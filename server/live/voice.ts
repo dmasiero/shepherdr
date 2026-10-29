@@ -46,8 +46,10 @@ async function agentId(key: string): Promise<string> {
     name: 'Shepherdr voice',
     conversation_config: {
       agent: {
-        first_message: 'Hi, I’m listening.',
+        // fork: says who you called through the agent dynamic variable; ElevenLabs refuses a first_message override
+        first_message: "You're through to {{agent}}. Go ahead.",
         language: 'en',
+        dynamic_variables: { dynamic_variable_placeholders: { agent: 'your agent' } },
         prompt: {
           prompt: PROMPT,
           tools: [
@@ -61,7 +63,7 @@ async function agentId(key: string): Promise<string> {
       tts: { agent_output_audio_format: 'pcm_16000' },
     },
     platform_settings: {
-      overrides: { conversation_config_override: { agent: { prompt: { prompt: true }, first_message: true } } },
+      overrides: { conversation_config_override: { agent: { prompt: { prompt: true } } } },
       privacy: { record_voice: false, retention_days: 0 },
     },
   }
@@ -90,7 +92,7 @@ export function startVoice(tools: VoiceTools, out: { send(d: ArrayBuffer | strin
         JSON.stringify({
           type: 'conversation_initiation_client_data',
           dynamic_variables: { agent: tools.name },
-          conversation_config_override: { agent: { prompt: { prompt: PROMPT.replace('{{agent}}', tools.name) }, first_message: `You're through to ${tools.name}. Go ahead.` } },
+          conversation_config_override: { agent: { prompt: { prompt: PROMPT.replace('{{agent}}', tools.name) } } },
         }),
       )
       offReply = tools.onReply((text) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'user_message', text: `(${tools.name} replied in the chat: "${text}") Read this reply out, briefly.` })))

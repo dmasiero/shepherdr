@@ -12,6 +12,10 @@ upstream before, as herdr-projects #189):
 - **The artifact check runs the plugin's own agent-browser**: `shepherdr artifact new/update/check` opened the page
   with a bare `agent-browser` looked up on the server's PATH, which herdr starts without Shepherdr's bin folder, so
   every check failed with `Executable not found in $PATH`. It now runs `browserBin()`, as the tasks' browser does.
+- **Voice calls start without a first_message override**: ElevenLabs closed every call right after "Listening"
+  (1008, `Override for field 'first_message' is not allowed by config.`), though the agent allowed that override. The
+  call now overrides only the prompt; the agent's own first message, "You're through to {{agent}}. Go ahead.", names
+  who you called through the `agent` dynamic variable the call already sends (placeholder "your agent").
 
 It is not a GitHub fork: upstream was herdr-projects, renamed, and that network's fork is
 [dmasiero/herdr-projects](https://github.com/dmasiero/herdr-projects). This repo holds upstream's history as it is,
@@ -40,6 +44,7 @@ Upstream's files change only where they hook in, each marked with a `fork:` comm
   Gitea's checks in a Gitea space).
 - `server/live/source.ts`: `shepherdr space add` and `space list` name the space's forge (`forgeName`).
 - `server/live/source.ts`: the artifact checker runs `browserBin()` (tested in `test/source.test.ts`).
+- `server/live/voice.ts`: the voice agent's first message and the call's override (tested in `test/voice-call.test.ts`).
 - `server/live/args.ts`: the help of `pr`, `checks` and `merge` says GitHub or Gitea.
 - `server/live/worktree.ts`: the task panel's pull request asks Gitea for a Gitea repo.
 - `skill/shepherdr-agent/SKILL.md`, `skill/shepherdr-coordinator/SKILL.md`: "GitHub (or Gitea)".
