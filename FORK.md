@@ -33,6 +33,7 @@ Everything is upstream's except these. `git diff upstream/main main` shows it al
 | `server/live/engine/follow-up.ts` | The follow-up pull request. |
 | `test/engine-gitea.test.ts`, `test/fake-tea.ts` | The tests, with tea faked as `fake-gh.ts` fakes gh. |
 | `docs/`, `FORK.md` | These pages. |
+| `scripts/sync-upstream.sh`, `flake.nix`, `flake.lock` | The sync with upstream that renix runs, and its dev shell. |
 
 Upstream's files change only where they hook in, each marked with a `fork:` comment:
 
@@ -51,17 +52,26 @@ Upstream's files change only where they hook in, each marked with a `fork:` comm
 
 ## Syncing with upstream
 
+`renix full` syncs this fork by itself (renix's `pkgs/forks.nix` names the script): in a clone of the fork, in its dev
+shell (`flake.nix`: Bun, gh, git), it runs `scripts/sync-upstream.sh`, which merges upstream's main into a
+`sync/upstream-<version>` branch in a worktree of its own, runs the fork's checks (`bun run typecheck`, the layer's
+tests above and `bun run build`) and opens the sync pull request; renix merges it and raises its pin
+(`pkgs/shepherdr.nix`) to the new commit. A conflict (exit 3) or a failed check (exit 4) goes to an agent in that
+worktree, then the script goes on with `--continue`. By hand:
+
 ```sh
-git fetch upstream --tags
-git checkout -b sync/upstream-<version> main
-git merge upstream/main          # or the release tag
-bun run typecheck && bun test test/engine-gitea.test.ts test/engine-merge.test.ts
+nix develop --command sh scripts/sync-upstream.sh            # or --no-pr to push and open nothing
+# after resolving conflicts or fixing the check in the worktree it names:
+nix develop --command sh scripts/sync-upstream.sh --continue --dir <worktree>
 ```
 
 Upstream comes in by merge, never by rebase or squash: `main` is published, and a merge keeps upstream's commits as
-they are, so the next sync only sees what is new. A sync pull request is merged with **Create a merge commit**. A
-conflict is almost always in one of the hook lines above: keep upstream's change and put the hook back. If upstream
-renames a `git.ts` function the engine calls, `forge.ts` must pass on the new name (`bun run typecheck` says so).
+they are, so the next sync only sees what is new. A sync pull request is merged with **Create a merge commit**.
 
-renix builds this fork (`pkgs/shepherdr.nix`, listed in `pkgs/forks.nix`): after a sync is merged, point it at the
-new commit and its hashes.
+### Conflicts
+
+A conflict is almost always in one of the hook lines above: keep upstream's change and put the hook back (the
+`fork:` comment with it). If upstream renames a `git.ts` function the engine calls, `forge.ts` must pass on the new
+name (`bun run typecheck` says so). While resolving, check with `nix develop --command bun run typecheck` and the
+layer's tests (`nix develop --command bun test test/engine-gitea.test.ts`, and the others in the table); not the
+whole suite (AGENTS.md).
