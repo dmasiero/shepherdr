@@ -88,7 +88,7 @@ not evidence of a working feature.
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Pending |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Pending |
-| Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; resizing/reconnect/files/diff/PR acceptance pending |
+| Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; phone Files and added-file Diff inspected through second core; resizing/reconnect and actual PR acceptance pending |
 | Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change inspected; other sections and full acceptance pending |
 | Health, alerts, unread/search, keyboard and mobile layouts | plugins/health; plugins/keyboard; src/layout* | Pending |
 | User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Pending; 2.0 API compatibility not required |
@@ -316,3 +316,29 @@ existing phone sheet (she301-native-background-output-live.png).
 Activity CI 40975708398 passed new core activity tests and all three layout
 files, but exposed stale legacy activity fixture doubles missing runtime and
 runtimeHook. The fixture now supplies both; branch CI is rerunning.
+
+Worktree panel slice: files, literal relative paths, binary/large-file display,
+rename-aware counts, uncommitted additions, unified patches and read-only gh PR
+inspection are served by one stateless native script through core machine.exec.
+No listener, SSH mirror, worker or legacy filesystem adapter is used. The task
+record alone chooses machine/folder/base/branch. Git external diff/textconv and
+interactive prompts are disabled; subprocess capture and time are bounded.
+File reads reject traversal, outside/ignored symlink targets, nonregular files
+and hardlinks. Review exposed a tracked-hardlink bypass in Git diff; the reader
+now validates every listed regular content path before Git can read it, with
+regressions for tracked hardlinks, redirected paths and literal-tab counts.
+Two scoped review rounds: one major and one minor fixed; second round clear.
+Manual acceptance: the real second-core coordinator created deferred task
+probe/REMO-2; its actual Claude child stayed To do. The coordinator added only
+panel-check.txt in that scratch worktree, uncommitted. Existing phone Files
+showed PANEL_DIFF_OK and Diff showed its +1 line. Screenshots
+she301-core-files-phone.png and she301-core-diff-phone.png. Actual GitHub PR
+data/check fallback and complete tablet/desktop/light/dark comparison pending.
+Typecheck passed; worktree branch CI pending. Activity follow-up e64e8679 passed
+core + legacy activity regressions and all three layout files (run 40975907171).
+
+Final scoped worktree round found no unresolved critical/major or additional
+minor findings. Expected reader failures use plain error envelopes. An unreadable
+GitHub checks fallback now has an explicit checksError in the existing PR Checks
+slot, rather than claiming no checks exist. New helper and layout regressions
+cover that access failure; actual GitHub failure UI remains unverified manually.

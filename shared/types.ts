@@ -823,6 +823,8 @@ export interface PullRequest {
   state: 'open' | 'draft' | 'merged' | 'closed'
   url: string
   checks: PrCheck[]
+  /** Missing access or unreadable checks is different from no checks reported. */
+  checksError?: string
 }
 
 /** what the side panel asks of a task's worktree */

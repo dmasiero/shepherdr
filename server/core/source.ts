@@ -23,7 +23,8 @@ import { CoreSecrets } from './secrets.ts'
 import { CoreArtifacts } from './artifacts.ts'
 import { CoreChat } from './chat.ts'
 import { CoreActivity } from './activity.ts'
-import type { ActivityAsk } from '../../shared/types.ts'
+import { CoreWorktree } from './worktree.ts'
+import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
@@ -46,6 +47,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly artifacts: CoreArtifacts
   readonly chats: CoreChat
   readonly activities: CoreActivity
+  readonly worktrees: CoreWorktree
   private local: { id: string; name: string }
   private machines: Machine[] = []
   private permissions = new Map<string, (answer: { allow: boolean }) => void>()
@@ -76,6 +78,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.artifacts = new CoreArtifacts(this, installation.id)
     this.chats = new CoreChat(this, installation.id)
     this.activities = new CoreActivity(this)
+    this.worktrees = new CoreWorktree(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -462,6 +465,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     queueMicrotask(() => { void this.flush(chat) })
   }
   terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
+  async worktree(ask: WorktreeAsk) { return this.worktrees.ask(ask) }
   async activity(ask: ActivityAsk) { return this.activities.ask(ask) }
   async artifact(id: string, version?: number) { try { return this.artifacts.page(id, version) } catch { return undefined } }
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }

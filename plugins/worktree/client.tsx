@@ -671,7 +671,7 @@ function PrView({ task }: { task: Task }) {
                 })}
               </ul>
             ) : (
-              <Small className="text-fg3">No checks on it.</Small>
+              <Small className={pr.checksError ? "text-need" : "text-fg3"}>{pr.checksError || "No checks on it."}</Small>
             )}
           </div>
         </div>
