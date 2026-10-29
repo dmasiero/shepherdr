@@ -1,0 +1,95 @@
+import { expect, test } from 'bun:test'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, linkSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { CoreSource } from '../server/core/source.ts'
+import type { CoreAgent, CoreSpace } from '../server/core/model.ts'
+
+/** Real private files through a fake core exec boundary, on GitHub only. Checker fakes are not UI proof. */
+async function fixture(run: (source: CoreSource, agent: CoreAgent, root: string, shots: { light: string; dark: string }) => Promise<void>) {
+  const root = mkdtempSync(join(tmpdir(), 'shep-artifacts-')), workspace = join(root, 'workspace')
+  mkdirSync(workspace)
+  const source = new CoreSource({ home: join(root, 'app'), port: 17887, session: 'test', socket: '/unused', binary: 'hc' })
+  const space = { id: 'p:machine:one', name: 'one', machine: 'machine', folder: workspace, base: 'main', prefix: 'ONE', mode: 'regular', added: 1 } as CoreSpace
+  const agent: CoreAgent = { chat: space.id, space: space.id, machine: space.machine, role: 'coordinator', kind: 'claude', launch: 'launch', grant: 'grant', hook: '/unused', started: 1, state: 'idle' }
+  agent.grant = source.mailbox.issue(agent.chat, agent.launch, agent.machine, ['artifact']).id
+  source.agents.terminal = (() => ({ state: 'live', pid: 123 })) as unknown as typeof source.agents.terminal
+  source.store.set('space', space.id, space); source.store.set('agent', agent.chat, agent)
+  source.agents.bun = async () => process.execPath
+  source.files.exec = async (_machine, argv, cwd, input) => {
+    const child = Bun.spawnSync(argv, { cwd, stdin: input ?? 'ignore', env: { ...process.env, HOME: root, USERPROFILE: root } })
+    if (child.exitCode) throw new Error(child.stderr.toString())
+    return Buffer.from(child.stdout)
+  }
+  const shots = { light: join(root, 'light.png'), dark: join(root, 'dark.png') }
+  writeFileSync(shots.light, 'test picture'); writeFileSync(shots.dark, 'test picture dark')
+  source.artifacts.checker = async () => ({ errors: [], warnings: [], shots })
+  writeFileSync(join(workspace, 'page.html'), '<p>First</p>')
+  writeFileSync(join(workspace, 'data.json'), '{"count":1}')
+  try { await run(source, agent, root, shots) }
+  finally { source.stop(); source.mailbox.close(); source.store.close(); rmSync(root, { recursive: true, force: true }) }
+}
+
+test('artifact data/title updates retain HTML, versions prune without losing referenced content, thumbs survive check cleanup', async () => fixture(async (source, agent, root, shots) => {
+  const cwd = source.space(agent.space)!.folder
+  await source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'example'], cwd)
+  const id = source.artifacts.list()[0].id
+  await source.artifacts.cli(agent, ['artifact', 'update', id, '--data', 'data.json'], cwd)
+  expect(source.artifacts.page(id)).toMatchObject({ html: '<p>First</p>', data: { count: 1 } })
+  for (let n = 0; n < 21; n++) await source.artifacts.cli(agent, ['artifact', 'update', id, '--title', `Example ${n}`], cwd)
+  expect(source.artifacts.list()[0].versions).toHaveLength(20)
+  expect(source.artifacts.page(id).html).toBe('<p>First</p>')
+  rmSync(shots.light); rmSync(shots.dark)
+  expect(await source.artifacts.thumb(id, false)!.text()).toBe('test picture')
+  await source.artifacts.act({ type: 'artifact-delete', place: agent.space, artifact: id })
+  expect(source.artifacts.list()).toHaveLength(0)
+  expect(source.store.get('artifact-id', id)).toBe(id) // Old chat links can never resolve to a reused ID.
+}))
+
+test('private files and symlink aliases cannot be imported', async () => fixture(async (source, agent, root) => {
+  const cwd = source.space(agent.space)!.folder, privateFile = join(source.config.home, 'vault.txt')
+  writeFileSync(privateFile, 'SYNTHETIC_PRIVATE_MATERIAL')
+  symlinkSync(privateFile, join(cwd, 'innocent.html'))
+  await expect(source.artifacts.cli(agent, ['artifact', 'new', 'innocent.html', '--title', 'Unsafe'], cwd)).rejects.toThrow('Private files')
+  linkSync(privateFile, join(cwd, 'hardlink.html'))
+  await expect(source.artifacts.cli(agent, ['artifact', 'new', 'hardlink.html', '--title', 'Unsafe'], cwd)).rejects.toThrow('regular file')
+  expect(source.artifacts.list()).toHaveLength(0)
+}))
+
+test('simultaneous updates and delete cannot overwrite each other; stale launch cannot publish', async () => fixture(async (source, agent) => {
+  const cwd = source.space(agent.space)!.folder
+  await source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'Example'], cwd)
+  const id = source.artifacts.list()[0].id
+  let release!: () => void, entered!: () => void
+  const checked = new Promise<void>(resolve => { entered = resolve })
+  const previous = source.artifacts.checker
+  source.artifacts.checker = async (...args) => { entered(); await new Promise<void>(resolve => { release = resolve }); return previous(...args) }
+  const first = source.artifacts.cli(agent, ['artifact', 'update', id, '--data', 'data.json'], cwd)
+  await checked
+  await expect(source.artifacts.cli(agent, ['artifact', 'update', id, '--title', 'Lost update'], cwd)).rejects.toThrow('being updated')
+  await expect(source.artifacts.act({ type: 'artifact-delete', place: agent.space, artifact: id })).rejects.toThrow('being updated')
+  source.store.set('agent', agent.chat, { ...agent, grant: 'replacement' })
+  release()
+  await expect(first).rejects.toThrow('replaced session')
+  expect(source.artifacts.list()[0].v).toBe(1)
+}))
+
+test('a browser error or missing check screenshots refuses publication', async () => fixture(async (source, agent) => {
+  const cwd = source.space(agent.space)!.folder
+  source.artifacts.checker = async () => ({ errors: ['script error'], warnings: [], shots: { light: '/missing', dark: '/missing' } })
+  await expect(source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'Example'], cwd)).rejects.toThrow('script error')
+  source.artifacts.checker = async () => ({ errors: [], warnings: [], skipped: 'Browser unavailable' })
+  await expect(source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'Example'], cwd)).rejects.toThrow('could not be checked')
+  expect(source.artifacts.list()).toHaveLength(0)
+}))
+
+
+test('revoking an unchanged session during validation refuses publication', async () => fixture(async (source, agent) => {
+  const cwd = source.space(agent.space)!.folder, checker = source.artifacts.checker
+  source.artifacts.checker = async (...args) => {
+    source.mailbox.revoke(agent.chat)
+    return checker(...args)
+  }
+  await expect(source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'Example'], cwd)).rejects.toThrow('replaced session')
+  expect(source.artifacts.list()).toHaveLength(0)
+}))

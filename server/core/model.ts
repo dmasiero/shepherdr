@@ -26,6 +26,7 @@ export interface CoreAgent {
   grant: string
   hook: string
   command?: string
+  browser?: { namespace: string; session: string; profile: string }
   transcript?: string
   transcriptFormat?: 'codex-exec'
   session?: string

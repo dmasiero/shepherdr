@@ -51,3 +51,23 @@ test('browser command idempotency persists outcomes across restart and rejects c
     expect(effects).toBe(1)
   } finally { store.close(); rmSync(root, { recursive: true, force: true }) }
 })
+
+test('installation IDs cannot inject paths into remote helper or export locations', () => {
+  const root = mkdtempSync(join(tmpdir(), 'shep-marker-'))
+  try {
+    prepareHome(root)
+    writeFileSync(join(root, 'installation.json'), JSON.stringify({ format: 'shepherdr-core', schema: 1, id: '../../other' }))
+    expect(() => prepareHome(root)).toThrow('Unsupported Shepherdr home format')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('standalone core startup never inherits another task browser route', async () => {
+  const { coreEnvironment } = await import('../server/core/config.ts')
+  const before = process.env.AGENT_BROWSER_CDP
+  try {
+    process.env.AGENT_BROWSER_CDP = 'ws://old-session'
+    const env = coreEnvironment({ home: '/private/preview', port: 17887, session: 'preview', socket: '/private/core.sock', binary: 'hc' })
+    expect(env.AGENT_BROWSER_CDP).toBeUndefined()
+    expect(env.HC_SESSION).toBe('preview')
+  } finally { if (before === undefined) delete process.env.AGENT_BROWSER_CDP; else process.env.AGENT_BROWSER_CDP = before }
+})

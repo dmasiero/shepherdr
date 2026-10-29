@@ -15,7 +15,7 @@ export function inspectHome(home: string): 'absent' | 'empty' | 'legacy' | Insta
   const marker = join(home, MARKER)
   if (!existsSync(marker)) return readdirSync(home).length ? 'legacy' : 'empty'
   const installation = JSON.parse(readFileSync(marker, 'utf8')) as Installation
-  if (installation.format !== 'shepherdr-core' || installation.schema !== 1 || typeof installation.id !== 'string') throw new Error('Unsupported Shepherdr home format')
+  if (installation.format !== 'shepherdr-core' || installation.schema !== 1 || typeof installation.id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(installation.id)) throw new Error('Unsupported Shepherdr home format')
   return installation
 }
 

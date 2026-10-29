@@ -91,6 +91,10 @@ export class Mailbox {
   }
 
   revoke(chat: string) { this.db.query('UPDATE grants SET revoked=1 WHERE chat=?').run(chat) }
+  permits(id: string, identity: { chat: string; session: string; machine: string }, action: string) {
+    const grant = this.get(id)
+    return !!grant && grant.chat === identity.chat && grant.session === identity.session && grant.machine === identity.machine && grant.actions.includes(action)
+  }
   active(): Grant[] {
     if (this.closed) return []
     return (this.db.query('SELECT * FROM grants WHERE revoked=0').all() as GrantRow[]).map(row => this.grant(row))

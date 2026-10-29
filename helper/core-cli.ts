@@ -25,7 +25,7 @@ try {
     process.stdout.write(saved.out); process.exit(saved.code)
   }
   const result = await coreRequest(credential.endpoint ?? credential.socket ?? (() => { throw new Error('Missing core endpoint') })(), credential.mail, 'cli', { args, cwd: process.cwd() }, {
-    timeout: args[0] === 'merge' || args[0] === 'checks' ? 110_000 : 60_000,
+    timeout: args[0] === 'merge' || args[0] === 'checks' || args[0] === 'artifact' ? 110_000 : 60_000,
   }) as { out: string; code: number }
   process.stdout.write(result.out)
   process.exitCode = result.code

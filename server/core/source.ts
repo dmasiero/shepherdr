@@ -20,6 +20,7 @@ import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
 import { CoreSettings } from './settings.ts'
 import { CoreSecrets } from './secrets.ts'
+import { CoreArtifacts } from './artifacts.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
@@ -40,6 +41,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
   readonly secrets: CoreSecrets
+  readonly artifacts: CoreArtifacts
   private local: { id: string; name: string }
   private machines: Machine[] = []
   private permissions = new Map<string, (answer: { allow: boolean }) => void>()
@@ -67,6 +69,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
     this.secrets = new CoreSecrets(this)
+    this.artifacts = new CoreArtifacts(this, installation.id)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -109,6 +112,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   }
   connected() { return this.core.current.connected }
   machineConnected(machine: string) { return this.connected() && (machine === this.local.id || this.machines.some(item => item.id === machine && item.state === 'connected')) }
+  localMachineId() { return this.local.id }
   machineName(machine: string) { return machine === this.local.id ? undefined : this.machines.find(item => item.id === machine)?.name }
   registerAction(type: Action['type'], handler: (action: Action) => Promise<unknown>) { this.hooks.set(type, handler) }
 
@@ -181,7 +185,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))],
-      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.store.all<Artifact>('artifact'), automations: {}, asks,
+      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: {}, asks,
       settings: this.secrets.pages(this.settings.sections()),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
       read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
@@ -249,6 +253,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
         return { answered: true }
       }
+      case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
       case 'setting':
         this.settings.set(action.key, action.value, action.place || 'all'); return {}
@@ -347,11 +352,19 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   ready ID --summary TEXT [--facts TEXT]
   merge ID (requires the human's exact-commit card approval)
   todo ID | task close ID
+  artifact new FILE --title TITLE | update ID [FILE] [--data JSON] | check FILE | show ID | list | remove ID
   secret list | secret ask NAME --why TEXT [--force]
   secret run NAME [NAME …] -- COMMAND | secret env NAME [NAME …] --file .env
 Use hc for starting, messaging and waiting on core child agents. Never use a web URL or legacy helper for core commands.
 `, code: 0 }
-      if (args[0] === 'secret') return { out: await this.secrets.cli(agent, args) + '\n', code: 0 }
+      if (args[0] === 'secret') {
+        if (!grant.actions.includes('secret')) throw new Error('This session has no secret permission')
+        return { out: await this.secrets.cli(agent, args) + '\n', code: 0 }
+      }
+      if (args[0] === 'artifact') {
+        if (!grant.actions.includes('artifact')) throw new Error('This session has no artifact permission')
+        return { out: await this.artifacts.cli(agent, args, typeof (input as { cwd?: unknown }).cwd === 'string' ? (input as { cwd: string }).cwd : this.space(agent.space)!.folder), code: 0 }
+      }
       if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
       if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
@@ -439,8 +452,8 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     queueMicrotask(() => { void this.flush(chat) })
   }
   terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
-  async artifact(id: string, version?: number) { return this.store.get<{ html: string; data?: unknown; sent?: string }>('artifact-version', `${id}:${version || this.store.get<Artifact>('artifact', id)?.v}`) }
-  async artifactThumb(_id: string, _dark: boolean) { return null }
+  async artifact(id: string, version?: number) { try { return this.artifacts.page(id, version) } catch { return undefined } }
+  async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) {
     if (!this.chat(chat)) throw new Error('No such chat')
     if (data.length > 32 * 1024 * 1024) throw new Error('Attachment is too large')

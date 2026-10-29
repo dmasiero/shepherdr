@@ -8,6 +8,9 @@ on:
       - 'helper/core-*.ts'
       - 'bin/shepherdr'
       - 'server/app.ts'
+      - 'server/frame.ts'
+      - 'server/artifact-check.ts'
+      - 'server/live/artifacts.ts'
       - 'server/source.ts'
       - 'shared/types.ts'
       - 'shared/models.ts'
@@ -42,7 +45,7 @@ jobs:
       - run: bun run typecheck
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-rewrite
-      - run: bun test test/core-*.test.ts
+      - run: bun test test/core-*.test.ts test/artifacts.test.ts test/models.test.ts
 
   task-layout:
     if: github.ref == 'refs/heads/work/301-build-shepherdr-2-1-on-core'

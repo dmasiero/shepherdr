@@ -82,7 +82,7 @@ not evidence of a working feature.
 | Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. GitHub/conflicts/recovery still pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Pending |
 | Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; real SSH/disconnect acceptance pending; old implementation removal pending |
-| Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Pending |
+| Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; notes/delete/device parity still pending |
 | Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; CI, env/set/rm and stale-scope acceptance pending |
 | Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Pending |
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
@@ -230,3 +230,38 @@ Secrets review found no unresolved critical/major. After a fresh start with this
 used secret run successfully and returned REMOTE_SECRET_OK. Screenshot:
 she301-remote-secret-ok.png. Synthetic value only; actual SSH and complete secret
 CLI parity remain pending.
+
+Artifacts slice in progress: native core-only file reads/exports, immutable input
+checks (private roots, symlink/hardlink/nonregular refusal), sealed browser
+validation, persistent thumbnails, 20 retained versions, data/title-only updates,
+comments/notes/actions and keeper routing are implemented. The exact existing
+frame and artifact UI are reused. Checker imports no legacy state/SSH transport;
+its browser runs in an isolated installation namespace/profile via one core exec
+batch, with inherited browser routing removed. Core exec sweeps that batch's
+children afterward; no testing browser/service/Tailscale mapping is installed.
+Update locks and permanent ID tombstones prevent lost updates and reused links.
+Fresh review found hardlink input and revoked-session publication majors; both
+fixed with CI regressions. Round two found no unresolved critical/major. Typecheck
+passed; real checked-artifact UI acceptance and branch CI remain pending.
+
+Manual offline acceptance: shared preview browser network set offline at
+2026-10-29 23:21:33 UTC, then reloaded to chrome-error (old WebSocket/page gone).
+Network restored after 23:31:36 UTC, over ten minutes later. The second-core
+Claude coordinator's 610-second harmless shell wait completed while the browser
+was offline. Reopening its chat showed native TEN_MIN_OFFLINE_OK once, with
+correct earlier messages. Screenshot she301-ten-minute-offline.png. This proves
+simulated browser network absence + authoritative native-log resync; physical
+phone sleep/offline behavior remains unverified. No live agents/services stopped.
+
+Artifact manual acceptance: the real second-core Claude coordinator published
+9788e43f from its own file through the authenticated core mailbox. The initial
+check refused publication on an agent-browser Unix socket path limit; shortened
+installation/session IDs fixed that without changing the shared browser. v2/v3
+changed HTML and JSON; v4 changed data only. The existing inline frame retained
+its v3 URL while showing ARTIFACT_DATA_TWO, proving the data event updated it
+without a page reload. Full screen also showed v4. Send proof reached the native
+coordinator as ARTIFACT_ACTION_OK. Phone light/dark inspected; screenshots
+she301-artifact-light.png, she301-artifact-data-full.png and
+she301-remote-artifact.png. This is two cores on one host, not actual SSH.
+Final scoped artifact review round found no critical/major or additional minor
+findings. Local typecheck passed; branch CI pending. Full parity remains open.
