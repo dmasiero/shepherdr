@@ -9,6 +9,9 @@ upstream before, as herdr-projects #189):
   commit here, watched for news, and main watched for going red.
 - **A pull request merged already** ([docs/follow-up.md](docs/follow-up.md)): newer work on a merged branch goes in a
   follow-up pull request instead of being left out of main. On GitHub too.
+- **The artifact check runs the plugin's own agent-browser**: `shepherdr artifact new/update/check` opened the page
+  with a bare `agent-browser` looked up on the server's PATH, which herdr starts without Shepherdr's bin folder, so
+  every check failed with `Executable not found in $PATH`. It now runs `browserBin()`, as the tasks' browser does.
 
 It is not a GitHub fork: upstream was herdr-projects, renamed, and that network's fork is
 [dmasiero/herdr-projects](https://github.com/dmasiero/herdr-projects). This repo holds upstream's history as it is,
@@ -36,6 +39,7 @@ Upstream's files change only where they hook in, each marked with a `fork:` comm
 - `server/live/engine/engine.ts` (`add`): a new task's Settings block goes through `forgeWords` (its Merge line says
   Gitea's checks in a Gitea space).
 - `server/live/source.ts`: `shepherdr space add` and `space list` name the space's forge (`forgeName`).
+- `server/live/source.ts`: the artifact checker runs `browserBin()` (tested in `test/source.test.ts`).
 - `server/live/args.ts`: the help of `pr`, `checks` and `merge` says GitHub or Gitea.
 - `server/live/worktree.ts`: the task panel's pull request asks Gitea for a Gitea repo.
 - `skill/shepherdr-agent/SKILL.md`, `skill/shepherdr-coordinator/SKILL.md`: "GitHub (or Gitea)".
