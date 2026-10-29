@@ -33,6 +33,8 @@ export interface FakeGitea {
   prs: FakeGiteaPr[]
   /** the commit statuses on any pull request's head, as Gitea lists them */
   statuses?: { context: string; status: string; target_url?: string }[]
+  /** the combined state Gitea reports, when it is to differ from what the statuses make */
+  combined?: string
   /** GET repos/…/branch_protections */
   protections?: unknown[]
   /** Gitea Actions' runs, newest first (workflow_runs) */
@@ -180,7 +182,17 @@ if (import.meta.main) {
     list.push({ id: 1000 + list.length, user: { login: 't' }, body: body!.body, html_url: `${st.url}/${st.repo}/pulls/${m[1]}#c`, created_at: new Date().toISOString() })
     answer(201, list.at(-1))
   }
-  if (path.match(/^repos\/[^/]+\/[^/]+\/commits\/[^/]+\/status$/)) answer(200, { state: 'x', statuses: st.statuses ?? [] })
+  if (path.match(/^repos\/[^/]+\/[^/]+\/commits\/[^/]+\/status$/)) {
+    // Gitea's combined status, as Gitea 28 makes it: the statuses page by page, and both the state and total_count
+    // of that page's own
+    const all = st.statuses ?? []
+    const limit = Number(q.get('limit') ?? 30)
+    const page = Number(q.get('page') ?? 1)
+    const statuses = all.slice((page - 1) * limit, page * limit)
+    const has = (...x: string[]) => statuses.some((s) => x.includes(s.status))
+    const state = (page === 1 ? st.combined : undefined) ?? (has('failure', 'error') ? 'failure' : has('pending') ? 'pending' : statuses.length ? 'success' : '')
+    answer(200, { state, total_count: statuses.length, statuses })
+  }
   if (path === `${repo}/branch_protections`) answer(200, st.protections ?? [])
   if (path === `${repo}/actions/runs`) {
     const runs = (st.runs ?? []) as { head_branch?: string; event?: string }[]

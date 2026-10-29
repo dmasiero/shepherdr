@@ -139,11 +139,28 @@ async function required(g: Gitea, cwd: string, base: string): Promise<string[]> 
   return [...new Set(out.filter((c) => c && !c.includes('*')))]
 }
 
-/** the latest status of each context on a commit, as gh pr checks has them; null when Gitea did not answer */
-async function statusesAt(g: Gitea, cwd: string, sha: string): Promise<Check[] | null> {
-  const r = await get<{ statuses?: Status[] | null }>(g, cwd, `repos/${g.repo}/commits/${sha}/status`)
-  if (failed(r)) return null
-  return (r.statuses ?? []).map((s) => ({ name: s.context, bucket: BUCKET[(s.status ?? s.state ?? '').toLowerCase()] ?? 'pending', link: whole(g, s.target_url) }))
+/** the most pages of a commit's statuses read (50 each): past that, the checks are unread, never passed */
+export const STATUS_PAGES = { max: 100 }
+
+/** the latest status of each context on a commit, as gh pr checks has them, every page of them; null when Gitea did
+ *  not answer, or there were more pages than are read. Gitea's combined state is of each page's own statuses: every
+ *  page's stands, so a failure (or one still pending) no status read shows is never taken as passed. */
+export async function statusesAt(g: Gitea, cwd: string, sha: string): Promise<Check[] | null> {
+  const out: Check[] = []
+  const combined = new Set<string>()
+  for (let page = 1; ; page++) {
+    if (page > STATUS_PAGES.max) return null
+    const r = await get<{ state?: string; statuses?: Status[] | null }>(g, cwd, `repos/${g.repo}/commits/${sha}/status?limit=${PAGE}&page=${page}`)
+    if (failed(r)) return null
+    const list = r.statuses ?? []
+    if (list.length) combined.add(BUCKET[(r.state ?? '').toLowerCase()] ?? '')
+    out.push(...list.map((s) => ({ name: s.context, bucket: BUCKET[(s.status ?? s.state ?? '').toLowerCase()] ?? 'pending', link: whole(g, s.target_url) })))
+    // Gitea's total_count is this page's count, not all of them: a short page is the last
+    if (list.length < PAGE) break
+  }
+  if (combined.has('fail') && !out.some((c) => c.bucket === 'fail')) out.push({ name: 'combined status (failure)', bucket: 'fail' })
+  if (combined.has('pending') && !out.some((c) => c.bucket === 'fail' || c.bucket === 'pending')) out.push({ name: 'combined status (pending)', bucket: 'pending' })
+  return out
 }
 
 /** the pull request's checks: its head's commit statuses, and those its base requires that have not shown yet as
