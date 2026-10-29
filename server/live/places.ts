@@ -11,7 +11,9 @@ import { nameProblem, slugify, type Mode } from '../../shared/types.ts'
 import { readJson, writeJson } from '../store.ts'
 import { Agents } from './agents.ts'
 import { boxHome } from './box.ts'
-import { defaultBranch, github, githubRemote, isRepo, topLevel, type GitHub } from './engine/git.ts'
+import { defaultBranch, isRepo, topLevel } from './engine/git.ts'
+// fork: a space's forge repo, GitHub's or Gitea's (FORK.md)
+import { github, githubRemote, type GitHub } from './engine/forge.ts'
 import { migrateToSpaces } from './migrate.ts'
 
 export interface Space {

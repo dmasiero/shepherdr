@@ -4,6 +4,7 @@
 import { isAbsolute, join, relative, sep } from 'node:path'
 import type { Diff, DiffFile, FileText, Patch, PullRequest, PrCheck, TreeFiles } from '../../shared/types.ts'
 import { actionJobs, git, mergeBase, noChecksAccess, sh } from './engine/git.ts'
+import { giteaPullRequest } from './engine/forge.ts'
 import { lstatSync, readHead, realpathSync, statSync } from './mfs.ts'
 
 /** the most files a tree lists */
@@ -186,6 +187,9 @@ export function checksOf(rollup: Rollup[] = []): PrCheck[] {
 /** the open (or last) pull request of a branch, by gh; none when there is none, or gh can't tell */
 export async function pullRequest(wt: string, branch: string): Promise<{ pr: PullRequest | null; why?: string }> {
   if (!branch) return { pr: null, why: 'No branch yet.' }
+  // fork: a repo on Gitea asks Gitea, through tea (forge.ts)
+  const gitea = await giteaPullRequest(wt, branch)
+  if (gitea) return gitea
   const remote = await git(wt, 'remote', 'get-url', 'origin')
   const gh = remote.ok ? ghRepo(remote.out) : null
   if (!gh) return { pr: null, why: 'This space has no GitHub remote.' }

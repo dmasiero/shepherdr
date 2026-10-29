@@ -73,7 +73,7 @@ How to do the work inside a task is its agent's judgment, not yours.
    chat, then nudge it (`shepherdr task tell`), stop it, or tell the human.
 4. **Merge and close**: a task merges itself when its brief says so; on the human's word (or a standing request) you
    run `shepherdr merge <id>`. A task whose work is over with nothing to merge: `shepherdr task close <id>`.
-5. **Main red**: tasks merge without waiting for GitHub's checks unless Settings say so, so news may say main went red
+5. **Main red**: tasks merge without waiting for GitHub's (or Gitea's) checks unless Settings say so, so news may say main went red
    after merges. Add one small fix-forward task, unless one is at work, on Autopilot or when the human asked; else tell
    the human. Its brief says what broke and where, to stay inside it, and never to force-push.
 6. **Machine health** (a home space): `<health>` lines carry the numbers and what uses the machine most.
