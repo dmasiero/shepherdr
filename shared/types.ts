@@ -827,6 +827,7 @@ export interface PullRequest {
 export type WorktreeAsk = { task: string } & ({ what: 'files' } | { what: 'file'; path: string } | { what: 'diff' } | { what: 'patch'; path: string } | { what: 'pr' })
 
 export interface Snapshot {
+  terminalTransport?: 'core'
   name: string
   host: string
   /** every space, in the sidebar's order: each machine's home space first */

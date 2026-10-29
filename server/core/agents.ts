@@ -105,10 +105,12 @@ export class CoreAgents {
       env: { SHEPHERDR_CHAT: '', SHEPHERDR_SECRET_FILE: '', SHEPHERDR_COMMAND: '', SHEPHERDR_URL: '',
         ...shellEnv, SHEPHERDR_CORE_HOOK_FILE: hook },
     }, 45_000)
-    record.terminal = terminal.address
-    record.pid = terminal.pid ?? undefined
-    this.store.set('agent', chat, record); this.changed(chat)
-    return record
+    const current = this.get(chat)
+    if (!current || current.launch !== launch || current.grant !== grant.id) throw new Error('Agent launch was replaced before core confirmed it')
+    current.terminal = terminal.address
+    current.pid = terminal.pid ?? undefined
+    this.store.set('agent', chat, current); this.changed(chat)
+    return current
     } finally { this.launching.delete(chat) }
   }
 
@@ -134,7 +136,9 @@ export class CoreAgents {
     if (event.model) record.model = event.model
     if (event.event === 'SessionStart' || event.event === 'Stop' || event.event === 'SessionEnd') record.state = 'idle'
     else if (event.event === 'UserPromptSubmit' || event.event === 'PreToolUse') record.state = 'working'
-    else if (event.event === 'PermissionRequest') { record.state = 'blocked'; record.permission = event.id }
+    // Only authenticated mailbox dispatch owns a permission card. Re-reading an old hook after
+    // restart must not resurrect an answered card or grant authority from observation text.
+    else if (event.event === 'PermissionRequest') record.state = 'blocked'
     this.store.set('agent', record.chat, record); this.changed(record.chat)
   }
 }

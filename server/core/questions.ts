@@ -38,6 +38,7 @@ export class CoreQuestions {
     const row = this.source.store.get<SavedQuestion>('question', action.question)
     if (!row) return false
     if (row.answered || row.chat !== action.chat) throw new Refusal('This card has already been answered or belongs to another chat')
+    if (this.source.agents.get(row.chat)?.grant !== row.grant) throw new Refusal('This card belongs to a replaced agent session; ask it for a fresh card')
     const selected = action.choices ?? [action.choice]
     const question = row.question
     if (!selected.length || selected.some(index => !Number.isInteger(index) || index < 0 || index >= question.choices.length) || !question.multi && selected.length !== 1) {
@@ -46,11 +47,10 @@ export class CoreQuestions {
     if (question.noteRequiredFor !== undefined && selected.includes(question.noteRequiredFor) && !action.note?.trim()) throw new Refusal('Add the note this choice asks for')
     const words = action.other || [...selected.map(index => question.choices[index]?.label).filter(Boolean), action.note].filter(Boolean).join('\n')
     row.answered = true; question.sent = action.other ? -1 : selected[0]; question.said = words
-    this.source.store.set('question', row.id, row)
+    this.source.saveAndDeliver(row.chat, `answer-${row.id}`, tag('answer', { from: this.source.snapshot().user, question: question.title }, words), () => this.source.store.set('question', row.id, row))
     const message = this.source.store.get<Message>(`message:${row.chat}`, row.id)
     this.source.post(row.chat, { ...message, id: row.id, who: 'agent', question, at: message?.at ?? Date.now() })
     this.source.forwardQuestion(row.chat, question, words, action.space ? 'space' : 'task')
-    await this.source.agents.send(row.chat, tag('answer', { from: this.source.snapshot().user, question: question.title }, words))
     return true
   }
 }

@@ -38,7 +38,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
     } },
     agents: { get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
       terminal: () => ({ address: 't1', state: state.terminal }), send: async () => {} },
-    core: { call: async () => ({}) }, status: () => 'idle', connected: () => true, emit: () => {},
+    core: { call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
     post: (chat: string, message: Message) => store.set(`message:${chat}`, message.id, message),
   } as unknown as CoreSource
   const tasks = new CoreTasks(source)
@@ -76,5 +76,18 @@ test('process exit never marks workflow merged', async () => {
     state.terminal = 'finished'
     expect(tasks.view(task).status).toBe('need')
     expect(tasks.get(task.id)?.workflow).toBe('working')
+  })
+})
+
+
+test('a fresh ready card and Not yet both revoke an earlier approval', async () => {
+  await withTask(async ({ tasks, task, grant }) => {
+    await tasks.ready(grant, task.id, 'Changed example')
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat)
+    expect(tasks.get(task.id)!.approvedHead).toBeDefined()
+    await tasks.ready(grant, task.id, 'Changed example again')
+    expect(tasks.get(task.id)!.approvedHead).toBeUndefined()
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 1, task.chat)
+    await expect(tasks.merge(grant, task.id)).rejects.toThrow('human must approve')
   })
 })

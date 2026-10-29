@@ -111,6 +111,7 @@ export class CoreTasks {
     if (!summary.trim() || summary.length > SUMMARY_MAX) throw new Refusal(`Write a summary of at most ${SUMMARY_MAX} characters`)
     if (!await this.git.clean({ machine: task.machine, folder: task.folder })) throw new Refusal('Commit or remove the worktree changes before reporting ready')
     task.readyHead = await this.git.head({ machine: task.machine, folder: task.folder })
+    delete task.approvedHead
     task.said = summary; task.facts = facts; task.workflow = 'ready'
     this.save(task); await this.label(task); this.card(task, summary)
     if (task.mergePolicy === 'ask') {
@@ -131,12 +132,14 @@ export class CoreTasks {
       const head = await this.git.head({ machine: task.machine, folder: task.folder })
       if (head !== request.head) throw new Refusal('The task changed after this request; ask for a fresh ready report')
       task.approvedHead = head
-    }
-    this.source.store.delete('merge-question', question)
+    } else delete task.approvedHead
+    this.source.saveAndDeliver(chat, `answer-${question}`, `<answer question="Merge ${task.id}?">${choice === 0 ? 'Merge' : 'Not yet'}</answer>`, () => {
+      this.source.store.delete('merge-question', question)
+      this.source.store.set('task', task.id, task)
+    })
     const message = this.source.store.get<{ question: Question }>(`message:${chat}`, question)
     if (message) this.source.post(chat, { ...message, id: question, who: 'agent', question: { ...message.question, sent: choice }, at: Date.now() })
     this.save(task)
-    await this.source.agents.send(chat, `<answer question="Merge ${task.id}?">${choice === 0 ? 'Merge' : 'Not yet'}</answer>`)
     return true
   }
   async merge(grant: Grant, id: string) {

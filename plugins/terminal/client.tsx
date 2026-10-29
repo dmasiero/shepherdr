@@ -9,6 +9,7 @@ import '@xterm/xterm/css/xterm.css'
 import { act, agentChat, definePlugin, getState, openItem, placeOf, setUI, shownItem, useStore, useUI } from '@client/kernel.ts'
 import { CTRL, ic, MenuItem, shortcut, Small, TermIcon } from '@client/ui.tsx'
 import type { Place, TermScreen } from '@shared/types.ts'
+import { connectTerminal, streamInput } from './stream.ts'
 import { colsOf, fitFont, frame, LINE, MAX, MIN, PAD, ZOOM } from './screen.ts'
 
 const KEYMAP: Record<string, string> = {
@@ -36,6 +37,11 @@ export function toKey(e: KeyboardEvent): { keys?: string[]; text?: string } | nu
   return null
 }
 
+function terminalInput(chat: string, message: Parameters<typeof streamInput>[1]) {
+  if (getState().snap?.terminalTransport === 'core') streamInput(chat, message)
+  else act({ ...message, chat })
+}
+
 /** the task terminal's screen in the side panel: focused, every key goes into it */
 const SCREEN = '[data-term-screen]'
 
@@ -54,7 +60,7 @@ const css = (name: string) => getComputedStyle(document.documentElement).getProp
 /** The CLI's screen drawn by a real terminal (xterm.js), read only, at the pane's own columns: nothing wraps. The font
  *  scales so the width fits; too small for a phone, it stops at MIN and the screen pans sideways. A pinch (or Ctrl and
  *  the wheel) zooms. */
-function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } & HTMLAttributes<HTMLDivElement>) {
+function Screen({ screen, stream, className, ...p }: { screen: TermScreen | undefined; stream?: string } & HTMLAttributes<HTMLDivElement>) {
   const box = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const [term, setTerm] = useState<Terminal | null>(null)
@@ -62,6 +68,7 @@ function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } 
   const [zoom, setZoom] = useState<number | null>(null)
   /** following the newest line: scrolled to the bottom (and kept there as lines come in) */
   const stuck = useRef(true)
+  const [streamStatus, setStreamStatus] = useState('Reading the terminal…')
   const cols = screen ? colsOf(screen) : 80
   const family = useMemo(() => css('--font-mono') || 'monospace', [])
   const whole = width ? fitFont(width, cols, cellOf(family)) : MAX
@@ -86,8 +93,8 @@ function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } 
       const [brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite] = bright
       made = new Terminal({
         cols: 80,
-        rows: 1,
-        scrollback: 0,
+        rows: stream ? 24 : 1,
+        scrollback: stream ? 2000 : 0,
         disableStdin: true,
         cursorBlink: false,
         fontFamily: family,
@@ -120,7 +127,7 @@ function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } 
       gone = true
       made?.dispose()
     }
-  }, [family])
+  }, [family, stream])
 
   useEffect(() => {
     const el = box.current
@@ -173,11 +180,20 @@ function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } 
     requestAnimationFrame(bottom)
   }, [term, font])
   useEffect(() => {
-    if (!term || !screen) return
+    if (!term || !screen || stream) return
     const { rows, data } = frame(screen.ansi)
     if (term.cols !== cols || term.rows !== rows) term.resize(cols, rows)
     term.write(data, () => requestAnimationFrame(bottom))
-  }, [term, screen, cols])
+  }, [term, screen, cols, stream])
+
+  useEffect(() => {
+    if (!term || !stream || !box.current) return
+    const dimensions = () => ({ cols: 80, rows: Math.max(8, Math.min(200, Math.floor((box.current!.clientHeight - PAD * 2) / (fontRef.current * LINE)))) })
+    const resize = () => { const { cols, rows } = dimensions(); term.resize(cols, rows); connection.resize() }
+    const connection = connectTerminal(stream, (bytes, done) => term.write(bytes, () => { bottom(); done() }), () => term.reset(), dimensions, setStreamStatus)
+    const observer = new ResizeObserver(resize); observer.observe(box.current)
+    return () => { observer.disconnect(); connection.close() }
+  }, [term, stream])
 
   return (
     <div
@@ -189,7 +205,7 @@ function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } 
       style={{ padding: PAD }}
     >
       <div ref={host} className="w-max" />
-      {screen ? null : <div className="text-[0.75rem] text-(--ansi-0b) phone:text-[0.8125rem]">Reading the terminal…</div>}
+      {stream ? (streamStatus ? <div className="text-[0.75rem] text-(--ansi-0b)">{streamStatus}</div> : null) : screen ? null : <div className="text-[0.75rem] text-(--ansi-0b) phone:text-[0.8125rem]">Reading the terminal…</div>}
     </div>
   )
 }
@@ -197,17 +213,19 @@ function Screen({ screen, className, ...p }: { screen: TermScreen | undefined } 
 function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) {
   const ui = useUI()
   const screen = useStore((s) => s.terms[chatKey])
+  const streaming = useStore((s) => s.snap?.terminalTransport === 'core')
   const input = useRef<HTMLTextAreaElement>(null)
   const phone = ui.device === 'phone'
   // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger, through the hidden box
   const typed = panel && !phone && ui.device === 'desktop'
   const touch = phone || (panel && !typed)
-  const keys = (k: string[]) => act({ type: 'keys', chat: chatKey, keys: k })
+  const keys = (keys: string[]) => terminalInput(chatKey, { type: 'keys', keys })
   return (
     <>
       <Screen
         key={chatKey}
         screen={screen}
+        stream={streaming ? chatKey : undefined}
         role="log"
         aria-label="Terminal"
         tabIndex={typed ? 0 : undefined}
@@ -225,7 +243,7 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
             autoCorrect="off"
             className="pointer-events-none absolute size-px opacity-0"
             value=""
-            onChange={(e) => e.target.value && act({ type: 'text', chat: chatKey, text: e.target.value })}
+            onChange={(e) => e.target.value && terminalInput(chatKey, { type: 'text', text: e.target.value })}
             onKeyDown={(e) => {
               // a tablet's keyboard: Ctrl keys go in as on a desktop (Alt alone, or AltGr's Ctrl+Alt, types its character)
               if (e.ctrlKey && !e.altKey) {
@@ -318,16 +336,16 @@ export default definePlugin({
           const k = toKey(e)
           if (!k) return true
           e.preventDefault()
-          if (k.keys) act({ type: 'keys', chat: focused, keys: k.keys })
-          else if (k.text) act({ type: 'text', chat: focused, text: k.text })
+          if (k.keys) terminalInput(focused, { type: 'keys', keys: k.keys })
+          else if (k.text) terminalInput(focused, { type: 'text', text: k.text })
           return true
         }
         if (!ui.term) return false
         const k = toKey(e)
         if (!k) return true
         e.preventDefault()
-        if (k.keys) act({ type: 'keys', chat: ui.term, keys: k.keys })
-        else if (k.text) act({ type: 'text', chat: ui.term, text: k.text })
+        if (k.keys) terminalInput(ui.term, { type: 'keys', keys: k.keys })
+        else if (k.text) terminalInput(ui.term, { type: 'text', text: k.text })
         return true
       },
     })

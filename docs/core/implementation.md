@@ -124,3 +124,19 @@ run concurrently so a human permission wait does not block status; answer writes
 remain serialized and retain responses for the current request queue. Helpers
 reconnect with the same authenticated request identity. New regression coverage
 runs only in branch CI. Local verification remains typecheck and manual inspection.
+
+Manual task evidence: the unchanged app's coordinator created CORE-1 as a real
+Codex core child in a separate scratch repository and worktree. A native
+PermissionRequest became a card; answering Allow once let Git commit succeed.
+This is desktop/shared-browser evidence, not lock-screen push evidence. The
+existing Terminal panel now displays the real raw core attach over a per-viewer
+WebSocket with bounded queues, acknowledgements and no input replay. Further
+typing/reconnect acceptance is pending.
+
+Second scoped review found five major lifecycle defects in the new integration:
+answer delivery could be lost, stale-session cards could answer replacements,
+fresh merge cards could retain old approval, terminal confirmation could overwrite
+hooks, and hook EOF could block transcript polling. Fixes and regression tests
+are being checked in branch CI; this is still not final rewrite review. Manual
+restart also exposed replayed PermissionRequest hooks resurrecting answered cards;
+permission ownership now belongs only to authenticated mailbox dispatch.

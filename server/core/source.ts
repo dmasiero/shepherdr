@@ -16,11 +16,12 @@ import { coreEnvironment } from './config.ts'
 import type { AgentKind, CoreAgent, CoreSpace } from './model.ts'
 import { CoreTasks } from './tasks.ts'
 import { CoreQuestions } from './questions.ts'
+import { terminalBridge } from './terminal.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
 interface Upload { id: string; chat: string; path: string; name: string }
-interface PendingSend { id: string; chat: string; text: string; state: 'queued' | 'sending' | 'uncertain' }
+interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' }
 
 /** Product state is Shepherdr's; terminals, machine commands, files and agent children are core's. */
 export class CoreSource extends Emitter<SourceEvents> implements Source {
@@ -56,7 +57,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
-    this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot') })
+    this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
   }
@@ -77,6 +78,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const message = this.store.get<Message>(`message:${pending.chat}`, pending.id)
         if (message) this.store.set(`message:${pending.chat}`, pending.id, { ...message, waiting: false, waitsFor: undefined })
       }
+    }
+    for (const agent of this.agents.all()) {
+      agent.permission = this.openPermissions(agent)[0]?.id
+      this.store.set('agent', agent.chat, agent)
     }
     await this.core.start(); await this.refresh(); this.logs.start()
     this.recovery = setInterval(() => {
@@ -118,12 +123,15 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   status(agent?: CoreAgent): Status {
     if (!this.connected()) return 'off'
     if (!agent) return 'idle'
-    if (this.questions.open(agent.chat).length || this.store.all<Permission>('permission').some(item => item.chat === agent.chat && item.grant === agent.grant && !item.settled && item.expires > Date.now())) return 'need'
+    if (this.questions.open(agent.chat).length || this.openPermissions(agent).length) return 'need'
     const terminal = this.agents.terminal(agent)
     if (terminal?.state === 'finished') return 'idle'
     if (agent.pid && terminal?.pid !== agent.pid) return 'need'
     const word = terminal?.status?.state ?? agent.state
     return word === 'blocked' || agent.permission ? 'need' : word === 'working' || word === 'starting' ? 'work' : 'idle'
+  }
+  private openPermissions(agent: CoreAgent) {
+    return this.store.all<Permission>('permission').filter(item => item.chat === agent.chat && item.grant === agent.grant && !item.settled && item.expires > Date.now())
   }
   snapshot(): Snapshot {
     const spaces = this.spaces()
@@ -133,7 +141,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
     for (const row of this.questions.open()) asks[row.chat] = row.id
     return {
-      name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
+      terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
       places: spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.status(this.agents.get(space.id)), mode: space.mode, chat: space.id })),
       machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
@@ -201,7 +209,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         permission.settled = true; permission.allow = allow; permission.question.sent = action.choice
         this.store.set('permission', permission.id, permission)
         const agent = this.agents.get(action.chat)
-        if (agent && agent.permission === permission.id) { delete agent.permission; agent.state = 'working'; this.store.set('agent', agent.chat, agent) }
+        if (agent && agent.permission === permission.id) { agent.permission = this.openPermissions(agent)[0]?.id; agent.state = agent.permission ? 'blocked' : 'working'; this.store.set('agent', agent.chat, agent) }
         this.post(action.chat, { id: `permission-${permission.id}`, who: 'agent', question: permission.question, at: Date.now() })
         this.forwardQuestion(action.chat, permission.question, allow ? 'Allow once' : 'Deny', action.space ? 'space' : 'task')
         this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
@@ -258,7 +266,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const space = this.space(chat) || task && this.space(task.place)
         if (!space) return
         const agent = this.agents.get(chat)
-        if (agent && (agent.state === 'starting' || agent.permission)) return
+        if (item.launch && agent?.launch !== item.launch) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); continue }
+        if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
           if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
@@ -286,6 +295,19 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       const input = request.args as { args?: unknown }
       if (!Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')) throw new Error('Invalid command words')
       const args = input.args as string[]
+      if (!args.length || args[0] === 'help' || args.includes('--help')) return { out: `Shepherdr standalone core commands (authenticated agent session):
+  show
+  space list | space add PATH
+  task add TITLE --brief FULL_BRIEF [--agent claude|codex] [--space NAME] [--later] [--after ID,ID]
+  task list | task show ID | task tell ID TEXT | task queue ID --after ID,ID|none
+  status ID TEXT --done 0..100 --left 5m|1h20m
+  ask TITLE --choice LABEL --choice LABEL | plan TITLE --choice LABEL --choice LABEL
+  review ID | pr ID | checks ID
+  ready ID --summary TEXT [--facts TEXT]
+  merge ID (requires the human's exact-commit card approval)
+  todo ID | task close ID
+Use hc for starting, messaging and waiting on core child agents. Never use a web URL or legacy helper for core commands.
+`, code: 0 }
       if (args[0] === 'show') return { out: `Standalone Shepherdr on core\nSession: ${agent.role}\nAgent: ${agent.kind}\nMerge: ask the human first\n`, code: 0 }
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
       if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
@@ -319,7 +341,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         this.store.set('permission', permission.id, permission)
         this.post(grant.chat, { id: `permission-${input.id}`, who: 'agent', question: permission.question, at: Date.now() })
         const current = this.agents.get(grant.chat)
-        if (current?.grant === grant.id && current.permission === permission.id) { delete current.permission; this.store.set('agent', current.chat, current) }
+        if (current?.grant === grant.id && current.permission === permission.id) { current.permission = this.openPermissions(current)[0]?.id; this.store.set('agent', current.chat, current) }
         resolve({ allow: false })
       }, Math.max(1, request.expires - Date.now() - 1000))
       this.permissions.set(input.id!, answer => { clearTimeout(timer); resolve(answer) })
@@ -355,6 +377,17 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.emit('snapshot'); return { place: id }
   }
   watch(_chats: string[], _terms: string[]) {}
+  /** The card's change and its delivery queue entry commit together before any transport effect. */
+  saveAndDeliver(chat: string, id: string, text: string, save: () => void) {
+    const agent = this.agents.get(chat)
+    if (!agent) throw new Error('The card’s agent session is missing')
+    this.store.db.transaction(() => {
+      save()
+      this.store.set('pending-send', id, { id, chat, text, launch: agent.launch, state: 'queued' } satisfies PendingSend)
+    })()
+    queueMicrotask(() => { void this.flush(chat) })
+  }
+  terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
   async artifact(id: string, version?: number) { return this.store.get<{ html: string; data?: unknown; sent?: string }>('artifact-version', `${id}:${version || this.store.get<Artifact>('artifact', id)?.v}`) }
   async artifactThumb(_id: string, _dark: boolean) { return null }
   async upload(chat: string, name: string, data: Uint8Array) {

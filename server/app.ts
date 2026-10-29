@@ -16,6 +16,7 @@ type Sock =
   | { kind: 'live'; chats: string[]; term: string | null; visible: boolean; push: string | null; link?: boolean }
   | { kind: 'voice'; chat: string; bridge?: ReturnType<NonNullable<Source['voice']>> }
   | { kind: 'browser'; task: string; bridge?: ReturnType<NonNullable<Source['browser']>> }
+  | { kind: 'terminal'; chat: string; bridge?: ReturnType<NonNullable<Source['terminal']>> }
 
 const FONT = join(import.meta.dir, '..', 'node_modules', 'inter-ui', 'variable', 'InterVariable.woff2')
 
@@ -123,6 +124,10 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
       if (path.startsWith('/api/') && path !== '/api/font/InterVariable.woff2' && !sameSite(req, path)) return new Response('forbidden', { status: 403 })
 
       if (path === '/api/ws') return srv.upgrade(req, { data: { kind: 'live', chats: [], term: null, visible: false, push: null } }) ? undefined : new Response('upgrade failed', { status: 400 })
+      if (path === '/api/terminal') {
+        if (!source.terminal) return new Response('no streaming terminal here', { status: 404 })
+        return srv.upgrade(req, { data: { kind: 'terminal', chat: q.get('chat') ?? '' } }) ? undefined : new Response('upgrade failed', { status: 400 })
+      }
       if (path === '/api/voice') return srv.upgrade(req, { data: { kind: 'voice', chat: q.get('chat') ?? '' } }) ? undefined : new Response('upgrade failed', { status: 400 })
       if (path === '/api/browser') {
         if (!source.browser) return new Response('no browser here', { status: 404 })
@@ -226,7 +231,9 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
     },
     websocket: {
       open(ws) {
-        if (ws.data.kind === 'live') {
+        if (ws.data.kind === 'terminal' && source.terminal) {
+          ws.data.bridge = source.terminal(ws.data.chat, { send: data => ws.send(data), close: () => ws.close(), buffered: () => ws.getBufferedAmount() })
+        } else if (ws.data.kind === 'live') {
           live.add(ws)
           send(ws, { type: 'snapshot', snapshot: source.snapshot() })
           send(ws, { type: 'build', id: build })
@@ -262,7 +269,7 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
           rewatch()
         } else if (d.kind === 'voice') {
           if (typeof msg !== 'string') d.bridge?.audio(msg.buffer.slice(msg.byteOffset, msg.byteOffset + msg.byteLength) as ArrayBuffer)
-        } else if (d.kind === 'browser') {
+        } else if (d.kind === 'browser' || d.kind === 'terminal') {
           if (typeof msg === 'string') d.bridge?.message(msg)
         }
       },
@@ -273,7 +280,7 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
         } else if (ws.data.kind === 'voice') {
           calls.delete(ws)
           ws.data.bridge?.end()
-        } else if (ws.data.kind === 'browser') {
+        } else if (ws.data.kind === 'browser' || ws.data.kind === 'terminal') {
           ws.data.bridge?.end()
         }
       },

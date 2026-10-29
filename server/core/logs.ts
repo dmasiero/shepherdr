@@ -6,6 +6,7 @@ import type { CoreAgents } from './agents.ts'
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
 import type { AgentHook, CoreAgent } from './model.ts'
+import { CoreError } from './client.ts'
 
 interface Cursor { path: string; line: number; byte: number; reader?: Reader }
 interface SavedMessage extends Message { source?: string }
@@ -26,7 +27,7 @@ export class CoreLogs {
     try {
       for (const agent of this.agents.all()) {
         try {
-          await this.hook(agent)
+          try { await this.hook(agent) } catch (error) { this.error(agent.chat, (error as Error).message) }
           const current = this.agents.get(agent.chat) ?? agent
           if (current.transcript) await this.transcript(current)
         } catch (error) { this.error(agent.chat, (error as Error).message) }
@@ -39,12 +40,22 @@ export class CoreLogs {
   outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); this.changed(chat) }
 
   private async lines(machine: string, cursor: Cursor, receive: (lines: { text: string; offset: number }[]) => void) {
-    let result = await this.files.text(machine, cursor.path, cursor.line, 256)
+    // Core rejects an offset beyond EOF. Re-read one known complete line as an anchor.
+    const first = Math.max(1, cursor.line - 1)
+    let result
+    try { result = await this.files.text(machine, cursor.path, first, 256) }
+    catch (error) {
+      if (!(error instanceof CoreError) || error.kind !== 'invalid_params' || !/^offset \d+:/.test(error.message)) throw error
+      cursor.line = 1; cursor.byte = 0; cursor.reader?.reset?.(cursor.path)
+      result = await this.files.text(machine, cursor.path, 1, 256)
+    }
     if (result.lines < cursor.line - 1) {
       cursor.line = 1; cursor.byte = 0; cursor.reader?.reset?.(cursor.path)
       result = await this.files.text(machine, cursor.path, 1, 256)
     }
-    const text = result.text
+    const skip = cursor.line > result.first
+    const text = skip ? result.text.slice(result.text.indexOf('\n') + 1) : result.text
+    if (skip && !result.text.includes('\n')) return
     const complete = text.endsWith('\n') ? text.slice(0, -1).split('\n') : text.slice(0, text.lastIndexOf('\n') + 1).replace(/\n$/, '').split('\n')
     if (!text.includes('\n')) return
     const lines = complete.map(text => {
@@ -91,6 +102,8 @@ export class CoreLogs {
     if (event.kind === 'agent' && /^\s*<no-reply>[\s\S]*<\/no-reply>\s*$/.test(event.text)) return
     const kind = `message:${agent.chat}`
     if (event.kind === 'user') {
+      const delivery = this.store.all<{ id: string; chat: string; launch?: string; text: string; state: string }>('pending-send').find(item => item.chat === agent.chat && item.launch === agent.launch && item.state === 'sending' && item.text === event.text)
+      if (delivery) this.store.delete('pending-send', delivery.id)
       const previous = this.store.all<SavedMessage>(kind).filter(message => message.who === 'you')
       if (previous.some(message => message.source === event.id)) return
       const optimistic = previous.find(message => !message.source && message.text === event.text && Math.abs((message.at ?? 0) - event.at) < 120_000)
