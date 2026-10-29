@@ -24,6 +24,9 @@ export interface CoreTask extends Task {
   review: { on: boolean; kind: AgentKind; rounds: number; mustFix: string }
   reviewTerminal?: string
   reviewRound?: number
+  reviewChat?: string
+  reviewHead?: string
+  reviewReport?: string
   mergeQuestion?: string
   startError?: string
   model?: string
@@ -40,7 +43,7 @@ export class CoreTasks {
   constructor(private readonly source: CoreSource) { this.git = new CoreGit(source.files) }
   all() { return this.source.store.all<CoreTask>('task') }
   get(id: string) { return this.source.store.get<CoreTask>('task', id) }
-  forChat(chat: string) { return this.all().find(task => task.chat === chat || `${task.id}/Reviewer` === chat) }
+  forChat(chat: string) { return this.all().find(task => task.chat === chat || `${task.id}/Reviewer` === chat || chat.startsWith(`${task.id}/Reviewer-`)) }
   private save(task: CoreTask) { this.source.store.set('task', task.id, task); this.source.emit('snapshot') }
   private assert(grant: Grant, task: CoreTask) {
     const agent = this.source.agents.get(grant.chat)
@@ -111,6 +114,7 @@ export class CoreTasks {
     if (!summary.trim() || summary.length > SUMMARY_MAX) throw new Refusal(`Write a summary of at most ${SUMMARY_MAX} characters`)
     if (!await this.git.clean({ machine: task.machine, folder: task.folder })) throw new Refusal('Commit or remove the worktree changes before reporting ready')
     task.readyHead = await this.git.head({ machine: task.machine, folder: task.folder })
+    if (task.review.on && (!task.reviewReport || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
     delete task.approvedHead
     task.said = summary; task.facts = facts; task.workflow = 'ready'
     this.save(task); await this.label(task); this.card(task, summary)
@@ -301,10 +305,12 @@ export class CoreTasks {
     if (round > task.review.rounds) throw new Refusal('The configured review rounds have been used; report the remaining findings')
     const parent = this.source.agents.get(task.chat), space = this.source.space(task.place)
     if (!parent || !space) throw new Refusal('The task agent must be running before its reviewer starts')
+    const reviewHead = await this.git.head({ machine: task.machine, folder: task.folder })
     const reviewer = await this.source.agents.launch(space, `${task.id}/Reviewer-${round}`, task.review.kind,
-      `Review the current change against this brief:\n\n${task.desc}\n\nRead repository AGENTS.md, CLAUDE.md and REVIEW.md if present. Find what broke, was omitted or exceeded the brief. Report each finding with proof and critical/major/minor/trivial severity. Do not edit files or decide whether to merge. Send your findings to your parent with hc send ${parent.terminal}.`,
+      `Review commit ${reviewHead} against base ${task.base} and this brief:\n\n${task.desc}\n\nRead repository AGENTS.md, CLAUDE.md and REVIEW.md if present. Find what broke, was omitted or exceeded the brief. Report each finding with proof and critical/major/minor/trivial severity. Do not edit files or decide whether to merge. Finish with your findings as a final reply in your own chat; Shepherdr forwards that native reply to the parent. Do not use hc send or request permission to leave the read-only sandbox for reporting.`,
       { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Use hc to report to the parent. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub. Reviewer private instructions: none.' })
-    task.reviewRound = round; task.reviewTerminal = reviewer.terminal; this.save(task)
+    task.reviewRound = round; task.reviewTerminal = reviewer.terminal; task.reviewChat = reviewer.chat
+    task.reviewHead = reviewHead; delete task.reviewReport; this.save(task)
     return reviewer.terminal
   }
   async tick() {
@@ -312,6 +318,19 @@ export class CoreTasks {
     this.ticking = true
     try {
       for (const task of this.all()) {
+        if (task.reviewChat && !task.reviewReport) {
+          const reviewer = this.source.agents.get(task.reviewChat)
+          if (reviewer?.state === 'idle' && this.source.agents.terminal(reviewer)?.status?.state === 'idle') {
+            const messages = this.source.logs.messages(task.reviewChat).filter(message => message.who === 'agent' && message.text)
+            const report = messages.at(-1)
+            if (report?.text) {
+              this.source.saveAndDeliver(task.chat, `review-${reviewer.launch}`, `<review round="${task.reviewRound}" head="${task.reviewHead}">${report.text}</review>`, () => {
+                task.reviewReport = report.text; this.source.store.set('task', task.id, task)
+              })
+              this.source.emit('snapshot')
+            }
+          }
+        }
         if (task.workflow !== 'queued' || !task.after?.every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
         const agent = this.source.agents.get(task.chat)
         if (!agent || agent.state !== 'idle' || agent.permission) continue
@@ -332,7 +351,11 @@ export class CoreTasks {
       return text(`${task.id}: ${task.name}\nBranch: ${task.branch}\nWorktree: ${task.folder}\nCore terminal: ${this.source.agents.get(task.chat)?.terminal || 'starting'}`)
     }
     if (verb === 'task' && sub === 'list') return text(this.all().filter(task => this.source.agents.get(grant.chat)?.space === task.place).map(task => this.view(task)))
-    const id = verb === 'task' ? rest[0] : sub
+    const rawId = verb === 'task' ? rest[0] : sub
+    const caller = this.source.agents.get(grant.chat)
+    const short = /^\d+$/.test(rawId || '') ? this.all().filter(task => task.id.endsWith(`-${rawId}`) && task.place === caller?.space) : []
+    if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in the space')
+    const id = short[0]?.id || rawId
     const task = id && this.get(id)
     if (!task) throw new Refusal('No such task or unsupported task command')
     this.assert(grant, task)
@@ -351,7 +374,7 @@ export class CoreTasks {
     }
     if (verb === 'pr' || verb === 'task' && sub === 'pr') return text(await this.pr(grant, id))
     if (verb === 'checks') return text((await this.git.pullRequest({ machine: task.machine, folder: task.folder }, task.branch!)).statusCheckRollup)
-    if (verb === 'review') return text(await this.review(grant, id))
+    if (verb === 'review') return text(`Fresh reviewer started: ${await this.review(grant, id)}\nIts native final reply will be forwarded to your chat. Wait for that report before ready; do not read terminal screens as the review result.`)
     if (verb === 'merge' || verb === 'task' && sub === 'merge') return text(`${(await this.merge(grant, id)).id} is merged`)
     if (verb === 'todo') { task.workflow = 'todo'; this.save(task); await this.label(task); return text(`${id} is To do`) }
     if (verb === 'task' && sub === 'tell') { await this.source.agents.send(task.chat, rest.slice(1).join(' ')); return text('Sent through core') }

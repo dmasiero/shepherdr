@@ -42,5 +42,6 @@ test('a queued answer never launches a replacement for a finished session', asyn
     await Promise.resolve(); await Promise.resolve()
     expect(source.store.get('pending-send', 'answer-one')).toMatchObject({ state: 'uncertain', launch: 'old' })
     expect(source.agents.get('chat')?.launch).toBe('old')
+    expect(source.chat('chat')?.messages.find(message => message.id === 'delivery-answer-one')?.text).toContain('could not confirm delivery')
   } finally { source.stop(); await Promise.resolve(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
 })

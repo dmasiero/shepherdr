@@ -25,7 +25,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
   const store = new CoreStore(join(root, 'home'))
   const task: CoreTask = { id: 'DEMO-1', name: 'Example', desc: 'Change example.txt', place: 'space', machine: 'machine', repo, folder: worktree,
     branch: 'work/1-example', base: 'main', chat: 'DEMO-1/Agent', kind: 'codex', workflow: 'working', status: 'work', mergePolicy: 'ask',
-    review: { on: true, kind: 'codex', rounds: 3, mustFix: 'major' }, age: 'now', created: new Date().toISOString(), on: 'test', state: 'Working' }
+    review: { on: false, kind: 'codex', rounds: 3, mustFix: 'major' }, age: 'now', created: new Date().toISOString(), on: 'test', state: 'Working' }
   store.set('task', task.id, task)
   const state = { terminal: 'live' }
   const grant = { id: 'grant', chat: task.chat, session: 'launch', machine: task.machine, actions: [] } as unknown as Grant
@@ -89,5 +89,16 @@ test('a fresh ready card and Not yet both revoke an earlier approval', async () 
     expect(tasks.get(task.id)!.approvedHead).toBeUndefined()
     await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 1, task.chat)
     await expect(tasks.merge(grant, task.id)).rejects.toThrow('human must approve')
+  })
+})
+
+
+test('review-on ready requires a finished report for the exact commit', async () => {
+  await withTask(async ({ tasks, task, grant }) => {
+    task.review.on = true
+    // Persist the setting, as the real settings action does.
+    const source = (tasks as unknown as { source: CoreSource }).source
+    source.store.set('task', task.id, task)
+    await expect(tasks.ready(grant, task.id, 'Changed example')).rejects.toThrow('fresh review')
   })
 })

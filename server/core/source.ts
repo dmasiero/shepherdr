@@ -76,6 +76,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     for (const pending of this.store.all<PendingSend>('pending-send')) {
       if (pending.state === 'sending') {
         pending.state = 'uncertain'; this.store.set('pending-send', pending.id, pending)
+        if (pending.launch) this.deliveryNotice(pending, true)
         const message = this.store.get<Message>(`message:${pending.chat}`, pending.id)
         if (message) this.store.set(`message:${pending.chat}`, pending.id, { ...message, waiting: false, waitsFor: undefined })
       }
@@ -267,8 +268,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const space = this.space(chat) || task && this.space(task.place)
         if (!space) return
         const agent = this.agents.get(chat)
-        if (item.launch && agent?.launch !== item.launch) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); continue }
-        if (item.launch && agent && this.agents.terminal(agent)?.state !== 'live') { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); continue }
+        if (item.launch && (agent?.launch !== item.launch || this.agents.terminal(agent)?.state !== 'live')) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); this.deliveryNotice(item, true); continue }
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
@@ -282,6 +282,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
             item.state = 'queued'; this.store.set('pending-send', item.id, item); return
           }
           item.state = 'uncertain'; this.store.set('pending-send', item.id, item)
+          if (item.launch) this.deliveryNotice(item, true)
           const message = this.store.get<Message>(`message:${chat}`, item.id)
           if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
           this.faults.set(chat, (error as Error).message)
@@ -382,6 +383,11 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     this.emit('snapshot'); return { place: id }
   }
   watch(_chats: string[], _terms: string[]) {}
+  private deliveryNotice(item: PendingSend, uncertain = false) {
+    this.post(item.chat, { id: `delivery-${item.id}`, who: 'agent', text: uncertain
+      ? 'Shepherdr could not confirm delivery of your saved answer. Check with the agent before answering again; it will not be sent to a replacement session.'
+      : 'Shepherdr saved your answer and is waiting for the agent to receive it.', at: Date.now() })
+  }
   /** The card's change and its delivery queue entry commit together before any transport effect. */
   saveAndDeliver(chat: string, id: string, text: string, save: () => void) {
     const agent = this.agents.get(chat)
@@ -389,6 +395,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     this.store.db.transaction(() => {
       save()
       this.store.set('pending-send', id, { id, chat, text, launch: agent.launch, state: 'queued' } satisfies PendingSend)
+      this.deliveryNotice({ id, chat, text, launch: agent.launch, state: 'queued' })
     })()
     queueMicrotask(() => { void this.flush(chat) })
   }

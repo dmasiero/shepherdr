@@ -103,7 +103,7 @@ export class CoreLogs {
     const kind = `message:${agent.chat}`
     if (event.kind === 'user') {
       const delivery = this.store.all<{ id: string; chat: string; launch?: string; text: string; state: string }>('pending-send').find(item => item.chat === agent.chat && item.launch === agent.launch && item.state === 'sending' && item.text === event.text)
-      if (delivery) this.store.delete('pending-send', delivery.id)
+      if (delivery) { this.store.delete('pending-send', delivery.id); this.store.delete(kind, `delivery-${delivery.id}`) }
       const previous = this.store.all<SavedMessage>(kind).filter(message => message.who === 'you')
       if (previous.some(message => message.source === event.id)) return
       const optimistic = previous.find(message => !message.source && message.text === event.text && Math.abs((message.at ?? 0) - event.at) < 120_000)
@@ -112,7 +112,7 @@ export class CoreLogs {
         this.store.delete('pending-send', optimistic.id)
         return
       }
-      if (/^\s*<(?:answer|go|restart|shepherdr|reaction|reaction-removed|artifact-sent|artifact-note|artifact-comment|browser-notes)\b/.test(event.text)) return
+      if (/^\s*<(?:answer|review|go|restart|shepherdr|reaction|reaction-removed|artifact-sent|artifact-note|artifact-comment|browser-notes)\b/.test(event.text)) return
     }
     this.store.set(kind, event.id, { id: event.id, who: event.kind === 'user' ? 'you' : 'agent', text: event.text, at: event.at, source: event.id } satisfies SavedMessage)
   }
