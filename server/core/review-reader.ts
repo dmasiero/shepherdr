@@ -20,7 +20,7 @@ export class CoreReviewReader implements Reader {
       if (event.type === 'turn.failed') events.push({ kind: 'turn-end', id, at, aborted: true })
       if ((event.type === 'error' || event.type === 'turn.failed') && typeof (event.message ?? event.error?.message) === 'string') events.push({ kind: 'error', id, at, text: event.message ?? event.error.message })
       if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') events.push({ kind: 'agent', id, at, text: event.item.text })
-      if (event.type === 'item.completed' && event.item?.type === 'command_execution') events.push({ kind: 'step', id, at, step: 'run', tool: 'command_execution', title: String(event.item.command || 'Command'), doing: 'Ran', target: String(event.item.command || 'Command'), end: at, failed: event.item.status === 'failed' || event.item.exit_code != null && event.item.exit_code !== 0 })
+      if (event.type === 'item.completed' && event.item?.type === 'command_execution') events.push({ kind: 'step', id, at, step: 'run', tool: 'command_execution', out: { file, offset: line.offset }, title: String(event.item.command || 'Command'), doing: 'Ran', target: String(event.item.command || 'Command'), end: at, failed: event.item.status === 'failed' || event.item.exit_code != null && event.item.exit_code !== 0 })
     }
     return events
   }

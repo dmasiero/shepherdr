@@ -77,7 +77,7 @@ not evidence of a working feature.
 | Feature | Legacy baseline | 2.1 acceptance evidence |
 | --- | --- | --- |
 | First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; ordering/sections/first-run parity pending |
-| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; activity and full device parity pending |
+| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; native activity rows and recorded read output shown; background child details, large logs and full device parity pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Pending |
 | Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. GitHub/conflicts/recovery still pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Pending |
@@ -287,3 +287,28 @@ final scoped round found no unresolved critical/major or additional minor findin
 Local typecheck passed; branch CI pending.
 Artifacts branch CI passed ca52a13a (run 40974536655): core regressions, legacy
 artifact/model regressions and restart layout. Proof hf2s updated to v3.
+
+Native activity slice: common pure turn grouping, step summaries and output
+decoding moved to server/activity.ts; legacy adapters retain their public names.
+Core activity uses persisted native events and reads only their recorded output
+locations through core exec, including on remote machines. Hidden system turns
+remain quiet; rows keep chronological order and finished processes have no live
+turn. Headless Codex steps link to their own captured native output. Child logs
+use native readers with original byte offsets; child output links are isolated
+to their owning chat. Shell tails preserve the cut flag even for a very long
+single line. Child logs currently have an explicit 4 MiB display limit: full
+large-log parity and incremental reading remain pending before readiness.
+Manual phone view opened the actual second-core file-read output containing
+REMOTE_UPLOAD_CONTENT_OK (she301-native-activity.png). A real 25-second native
+background shell appeared in In the background, then disappeared on its native
+completion, with BACKGROUND_COMPLETE_OK in chat (she301-native-background.png,
+she301-native-background-output.png). No screen parsing or alternate transport.
+Scoped review: two rounds, no critical/major, truncation-notice minor fixed;
+second round found none remaining. Typecheck passed; branch CI pending.
+Chat CI passed 41b6bc45 (run 40975053582), including native chat regressions,
+existing core/artifact/model tests, restart layout and the focused-Enter
+regression in layout-keyboard.test.ts. All suites ran only on GitHub.
+
+A second harmless background shell printed BACKGROUND_OUTPUT_OK before a
+35-second wait. Opening its live job displayed that exact native output in the
+existing phone sheet (she301-native-background-output-live.png).

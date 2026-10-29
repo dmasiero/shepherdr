@@ -22,6 +22,8 @@ import { CoreSettings } from './settings.ts'
 import { CoreSecrets } from './secrets.ts'
 import { CoreArtifacts } from './artifacts.ts'
 import { CoreChat } from './chat.ts'
+import { CoreActivity } from './activity.ts'
+import type { ActivityAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
@@ -43,6 +45,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly secrets: CoreSecrets
   readonly artifacts: CoreArtifacts
   readonly chats: CoreChat
+  readonly activities: CoreActivity
   private local: { id: string; name: string }
   private machines: Machine[] = []
   private permissions = new Map<string, (answer: { allow: boolean }) => void>()
@@ -72,6 +75,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.secrets = new CoreSecrets(this)
     this.artifacts = new CoreArtifacts(this, installation.id)
     this.chats = new CoreChat(this, installation.id)
+    this.activities = new CoreActivity(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -201,7 +205,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const status = this.status(agent)
     const messages = this.logs.messages(key)
     if (agent?.kind === 'codex' && agent.state === 'starting' && !agent.transcript) messages.push({ id: `setup-${agent.launch}`, who: 'agent', text: 'Codex may ask you to trust its folder or Shepherdr’s hooks. Open Terminal to review its own prompts. Chat connects after those hooks are trusted.', at: agent.started })
-    return { key, messages, cli: agent?.kind ?? this.agentKind(), working: status === 'work',
+    return { key, ...this.activities.chat(key, messages, terminal?.state === 'live' && status === 'work'), cli: agent?.kind ?? this.agentKind(), working: status === 'work',
       failed: this.store.all<PendingSend>('pending-send').filter(item => item.chat === key && item.state === 'uncertain').map(item => ({ cid: item.id, error: 'Delivery was interrupted; check the chat before sending again' })),
       finished: !!agent && terminal?.state === 'finished', agent: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort } }
   }
@@ -458,6 +462,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     queueMicrotask(() => { void this.flush(chat) })
   }
   terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
+  async activity(ask: ActivityAsk) { return this.activities.ask(ask) }
   async artifact(id: string, version?: number) { try { return this.artifacts.page(id, version) } catch { return undefined } }
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
