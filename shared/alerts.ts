@@ -2,7 +2,7 @@
 // worker and the screen. An iPhone shows no buttons on an alert, so its words alone must let you decide from the lock
 // screen: the title says the task and what it needs, the body the question or the card's choices.
 import { excerpt } from './excerpt.ts'
-import { splitFacts, type Alert, type Chat, type Message, type Question, type Snapshot } from './types.ts'
+import { splitFacts, taskChatId, type Alert, type Chat, type Message, type Question, type Snapshot } from './types.ts'
 
 /** about what an iPhone's lock screen shows of a title (one line) and of a body (a few lines) */
 export const TITLE_MAX = 40
@@ -31,7 +31,7 @@ export function waiting(snap: Pick<Snapshot, 'places' | 'tasks' | 'asks'>): { co
 /** the tags of the alerts that may stay: what still waits on you, less the chats on screen right now (a task's, a
  *  coordinator's: you opened its card) */
 export function keptTags(snap: Pick<Snapshot, 'places' | 'tasks' | 'asks'>, onScreen: string[]) {
-  const seen = new Set(onScreen.map((k) => (k.includes('/') ? k.split('/')[0] : askTag(k))))
+  const seen = new Set(onScreen.map((k) => taskChatId(k) ?? askTag(k)))
   return waiting(snap).tags.filter((t) => !seen.has(t))
 }
 

@@ -11,7 +11,7 @@ import { hush } from './motion.ts'
 import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
 import { setupGuarded } from './guard.tsx'
 import { decide, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
-import { machineName, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
+import { machineName, taskChatId, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
 
 /* ---------- slots ---------- */
 
@@ -1131,7 +1131,7 @@ export function chatIn(snap: Snapshot) {
 /** "GTM-15 agent", "gtm" */
 export function chatName(snap: Snapshot, key: string) {
   if (key.includes('/')) {
-    const [id, role] = key.split('/')
+    const id = taskChatId(key)!, role = key.slice(key.lastIndexOf('/') + 1)
     return `${id} ${role.toLowerCase()}`
   }
   // a coordinator keeps its own name, even one the screen doesn't list (All machines with a single machine)
@@ -1363,7 +1363,7 @@ export function openTask(id: string) {
 }
 
 export function goChat(key: string) {
-  if (key.includes('/')) openTask(key.split('/')[0])
+  if (key.includes('/')) openTask(taskChatId(key)!)
   else setUI({ place: key, task: null, tab: 'chat', drawer: false })
 }
 

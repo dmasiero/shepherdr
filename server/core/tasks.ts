@@ -9,6 +9,7 @@ import type { AgentKind, CoreSpace } from './model.ts'
 import type { Grant } from './mailbox.ts'
 import { one, parseArgs, summaryOpts } from '../live/args.ts'
 import type { LogEvent } from '../live/readers/types.ts'
+import { reserveTaskId } from './ids.ts'
 
 export interface CoreTask extends Task {
   branch: string
@@ -34,6 +35,7 @@ export interface CoreTask extends Task {
   model?: string
   effort?: string
   mergeCommit?: string
+  localId?: string
 }
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
@@ -57,7 +59,7 @@ export class CoreTasks {
     const terminal = agent && this.source.agents.terminal(agent)
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
       : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : this.source.status(agent) === 'need' || terminal?.state === 'finished' ? 'need' : 'work'
-    return { ...task, status, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status, age: task.age, note: task.report?.msg || '' } : undefined,
+    return { ...task, status, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: { title: string; brief: string; space?: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string }) {
@@ -68,14 +70,13 @@ export class CoreTasks {
     const space = input.space ? this.source.spaces().find(space => space.id === input.space || space.name === input.space && space.machine === caller.machine) : this.source.space(caller.space)
     if (!space || space.home) throw new Refusal('Choose a repository space for the task')
     if (space.machine !== caller.machine) throw new Refusal('Use the coordinator of the task’s machine')
-    const number = this.source.store.next(`task:${space.machine}:${space.prefix}`)
-    const id = `${space.prefix}-${number}`
+    const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine))
     const branch = `work/${number}-${slugify(input.title).slice(0, 40)}`
-    const folder = join(this.source.config.home, 'worktrees', space.name, branch.replaceAll('/', '-'))
+    const folder = join(await this.source.agents.worktreeRoot(space.machine), space.name, branch.replaceAll('/', '-'))
     const after = input.after ?? []
     for (const dependency of after) if (!this.get(dependency)) throw new Refusal(`No such dependency: ${dependency}`)
     const task: CoreTask = {
-      id, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
+      id, localId, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
       chat: `${id}/Agent`, kind: input.kind || caller.kind, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
       mergePolicy: 'ask', review: { on: true, kind: 'codex', rounds: 3, mustFix: 'major' }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }
@@ -96,7 +97,7 @@ export class CoreTasks {
     const wait = task.workflow === 'queued' ? `This task is queued after ${task.after?.join(', ')}. Read the brief, then wait for <go>. Do not start implementation yet.`
       : task.workflow === 'todo' ? 'Read the brief, then wait for the human’s go. Do not start implementation yet.' : ''
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
-    const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Your authenticated shepherdr command is ${join(import.meta.dir, '../../bin/shepherdr')}. Use hc for child agents, messages and waits. Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
+    const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. Use hc for child agents, messages and waits. Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
     const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ask the human first\n${message ? `\n<go>${message}</go>` : ''}`
     await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: true })
     await this.label(task)
@@ -356,7 +357,7 @@ export class CoreTasks {
     if (verb === 'task' && sub === 'list') return text(this.all().filter(task => this.source.agents.get(grant.chat)?.space === task.place).map(task => this.view(task)))
     const rawId = verb === 'task' ? rest[0] : sub
     const caller = this.source.agents.get(grant.chat)
-    const short = /^\d+$/.test(rawId || '') ? this.all().filter(task => task.id.endsWith(`-${rawId}`) && task.place === caller?.space) : []
+    const short = this.all().filter(task => task.place === caller?.space && (/^\d+$/.test(rawId || '') ? task.id.endsWith(`-${rawId}`) : task.localId === rawId))
     if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in the space')
     const id = short[0]?.id || rawId
     const task = id && this.get(id)

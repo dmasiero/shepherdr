@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { createServer, type Socket } from 'node:net'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreClient } from '../server/core/client.ts'
@@ -16,8 +16,9 @@ function frame(channel: number, body: string | Buffer, kind = 0) {
 type Call = { id: number; method: string; params: Record<string, unknown> }
 const NO_REPLY = Symbol('no reply')
 
+
 async function fixture(run: (client: CoreClient, wire: { send(channel: number, body: string | Buffer, kind?: number): void }) => Promise<void>,
-  respond: (call: Call, socket: Socket) => unknown = () => ({})) {
+  respond: (call: Call, socket: Socket) => unknown = () => ({}), command = false) {
   const directory = mkdtempSync(join(tmpdir(), 'shep-core-'))
   const path = join(directory, 'core.sock')
   const sockets = new Set<Socket>()
@@ -54,7 +55,11 @@ async function fixture(run: (client: CoreClient, wire: { send(channel: number, b
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve) })
   let client: CoreClient | undefined
   try {
-    client = await CoreClient.open(path)
+    if (command) {
+      const binary = join(directory, 'hc')
+      writeFileSync(binary, `#!${process.execPath}\nimport{connect}from'node:net';const s=connect(${JSON.stringify(path)});process.stdin.pipe(s);s.pipe(process.stdout);s.on('close',()=>process.exit());`, { mode: 0o700 })
+      client = await CoreClient.endpoint({ binary, session: 'remote' })
+    } else client = await CoreClient.open(path)
     await run(client, { send: (channel, body, kind) => peer.write(frame(channel, body, kind)) })
   } finally {
     client?.close(); for (const socket of sockets) socket.destroy()
@@ -114,4 +119,11 @@ test('turn end state never changes a live terminal into a stopped process', asyn
       expect(session.current.terminals.get('t1')).toMatchObject({ state: 'live', status: { state: 'idle' }, turn: 1 })
     } finally { session.stop() }
   }, () => ({ channel: 2, seq: 0, terminals: [terminal] }))
+})
+
+
+test('agent-side documented hc connect uses the same pinned framed protocol', async () => {
+  await fixture(async client => {
+    expect(await client.call('server.status')).toEqual({ connected: true })
+  }, () => ({ connected: true }), true)
 })

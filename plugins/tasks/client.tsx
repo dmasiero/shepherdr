@@ -82,7 +82,7 @@ import {
   UnpinIcon,
   Who,
 } from '@client/ui.tsx'
-import type { Automation, Place, Snapshot, Task } from '@shared/types.ts'
+import { taskChatId, type Automation, type Place, type Snapshot, type Task } from '@shared/types.ts'
 import { useFlip } from '@client/motion.ts'
 import { and, Dialog, RowMenu, RowMenuButton, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
 import { RestartItem } from '@client/restart.tsx'
@@ -645,7 +645,8 @@ function TasksMenu(_: { place: Place }) {
 function PrLink({ chatKey }: { chatKey: string }) {
   const snap = useSnap()!
   const ui = useUI()
-  const pr = chatKey.includes('/') ? taskOf(snap, chatKey.split('/')[0])?.pr : undefined
+  const id = taskChatId(chatKey)
+  const pr = id ? taskOf(snap, id)?.pr : undefined
   if (!pr) return null
   const phone = ui.device === 'phone'
   return (

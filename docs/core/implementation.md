@@ -149,3 +149,19 @@ major; all were fixed with regression coverage. The final complete-rewrite
 review remains pending. Manual acceptance then exposed premature reviewer
 commentary forwarding: relays now require a successful native turn-end marker
 and retain the reviewed commit. An aborted turn is not a completed review.
+
+Remote provisioning is implemented through core machine.exec only. Helpers are
+immutable, content-versioned files in a private per-installation agent runtime
+under the destination user's .local/share/shepherdr-agents; credentials are
+created with exclusive mode-0600 writes, never file.write's default permissions.
+Agent-side hc connect speaks the pinned framed API to its own core; no app
+listener, SSH bridge or per-machine worker is installed. Both binary version
+and the helper's actual connected core identity are checked before launch.
+A real Claude coordinator on the isolated second core returned
+REMOTE_CORE_CLAUDE_OK through its own native transcript. This is same-host
+transport evidence, not real SSH-machine acceptance.
+
+Remote task IDs retain their machine-local prefix/number, qualified by the core
+machine name in the combined app (e.g. probe/CORE-1), avoiding cross-machine
+collisions. Bare local IDs resolve only within the authenticated caller's space.
+Workflow remains separate from an unreachable agent's machine status.

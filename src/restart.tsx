@@ -2,7 +2,7 @@
 import clsx from 'clsx'
 import { ChevronUpDownIcon } from '@heroicons/react/20/solid'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
-import type { Place, RestartCli, RestartInfo } from '@shared/types.ts'
+import { taskChatId, type Place, type RestartCli, type RestartInfo } from '@shared/types.ts'
 import { act, setUI, taskOf, useSnap, useStore } from './kernel.ts'
 import { Dialog } from './rowmenu.tsx'
 import { Pick, shown, Switch, TextValue } from './Settings.tsx'
@@ -167,7 +167,7 @@ export function RestartHint(_props: { chatKey: string; cli: string }) {
 
 /** a task header's ⋯ (agentMenu): its agent, while the task is open */
 export function TaskRestartItem({ chatKey }: { chatKey: string }) {
-  const id = chatKey.split('/')[0]
+  const id = taskChatId(chatKey) ?? chatKey
   const snap = useSnap()
   const t = snap && taskOf(snap, id)
   if (!t || t.status === 'done' || t.archived) return null
@@ -187,7 +187,7 @@ export function AgentControls({ chatKey, cli }: { chatKey: string; cli: string }
   const effort = agent?.runtime?.effortUnsupported ? 'Not supported' : level ? (level === 'xhigh' ? 'Extra high' : level.charAt(0).toUpperCase() + level.slice(1)) : 'Not reported'
   const open = () => {
     setUI({ plus: null })
-    openRestart(chatKey, chatKey.includes('/') ? chatKey.split('/')[0] : 'this space', true)
+    openRestart(chatKey, taskChatId(chatKey) ?? 'this space', true)
   }
   return <div data-agent-controls>
     {([['Agent', agent ? cli : `${cli} · unknown`, ModeIcon], ['Model', model, ModelIcon], ['Effort', effort, EffortIcon]] as const).map(([label, value, Icon]) =>

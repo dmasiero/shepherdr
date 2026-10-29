@@ -19,7 +19,7 @@ import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
 
-interface Machine { id: string; name: string; state: string; host?: string; version?: string }
+interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
 interface Upload { id: string; chat: string; path: string; name: string }
 interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' }
@@ -44,6 +44,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   private recovery?: ReturnType<typeof setInterval>
   private recovering = false
   private sending = new Set<string>()
+  private refreshing?: Promise<void>
 
   constructor(readonly config: CoreConfig) {
     super()
@@ -54,7 +55,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.files = new CoreFiles(this.core, machine => this.route(machine))
     this.mailbox = new Mailbox(config.home, this.core, machine => this.route(machine), (grant, request, id) => this.mail(grant, request, id))
     const changed = (chat: string) => { this.questions?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
-    this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed)
+    this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed, machine => this.machines.find(item => item.id === machine) ?? {})
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
@@ -87,7 +88,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
     await this.core.start(); await this.refresh(); this.logs.start()
     this.recovery = setInterval(() => {
-      if (this.connected()) { void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
+      if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return
       this.recovering = true
       // Restart the configured, isolated core after a crash. This never updates binaries or stops holders.
@@ -99,6 +100,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }, 5000)
   }
   connected() { return this.core.current.connected }
+  machineConnected(machine: string) { return this.connected() && (machine === this.local.id || this.machines.some(item => item.id === machine && item.state === 'connected')) }
+  machineName(machine: string) { return machine === this.local.id ? undefined : this.machines.find(item => item.id === machine)?.name }
   registerAction(type: Action['type'], handler: (action: Action) => Promise<unknown>) { this.hooks.set(type, handler) }
 
   async route(machine: string): Promise<string | undefined> {
@@ -111,6 +114,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   spaces() { return this.store.all<CoreSpace>('space') }
   space(id: string) { return this.store.get<CoreSpace>('space', id) }
   async refresh() {
+    if (this.refreshing) return this.refreshing
+    this.refreshing = this.refreshNow().finally(() => { this.refreshing = undefined })
+    return this.refreshing
+  }
+  private async refreshNow() {
     const status = await this.core.call<{ core: { id: string; name: string } }>('server.status')
     this.local = status.core; this.store.set('meta', 'local', this.local)
     this.machines = (await this.core.call<{ machines: Machine[] }>('machine.list')).machines
@@ -119,12 +127,20 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       const folder = (await this.files.exec(this.local.id, ['sh', '-c', 'printf %s "$HOME"'])).toString('utf8')
       this.store.set('space', homeId, { id: homeId, name: '~', home: true, machine: this.local.id, folder, base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
     }
+    for (const machine of this.machines.filter(item => item.state === 'connected')) {
+      const id = `p:${machine.id}:~`
+      if (!this.space(id)) {
+        const folder = (await this.files.exec(machine.id, ['sh', '-c', 'printf %s "$HOME"'])).toString('utf8')
+        this.store.set('space', id, { id, name: '~', home: true, machine: machine.id, folder, base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+      }
+    }
     this.agents.reconcile(); this.emit('snapshot')
   }
 
   status(agent?: CoreAgent): Status {
     if (!this.connected()) return 'off'
     if (!agent) return 'idle'
+    if (!this.machineConnected(agent.machine)) return 'off'
     if (this.questions.open(agent.chat).length || this.openPermissions(agent).length) return 'need'
     const terminal = this.agents.terminal(agent)
     if (terminal?.state === 'finished') return 'idle'
@@ -145,7 +161,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     return {
       terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
       places: spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
-        level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.status(this.agents.get(space.id)), mode: space.mode, chat: space.id })),
+        level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))],
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.store.all<Artifact>('artifact'), automations: {}, asks,
@@ -278,7 +294,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           const message = this.store.get<Message>(`message:${chat}`, item.id)
           if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
         } catch (error) {
-          if (error instanceof CoreError && ['unavailable', 'blocked', 'status_mismatch', 'busy'].includes(error.kind)) {
+          if (error instanceof CoreError && ['blocked', 'status_mismatch', 'busy'].includes(error.kind)) {
             item.state = 'queued'; this.store.set('pending-send', item.id, item); return
           }
           item.state = 'uncertain'; this.store.set('pending-send', item.id, item)
@@ -356,7 +372,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
 
   async folders(machine: string, path: string): Promise<Folders> {
     const script = `const f=require('node:fs'),p=require('node:path'),o=require('node:os'),c=require('node:child_process');const raw=process.argv.at(-1),home=o.homedir(),target=p.resolve(raw==='~'?home:raw.startsWith('~/')?p.join(home,raw.slice(2)):raw);let x={path:target,exists:f.existsSync(target),dir:false,repo:null,entries:[]};if(x.exists){const real=f.realpathSync(target);if(real!==home&&!real.startsWith(home+p.sep))throw Error('Choose a folder in your home');x.dir=f.statSync(real).isDirectory();if(x.dir){let g=c.spawnSync('git',['-C',real,'rev-parse','--show-toplevel'],{encoding:'utf8'});x.repo=g.status===0?g.stdout.trim():null;x.entries=f.readdirSync(real,{withFileTypes:true}).filter(e=>e.isDirectory()&&!e.name.startsWith('.')).slice(0,200).map(e=>({name:e.name,path:p.join(real,e.name),repo:f.existsSync(p.join(real,e.name,'.git'))}));}}console.log(JSON.stringify(x))`
-    const result = JSON.parse((await this.files.exec(machine, [process.execPath, '-e', script, '--', path])).toString('utf8')) as Folders
+    const result = JSON.parse((await this.files.exec(machine, [await this.agents.bun(machine), '-e', script, '--', path])).toString('utf8')) as Folders
     for (const entry of result.entries) entry.added = this.spaces().some(space => space.machine === machine && space.folder === entry.path)
     result.added = this.spaces().some(space => space.machine === machine && space.folder === result.repo)
     return result

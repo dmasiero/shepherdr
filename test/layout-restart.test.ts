@@ -109,4 +109,20 @@ describe.skipIf(!browser)('restarting an agent', () => {
     }
   }, 30_000)
 
+  test('machine-qualified task IDs retain their header PR and restart menu', async () => {
+    const original = world.tasks.find(task => task.id === 'GTM-17')!
+    const id = 'box/GTM-901', chat = `${id}/Agent`
+    world.tasks.push({ ...original, id, status: 'work', pr: { number: 901, url: 'https://github.com/example/repo/pull/901' }, agent: { ...original.agent!, chat } })
+    world.chats[chat] = { ...world.chats['GTM-17/Agent'], key: chat }
+    const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
+    try {
+      await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(original.place)}&task=${encodeURIComponent(id)}`)
+      await page.locator('[data-pr="901"]').waitFor()
+      await page.getByRole('button', { name: 'More', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Restart agent…', exact: true }).click()
+      await page.getByRole('alertdialog').locator('[data-restart]').waitFor()
+      expect(await page.getByRole('alertdialog').textContent()).toContain(id)
+    } finally { await page.close(); world.tasks = world.tasks.filter(task => task.id !== id); delete world.chats[chat] }
+  })
+
 })

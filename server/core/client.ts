@@ -1,4 +1,6 @@
-import { connect, type Socket } from 'node:net'
+import { connect } from 'node:net'
+import { spawn } from 'node:child_process'
+import { Duplex } from 'node:stream'
 import { CORE_GENERATION, CORE_VERSION, FRAME, MAX_FRAME, FrameReader, encodeFrame, type CoreHello, type CoreNotification, type CoreSnapshot } from './protocol.ts'
 
 export class CoreError extends Error {
@@ -11,11 +13,12 @@ export class Refusal extends Error {
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 type Stream = { data(bytes: Buffer): void; close(reason: unknown): void }
+export type CoreEndpoint = string | { binary: string; session?: string; socket?: string }
 const REQUIRED = ['terminal.run', 'terminal.list', 'terminal.get', 'terminal.label', 'terminal.attach', 'terminal.send', 'terminal.wait', 'events.subscribe', 'doc.get', 'doc.set', 'file.read', 'machine.exec']
 
 /** One local Unix socket. No shell, SSH bridge, screen parsing, or retry of uncertain writes. */
 export class CoreClient {
-  private socket: Socket
+  private socket: Duplex
   private next = 0
   private pending = new Map<number, Pending>()
   private streams = new Map<number, Stream>()
@@ -27,8 +30,8 @@ export class CoreClient {
   private upgradeId = 0
   private notifications = new Set<(event: CoreNotification) => void>()
   private disconnects = new Set<(error: Error) => void>()
-  private constructor(readonly path: string) {
-    this.socket = connect(path)
+  private constructor(readonly path: string, socket: Duplex = connect(path), private readonly dispose?: () => void) {
+    this.socket = socket
     this.socket.on('data', bytes => {
       try { this.receive(Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)) } catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))) }
     })
@@ -38,6 +41,35 @@ export class CoreClient {
 
   static async open(path: string): Promise<CoreClient> {
     const client = new CoreClient(path)
+    return this.negotiate(client)
+  }
+
+  /** Remote helpers use their own documented hc connect, never SSH or an app listener.
+   * The application server itself always uses open(localSocket). */
+  static async endpoint(endpoint: CoreEndpoint): Promise<CoreClient> {
+    if (typeof endpoint === 'string') return this.open(endpoint)
+    const env = { ...process.env }
+    delete env.HC_SOCKET; delete env.HC_TERMINAL_ID; delete env.HC_CORE_ID
+    if (endpoint.socket) env.HC_SOCKET = endpoint.socket
+    if (endpoint.session) env.HC_SESSION = endpoint.session
+    else delete env.HC_SESSION
+    const child = spawn(endpoint.binary, ['connect'], { env, stdio: ['pipe', 'pipe', 'ignore'] })
+    const stream = new Duplex({
+      read() { child.stdout.resume() },
+      write(bytes, encoding, done) { child.stdin.write(bytes, encoding, done) },
+      destroy(error, done) { child.stdin.destroy(); child.stdout.destroy(); done(error) },
+    })
+    child.stdout.on('data', bytes => { if (!stream.push(bytes)) child.stdout.pause() })
+    child.stdout.on('end', () => stream.push(null))
+    child.stdout.on('error', error => stream.destroy(error))
+    child.stdin.on('error', error => stream.destroy(error))
+    const client = new CoreClient('hc connect', stream, () => { if (child.exitCode === null) child.kill() })
+    child.on('error', error => stream.destroy(error))
+    child.on('exit', () => stream.destroy())
+    return this.negotiate(client)
+  }
+
+  private static async negotiate(client: CoreClient): Promise<CoreClient> {
     try {
       // Only hello is sent in plain mode. Its reply switches parsing before buffered frames are consumed.
       client.upgradeId = client.next + 1
@@ -194,6 +226,7 @@ export class CoreClient {
     if (this.ended) return
     this.ended = true
     this.socket.destroy()
+    this.dispose?.()
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error) }
     this.pending.clear()
     for (const stream of this.streams.values()) { try { stream.close({ reason: 'disconnected' }) } catch { /* finish all streams */ } }

@@ -5,6 +5,8 @@ import type { BrowserNote } from './browser.ts'
 /** Status marks: red needs you, green ready, green turning ring merging, amber working, grey ring idle or to do, grey
  * clock queued, grey check done, dashed ring unreachable. */
 export type Status = 'need' | 'ready' | 'merging' | 'work' | 'idle' | 'queued' | 'todo' | 'done' | 'off'
+/** A chat's final segment is its role; the task ID may itself contain a machine qualifier. */
+export function taskChatId(chat: string) { const at = chat.lastIndexOf('/'); return at < 0 ? undefined : chat.slice(0, at) }
 
 /** regular, always the fallback: the coordinator does what the human asks; or Autopilot, a switch on top of it */
 export type Mode = 'regular' | 'autopilot'
@@ -183,7 +185,7 @@ export interface TaskAgent {
   chat: string
   role: string
   cli: string
-  /** always the task's own status: the list and the chat show one and the same */
+  /** Task status, or off when core cannot confirm the agent's machine; workflow remains separate. */
   status: Status
   age: string
   note: string

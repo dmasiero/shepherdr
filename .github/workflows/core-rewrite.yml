@@ -11,6 +11,11 @@ on:
       - 'server/source.ts'
       - 'shared/types.ts'
       - 'plugins/terminal/**'
+      - 'plugins/tasks/**'
+      - 'src/kernel.ts'
+      - 'src/restart.tsx'
+      - 'shared/alerts.ts'
+      - 'test/layout-restart.test.ts'
       - 'vite.config.ts'
       - 'tsconfig.json'
       - 'test/core-*.test.ts'
@@ -36,3 +41,22 @@ jobs:
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-rewrite
       - run: bun test test/core-*.test.ts
+
+  task-layout:
+    if: github.ref == 'refs/heads/work/301-build-shepherdr-2-1-on-core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: core-rewrite-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - run: bun x playwright-core install --only-shell chromium
+      - run: bun test test/layout-restart.test.ts
+        env:
+          SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-layout

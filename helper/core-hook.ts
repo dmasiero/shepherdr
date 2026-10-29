@@ -4,6 +4,7 @@ import { appendFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { readCredential } from '../server/core/home.ts'
 import { coreRequest } from '../server/core/request.ts'
+import type { CoreEndpoint } from '../server/core/client.ts'
 import type { MailCredential } from '../server/core/envelope.ts'
 import type { AgentHook } from '../server/core/model.ts'
 
@@ -16,7 +17,7 @@ try {
   const input = JSON.parse(raw)
   permission = input.hook_event_name === 'PermissionRequest'
   if (!credentialFile || !hookFile || typeof input.hook_event_name !== 'string') throw new Error('Missing launch identity')
-  const credential = readCredential<{ mail: MailCredential; socket: string }>(credentialFile)
+  const credential = readCredential<{ mail: MailCredential; socket?: string; endpoint?: CoreEndpoint }>(credentialFile)
   const cut = (value: unknown, max: number) => typeof value === 'string' ? value.slice(0, max) : undefined
   const event: AgentHook = {
     id: randomUUID(), event: input.hook_event_name, at: Date.now(), session: cut(input.session_id, 128),
@@ -24,7 +25,7 @@ try {
   }
   appendFileSync(hookFile, JSON.stringify(event) + '\n', { mode: 0o600 })
   if (permission) {
-    const answer = await coreRequest(credential.socket, credential.mail, 'permission', {
+    const answer = await coreRequest(credential.endpoint ?? credential.socket ?? (() => { throw new Error('Missing core endpoint') })(), credential.mail, 'permission', {
       id: event.id, tool: event.tool, input: input.tool_input, session: event.session, agent: event.agent,
     }, { id: event.id, timeout: 3_500_000 }) as { allow: boolean }
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: {
