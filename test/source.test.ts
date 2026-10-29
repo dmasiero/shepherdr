@@ -12,6 +12,7 @@ const { LiveSource } = await import('../server/live/source.ts')
 const { HOST, NAME, placeId, Places } = await import('../server/live/places.ts')
 const { herdr } = await import('../server/live/herdr.ts')
 const { hidden } = await import('../server/live/agents.ts')
+const { isAgentProcess } = await import('../server/live/agent-process.ts')
 const { heartbeatFile } = await import('../server/live/heartbeat.ts')
 const { carryOn } = await import('../server/live/retry.ts')
 const { Worktrees } = await import('../server/live/engine/worktrees.ts')
@@ -45,6 +46,24 @@ async function workedTask(name: string) {
   execSync('echo x > x.txt && git add -A && git commit -qm work', { cwd: t.worktree!, shell: '/bin/sh' })
   return { t, dir, place: placeId.space(p.name) }
 }
+
+describe('private instruction CLI', () => {
+  test('an explicit empty value suppresses inherited instructions without restarting agents', async () => {
+    try {
+      expect((await src.cli(['set', 'task.instructions', 'Everywhere rule.'], {})).code).toBe(0)
+      const blank = await src.cli(['set', 'task.instructions', '', '--machine'], {})
+      expect(blank.code).toBe(0)
+      expect(blank.out).toContain('running agents are unchanged')
+      expect(src.settings.get('task.instructions')).toBe('')
+      expect(src.settings.pick('task.instructions').from).toBe('machine')
+      expect((await src.cli(['unset', 'task.instructions', '--machine'], {})).code).toBe(0)
+      expect(src.settings.get('task.instructions')).toBe('Everywhere rule.')
+    } finally {
+      src.settings.set('task.instructions', null, 'machine')
+      src.settings.set('task.instructions', null)
+    }
+  })
+})
 
 describe('merging from the command', () => {
   test("a task's agent merges its own task, and only its own", async () => {
@@ -237,6 +256,34 @@ describe('deleting a task from the command', () => {
   })
 })
 
+describe('base branch choices', () => {
+  test('CLI and Settings keep task snapshots, validate before adding, and show the target', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shep-base-cli-'))
+    execSync('git init -q -b main && git config user.email t@t && git config user.name T && touch README && git add . && git commit -qm init && git branch develop && git branch feature/topic', { cwd: dir })
+    const p = await src.places.add(dir, 'base-cli')
+    const place = placeId.space(p.name)
+    expect((await src.cli(['set', 'space.base', 'develop', '--space', p.name], {})).code).toBe(0)
+    expect((await src.cli(['show', '--space', p.name], {})).out).toContain('Base branch: develop')
+    const add = await src.cli(['task', 'add', 'Use feature', '--base', 'feature/topic', '--space', p.name], {})
+    expect(add.code).toBe(0)
+    const t = src.engine.tasks.at(-1)!
+    expect(t.base).toBe('feature/topic')
+    expect((await src.cli(['task', 'show', t.id], {})).out).toContain('Merges into: feature/topic')
+    const count = src.engine.tasks.length
+    expect((await src.cli(['task', 'add', 'Bad base', '--base', 'missing', '--space', p.name], {})).code).toBe(1)
+    expect(src.engine.tasks.length).toBe(count)
+    expect((await src.cli(['space', 'set', 'base', 'main', '--space', p.name], {})).code).toBe(0)
+    expect(t.base).toBe('feature/topic')
+    expect(await src.act({ type: 'setting', place, key: 'space.base', value: 'develop' })).toMatchObject({ ok: true })
+    expect(await src.act({ type: 'setting', place, key: 'space.base', value: 'missing' })).toMatchObject({ ok: false })
+    expect(p.base).toBe('develop')
+    expect(src.snapshot().settings.find((s) => s.level === place && s.name === 'Repository')!.rows[0].value).toBe('develop')
+    expect((await src.cli(['set', 'space.base', 'main'], {})).code).toBe(1)
+    expect((await src.cli(['set', 'space.base', 'main', '--space', 'home'], {})).code).toBe(1)
+    await until(() => !!t.trouble)
+  })
+})
+
 describe('To do from the command', () => {
   test('task add starts its agent; shepherdr todo shows it as To do, and a message to its agent is the go', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'shep-src-repo-'))
@@ -332,7 +379,7 @@ describe("a task's CLI, model and effort", () => {
       [['--model', 'opus;rm'], 'Write a model id'],
       [['--prio', 'high'], 'Task add takes no --prio'],
       [['--effort'], '--effort needs a value'],
-      [['--agent', 'gemini', '--model', 'x'], 'Claude Code, Codex and pi only'],
+      [['--agent', 'gemini', '--model', 'x'], 'gemini does not support Shepherdr chat'],
     ]) {
       const r = await src.cli(['task', 'add', 'Odd', '--desc', 'x', ...args], { chat: place })
       expect(r.code).toBe(1)
@@ -448,13 +495,34 @@ describe("a task's CLI, model and effort", () => {
     expect(src.agents.args(rec('claude', 'default', 'default'), false)).toEqual(hooks)
     // a level its model lacks goes in as the nearest it has
     expect(src.agents.args(rec('claude', 'Haiku 5.5', 'ultra'), false)).toEqual([...hooks, '--model', 'claude-haiku-5-5', '--effort', 'max'])
-    expect(src.agents.args(rec('codex', 'gpt-6-luna', 'ultra'), false)).toEqual(['--dangerously-bypass-approvals-and-sandbox', '-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="max"'])
+    expect(src.agents.args(rec('codex', 'gpt-6-luna', 'ultra'), false).slice(2)).toEqual(['--dangerously-bypass-approvals-and-sandbox', '-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="max"'])
+    for (const key of ['space-key', 'SHE-9/Agent', 'SHE-9/Reviewer']) {
+      for (const resume of [false, true]) {
+        const args = src.agents.args({ ...rec('codex', '', ''), key, env: { SHEPHERDR_CHAT: 'ST-1/Reviewer', SHEPHERDR_URL: 'http://127.0.0.1:7787' } }, resume)
+        const policy = args.find((a) => a.startsWith('shell_environment_policy.set='))!
+        expect(policy).toContain(`"SHEPHERDR_CHAT"="${key}"`)
+        expect(policy).toContain('"SHEPHERDR_COMMAND"=')
+        expect(policy).toContain('"PATH"=')
+      }
+    }
     expect(src.agents.args(rec('pi', 'openai/gpt-5.5', 'lowest'), false)).toEqual(['--model', 'openai/gpt-5.5', '--thinking', 'minimal'])
     expect(src.agents.args(rec('gemini', 'x', 'high'), false)).toEqual([])
   })
 })
 
 describe('choice cards', () => {
+  test('fast answers require an explicit ordinary question declaration', async () => {
+    const chat = placeId.home()
+    for (const ordinary of [false, true]) {
+      const r = await src.cli(['ask', 'Which colour?', ...(ordinary ? ['--ordinary'] : []), '--choice', 'Blue', '--choice', 'Green'], { chat })
+      expect(r.code).toBe(0)
+      const q = src.chats.log(chat).posted.at(-1)!.question!
+      expect(q.ordinary).toBe(ordinary || undefined)
+      expect(q.choices.map((c) => c.label)).toEqual(['Blue', 'Green'])
+      src.chats.answer(chat, q.id, 0)
+    }
+  })
+
   test('a typed reply closes the open card: the dot stops waiting and the card shows answered', async () => {
     const chat = placeId.home()
     const r = await src.cli(['ask', 'Rerun CI on main?', '--choice', 'Rerun it', '--choice', 'Leave it'], { chat })
@@ -907,6 +975,33 @@ describe('what you send shows at once', () => {
     agents.reachable = reachable
     agents.outbox = agents.outbox.filter((o) => o.key !== chat)
   })
+  test('requester news survives offline timeouts and keeps a receipt across Agents restart', async () => {
+    const agents = src.agents
+    const cid = `requested-news:restart-${Date.now()}`
+    await as('blocked', () => agents.send(chat, hidden('Task is ready', 'news'), { cid }))
+    const reachable = agents.reachable
+    agents.reachable = false
+    try {
+      agents.checkStranded(Date.now())
+      agents.checkStranded(Date.now() + agents.strandAfter + 1)
+      expect(agents.waiting(chat).some((o) => o.cid === cid)).toBe(true)
+      const item = agents.outbox.find((o) => o.cid === cid)!
+      ;(agents as unknown as { fail(key: string, error: string): void }).fail(chat, 'offline')
+      expect(agents.outbox).toContain(item)
+      // This is the actual delivery bookkeeping, which must outlive a process restart.
+      ;(agents as unknown as { went(o: typeof item): void }).went(item)
+      agents.save() // simulate a crash after receipt, before removing the queued copy
+      const { Agents } = await import('../server/live/agents.ts')
+      const restarted = new Agents()
+      try {
+        await restarted.deliver(chat)
+        expect((await restarted.send(chat, item.text, { cid })).waiting).toBe(false)
+        expect(restarted.waiting(chat).some((o) => o.cid === cid)).toBe(false)
+      } finally { restarted.stop() }
+      agents.outbox = agents.outbox.filter((o) => o !== item)
+      agents.save()
+    } finally { agents.reachable = reachable }
+  })
   test('sent again while the first is still on its way, it goes in once', async () => {
     const agents = src.agents
     agents.outbox = agents.outbox.filter((o) => o.key !== chat)
@@ -1074,6 +1169,77 @@ describe('modes: regular and Autopilot', () => {
 })
 
 describe('news for coordinators', () => {
+  test('helper task add forwards the full remote identity, options and known requesting coordinator', async () => {
+    const peers = src.peers!
+    const list = peers.list
+    const fetch = peers.fetch
+    const chat = placeId.home()
+    const record = src.agents.records[chat]
+    src.agents.records[chat] = { key: chat, name: 'home', kind: 'codex', cwd: '/', workspace: 'home', logs: [], started: 1 }
+    src.agents.save()
+    const calls: { args: string[]; chat?: string }[] = []
+    peers.list = (() => [{ rec: { machine: 'desktop' }, snap: { places: [{ id: 'p:desktop:remote', name: 'Remote', home: false }] } }]) as never
+    peers.fetch = (async (_l, path, init) => {
+      expect(path).toBe('/api/cli')
+      calls.push(JSON.parse(String(init!.body)))
+      return Response.json({ code: 0, out: 'Added REM-1: Remote task.' })
+    }) as typeof fetch
+    try {
+      const result = await src.cli(['task', 'add', 'Remote task', '--space', 'p:desktop:remote', '--desc', 'Whole brief', '--later'], { chat })
+      expect(result.code).toBe(0)
+      expect(calls[0]).toEqual({ args: ['task', 'add', 'Remote task', '--space', 'remote', '--desc', 'Whole brief', '--later'], chat })
+      await src.cli(['task', 'add', 'Terminal task', '--space', 'p:desktop:remote'], { chat: 'invented' })
+      expect(calls[1].chat).toBeUndefined()
+    } finally {
+      peers.list = list
+      peers.fetch = fetch
+      if (record) src.agents.records[chat] = record
+      else delete src.agents.records[chat]
+      src.agents.save()
+    }
+  })
+  test('requester news preserves owner/home routes, carries no extra card, and drops removed origins', async () => {
+    const { t, place } = await workedTask('requestnews')
+    const originDir = mkdtempSync(join(tmpdir(), 'request-origin-'))
+    execSync('git init -q -b main', { cwd: originDir })
+    const origin = await src.places.add(originDir, 'requestorigin')
+    const requester = placeId.space(origin.name)
+    const sent: { chat: string; text: string }[] = []
+    const send = src.agents.send
+    const old = src.agents.records[requester]
+    src.agents.records[requester] = { key: requester, name: 'coordinator', kind: 'codex', logs: [], cwd: originDir, workspace: 'origin', started: 1 }
+    src.agents.send = (async (chat: string, text: string) => { sent.push({ chat, text }); return { waiting: false } }) as never
+    const drain = () => (src as unknown as { drainRequestedNews(): Promise<void> }).drainRequestedNews()
+    try {
+      t.requester = requester
+      const before = src.chats.chat(requester).messages.length
+      src.engine.emit('news', place, `${t.id} is ready`, 'ready', { task: t.id, event: 'ready' })
+      await until(() => sent.some((n) => n.chat === requester))
+      expect(sent.map((n) => n.chat).sort()).toEqual([place, placeId.home(), requester].sort())
+      expect(sent.find((n) => n.chat === requester)!.text).toContain('You requested this task')
+      expect(src.chats.chat(requester).messages).toHaveLength(before)
+      await drain()
+      expect(sent.filter((n) => n.chat === requester)).toHaveLength(1)
+      // Ordinary same-space tasks keep their original single delivery.
+      t.requester = place
+      sent.length = 0
+      src.engine.emit('news', place, `${t.id} is ready`, 'ready', { task: t.id, event: 'ready' })
+      await drain()
+      expect(sent.map((n) => n.chat).sort()).toEqual([place, placeId.home()].sort())
+      // A saved return address cannot resurrect a removed space.
+      t.requester = requester
+      src.places.spaces = src.places.spaces.filter((p) => p !== origin)
+      sent.length = 0
+      src.engine.emit('news', place, `${t.id} merged`, 'done', { task: t.id, event: 'merged' })
+      await until(() => !(src as unknown as { drainingNews: boolean }).drainingNews)
+      expect(sent.some((n) => n.chat === requester)).toBe(false)
+    } finally {
+      src.agents.send = send
+      if (old) src.agents.records[requester] = old
+      else delete src.agents.records[requester]
+      if (!src.places.spaces.includes(origin)) src.places.spaces.push(origin)
+    }
+  })
   test("every space starts regular; the main machine's home space hears every space's news, a task added only on Autopilot", async () => {
     const project = placeId.space('newsco')
     const home = placeId.home()
@@ -2003,5 +2169,79 @@ describe('startup menus before the first message', () => {
       src.agents.outbox = src.agents.outbox.filter((o) => o.key !== key)
       src.chats.forget(key)
     }
+  })
+})
+
+describe('visible launch controls', () => {
+  test('coordinator and task metadata comes from the launch record, never new Settings; old actions cannot claim an unapplied change', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shep-controls-'))
+    execSync('git init -q -b main && git config user.email t@t && git config user.name T && echo hi > README.md && git add -A && git commit -qm init', { cwd: dir, shell: '/bin/sh' })
+    const p = await src.places.add(dir, 'launch-controls')
+    const place = placeId.space(p.name)
+    const t = src.engine.add({ project: p.name, title: 'Launch controls', by: 'test', later: true })
+    const keys = [place, `${t.id}/Agent`]
+    try {
+      src.settings.set('coordinator.agent', 'Claude Code', { space: p.name })
+      src.settings.set('task.agent', 'Claude Code', { space: p.name })
+      for (const key of keys) {
+        src.agents.records[key] = { key, name: `launch-${key}`, kind: 'codex', model: 'gpt-6-sol', effort: 'high', cwd: dir, workspace: 'launch', logs: [], started: 0 }
+        expect(src.chat(key)?.agent).toEqual({ kind: 'codex', model: 'gpt-6-sol', modelLabel: 'GPT-6-Sol', effort: 'high' })
+        const before = { ...src.agents.records[key] }
+        expect(await src.act({ type: 'model', chat: key, model: 'gpt-6-luna' })).toMatchObject({ ok: false, error: expect.stringContaining('Restart') })
+        expect(await src.act({ type: 'effort', chat: key, effort: 'low' })).toMatchObject({ ok: false })
+        expect(src.agents.records[key]).toEqual(before)
+        // Missing values are kept missing: no guessed model or effort, even when Settings specifies them.
+        delete src.agents.records[key].model
+        delete src.agents.records[key].effort
+        expect(src.chat(key)?.agent).toEqual({ kind: 'codex' })
+        const info = await src.act({ type: 'restart-info', chat: key }) as { info: { on: unknown; want: unknown } }
+        expect(info.info.on).toEqual({ kind: 'codex' })
+        expect(info.info.want).toMatchObject({ kind: 'claude' })
+        const bad = await src.act({ type: 'restart', chat: key, kind: 'codex', model: 'no-longer-available', save: true })
+        expect(bad).toMatchObject({ ok: false, error: expect.stringContaining('no available model') })
+        expect(src.chat(key)?.agent).toEqual({ kind: 'codex' })
+      }
+    } finally {
+      for (const key of keys) delete src.agents.records[key]
+      src.settings.set('coordinator.agent', null, { space: p.name })
+      src.settings.set('task.agent', null, { space: p.name })
+    }
+  })
+})
+
+test('native and npm agent CLI process identities', () => {
+  expect(isAgentProcess('codex', ['/opt/bin/codex', '--resume'])).toBe(true)
+  expect(isAgentProcess('pi', ['/usr/bin/node', '/opt/node_modules/@mariozechner/pi-coding-agent/dist/cli.js'])).toBe(true)
+  expect(isAgentProcess('claude', ['/usr/bin/node', '/opt/node_modules/@anthropic-ai/claude-code/cli.js'])).toBe(true)
+  expect(isAgentProcess('pi', ['/usr/bin/node', '/some/app.js', 'pi'])).toBe(false)
+})
+
+describe('Task IDs live only in repository space Settings', () => {
+  test('edits apply to new tasks and survive a display rename; invalid scopes and collisions fail', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shep-id-settings-'))
+    execSync('git init -q -b main', { cwd: dir })
+    const p = await src.places.add(dir, 'id-settings')
+    const place = placeId.space(p.name)
+    const set = (key: string, value: string, at = place) => src.act({ type: 'setting', place: at, key, value })
+    expect(await set('taskIds.prefix', 'GAME')).toMatchObject({ ok: true })
+    expect(await set('taskIds.next', '100')).toMatchObject({ ok: true })
+    const t = src.engine.add({ project: p.name, title: 'Numbered', by: 'test', after: [], later: true })
+    expect(t.id).toBe('GAME-100')
+    src.places.rename(place, 'pretty-name')
+    expect(src.places.space(place)?.key).toBe('GAME')
+    expect(await set('taskIds.next', '100')).toMatchObject({ ok: false })
+    expect(await set('taskIds.prefix', 'NEWKEY')).toMatchObject({ ok: true })
+    expect(t.id).toBe('GAME-100')
+    expect(src.engine.add({ project: 'pretty-name', title: 'Next', by: 'test', later: true }).id).toBe('NEWKEY-101')
+    expect(await set('taskIds.prefix', 'invalid')).toMatchObject({ ok: false })
+    for (const at of ['all', placeId.machine(), placeId.home(), 'p:other:some-space']) expect(await set('taskIds.next', '999', at)).toMatchObject({ ok: false })
+    const snap = await src.snapshot()
+    const pages = snap.settings.filter((s) => s.name === 'Task IDs')
+    expect(pages.find((s) => s.level === place)?.rows[0].value).toBe('NEWKEY')
+    expect(pages.every((s) => s.level?.startsWith('p:') && !s.level.endsWith(':~'))).toBe(true)
+    const otherDir = mkdtempSync(join(tmpdir(), 'shep-id-other-'))
+    execSync('git init -q -b main', { cwd: otherDir })
+    const other = await src.places.add(otherDir, 'id-other')
+    expect(await set('taskIds.prefix', 'GAME', placeId.space(other.name))).toMatchObject({ ok: false })
   })
 })

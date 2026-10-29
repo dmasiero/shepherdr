@@ -11,7 +11,7 @@ import { nameProblem, slugify, type Mode } from '../../shared/types.ts'
 import { readJson, writeJson } from '../store.ts'
 import { Agents } from './agents.ts'
 import { boxHome } from './box.ts'
-import { defaultBranch, isRepo, topLevel } from './engine/git.ts'
+import { validateBase, defaultBranch, isRepo, topLevel } from './engine/git.ts'
 // fork: a space's forge repo, GitHub's or Gitea's (FORK.md)
 import { github, githubRemote, type GitHub } from './engine/forge.ts'
 import { migrateToSpaces } from './migrate.ts'
@@ -86,6 +86,8 @@ export function keyFor(name: string, taken: string[]) {
 }
 
 export class Places {
+  /** Historical task prefixes, including deleted tasks; supplied by the owning engine. */
+  takenTaskKeys?: () => string[]
   /** what was kept under the coordinators that are gone moves to the home spaces first, once */
   retired = migrateToSpaces((m) => placeId.home(m), HOME_AGENT).retire
   spaces: Space[] = readJson('spaces.json', [])
@@ -228,9 +230,18 @@ export class Places {
     // that one's key, so the new one gets a key of its own and shows the name asked for
     let key = nm
     for (let i = 2; this.spaces.some((x) => x.name === key); i++) key = `${nm}-${i}`
-    const p: Space = { name: key, path: top, key: keyFor(nm, this.spaces.map((x) => x.key)), github: await githubRemote(top), base: await defaultBranch(top), added: Date.now() }
+    const p: Space = { name: key, path: top, key: keyFor(nm, [...this.spaces.map((x) => x.key), ...(this.takenTaskKeys?.() ?? [])]), github: await githubRemote(top), base: await defaultBranch(top), added: Date.now() }
     this.spaces.push(p)
     if (key !== nm) this.rename(placeId.space(key), nm)
+    this.save()
+    return p
+  }
+
+  async setBase(name: string, base: string) {
+    const p = this.byName(name) ?? this.space(name)
+    if (!p) throw new Error('Choose a repository space first.')
+    await validateBase(p.path, base)
+    p.base = base
     this.save()
     return p
   }

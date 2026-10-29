@@ -1,3 +1,4 @@
+import { TaskIds } from '../task-ids.ts'
 import { trustWorktree } from '../trust.ts'
 // The tasks engine. A task is added by a coordinator and at once gets one agent, in its own git worktree and branch
 // from main. The coordinator's brief is the agent's first message and decides everything else (wait for a go, plan
@@ -17,10 +18,10 @@ import { readJson, writeJson } from '../../store.ts'
 import { ROOT } from '../../root.ts'
 import { has } from '../../plugins.ts'
 import { browserEnv } from '../browser.ts'
-import { hidden, type Agents, type Spec } from '../agents.ts'
+import { hidden, ROUTING_FAILURE, type Agents, type Spec } from '../agents.ts'
 import type { Chats } from '../chats.ts'
 import { HOST, placeId, type Places, type Space } from '../places.ts'
-import { goLine, handOverLine, restartLine, resumedLine, settingsBlock, prNewsLine, queuedLine, splitBrief, taskFirst, taskPrompt } from '../prompts.ts'
+import { privatePrompt, goLine, handOverLine, restartLine, resumedLine, settingsBlock, prNewsLine, queuedLine, splitBrief, taskFirst, taskPrompt } from '../prompts.ts'
 import { inMins, type Retry } from '../retry.ts'
 import { pastTimes } from '../estimates.ts'
 import { CLI_NAME, kindOf, type Settings } from '../settings.ts'
@@ -37,6 +38,8 @@ export interface TaskRec {
   title: string
   desc: string
   by: string
+  /** Exact coordinator chat that requested this task, when known. */
+  requester?: string
   created: number
   updated: number
   branch?: string
@@ -334,6 +337,7 @@ const LATER = "Don't start yet: wait for a go."
 export class Engine extends Emitter<Events> {
   /** main: by project path, the failing commit on GitHub's main its coordinator was told of, until main is green */
   private data = readJson<{ next: Record<string, number>; tasks: TaskRec[]; red?: Record<string, string> }>('tasks.json', { next: {}, tasks: [] })
+  readonly taskIds: TaskIds
   private starting = new Set<string>()
   /** started, its brief not yet taken up: To do until its agent works on it */
   private briefing = new Set<string>()
@@ -382,16 +386,25 @@ export class Engine extends Emitter<Events> {
     h?: HerdrSpaces,
   ) {
     super()
+    this.taskIds = new TaskIds(this.places.spaces, this.data, (name) => placeId.space(name))
+    this.places.takenTaskKeys = () => this.taskIds.keys()
     this.wt = new Worktrees(h)
+    let snapped = false
     // tasks from before statuses came from the agent: a finished one is merged, and was cleaned up then
     for (const t of this.data.tasks as (Omit<TaskRec, 'after'> & { stage?: string; after?: string | string[] })[]) {
       if (t.stage === 'done') Object.assign(t, { merged: true, cleaned: true })
       delete t.stage
+      // Freeze older queued records before any space setting can change.
+      if (!t.base) {
+        t.base = this.places.space(t.project)?.base
+        snapped ||= !!t.base
+      }
       // from an older way a task waited on another one's merge
       if (typeof t.after === 'string') delete t.after
       // from when the Watcher put what a task asks in a few words
       delete (t as { gist?: unknown }).gist
     }
+    if (snapped) this.save()
     queueMicrotask(() => {
       // saved for later with no agent, before every task got one at once: its agent starts now and waits for a go
       let chain = Promise.resolve()
@@ -452,6 +465,7 @@ export class Engine extends Emitter<Events> {
   }
 
   stop() {
+    this.taskIds.close()
     for (const x of this.later.values()) clearTimeout(x)
     for (const x of this.sweeps) clearTimeout(x)
   }
@@ -464,7 +478,7 @@ export class Engine extends Emitter<Events> {
     if (t.trouble) return 'need'
     const key = this.key(t)
     const st = this.agents.status(key)
-    if (st === 'blocked') return 'need'
+    if (st === 'blocked' || this.asks(key)) return 'need'
     // queued: until they are all done, or one ends without being done (then it waits for you to decide)
     if (this.queued(t)) return this.halts(t).length ? 'need' : 'queued'
     // held until the machine has room
@@ -510,6 +524,7 @@ export class Engine extends Emitter<Events> {
     const s = (() => {
       // a few words, never the summary: that is in its chat's card
       if (status === 'done') return t.closed ? 'Nothing to merge' : 'Merged'
+      if (status === 'need' && (this.agents.status(key) === 'blocked' || this.asks(key))) return this.reasonOf(key) ?? NEED.question
       if (t.trouble) return fitStatus(`Went wrong: ${t.trouble}`)
       // a To do row is its title alone
       if (status === 'todo') return ''
@@ -544,6 +559,8 @@ export class Engine extends Emitter<Events> {
     }
     const card = this.chats.openCard(key)
     if (card) return card === 'plan' ? NEED.plan : fitStatus(this.chats.openCardTitle(key) ?? '') || NEED.question
+    const question = this.chats.openQuestion(key)
+    if (question) return fitStatus(question.items[0]?.question ?? '') || NEED.question
     const last = this.chats.lastReply(key)
     if (said?.kind === 'auth' || loginGone(last)) return NEED.login
     return askOf(last)
@@ -641,6 +658,7 @@ export class Engine extends Emitter<Events> {
       age: age(t.archived ?? doneAt ?? (status === 'todo' ? t.created : t.updated)),
       doneAt,
       branch: t.branch,
+      base: t.base,
       pr: t.pr,
       plan: t.plan,
       agent: rec || t.worktree ? { chat: key, role: 'Agent', cli, status, age: age(rec?.started ?? t.updated), note: sub } : undefined,
@@ -990,15 +1008,17 @@ export class Engine extends Emitter<Events> {
    * A new task: its agent starts on the brief at once. The brief ends with the default way of working from Settings;
    * its CLI, model and effort are Settings' too, unless the coordinator chose others for it.
    */
-  add(o: { project: string; title: string; desc?: string; by: string; after?: string[]; later?: boolean; agent?: Partial<Harness>; reviewer?: Partial<Harness>; set?: Record<string, string> }) {
+  add(o: { project: string; base?: string; title: string; desc?: string; by: string; requester?: string; after?: string[]; later?: boolean; agent?: Partial<Harness>; reviewer?: Partial<Harness>; set?: Record<string, string> }) {
     const p = this.places.byName(o.project) ?? this.places.byKey(o.project) ?? this.places.space(o.project)
     if (!p) throw new Error(`No project called ${o.project}`)
     // a new task is in no circle; those already done are not waited for
     const after = this.checkAfter(undefined, o.after ?? []).filter((ref) => this.depState(ref) !== 'done')
     const title = short(o.title)
-    const n = (this.data.next[p.key] ?? 0) + 1
-    this.data.next[p.key] = n
-    const id = `${p.key}-${n}`
+    const space = placeId.space(p.name)
+    this.taskIds.ensure(space, p.key)
+    const { id, n, prefix } = this.taskIds.allocate(space)
+    p.key = prefix
+    this.data.next[prefix] = n
     // its project's defaults: its own, else its machine's, else All machines'
     const reviewer = this.harness(o.reviewer, 'reviewer', p.name)
     const agent = this.harness(o.agent, 'task', p.name)
@@ -1013,9 +1033,11 @@ export class Engine extends Emitter<Events> {
       id,
       n,
       project: placeId.space(p.name),
+      base: o.base ?? p.base,
       title,
       desc,
       by: o.by,
+      requester: o.requester,
       created: Date.now(),
       updated: Date.now(),
       told: after.length ? 'queued' : 'work',
@@ -1070,10 +1092,14 @@ export class Engine extends Emitter<Events> {
     try {
       const p = this.proj(t)
       const branch = branchFor(t)
-      const made = await this.wt.create({ repo: p.path, name: p.name }, branch, p.base, labelOf(t)).catch((e) => {
+      // Old records without a snapshot keep the existing fallback; new tasks snapshot at add.
+      t.base ??= p.base
+      this.save()
+      await G.validateBase(p.path, t.base)
+      const made = await this.wt.create({ repo: p.path, name: p.name }, branch, t.base, labelOf(t)).catch((e) => {
         throw new Error(`Could not make a worktree: ${(e as Error).message}`)
       })
-      Object.assign(t, { base: p.base, branch, worktree: made.path })
+      Object.assign(t, { branch, worktree: made.path })
       this.save()
       await this.launch(t, this.queued(t) ? `${taskFirst(t)}\n\n${queuedLine(this.open(t), 'start', t.id)}` : taskFirst(t), made)
       this.briefing.add(t.id)
@@ -1125,7 +1151,7 @@ export class Engine extends Emitter<Events> {
       cwd: t.worktree!,
       workspace: labelOf(t),
       tab: 'Agent',
-      system: taskPrompt({ id: t.id, branch: t.branch!, base: t.base! }, pastTimes(this.data.tasks, t)),
+      system: taskPrompt({ id: t.id, branch: t.branch!, base: t.base! }, pastTimes(this.data.tasks, t)) + '\n\n' + privatePrompt(this.settings.instructions('task', this.nameOf(t)), this.settings.instructions('reviewer', this.nameOf(t))),
       env,
       first,
       pane: () => this.wt.agentPane({ home, wt: t.worktree!, label: labelOf(t), tab: 'Agent', env, made }),
@@ -1461,6 +1487,7 @@ export class Engine extends Emitter<Events> {
     const pushed = await this.push(t)
     if (!pushed.ok) return { ok: false, text: `Could not push ${t.branch} to GitHub: ${(pushed.err || pushed.out).split('\n')[0]}` }
     let pr = await this.prOf(t, g, t.worktree)
+    if (pr && pr.baseRefName !== t.base) return { ok: false, text: `PR #${pr.number} targets ${pr.baseRefName}, but ${t.id} targets ${t.base}. Correct the pull request target on GitHub first.` }
     let opened = false
     if (pr?.state === 'MERGED') {
       // fork: its branch's work since goes in a follow-up pull request (follow-up.ts)
@@ -1805,6 +1832,7 @@ export class Engine extends Emitter<Events> {
     const ahead = Number((await G.git(p.path, 'rev-list', '--count', `${base}..${t.base}`)).out || 0)
     if (ahead) return { ok: false, error: `${t.base} here has ${ahead} commit${ahead === 1 ? '' : 's'} GitHub lacks: push ${t.base} (git push origin ${t.base}) or move them off it, then merge ${t.id} again. Nothing was merged.` }
     let pr = await this.prOf(t, g, wt)
+    if (pr && pr.baseRefName !== t.base) return { ok: false, error: `PR #${pr.number} targets ${pr.baseRefName}, but ${t.id} targets ${t.base}. Correct the pull request target on GitHub first. Nothing was merged.` }
     // merged on GitHub already (by hand, or a merge whose answer was lost): it only needs main here and marking
     if (pr?.state === 'MERGED') {
       // fork: unless its branch has work since that the merge did not bring in: that opens a follow-up pull request,
@@ -2177,6 +2205,19 @@ export class Engine extends Emitter<Events> {
     this.wrote.set(t.id, Date.now())
     this.settle(t)
     this.settleSoon(t, ANSWER_GRACE + 500)
+  }
+
+  /** A launch error is superseded only by verified private routing and a live owning agent.
+   * Progress reports, queued messages and old hooks alone are not evidence of recovery. */
+  routeRecovered(key: string) {
+    const t = this.task(key.split('/')[0])
+    if (!t || key !== this.key(t)) return
+
+    const st = this.agents.status(key)
+    if (t.trouble !== ROUTING_FAILURE || t.stopped || ended(t) || !this.agents.routed(key) || (st !== 'working' && st !== 'blocked')) return false
+    t.trouble = undefined
+    this.settle(t)
+    this.save()
   }
 
   /** an agent's state changed in herdr */

@@ -49,6 +49,10 @@ Upstream's files change only where they hook in, each marked with a `fork:` comm
 - `server/live/args.ts`: the help of `pr`, `checks` and `merge` says GitHub or Gitea.
 - `server/live/worktree.ts`: the task panel's pull request asks Gitea for a Gitea repo.
 - `skill/shepherdr-agent/SKILL.md`, `skill/shepherdr-coordinator/SKILL.md`: "GitHub (or Gitea)".
+- `test/engine-merge.test.ts`, `test/source.test.ts`: three of upstream's tests that upstream 2.0.0's own main fails
+  (its Check run 40886522333), brought up to its code: a merging task asking on a card is Needs you (SHE-291), gemini
+  is refused for having no chat reader (SHE-287), and the launch controls test's space is a git repository. No
+  `fork:` comment: take upstream's version of these lines once it fixes them.
 
 ## Syncing with upstream
 

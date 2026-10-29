@@ -61,7 +61,7 @@ export const withoutWip = (title: string) => title.replace(/^\s*(wip:|\[wip\])\s
 /** its branch: Gitea calls a merged one's whose branch is gone refs/pull/<n>/head, and keeps the name as its label */
 const branchOf = (p: GiteaPr) => (p.head?.ref && !p.head.ref.startsWith('refs/pull/') ? p.head.ref : (p.head?.label ?? ''))
 
-const asPr = (p: GiteaPr): Pr => ({ number: p.number, url: p.html_url, state: p.merged ? 'MERGED' : p.state === 'closed' ? 'CLOSED' : 'OPEN', isDraft: !!p.draft || isWip(p.title), headRefOid: p.head?.sha ?? '' })
+const asPr = (p: GiteaPr): Pr => ({ number: p.number, url: p.html_url, state: p.merged ? 'MERGED' : p.state === 'closed' ? 'CLOSED' : 'OPEN', isDraft: !!p.draft || isWip(p.title), headRefOid: p.head?.sha ?? '', baseRefName: p.base?.ref ?? '' })
 
 /** the branch's pull requests, the open ones first, then the closed ones newest first */
 async function prsOf(g: Gitea, cwd: string, branch: string): Promise<GiteaPr[] | null> {

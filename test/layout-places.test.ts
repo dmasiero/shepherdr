@@ -141,6 +141,56 @@ describe.skipIf(!browser)('sidebars', () => {
     await page.close()
   }, 30_000)
 
+  test('available room chooses a drawer at 820/1024/1100 and docking at 1180; resized lists keep chat readable', async () => {
+    const page = await browser!.newPage({ viewport: { width: 1024, height: 850 } })
+    await page.goto(url())
+    await page.getByRole('textbox', { name: 'Message home…' }).waitFor()
+    for (const w of [820, 1024, 1100, 1180, 1440]) {
+      await page.setViewportSize({ width: w, height: 850 })
+      await settled(page)
+      const docked = w >= 1180
+      expect(await page.getByRole('button', { name: 'Hide Places', exact: true }).count()).toBe(docked ? 1 : 0)
+      expect(await page.getByRole('button', { name: 'Places', exact: true }).count()).toBe(docked ? 0 : 1)
+      expect(await page.locator('[data-messages]').first().evaluate((e) => e.getBoundingClientRect().width)).toBeGreaterThanOrEqual(480)
+      if (!docked) {
+        await page.getByRole('button', { name: 'Places', exact: true }).click()
+        await page.getByRole('navigation', { name: 'Places' }).waitFor()
+        await page.getByRole('button', { name: 'Close', exact: true }).click()
+      }
+    }
+    await drag(page, 'Resize tasks', -300)
+    await page.setViewportSize({ width: 1180, height: 850 })
+    await settled(page)
+    expect(await page.getByRole('button', { name: 'Places', exact: true }).count()).toBe(1)
+    expect(await page.locator('[data-messages]').first().evaluate((e) => e.getBoundingClientRect().width)).toBeGreaterThanOrEqual(480)
+    await page.reload()
+    await page.getByRole('button', { name: 'Places', exact: true }).waitFor()
+    await page.setViewportSize({ width: 1920, height: 850 })
+    await page.getByRole('button', { name: 'Hide Places', exact: true }).waitFor()
+    expect(await width(page, tasks)).toBe(700)
+    // Explicitly hidden places and task tools stay hidden on wider windows.
+    await page.getByRole('button', { name: 'Hide Places', exact: true }).click()
+    await page.setViewportSize({ width: 2560, height: 850 })
+    await page.getByRole('button', { name: 'Show Places', exact: true }).waitFor()
+    expect(await page.locator('#task-panel').count()).toBe(0)
+    await page.close()
+  }, 30_000)
+
+  test('a drawer open while widening does not reopen when the window narrows again', async () => {
+    const page = await browser!.newPage({ viewport: { width: 1100, height: 850 } })
+    await page.goto(url())
+    await page.getByRole('button', { name: 'Places', exact: true }).click()
+    await page.getByRole('button', { name: 'Close', exact: true }).waitFor()
+    await page.setViewportSize({ width: 1180, height: 850 })
+    await page.getByRole('button', { name: 'Hide Places', exact: true }).waitFor()
+    await page.setViewportSize({ width: 1100, height: 850 })
+    await settled(page)
+    expect(await page.getByRole('button', { name: 'Close', exact: true }).count()).toBe(0)
+    await page.getByRole('button', { name: 'Places', exact: true }).click()
+    await page.getByRole('button', { name: 'Close', exact: true }).waitFor()
+    await page.close()
+  })
+
   test('a tablet resizes tasks only; a phone keeps its drawer', async () => {
     const tablet = await browser!.newPage({ viewport: { width: 900, height: 800 } })
     await tablet.goto(url())
@@ -149,7 +199,7 @@ describe.skipIf(!browser)('sidebars', () => {
     expect(await tablet.getByRole('button', { name: /^(Hide|Show) Places$/ }).count()).toBe(0)
     const before = await width(tablet, tasks)
     await drag(tablet, 'Resize tasks', -40)
-    expect(await width(tablet, tasks)).toBe(before + 40)
+    expect(await width(tablet, tasks)).toBe(Math.min(before + 40, 900 - 480))
     await tablet.close()
     const phone = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true })
     await phone.goto(url())
@@ -177,7 +227,7 @@ describe.skipIf(!browser)("a place's Autopilot", () => {
       expect(await pill.count()).toBe(0)
       // no switch in the + menu: that keeps files, model and effort
       await page.locator('[data-composer] button[aria-label="Attach files and more"]').first().click()
-      await page.getByRole('combobox', { name: 'Model' }).waitFor()
+      await page.getByRole('menuitem', { name: 'File or photo' }).waitFor()
       expect(await page.getByRole('menuitemcheckbox', { name: 'Autopilot' }).count()).toBe(0)
       await page.keyboard.press('Escape')
       // the ⋯ menu: the switch first, then search, the terminal, artifacts; no three-way picker
@@ -269,25 +319,16 @@ describe.skipIf(!browser)("a place's Autopilot", () => {
       await ctx.close()
     }, 30_000)
 
-  test("a task's agent has no mode: its + menu keeps Model and Effort only, whole even on a small phone", async () => {
+  test("a task's attachment menu keeps files; agent controls live inside it on a small phone", async () => {
     const page = await browser!.newPage({ viewport: { width: 320, height: 640 }, hasTouch: true })
     await page.goto(`http://127.0.0.1:${server!.port}/?place=all&task=GTM-14`)
+    await page.locator('[data-composer]').first().waitFor()
+    expect(await page.locator('[data-agent-controls]').count()).toBe(0)
     await page.locator('[data-composer] button[aria-label="Attach files and more"]').first().click()
-    const model = page.getByRole('combobox', { name: 'Model' })
-    await model.waitFor()
+    await page.getByRole('menuitem', { name: 'File or photo' }).waitFor()
+    expect(await page.getByRole('combobox', { name: 'Model' }).count()).toBe(0)
     expect(await page.getByRole('group', { name: 'Mode', exact: true }).count()).toBe(0)
-    // Claude Code's models and the levels its model takes, each a picker showing what it is on
-    expect(await model.locator('option').allTextContents()).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
-    const effort = page.getByRole('combobox', { name: 'Effort' })
-    expect(await effort.locator('option').allTextContents()).toEqual(['Low', 'Medium', 'High', 'Extra high', 'Max'])
-    const shown = (name: string) => page.locator(`.popover label:has(select[aria-label="${name}"]) > span:nth-child(3)`).textContent()
-    expect([await shown('Model'), await shown('Effort')]).toEqual(['Opus 5.5', 'High'])
-    await model.selectOption({ label: 'Haiku 5.5' })
-    await page.waitForFunction(() => document.querySelector('.popover label:has(select[aria-label="Model"]) > span:nth-child(3)')?.textContent === 'Haiku 5.5')
-    await model.selectOption({ label: 'Opus 5.5' })
-    // no words are cut short, and the page never scrolls sideways
-    const cut = await page.locator('.popover [aria-pressed] span, .popover label span').evaluateAll((ss) => ss.filter((s) => s.scrollWidth > s.clientWidth).map((s) => s.textContent))
-    expect(cut).toEqual([])
+    expect(await page.locator('[data-agent-controls] [role=menuitem]').count()).toBe(3)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.close()
   }, 30_000)
@@ -417,7 +458,7 @@ describe.skipIf(!browser)('places, calm like Slack', () => {
     page.$$eval(`${sel} li`, (ls) =>
       ls.map((l) => {
         const name = l.querySelector('button > span')!
-        const badge = l.querySelector('span[aria-label$="waiting on you"]')
+        const badge = l.querySelector('span[aria-label$="need you here"]')
         return { name: name.textContent, count: badge ? Number(badge.textContent) : 0, bold: Number(getComputedStyle(name).fontWeight) >= 600, dots: l.querySelectorAll('.dot').length, text: l.textContent }
       }),
     )
@@ -504,7 +545,7 @@ describe.skipIf(!browser)('places, calm like Slack', () => {
         expect(await page.locator('main [data-icon], [data-chrome] [data-icon]').first().getAttribute('data-icon')).toBe('hash')
         // ⌘K: a place's icon where a task has its dot
         await page.keyboard.press('Control+k')
-        const list = page.getByRole('listbox', { name: 'Places and tasks' })
+        const list = page.getByRole('listbox', { name: 'Search results' })
         await list.waitFor()
         const first = list.getByRole('option').first().locator('[data-icon]')
         expect(await first.getAttribute('data-icon')).toBe('hash')
@@ -517,7 +558,7 @@ describe.skipIf(!browser)('places, calm like Slack', () => {
       await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent('p:vm-str:gtm')}`)
       if (phone) await page.getByRole('button', { name: 'Places' }).first().click()
       await page.getByRole('navigation', { name: 'Places' }).getByRole('button', { name: 'Settings', exact: true }).click()
-      const pick = page.getByRole('button', { name: /^Defaults for: / }).first()
+      const pick = page.getByRole('button', { name: /^Editing: / }).first()
       await pick.waitFor()
       expect(await pick.locator('[data-icon]').getAttribute('data-icon')).toBe('hash')
       await pick.click()
@@ -558,7 +599,7 @@ describe.skipIf(!browser)('the places tree', () => {
     expect(at()).toBe('vm-str/home')
     expect(await row(page, 'mac').getAttribute('aria-current')).toBeNull()
     expect(await row(page, 'mac').locator('[aria-current]').count()).toBe(0)
-    expect(await page.locator('#places li[data-heading="m:mac"] [data-autopilot], #places li[data-heading="m:mac"] [aria-label$="waiting on you"]').count()).toBe(0)
+    expect(await page.locator('#places li[data-heading="m:mac"] [data-autopilot], #places li[data-heading="m:mac"] [aria-label$="need you here"]').count()).toBe(0)
     await row(page, 'mac').getByRole('button', { name: 'mac', exact: true }).click()
     await page.getByRole('button', { name: "Hide mac's spaces" }).waitFor()
     expect(at()).toBe('vm-str/home')
@@ -575,7 +616,7 @@ describe.skipIf(!browser)('the places tree', () => {
     await page.locator('#places li', { hasText: 'quiet' }).waitFor({ state: 'detached' })
     expect(await page.locator('#places li[data-project][data-machine="m:vm-str"]').count()).toBe(0)
     expect(await page.locator('#places li[aria-current], #places li:has([aria-current])').count()).toBe(0)
-    expect(await row(page, 'vm-str').locator('span[aria-label$="waiting on you"]').count()).toBe(0)
+    expect(await row(page, 'vm-str').locator('span[aria-label$="need you here"]').count()).toBe(0)
     expect(await row(page, 'vm-str').getByRole('img', { name: 'Something in it waits on you' }).count()).toBe(1)
     expect(at()).toBe('vm-str/home')
     // the screen remembers it, and the chevron brings them back
@@ -605,7 +646,7 @@ describe.skipIf(!browser)('the places tree', () => {
     // quiet stays open, out of sight; gtm and herdr-projects wait on you, so the heading has a red dot, not a count
     expect(await names()).toEqual(['mac', 'home', 'lilla-varlden', 'nas', 'home', 'vm-str'])
     expect(at()).toBe('vm-str/quiet')
-    expect(await row(page, 'vm-str').locator('span[aria-label$="waiting on you"]').count()).toBe(0)
+    expect(await row(page, 'vm-str').locator('span[aria-label$="need you here"]').count()).toBe(0)
     expect(await row(page, 'vm-str').getByRole('img', { name: 'Something in it waits on you' }).count()).toBe(1)
     // remembered; Alt+↑ from the hidden one goes to the space shown above where it sits, and leaves the fold as it is
     await page.reload()
@@ -649,7 +690,7 @@ describe.skipIf(!browser)('the places tree', () => {
     await page.waitForSelector('#places li')
     await row(page, 'vm-str').hover()
     const side = await box(page, '#places')
-    for (const sel of ['#places button[aria-label="New space on vm-str"]', '#places [aria-label$="waiting on you"]', '#places li:has-text("herdr-projects")']) {
+    for (const sel of ['#places button[aria-label="New space on vm-str"]', '#places [aria-label$="need you here"]', '#places li:has-text("herdr-projects")']) {
       expect((await box(page, sel)).right).toBeLessThanOrEqual(side.right)
     }
     await page.close()
@@ -757,11 +798,12 @@ describe.skipIf(!browser)('removing a space', () => {
       const at = (await row.boundingBox())!
       expect(box.x).toBeGreaterThanOrEqual(at.x + at.width)
       expect(Math.abs(box.y - at.y)).toBeLessThan(8)
-      await page.getByRole('menuitem', { name: 'Remove', exact: true }).click()
+      expect(await page.getByRole('menuitem').last().textContent()).toContain('Remove from Shepherdr…')
+      await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).click()
       const ask = page.getByRole('alertdialog', { name: 'Remove gtm from Shepherdr?' })
       await ask.waitFor()
       const words = (await ask.textContent())!
-      expect(words).toContain('Its folder and code stay on disk.')
+      expect(words).toContain('Its files and folder stay on disk.')
       expect(words).toContain('Its 5 open tasks hide with it')
       // Escape keeps it, and the focus goes back to its ⋯
       await page.keyboard.press('Escape')
@@ -774,7 +816,7 @@ describe.skipIf(!browser)('removing a space', () => {
       expect(await ring()).toBe('none')
       // a right click opens the same menu
       await row.click({ button: 'right' })
-      await page.getByRole('menuitem', { name: 'Remove', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).click()
       await ask.getByRole('button', { name: 'Remove' }).click()
       await row.waitFor({ state: 'detached' })
       await page.waitForURL(/place=vm-str%2Fhome/)
@@ -784,7 +826,7 @@ describe.skipIf(!browser)('removing a space', () => {
       const home = page.locator('#places li[data-home]').filter({ hasText: 'home' }).last()
       await home.click({ button: 'right' })
       await page.getByRole('menuitem', { name: 'Rename', exact: true }).waitFor()
-      expect(await page.getByRole('menuitem', { name: 'Remove', exact: true }).count()).toBe(0)
+      expect(await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).count()).toBe(0)
       await page.keyboard.press('Escape')
       expect(await world.act({ type: 'space-remove', place: 'p:vm-str:~' })).toEqual({ ok: false, error: "home is vm-str's home space: it can be renamed, not removed." })
     } finally {
@@ -798,7 +840,7 @@ describe.skipIf(!browser)('removing a space', () => {
     await page.goto(url())
     const row = page.locator('#places li', { hasText: 'herdr-projects' })
     await row.click({ button: 'right' })
-    await page.getByRole('menuitem', { name: 'Remove', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).click()
     const ask = page.getByRole('alertdialog', { name: 'herdr-projects can’t be removed yet' })
     await ask.waitFor()
     expect(await ask.textContent()).toContain('HP-202 is still working. Pause it or let it finish first.')
@@ -827,7 +869,7 @@ describe.skipIf(!browser)('removing a space', () => {
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [at] })
       await page.waitForTimeout(700)
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-      await page.getByRole('menuitem', { name: 'Remove', exact: true }).tap()
+      await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).tap()
       // the hold didn't open the space
       expect(page.url()).not.toContain('lilla-varlden')
       const ask = page.getByRole('alertdialog', { name: 'Remove lilla-varlden from Shepherdr?' })
@@ -920,9 +962,9 @@ describe.skipIf(!browser)('the order of places', () => {
       const y = box.y + box.height / 2
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
       await page.waitForTimeout(600)
-      await page.getByRole('menuitem', { name: 'Remove', exact: true }).waitFor()
+      await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).waitFor()
       for (let i = 1; i <= 8; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - i * 8 }] })
-      expect(await page.getByRole('menuitem', { name: 'Remove', exact: true }).count()).toBe(0)
+      expect(await page.getByRole('menuitem', { name: 'Remove from Shepherdr…', exact: true }).count()).toBe(0)
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
       await settled(page)
       expect(await order(page, nav)).toEqual(['mac', 'home', 'lilla-varlden', 'nas', 'home', 'vm-str', 'home', 'herdr-projects', 'gtm'])

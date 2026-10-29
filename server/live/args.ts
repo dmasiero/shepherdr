@@ -7,7 +7,7 @@ export interface Parsed {
   flags: Set<string>
 }
 
-const FLAGS = new Set(['other', 'multi', 'json', 'project-coordinator', 'off', 'help', 'force', 'archived', 'machine', 'later', 'save'])
+const FLAGS = new Set(['ordinary', 'other', 'multi', 'json', 'project-coordinator', 'off', 'help', 'force', 'archived', 'machine', 'later', 'save'])
 
 export function parseArgs(args: string[]): Parsed {
   const words: string[] = []
@@ -48,6 +48,7 @@ Spaces (a folder on a machine with a name and its own coordinator; each machine 
   shepherdr space add <path> [--name NAME]       add a git repo folder as a space (its own herdr space); the name
                                                  follows the space rules: lowercase letters, numbers, - and _,
                                                  at most 80 characters, its own on its machine
+  shepherdr space set base <branch> --space NAME  new tasks start from and merge into this branch; existing tasks keep theirs
   shepherdr space list
   shepherdr space rename <name> <new-name>       only the name that shows changes (its folder, herdr space and task
                                                  ids stay)
@@ -62,7 +63,7 @@ Spaces (a folder on a machine with a name and its own coordinator; each machine 
                                                  the heartbeat); the human edits it in Settings → Autopilot too
 
 Tasks (coordinators add them; only when the human asks, or on Autopilot)
-  shepherdr task add "<title>" --brief "<the brief>" [--space NAME] [--after SHE-12,SHE-13] [--later]
+  shepherdr task add "<title>" --brief "<the brief>" [--space NAME] [--base BRANCH] [--after SHE-12,SHE-13] [--later]
                                                  [--set KEY=VALUE ...] [--agent CLI] [--model ID] [--effort LEVEL]
                                                  [--reviewer CLI] [--reviewer-model ID] [--reviewer-effort LEVEL]
                                                  the title at most ${TITLE_MAX} characters (it fits one line on a phone);
@@ -154,9 +155,26 @@ Task agents
                                                  while you work). Run it at the start and at each natural step
 
 Chat
-  shepherdr ask "<question>" --choice "<label>" ... [--desc "<label>=<one line>"] [--other] [--multi]
+  shepherdr ask "<question>" --choice "<label>" ... [--desc "<label>=<one line>"] [--other] [--multi] [--ordinary]
+      --ordinary: ordinary questions only; never permissions, startup approvals or plans
   shepherdr alert "<title>" --body "<why now>" [--task <id>]
                                                  with --task: it says what that task needs and opens on its card
+
+Secrets (API keys, tokens, passwords: used by name, never seen or printed)
+  shepherdr secret list                          the names you can use here, and where each is kept
+  shepherdr secret ask NAME --why "<what for>" [--force]
+                                                 a masked box in your chat for the human; end your turn, and a
+                                                 <secret name="NAME"> line says it is kept. --force: ask again for one
+                                                 kept already (wrong or expired)
+  shepherdr secret run NAME [NAME …] -- <command> [its words]
+                                                 runs the command with each one in its environment ($NAME),
+                                                 masked (********) in what it prints
+  shepherdr secret env NAME [NAME …] [--file .env]
+                                                 writes NAME=value lines to a file git ignores (readable by you only)
+  shepherdr secret set NAME [--machine | --space NAME] < file
+  shepherdr secret rm NAME [--machine | --space NAME]
+                                                 for the human: keep one (its value on stdin) or remove it, Everywhere
+                                                 (none), for this machine or one space; the most specific one wins
 
 Artifacts (one self-contained HTML file, optional JSON data; checked at phone width, then shown in your chat)
   shepherdr artifact new <file.html> --title "<title>" [--data <file.json>] [--space NAME]

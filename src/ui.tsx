@@ -55,6 +55,7 @@ export {
   FolderOpenIcon,
   GlobeAltIcon as GlobeIcon,
   ListBulletIcon as TasksIcon,
+  LockClosedIcon as LockIcon,
   MagnifyingGlassIcon as SearchIcon,
   MicrophoneIcon as MicIcon,
   MinusCircleIcon,
@@ -103,6 +104,14 @@ export function MicOffIcon({ className }: { className?: string }) {
 }
 
 /** A keyboard: keys cut out of a rounded box. No Heroicon exists for it */
+export function KeyIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className={clsx('size-4 shrink-0 fill-current', className)}>
+      <path fillRule="evenodd" d="M14 6a4 4 0 0 1-4.899 3.899l-1.955 1.955a.5.5 0 0 1-.353.146H5v1.5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1-.5-.5v-2.293a.5.5 0 0 1 .146-.353l3.955-3.955A4 4 0 1 1 14 6Zm-4-2a.75.75 0 0 0 0 1.5.5.5 0 0 1 .5.5.75.75 0 0 0 1.5 0 2 2 0 0 0-2-2Z" clipRule="evenodd" />
+    </svg>
+  )
+}
+
 export function KeyboardIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" className={clsx('size-4 shrink-0 fill-current', className)}>
@@ -460,7 +469,7 @@ export function taskLine(t: Task, where?: string[]): ReactNode {
   const w = rowReport(t)
   const line = w ? <ReportLine w={w} /> : t.sub
   // where it is leads, or else its pull request's number, small: the link itself is in its chat's header
-  const parts = where?.length ? where : t.pr ? [`PR #${t.pr.number}`] : []
+  const parts = [...(where?.length ? where : t.pr ? [`PR #${t.pr.number}`] : []), ...(t.base ? [`→ ${t.base}`] : [])]
   const lead = parts.length ? (
     // alone (no line after it), it has the whole width: half of it cut the machine's short name ("vm-…")
     <span className={clsx('inline-flex min-w-0 shrink-0 align-bottom text-fg3', line ? 'max-w-1/2' : 'max-w-full')}>
@@ -514,6 +523,22 @@ export function Count({ n, className, label }: { n: number; className?: string; 
       {/* trimmed to the digits' own height (cap to baseline), so the grid centres the ink, not the line with its
           room for descenders below, which sat the digit a pixel low */}
       <span className="[text-box:trim-both_cap_alphabetic]">{n}</span>
+    </span>
+  )
+}
+
+/** One notification, with separate counts: needs you on the left, ready on the right.
+ * Cap each printed count independently; the accessible name always keeps the exact numbers. */
+export function AttentionBadge({ need, ready, scope }: { need: number; ready: number; scope: string }) {
+  if (!need && !ready) return null
+  const split = need > 0 && ready > 0
+  const label = `${need} needs you, ${ready} ready · ${scope}`
+  const cap = (n: number) => n > 9 ? '9+' : String(n)
+  return (
+    <span role="img" aria-label={label} title={label} data-attention-badge={split ? 'both' : need ? 'need' : 'ready'}
+      className={clsx('attention-badge', split && 'attention-badge-split')}>
+      {need > 0 ? <span aria-hidden="true" className="attention-badge-need">{cap(need)}</span> : null}
+      {ready > 0 ? <span aria-hidden="true" className="attention-badge-ready">{cap(ready)}</span> : null}
     </span>
   )
 }
@@ -987,26 +1012,31 @@ export function Small({ children, className, ...p }: HTMLAttributes<HTMLDivEleme
 }
 
 /** Column header: 52px with a hairline under it; its icon buttons are round, like its ⋯ */
-export function Head({ children, className }: { children: ReactNode; className?: string }) {
+export function Head({ children, className, conversation }: { children: ReactNode; className?: string; conversation?: boolean }) {
   return (
-    <div data-chrome className={clsx('relative flex min-h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3 pl-4 [&_.hit]:rounded-full', className)}>
-      {children}
+    <div data-chrome className={clsx('relative flex min-h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3 pl-4 [&_.hit]:rounded-full', conversation && 'px-0!', className)}>
+      {conversation ? <div data-conversation-head className="mx-auto flex min-h-[51px] w-full max-w-read min-w-0 items-center gap-2.5 pr-3 pl-5 [&_.hit]:rounded-full">{children}</div> : children}
     </div>
   )
 }
 
 /** A phone screen's top: round buttons either side, the title centred and as wide as the buttons leave room for; a
  *  mark after the subtitle */
-export function PhoneTop({ left, dot, icon, p, name, kind, mark, right, report }: { left?: ReactNode; dot?: Status; icon?: ReactNode; p?: number; name: string; kind?: ReactNode; mark?: ReactNode; right?: ReactNode; report?: Report }) {
+export function PhoneTop({ left, dot, icon, p, name, kind, mark, right, report, expandName }: { left?: ReactNode; dot?: Status; icon?: ReactNode; p?: number; name: string; kind?: ReactNode; mark?: ReactNode; right?: ReactNode; report?: Report; expandName?: boolean }) {
+  const [expanded, setExpanded] = useState(false)
   return (
     // under a bar at the top (offline, a call) the notch is already kept clear
-    <div data-kb data-chrome className="relative grid shrink-0 grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-2 border-b border-line px-3 pt-[calc(env(safe-area-inset-top)+6px)] pb-1.5 [[data-topbar]~*_&]:pt-1.5">
+    <div data-kb data-chrome className={clsx('relative grid shrink-0 items-center gap-2 border-b border-line px-3 pt-[calc(env(safe-area-inset-top)+6px)] pb-1.5 [[data-topbar]~*_&]:pt-1.5', expandName ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[1fr_minmax(0,auto)_1fr]')}>
       <div className="flex gap-1">{left}</div>
       <div className="min-w-0 text-center">
         <div className="flex items-center justify-center gap-1.5 font-semibold">
           {dot ? <Dot s={dot} p={p} halo /> : null}
           {icon}
-          <span className="truncate">{name}</span>
+          {expandName ? (
+            <button type="button" aria-label={`${expanded ? 'Collapse' : 'Show full'} task title: ${name}`} aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className={clsx('min-w-0 text-left break-words', !expanded && 'line-clamp-2')}>
+              {name}
+            </button>
+          ) : <span className="truncate">{name}</span>}
         </div>
         {mark && !report ? (
           // a mark (a coordinator's mode) ends the subtitle line, whole; the words before it give way first
@@ -1015,8 +1045,9 @@ export function PhoneTop({ left, dot, icon, p, name, kind, mark, right, report }
             {mark}
           </div>
         ) : (
-          <div className={clsx('text-[0.8125rem]/[18px] text-fg2', !report && 'truncate')}>{report ? <ReportLine w={report} head wrap /> : kind}</div>
+          <div className={clsx('text-[0.8125rem]/[18px] text-fg2', !report && 'truncate')}>{expandName ? kind : report ? <ReportLine w={report} head wrap /> : kind}</div>
         )}
+        {expandName && report ? <div className="text-[0.8125rem]/[18px] text-fg2"><ReportLine w={report} head wrap /></div> : null}
       </div>
       <div className="flex justify-end gap-1">{right}</div>
     </div>
@@ -1109,6 +1140,29 @@ export function TextBox({
       onChange={(e) => onChange(e.target.value)}
       className={clsx('resize-none overflow-hidden', className)}
       {...p}
+    />
+  )
+}
+
+/** A secret's box: masked, never kept as a draft or offered for saving, and Enter saves. Its value lives only in the
+ *  page's memory until it is sent */
+export function SecretField({ label, value, onChange, onEnter, className, autoFocus }: { label: string; value: string; onChange: (v: string) => void; onEnter?: () => void; className?: string; autoFocus?: boolean }) {
+  return (
+    <input
+      type="password"
+      aria-label={label}
+      placeholder="Paste or type it"
+      autoComplete="off"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      data-1p-ignore
+      data-lpignore="true"
+      autoFocus={autoFocus}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && onEnter?.()}
+      className={clsx('min-h-10 w-full min-w-0 rounded-row bg-transparent px-3 py-[9px] font-mono placeholder:font-sans placeholder:text-fg3 coarse:min-h-11 phone:min-h-11 phone:text-[1rem]', field, className)}
     />
   )
 }

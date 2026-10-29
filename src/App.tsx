@@ -1,3 +1,4 @@
+import { attentionCounts } from './attention.ts'
 // The layout: places | coordinator chat | tasks or artifacts on a desktop (sidebars resize, places hides), and an open
 // task's side panel after them (focus hides places and the chat, for the task); chat | tasks or artifacts with places in a drawer on a tablet; one column with a
 // Chat | Tasks | Artifacts switch on a phone, where a task's panel items open as sheets. Every part inside comes from a
@@ -7,12 +8,12 @@ import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeybo
 import {
   agentChat,
   closePane,
-  counts,
   focusPane,
   onlyPane,
   openArtifact,
   openSplit,
   panesHere,
+  placesDocked,
   sizePanes,
   focusHere,
   getState,
@@ -21,7 +22,6 @@ import {
   chipName,
   listsPinned,
   listView,
-  listWaiting,
   panelHere,
   placeOf,
   registry,
@@ -44,7 +44,7 @@ import {
   CrookIcon,
   CogIcon,
   OpenIcon,
-  Count,
+  AttentionBadge,
   Dot,
   Empty,
   FitIcon,
@@ -58,7 +58,7 @@ import {
   MoreIcon,
   PageIcon,
   PhoneTop,
-  PinIcon,
+  LockIcon,
   PlaceIcon,
   RoundButton,
   SearchIcon,
@@ -162,7 +162,7 @@ export function SearchBox() {
     <div className="flex items-center gap-1.5 px-2.5 pt-2.5 pb-1.5">
       <button
         type="button"
-        onClick={() => setUI({ search: true, drawer: false })}
+        onClick={() => setUI({ search: true, searchScope: undefined, drawer: false })}
         className="press-dim flex h-8 flex-1 items-center gap-2 rounded-full bg-bg px-3 text-left text-[0.8125rem] text-fg3 shadow-[inset_0_0_0_1px_var(--line2)] coarse:h-11 phone:h-11 phone:text-[1rem]"
       >
         <SearchIcon className={ic} />
@@ -231,7 +231,8 @@ function Drawer() {
 
 function MenuButton() {
   const device = useUI((u) => u.device)
-  if (device === 'desktop') return null
+  const docked = useStore((s) => placesDocked(s.ui, s.snap))
+  if (docked) return null
   return device === 'phone' ? (
     <RoundButton label="Places" onClick={() => setUI({ drawer: true })}>
       <MenuIcon className={ic} />
@@ -294,7 +295,7 @@ function PlaceColumn({ place, pane }: { place: Place; pane?: number }) {
   const Chat = registry.views.chat
   return (
     <section data-drawer-from className="@container/place flex min-h-0 min-w-0 flex-1 flex-col">
-      <Head>
+      <Head conversation>
         <MenuButton />
         {pane ? null : <PlacesToggle when="closed" />}
         <Who
@@ -341,39 +342,41 @@ function TaskColumn({ snap }: { snap: Snapshot }) {
   )
 }
 
-/** Pins the Tasks and Artifacts lists' chips, so they stay whatever place is picked, or lets them follow it again.
- *  Pinned, a wide screen's says so (a phone's top bar does) */
+/** Locks the lists' filters while switching spaces; the stored pin behaviour stays compatible. */
 function PinButton() {
   const pinned = useStore((s) => listsPinned(s.ui, s.snap!))
   const phone = useUI((u) => u.device === 'phone')
-  const name = 'Pinned'
-  const label = pinned ? 'Unpin: follow the space picked' : 'Pin these filters'
+  const name = pinned ? 'Locked' : 'Lock'
+  const label = pinned ? 'Locked: unlock filters to follow the space picked' : 'Lock filters: keep them when switching spaces'
   if (phone)
     return (
       <RoundButton label={label} pressed={pinned} onClick={togglePin}>
-        <PinIcon className={ic} />
+        <LockIcon className={ic} />
       </RoundButton>
-    )
-  if (!pinned)
-    return (
-      <IconButton label={label} onClick={togglePin}>
-        <PinIcon className={ic} />
-      </IconButton>
     )
   return (
     <button
       type="button"
       aria-label={label}
-      aria-pressed
-     
+      aria-pressed={pinned}
+      title={label}
       onClick={togglePin}
-      className="press-dim inline-flex h-7 max-w-40 min-w-7 shrink items-center justify-center gap-1.5 rounded-full bg-sel px-2 text-[0.8125rem] text-fg coarse:h-9 @sm/side:pr-2.5"
+      className={clsx('press-dim inline-flex h-7 max-w-40 min-w-7 shrink items-center justify-center gap-1.5 rounded-full px-2 text-[0.8125rem] text-fg coarse:h-9 @sm/side:pr-2.5', pinned && 'bg-sel')}
     >
-      <PinIcon className={ic} />
-      {/* a narrow column has room for the pin alone */}
+      <LockIcon className={ic} />
+      {/* a narrow column has room for the lock alone */}
       <span className="truncate @max-sm/side:hidden">{name}</span>
     </button>
   )
+}
+
+/** Task requests in the panel’s scope, excluding coordinator requests. */
+function TaskAttention() {
+  const snap = useSnap()!
+  const view = useStore((s) => listView(s.ui, snap))
+  const ids = snap.places.filter((p) => !view.chips.length || view.chips.includes(p.id) || view.chips.includes(`m:${p.machine}`)).map((p) => p.id)
+  const c = attentionCounts({ ...snap, asks: {}, attentionRequests: { ...snap.attentionRequests, ...Object.fromEntries(snap.places.map((p) => [p.chat, []])) } }, ids)
+  return <AttentionBadge need={c.need} ready={c.ready} scope="panel scope" />
 }
 
 /** The lists' tasks, or their artifacts: what their chips hold */
@@ -384,7 +387,6 @@ function SideList({ snap }: { snap: Snapshot }) {
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
   const Artifacts = registry.views.artifacts
-  const c = { tasks: listWaiting(snap, view) }
   const side = Artifacts ? shown : 'tasks'
   return (
     <section className="@container/side flex min-h-0 min-w-0 flex-1 flex-col border-l border-line" aria-label={side === 'tasks' ? 'Tasks' : 'Artifacts'}>
@@ -402,7 +404,7 @@ function SideList({ snap }: { snap: Snapshot }) {
               ).map(([k, l]) => (
                 <Tab key={k} on={side === k} onClick={() => setUI({ side: k })}>
                   {l}
-                  {k === 'tasks' ? <Count n={c.tasks} label={`${c.tasks} waiting on you`} /> : null}
+                  {k === 'tasks' ? <TaskAttention /> : null}
                 </Tab>
               ))}
             </Tabs>
@@ -410,7 +412,7 @@ function SideList({ snap }: { snap: Snapshot }) {
         ) : (
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <h2 className="min-w-0 truncate font-semibold">Tasks</h2>
-            <Count n={c.tasks} label={`${c.tasks} waiting on you`} />
+            <TaskAttention />
           </div>
         )}
         <PinButton />
@@ -433,6 +435,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   const desktop = useUI((u) => u.device === 'desktop')
   const keyboard = useUI((u) => u.keyboard)
   const coordinator = placeOf(snap, task.place).name
+  const target = task.base ? <div className="shrink-0 truncate border-b border-line px-4 py-1 text-xs text-fg3" title={`Merges into ${task.base}`}>Merges into <span className="font-medium text-fg2">{task.base}</span></div> : null
   // in focus it sits at the window's edge: no line there
   const focus = useStore((s) => focusHere(s.ui, s.snap))
   // split, a click on the open task on the right gives it the focus (the keys work on its chat)
@@ -455,8 +458,9 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
           }
           dot={task.status}
           p={task.report?.progress}
-          name={task.id}
-          kind={g ? `${task.name} · ${g.cli}` : task.name}
+          name={task.name}
+          expandName
+          kind={g ? `${task.id} · ${g.cli}` : task.id}
           right={
             g ? (
               <>
@@ -469,6 +473,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
           }
           report={task.report}
         />
+        {target}
         {/* no bar under a task's chat: the message box keeps clear of the home indicator itself */}
         <div className={clsx('flex min-h-0 flex-1 flex-col', !keyboard && 'pb-[env(safe-area-inset-bottom)]')}>
           <Scroll chat={!!g}>{body}</Scroll>
@@ -478,8 +483,8 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
   if (pane !== undefined)
     return (
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Head>
-          {pane ? null : <PlacesToggle when="closed" />}
+        <Head conversation>
+          {pane ? null : <><MenuButton /><PlacesToggle when="closed" /></>}
           <Dot s={task.status} p={task.report?.progress} halo />
           <Who name={task.name} kind={task.report ? <span className="flex min-w-0 gap-1">{task.id} ·<ReportLine w={task.report} head /></span> : `${task.id} · ${coordinator}`} />
           <div className="flex shrink-0 items-center gap-1">
@@ -488,6 +493,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
             <PaneButtons i={pane} />
           </div>
         </Head>
+        {target}
         <Scroll chat={!!g}>{body}</Scroll>
       </section>
     )
@@ -498,7 +504,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
       onFocusCapture={split && !middle ? () => focusPane(-1) : undefined}
       className={clsx('flex min-h-0 min-w-0 flex-1 flex-col border-line', !focus && !middle && 'border-l')}
     >
-      <Head>
+      <Head conversation>
         {middle ? (
           <>
             <MenuButton />
@@ -520,6 +526,7 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
           {g ? <TaskMenu task={task} chatKey={g.chat} /> : null}
         </div>
       </Head>
+      {target}
       <Scroll chat={!!g}>{body}</Scroll>
     </section>
   )
@@ -607,13 +614,12 @@ function TasksPane({ place, i }: { place: Place; i: number }) {
   const snap = useSnap()!
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
-  const c = counts(snap, place.id)
   return (
     <section aria-label={`Tasks of ${place.name}`} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <Head>
         {i ? null : <PlacesToggle when="closed" />}
         <TasksIcon className={clsx(ic, 'text-fg2')} />
-        <Who name={<span className="flex items-center gap-1.5">Tasks<Count n={c.tasks} label={`${c.tasks} waiting on you`} /></span>} kind={placeKind(snap, place) ? `${place.name} · ${placeKind(snap, place)}` : place.name} />
+        <Who name={<span className="flex items-center gap-1.5">Tasks<TaskAttention /></span>} kind={placeKind(snap, place) ? `${place.name} · ${placeKind(snap, place)}` : place.name} />
         {TasksMenu ? <TasksMenu key={place.id} place={place} /> : null}
         <PaneButtons i={i} />
       </Head>
@@ -728,6 +734,7 @@ function Divider({ at, box }: { at: number; box: RefObject<HTMLDivElement | null
 function WideLayout({ snap }: { snap: Snapshot }) {
   const settings = useUI((u) => !!u.settings)
   const desktop = useUI((u) => u.device === 'desktop')
+  const docked = useStore((s) => placesDocked(s.ui, s.snap))
   // the open task whose side panel has a column here
   const panel = useUI((u) => (panelHere(u, snap) ? u.task : null))
   const Settings = registry.views.settings
@@ -736,6 +743,7 @@ function WideLayout({ snap }: { snap: Snapshot }) {
       <Frame places>
         <Sidebar />
         <Settings />
+        {!docked ? <Drawer /> : null}
       </Frame>
     )
   if (desktop) {
@@ -745,6 +753,7 @@ function WideLayout({ snap }: { snap: Snapshot }) {
         <Sidebar />
         <Middle snap={snap} />
         <TaskColumn snap={snap} />
+        {!docked ? <Drawer /> : null}
         {task ? (
           <PanelColumn>
             <TaskPanel task={task} />
@@ -793,7 +802,6 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
   const Artifacts = registry.views.artifacts
-  const c = { tasks: listWaiting(snap, view) }
   const lists = tab !== 'chat' && pinned
   return (
     <div data-drawer-from className="relative flex min-h-0 flex-1 flex-col">
@@ -801,7 +809,7 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
         left={<MenuButton />}
         name={lists ? (view.chips.length ? chipName(snap, view.chips[0]) + (view.chips.length > 1 ? ` +${view.chips.length - 1}` : '') : 'Everything') : place.name}
         icon={<PlaceIcon level={2} className="text-fg2" />}
-        kind={lists ? 'Pinned' : placeKind(snap, place)}
+        kind={lists ? 'Locked' : placeKind(snap, place)}
         mark={tab === 'chat' ? <PlaceMarks place={place} /> : undefined}
         right={
           tab === 'chat' ? (
@@ -827,14 +835,14 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
         <div className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain">{tab === 'artifacts' && Artifacts ? <Artifacts placeId={place.id} /> : Tasks ? <Tasks placeId={place.id} /> : null}</div>
       )}
       {/* the keyboard is up: the message box sits right on it, so more of the chat shows */}
-      {keyboard ? null : <PhoneBar tasks={c.tasks} />}
+      {keyboard ? null : <PhoneBar />}
       <Drawer />
     </div>
   )
 }
 
 /** Chat | Tasks | Artifacts and Search at the bottom of the phone */
-function PhoneBar({ tasks }: { tasks: number }) {
+function PhoneBar() {
   const tab = useUI((u) => u.tab)
   return (
     <div className="flex shrink-0 gap-2 px-4 pt-1 pb-[max(env(safe-area-inset-bottom),--spacing(4))]">
@@ -858,11 +866,11 @@ function PhoneBar({ tasks }: { tasks: number }) {
             {/* a phone in Display Zoom (320px) has room for the words only */}
             <Icon className={clsx(ic, 'max-[359px]:hidden')} />
             {l}
-            {k === 'tasks' ? <Count n={tasks} label={`${tasks} waiting on you`} /> : null}
+            {k === 'tasks' ? <TaskAttention /> : null}
           </button>
         ))}
       </div>
-      <RoundButton label="Search" className="size-14" onClick={() => setUI({ search: true })}>
+      <RoundButton label="Search" className="size-14" onClick={() => setUI({ search: true, searchScope: undefined })}>
         <SearchIcon className={ic} />
       </RoundButton>
     </div>

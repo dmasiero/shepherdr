@@ -1,3 +1,5 @@
+import { chatProblem } from './readers/index.ts'
+import { LinkBackoff } from './recovery.ts'
 // Every agent Shepherdr talks to is an ordinary herdr agent. This keeps which herdr agent and which log files belong
 // to each chat, starts and resumes agents, and sends what you write: at once, even while the agent works (Claude Code,
 // Codex and pi take it mid-turn, as steering). It waits only while the CLI shows a menu or permission prompt, where typed
@@ -7,7 +9,7 @@ import { mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Emitter } from '../source.ts'
 import { readJson, writeJson } from '../store.ts'
-import type { TermScreen } from '../../shared/types.ts'
+import type { AgentRuntime, TermScreen } from '../../shared/types.ts'
 import { herdr, Subscription, type AgentInfo, type AgentStatus, type HerdrError, type HerdrEvent } from './herdr.ts'
 import { ClaudeSessions, Reviewers, screenBackground, sessionBackground, type Background } from './readers/background.ts'
 import { claudeHome, claudeLogPath, findClaudeLog, findCodexLog, findLog, findPiLog, logKind } from './readers/find.ts'
@@ -16,9 +18,13 @@ import { tag } from './chatlines.ts'
 import { hookSettings, HookLogs, type Said } from './readers/hooks.ts'
 import * as task from './mfs.ts'
 import { boxDir, mirrored } from './mfs.ts'
-import { runSync } from './box.ts'
+import { agentEnv, BOX, helperDir, run, runSync } from './box.ts'
+import { ROOT } from '../root.ts'
 import { leftAtPrompt } from './commands.ts'
 import { paneWrong, type Wrong } from './revive.ts'
+import { readCodexRuntime } from './codex-runtime.ts'
+import { SecretAccess } from './secret-access.ts'
+import { isAgentProcess } from './agent-process.ts'
 
 /** a log's name (its session id), wherever it lies: one named both by its mirrored path and by its own is one log */
 const logName = (f: string) => f.slice(f.lastIndexOf('/') + 1)
@@ -127,7 +133,10 @@ export interface Sent {
   item: OutItem
 }
 
+export const ROUTING_FAILURE = 'Could not provision private agent command routing'
+
 type Events = {
+  routed: [key: string]
   status: [key: string, status: AgentStatus | 'gone']
   logs: [key: string]
   sent: [item: OutItem]
@@ -180,12 +189,24 @@ export class Agents extends Emitter<Events> {
   private byName = new Map<string, string>()
   private timer: ReturnType<typeof setInterval> | null = null
   private sub: Subscription
+  readonly secretAccess = new SecretAccess()
+  secretScope: (chat: string) => string[] | undefined = () => undefined
+  private readingBackground = false
+  private refreshing = false
+  private stopped = false
+  private retryAt = 0
+  private recovery = new LinkBackoff()
+  private routesAt = 0
+  private routing = false
+  private routes = new Map<string, string>()
   private starting = new Map<string, Promise<AgentInfo | null>>()
   /** agents being stopped for a restart: what you send waits for the one it starts */
   private stopping = new Set<string>()
   private delivering = new Set<string>()
   /** what went in lately with a screen's id: the chat gives the id back once it reads the message from the log */
   private delivered: OutItem[] = []
+  /** Durable internal news receipts, unlike the screen's short-lived send history. */
+  private newsReceipts: string[] = readJson('requested-news-receipts.json', [])
   /** everything that went in lately, with when: what a merge checks the agent has read, so kept across a restart */
   private typed: OutItem[] = readJson('typed.json', [])
   /** what a screen sent that waited and then couldn't go in: the screen says so and offers Retry */
@@ -264,6 +285,7 @@ export class Agents extends Emitter<Events> {
   }
 
   stop() {
+    this.stopped = true
     if (this.timer) clearInterval(this.timer)
     if (this.soon) clearTimeout(this.soon)
     this.hookWatch?.close()
@@ -284,8 +306,54 @@ export class Agents extends Emitter<Events> {
     return r ? this.live.get(r.name) : undefined
   }
 
+  /** Private routing was bound to this session's actual CLI process. */
+  routed(key: string) {
+    return this.reachable && !!this.info(key)?.agent && !this.record(key)?.finished && this.routes.has(key)
+  }
+
   status(key: string): AgentStatus | 'gone' {
     return statusFrom(this.said(key), this.info(key)?.agent_status ?? 'gone')
+  }
+
+  private codexState = new Map<string, AgentRuntime>()
+  private runtimeAt = 0
+  private runtimeReading = false
+
+  runtime(key: string): AgentRuntime | undefined {
+    const state = this.codexState.get(key)
+    return this.info(key) && state && Date.now() - state.at < 10_000 ? state : undefined
+  }
+
+  private async readRuntime() {
+    if (this.runtimeReading || Date.now() - this.runtimeAt < 5000) return
+    this.runtimeReading = true
+    this.runtimeAt = Date.now()
+    try {
+      const sessions = new Map<string, { id: string; started: number }>()
+      for (const [key, r] of Object.entries(this.records)) {
+        if (r.kind !== 'codex' || !this.info(key)) continue
+        const active = this.info(key)?.agent_session
+        const id = active?.kind === 'id' ? active.value
+          : (active?.kind === 'path' ? active.value : r.logs.at(-1))?.match(/([0-9a-f-]{36})\.jsonl$/)?.[1]
+        if (id) sessions.set(key, { id, started: r.started })
+      }
+      const states = await readCodexRuntime([...new Set([...sessions.values()].map((s) => s.id))])
+      this.codexState.clear()
+      for (const [key, session] of sessions) {
+        if (this.records[key]?.started !== session.started) continue
+        const state = states.get(session.id)
+        if (state) this.codexState.set(key, state)
+        this.emit('logs', key)
+      }
+    } catch { this.codexState.clear() } finally { this.runtimeReading = false }
+  }
+
+  /** Runtime fields reported by this launch's main Claude process, never its subagents. */
+  runtimeHook(key: string) {
+    const r = this.records[key]
+    if (!r?.hooks || r.kind !== 'claude' || !this.info(key)) return undefined
+    const h = this.hooks.read(mirrored(r.hooks)).runtime
+    return h && h.at >= r.started && (!h.session || h.session === r.sessionId) ? h : undefined
   }
 
   /** what the agent reports of itself, from its hooks; nothing when it reports nothing (see statusFrom). A turn its log
@@ -317,9 +385,15 @@ export class Agents extends Emitter<Events> {
   /* ---------- herdr state ---------- */
 
   async refresh() {
+    if (this.stopped || this.refreshing || (BOX && Date.now() < this.retryAt)) return
+    this.refreshing = true
     this.saidAt.clear()
     try {
       const list = await herdr.agents()
+      if (this.stopped) return
+      if (!this.reachable && BOX) console.info('shepherdr: herdr link recovered')
+      this.recovery.success()
+      this.retryAt = 0
       this.reachable = true
       this.lastReach = Date.now()
       this.live = new Map(list.filter((a) => a.name).map((a) => [a.name!, a]))
@@ -329,7 +403,23 @@ export class Agents extends Emitter<Events> {
         this.told.set(key, now)
         if (was !== now) this.changed(key, now)
       }
-      await this.readBackground()
+      for (const r of Object.values(this.records)) {
+        if (!this.live.has(r.name) || r.finished) {
+          this.secretAccess.revoke(r.key)
+          this.routes.delete(r.key)
+        }
+      }
+      // Repair running sessions without interrupting them, including ones restored by herdr.
+      if (Date.now() - this.routesAt > 30_000 && !this.routing) {
+        this.routesAt = Date.now()
+        void this.repairRoutes()
+      }
+      void this.readRuntime()
+      // Slow pane reads must not hold up transport health checks.
+      if (!this.readingBackground) {
+        this.readingBackground = true
+        void this.readBackground().catch(() => undefined).finally(() => { this.readingBackground = false })
+      }
       // learn log files herdr names (its agent integrations report them)
       for (const [name, key] of this.byName) this.learnSession(key, this.live.get(name))
       // and the session its hooks say it is in now, which herdr doesn't name: a /clear starts another
@@ -344,12 +434,50 @@ export class Agents extends Emitter<Events> {
         ...[...this.watchedPanes].map((pane_id) => ({ type: 'pane.output_changed', pane_id })),
       ])
     } catch {
+      if (BOX) this.retryAt = Date.now() + this.recovery.fail()
       if (this.reachable) {
+        if (BOX) console.info('shepherdr: herdr link lost; retrying (3–30s backoff)')
         this.reachable = false
         this.emit('status', '*', 'gone')
       }
       this.checkStranded()
+    } finally {
+      this.refreshing = false
     }
+  }
+
+  /** Bind the actual CLI process, not HERDR_PANE_ID (old shells can inherit another pane's id). */
+  private async bindRoute(r: AgentRecord, pane: string) {
+    const p = await herdr.processInfo(pane)
+    const proc = p.foreground_processes?.find((x) => x.pid && isAgentProcess(r.kind, x.argv))
+    if (!proc?.pid || r.finished || this.records[r.key]?.finished || this.stopping.has(r.key)) { this.routes.delete(r.key); this.secretAccess.revoke(r.key); return }
+    const env = agentEnv(r.key, ROOT)
+    const chain = this.secretScope(r.key)
+    const capability = chain ? this.secretAccess.issue(r.key, `${proc.pid}:${r.started}`, chain) : undefined
+    const route = { chat: r.key, cwd: r.cwd, capability, credentialFile: this.records[r.key]?.env?.SHEPHERDR_SECRET_FILE ?? r.env?.SHEPHERDR_SECRET_FILE ?? env.SHEPHERDR_SECRET_FILE, ...(BOX ? { helper: env.SHEPHERDR_COMMAND } : { url: env.SHEPHERDR_URL }) }
+    const signature = JSON.stringify([proc.pid, route])
+    if (this.routes.get(r.key) === signature) { this.emit('routed', r.key); return }
+    const router = BOX ? join(helperDir(BOX.home), 'route.pl') : join(ROOT, 'helper', 'route.pl')
+    const result = await run(['perl', router, '--bind', String(proc.pid)], { stdin: JSON.stringify(route), timeoutMs: 5000 })
+    if (result.code) {
+      this.routes.delete(r.key)
+      this.secretAccess.revoke(r.key)
+      throw new Error(ROUTING_FAILURE)
+    }
+    // A stop may have raced the asynchronous provisioning write. Never restore its authority.
+    if (this.records[r.key]?.finished || this.stopping.has(r.key)) { this.secretAccess.revoke(r.key); return }
+    this.routes.set(r.key, signature)
+    this.emit('routed', r.key)
+  }
+
+  private async repairRoutes() {
+    this.routing = true
+    try {
+      for (const r of Object.values(this.records)) {
+        const a = this.live.get(r.name)
+        if (a) await this.bindRoute(r, a.pane_id).catch((e) => console.error(`shepherdr: routing ${r.key}: ${e.message}`))
+      }
+    } finally { this.routing = false }
   }
 
   /**
@@ -386,6 +514,7 @@ export class Agents extends Emitter<Events> {
    *  as a status change, since the agent may have woken, said a word and stopped again in between herdr's looks. */
   private async readBackground() {
     for (const key of this.byName.values()) {
+      if (this.stopped) return
       const r = this.records[key]
       const st = this.status(key)
       const pane = this.info(key)?.pane_id
@@ -411,7 +540,7 @@ export class Agents extends Emitter<Events> {
   /** what a screen sent waits only on a menu or a starting agent: one whose agent is gone (or herdr out of reach) for a
    *  while fails */
   checkStranded(now = Date.now()) {
-    const keys = new Set(this.outbox.filter((o) => o.cid).map((o) => o.key))
+    const keys = new Set(this.outbox.filter((o) => o.cid && !o.cid.startsWith('requested-news:')).map((o) => o.key))
     for (const key of this.stranded.keys()) if (!keys.has(key)) this.stranded.delete(key)
     for (const key of keys) {
       if (this.reachable && this.status(key) !== 'gone') {
@@ -428,7 +557,7 @@ export class Agents extends Emitter<Events> {
 
   /** what a screen sent that waits for this agent fails: the screen says why and offers Retry */
   private fail(key: string, error: string) {
-    const mine = this.outbox.filter((o) => o.key === key && o.cid)
+    const mine = this.outbox.filter((o) => o.key === key && o.cid && !o.cid.startsWith('requested-news:'))
     if (!mine.length) return
     const now = Date.now()
     this.outbox = this.outbox.filter((o) => !mine.includes(o))
@@ -533,6 +662,8 @@ export class Agents extends Emitter<Events> {
    * message. `before` throwing leaves it as it was.
    */
   restart(spec: Spec, before?: () => Promise<string | void>): Promise<AgentInfo | null> {
+    const problem = chatProblem(spec.kind)
+    if (problem) return Promise.reject(new Error(problem))
     const p0 = this.starting.get(spec.key)
     const p = (async () => {
       await p0?.catch(() => undefined)
@@ -552,8 +683,10 @@ export class Agents extends Emitter<Events> {
 
   /** start (or resume) this chat's agent; resolves once herdr says it is ready for input */
   ensure(spec: Spec): Promise<AgentInfo | null> {
+    const problem = chatProblem(spec.kind)
+    if (problem) return Promise.reject(new Error(problem))
     const running = this.live.get(spec.name)
-    if (running) return Promise.resolve(running)
+    if (running) return this.bindRoute({ ...this.records[spec.key], ...spec } as AgentRecord, running.pane_id).then(() => running)
     const p0 = this.starting.get(spec.key)
     if (p0) return p0
     const p = this.launch(spec).finally(() => this.starting.delete(spec.key))
@@ -562,11 +695,15 @@ export class Agents extends Emitter<Events> {
   }
 
   private async launch({ first, pane: place, was, ...spec }: Spec) {
+    this.secretAccess.revoke(spec.key)
+    this.routes.delete(spec.key)
     const old = this.records[spec.key]
     const resume = old && old.kind === spec.kind && (old.sessionId || old.logs.length)
     const r: AgentRecord = old ?? { ...spec, logs: [], started: Date.now() }
+    const changedPrompt = old?.system !== spec.system
     const from = old?.cwd
     Object.assign(r, { name: spec.name, kind: spec.kind, cwd: spec.cwd, workspace: spec.workspace, tab: spec.tab ?? r.tab, env: spec.env ?? r.env, access: spec.access ?? r.access, model: spec.model ?? r.model, effort: spec.effort ?? r.effort, system: spec.system ?? r.system, set: spec.set ?? r.set, finished: false })
+    this.codexState.delete(spec.key)
     r.started = Date.now()
     if (!resume) r.sessionId = r.kind === 'codex' ? undefined : randomUUID()
     // a run of its own: what its hooks record starts over
@@ -601,9 +738,10 @@ export class Agents extends Emitter<Events> {
       }
     }
     await this.refresh()
+    await this.bindRoute(r, pane)
     // CLIs without an option for extra instructions get them first, hidden from the chat. Both wait until the CLI is
     // ready, ahead of what you sent meanwhile (a restart)
-    this.queue(r.key, [r.kind !== 'claude' && r.kind !== 'pi' && !resume && r.system ? hidden(r.system) : '', first ?? ''].filter(Boolean), true)
+    this.queue(r.key, [r.kind !== 'claude' && r.kind !== 'pi' && (!resume || changedPrompt) && r.system ? hidden(r.system) : '', first ?? ''].filter(Boolean), true)
     setTimeout(() => this.deliver(r.key), 1000)
     setTimeout(() => this.discoverLog(r.key), 3000)
     setTimeout(() => this.discoverLog(r.key), 15000)
@@ -632,6 +770,10 @@ export class Agents extends Emitter<Events> {
       if (model) a.push('--model', model)
       if (effort) a.push('--thinking', effort)
     } else if (r.kind === 'codex') {
+      // Codex tools have their own environment policy. Set the owner explicitly even on resume;
+      // do not depend on the pane's login shell or its stale inherited environment.
+      const env = { ...r.env, ...agentEnv(r.key, ROOT) }
+      a.push('-c', `shell_environment_policy.set={${Object.entries(env).map(([k, v]) => `${JSON.stringify(k)}=${JSON.stringify(v)}`).join(',')}}`)
       // its own last log: a task it took over keeps the logs of the agent before it too
       const id = resume ? r.logs.findLast((f) => (logKind(f) ?? 'codex') === 'codex')?.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/)?.[1] : undefined
       if (id) a.unshift('resume', id)
@@ -688,6 +830,8 @@ export class Agents extends Emitter<Events> {
   /** started again by `start` (that resumes its session), its pane closed first where it still holds it (its CLI
    *  exited, or runs on outdated files). Meanwhile what you send waits for the one it starts, as in a restart */
   async relaunch(key: string, close: boolean, start: () => Promise<unknown>) {
+    this.secretAccess.revoke(key)
+    this.routes.delete(key)
     this.stopping.add(key)
     try {
       const a = close ? this.info(key) : undefined
@@ -752,6 +896,7 @@ export class Agents extends Emitter<Events> {
   }
 
   private async sendNow(key: string, text: string, { reaction, ensure, cid, idle, command }: SendOpts): Promise<Sent> {
+    if (cid?.startsWith('requested-news:') && this.newsReceipts.includes(cid)) return { waiting: false, item: { id: cid, cid, key, text, at: Date.now() } }
     const again = cid && this.outbox.find((o) => o.cid === cid)
     if (again) return { waiting: true, waitsFor: this.whyWaits(key), item: again }
     const done = cid && this.delivered.find((o) => o.cid === cid)
@@ -830,13 +975,18 @@ export class Agents extends Emitter<Events> {
       for (;;) {
         const next = this.outbox.find((o) => o.key === key)
         if (!next) return void this.unready.delete(key)
+        if (next.cid?.startsWith('requested-news:') && this.newsReceipts.includes(next.cid)) {
+          this.outbox = this.outbox.filter((o) => o !== next)
+          this.save()
+          continue
+        }
         await this.beforeInput?.(key)
         if (this.heldBy(key, next)) return
         await this.put(key, next)
         this.unready.delete(key)
+        this.went(next)
         this.outbox = this.outbox.filter((o) => o !== next)
         this.save()
-        this.went(next)
         this.emit('sent', next)
         // give the CLI a moment to take it before the next item
         await new Promise((r) => setTimeout(r, 1500))
@@ -897,6 +1047,10 @@ export class Agents extends Emitter<Events> {
     this.typed = [...this.typed.filter((o) => now - o.at < 600_000), { ...item, at: now }].slice(-200)
     writeJson('typed.json', this.typed)
     if (!item.cid) return
+    if (item.cid.startsWith('requested-news:') && !this.newsReceipts.includes(item.cid)) {
+      this.newsReceipts.push(item.cid)
+      writeJson('requested-news-receipts.json', this.newsReceipts)
+    }
     this.delivered = [...this.delivered.filter((o) => now - o.at < 600_000), { ...item, at: now }].slice(-200)
   }
 
@@ -938,6 +1092,8 @@ export class Agents extends Emitter<Events> {
 
   /** end a task agent's run: its pane closes; its chat stays and writing to it resumes it */
   async finish(key: string) {
+    this.secretAccess.revoke(key)
+    this.routes.delete(key)
     const r = this.records[key]
     const a = this.info(key)
     if (r) r.finished = true
@@ -950,6 +1106,8 @@ export class Agents extends Emitter<Events> {
 
   /** a deleted task's agent, forgotten: its record (so its chat no longer reads its CLI's log) and what waited for it */
   forget(key: string) {
+    this.secretAccess.revoke(key)
+    this.routes.delete(key)
     const r = this.records[key]
     if (r && this.byName.get(r.name) === key) this.byName.delete(r.name)
     delete this.records[key]

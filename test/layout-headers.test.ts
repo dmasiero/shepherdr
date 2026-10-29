@@ -123,17 +123,17 @@ describe.skipIf(!browser)('the place header', () => {
       const bar = title.closest('.border-b')!
       // the place's icon (SHE-207) before its name: on a phone the two are centred together
       const icon = title.querySelector('svg')?.getBoundingClientRect()
-      return { dots: bar.querySelectorAll('.dot').length, icon: icon?.toJSON() as Box | undefined, bar: bar.getBoundingClientRect().toJSON() as Box, title: title.getBoundingClientRect().toJSON() as Box, name: (title.querySelector('span') ?? title).getBoundingClientRect().toJSON() as Box }
+      return { reading: (bar.querySelector("[data-conversation-head]") ?? bar).getBoundingClientRect().toJSON() as Box, dots: bar.querySelectorAll('.dot').length, icon: icon?.toJSON() as Box | undefined, bar: bar.getBoundingClientRect().toJSON() as Box, title: title.getBoundingClientRect().toJSON() as Box, name: (title.querySelector('span') ?? title).getBoundingClientRect().toJSON() as Box }
     })
 
   test('no status dot before the place name, the title still sits right', async () => {
-    // desktop with its sidebar open: the title starts at the header's own padding
+    // desktop with its sidebar open: the title follows the conversation reading column
     const desk = await browser!.newPage({ viewport: { width: 1440, height: 800 } })
     await desk.goto(url())
     await desk.waitForSelector('#places li')
     const d = await head(desk)
     expect(d.dots).toBe(0)
-    expect(Math.abs(d.title.left - d.bar.left - 16)).toBeLessThan(0.5)
+    expect(Math.abs(d.title.left - d.reading.left - 20)).toBeLessThan(0.5)
     await desk.close()
     // a tablet: the title right after the Places button
     const tablet = await browser!.newPage({ viewport: { width: 900, height: 800 } })
@@ -169,7 +169,7 @@ describe.skipIf(!browser)('the Tasks header', () => {
         return { pressed: b.getAttribute('aria-pressed'), bg: st.backgroundColor, shadow: st.boxShadow }
       }
       const [tasks, artifacts] = [...tabs.querySelectorAll('button')]
-      const count = tasks.querySelector('[aria-label$="waiting on you"]')
+      const count = tasks.querySelector('[data-attention-badge]')
       return {
         text: bar.textContent,
         tabs: rect(tabs),
@@ -195,8 +195,8 @@ describe.skipIf(!browser)('the Tasks header', () => {
           await page.waitForSelector('section[aria-label="Tasks"] [role="group"][aria-label="Show"]')
           await page.getByText('Needs you', { exact: true }).first().waitFor()
           const t = await head(page)
-          // the tabs, the count on Tasks, nothing else: no "· place" to mistake for a third tab
-          expect(t.text).toMatch(/^Tasks\d*Artifacts$/)
+          // The tabs keep separate Needs you / Ready counts and the approved filter lock.
+          expect(t.text).toMatch(/^Tasks[\d+]*ArtifactsLock$/)
           expect(t.text).not.toContain('·')
           expect(await page.getByText('everything under it').count()).toBe(0)
           // the shown tab is plainly picked: filled and edged; the other is bare
@@ -217,7 +217,7 @@ describe.skipIf(!browser)('the Tasks header', () => {
           // and it stays right there with Artifacts shown
           await page.getByRole('button', { name: 'Artifacts', exact: true }).click()
           const still = await page.evaluate(() => {
-            const c = document.querySelector('[aria-label="Show"] button [aria-label$="waiting on you"]')
+            const c = document.querySelector('[aria-label="Show"] button [data-attention-badge]')
             return c ? (c.getBoundingClientRect().toJSON() as Box) : null
           })
           expect(still).toEqual(t.count)
@@ -411,4 +411,56 @@ describe.skipIf(!browser)('a coordinator working in the background', () => {
       c.messages = c.messages.filter((m) => m.id !== 'bg-reply')
     })
   }, 30_000)
+})
+
+
+describe.skipIf(!browser)('clear phone task titles', () => {
+  test('a long task name can be expanded while its ID and progress stay visible', async () => {
+    const task = world.tasks.find((t) => t.id === 'GTM-14')!
+    const was = task.name
+    const name = 'Bundle skills into the template with clear instructions for every machine and every new project'
+    task.name = name
+    const page = await browser!.newPage({ viewport: { width: 320, height: 740 }, hasTouch: true })
+    try {
+      await page.goto(`${url()}&task=GTM-14`)
+      const title = page.getByRole('button', { name: `Show full task title: ${name}` })
+      await title.waitFor()
+      const header = page.locator('[data-chrome]').filter({ has: title })
+      expect(await header.textContent()).toContain('GTM-14 · Claude Code')
+      expect(await header.textContent()).toContain('62%')
+      expect(await title.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true)
+      await title.click()
+      const expanded = page.getByRole('button', { name: `Collapse task title: ${name}` })
+      expect(await expanded.getAttribute('aria-expanded')).toBe('true')
+      expect(await expanded.evaluate((e) => e.scrollHeight <= e.clientHeight + 1)).toBe(true)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    } finally {
+      task.name = was
+      await page.close()
+    }
+  })
+})
+
+describe.skipIf(!browser)('conversation header alignment', () => {
+  test('space and task headers follow their reading column on very wide screens', async () => {
+    const page = await browser!.newPage({ viewport: { width: 2560, height: 1000 } })
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/gtm`)
+    await page.getByRole('textbox', { name: 'Message gtm…' }).waitFor()
+    const aligned = async () => page.locator('[data-conversation-head]').first().evaluate((head) => {
+      const messages = head.closest('section')!.querySelector('[data-messages]')!
+      const h = head.getBoundingClientRect(), m = messages.getBoundingClientRect()
+      return Math.abs(h.left - m.left) < 1 && Math.abs(h.width - m.width) < 1
+    })
+    expect(await aligned()).toBe(true)
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/gtm&task=GTM-14`)
+    await page.getByRole('textbox', { name: 'Message GTM-14…' }).waitFor()
+    await page.getByRole('button', { name: 'Hide gtm', exact: true }).click()
+    await page.getByRole('button', { name: 'Show gtm', exact: true }).waitFor()
+    const taskHead = page.locator('section:has(textarea[aria-label="Message GTM-14…"]) > [data-chrome] [data-conversation-head]').last()
+    expect(await taskHead.evaluate((head) => {
+      const messages = head.closest('section')!.querySelector('[data-messages]')!
+      return Math.abs(head.getBoundingClientRect().left - messages.getBoundingClientRect().left) < 1
+    })).toBe(true)
+    await page.close()
+  })
 })

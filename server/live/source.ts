@@ -1,3 +1,5 @@
+import { taskIdsSection } from './task-ids.ts'
+import { coordinatorRequestIds } from '../../shared/attention.ts'
 // The live source: herdr is the truth for agents and their states; the CLIs' own logs are the chats; Shepherdr keeps
 // only what herdr can't tell it (spaces, tasks, modes, cards, settings). Assembled from the base plugins' parts.
 import { execSync } from 'node:child_process'
@@ -25,7 +27,7 @@ import { excerpt, line, tag } from './chatlines.ts'
 import { Chats, menuId, menuKeys, rememberReply } from './chats.ts'
 import { age, checkTitle, ended, Engine, fitStatus, type TaskRec } from './engine/engine.ts'
 import { listFolders, makeRepo, resolveInHome } from './folders.ts'
-import { sh } from './engine/git.ts'
+import { sh, validateBase } from './engine/git.ts'
 import { Artifacts, browserChecker, type ArtifactRec, type Checker } from './artifacts.ts'
 import { Machines } from './machines.ts'
 import { agentEnv, BOX, boxHome } from './box.ts'
@@ -35,13 +37,15 @@ import { claudeProjectDir, piSessionDir } from './readers/find.ts'
 import { boxDir } from './mfs.ts'
 import * as task from './mfs.ts'
 import { asMode, HOME_SPACE, HOST, NAME, placeId, Places } from './places.ts'
-import { coordinatorPrompt, relaunchedLine, restartLine, resumedLine, settingsBlock } from './prompts.ts'
-import { fitHarness, harnessWords, recentChat, restartHint, restartInfo, type Harness } from './restart.ts'
+import { privatePrompt, coordinatorPrompt, relaunchedLine, restartLine, resumedLine, settingsBlock } from './prompts.ts'
+import { fitHarness, harnessProblem, harnessWords, recentChat, restartHint, restartInfo, type Harness } from './restart.ts'
 import { Revivals, type Wrong } from './revive.ts'
 import { carryOn, Retries, type Retry } from './retry.ts'
-import { CATALOG, CLI_NAME, CLIS, kindOf, refuse, setForTask, Settings, type Level } from './settings.ts'
+import { CATALOG, CLI_NAME, CLIS, kindOf, refuse, setForTask, repositorySection, Settings, type Level } from './settings.ts'
 import { startVoice } from './voice.ts'
+import { SECRET_NAME, secretPages, Vault } from './secrets.ts'
 import { diffFiles, diffPatch, listFiles, pullRequest, readFile } from './worktree.ts'
+import { RequestedNewsMailbox } from './requested-news.ts'
 import { Unread } from './unread.ts'
 import { Monitor, meters, procLines, summary, topProcs, type HealthEvent, type Kind } from './health.ts'
 import { has, PLUGIN_KEY, pluginSection, setPluginOn } from '../plugins.ts'
@@ -74,6 +78,8 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
   automations = new Automations()
   heartbeats = new Heartbeats()
   artifacts = new Artifacts()
+  /** agents' secrets: one file on the main machine, which a worker for another machine reads there */
+  vault = new Vault(process.env.SHEPHERDR_MAIN_HOME || HOME)
   /** opens an artifact at phone width before anyone sees it (a test puts its own here) */
   checker: Checker = browserChecker(
     // on this machine, whichever machine the artifact came from
@@ -107,6 +113,8 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
   unread = new Unread()
   /** when this server started: only what comes after it buzzes as a new message */
   private born = Date.now()
+  private requestedNews = new RequestedNewsMailbox(process.env.SHEPHERDR_MAIN_HOME ?? HOME)
+  private drainingNews = false
   private watched: string[] = []
   /** the task whose card went up last, for its news that follows at once */
   private carded?: string
@@ -122,6 +130,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
   /** when a busy machine last had its finished tasks' browsers closed */
   private sweptAt = 0
   devices: () => string[] = () => []
+  pushWarnings: () => string[] = () => []
   /** the main machine runs every other machine saved in herdr, each from a worker of its own (machines.ts); a worker
    *  is one of those (box.ts) */
   peers: Machines | null = BOX ? null : new Machines(process.env.NODE_ENV === 'test' ? null : undefined)
@@ -143,6 +152,11 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
 
   constructor() {
     super()
+    this.timers.push(setInterval(() => void this.drainRequestedNews(), 1000))
+    this.agents.secretScope = (chat) => {
+      const space = /^[^/]+\/(Agent|Reviewer)$/.test(chat) ? this.engine.task(chat.split('/')[0])?.project : this.places.find(chat)?.id === chat ? chat : undefined
+      return space ? [space, placeId.machine(), 'all'] : undefined
+    }
     mkdirSync(HOME, { recursive: true })
     // what the Watcher kept, from before agents reported their own progress
     for (const f of ['watcher.json', 'watcher-call.json']) rmSync(join(HOME, f), { force: true })
@@ -171,6 +185,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       this.emit('chat', key)
       this.fresh(key)
     }
+    this.agents.on('routed', (key) => this.engine.routeRecovered(key))
     this.agents.on('status', (key, st) => {
       if (key === '*') return this.emit('snapshot')
       this.revivals.status(key, st)
@@ -425,6 +440,22 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
     return out
   }
 
+  /** Read original chats only: forwarded cards must never multiply requests. */
+  private attentionRequests(): Record<string, string[]> {
+    const out: Record<string, string[]> = {}
+    for (const p of [placeId.home(), ...this.places.spaces.map((x) => placeId.space(x.name))]) {
+      const log = this.chats.log(p)
+      out[p] = coordinatorRequestIds(log.posted, log.answers, openCards(this.chats.chat(p)).map((m) => m.question.id), this.agents.status(p) === 'blocked')
+    }
+    for (const t of this.engine.tasks.filter((t) => !t.archived && this.engine.statusOf(t) === 'need')) {
+      const key = `${t.id}/Agent`
+      const ids = openCards(this.chats.chat(key)).map((m) => m.question.id)
+      // Plain questions and permission menus without a card still require one response.
+      out[key] = ids.length ? ids : ['attention']
+    }
+    return out
+  }
+
   /** the Everywhere defaults, for the other machines (they keep a copy) */
   everywhere() {
     return this.settings.everywhere()
@@ -437,11 +468,13 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
     const peers = this.peers?.list() ?? []
     const automations: Snapshot['automations'] = Object.fromEntries(places.map((p) => [p.id, this.automations.view(p.id, this.settings.zone())]))
     const asks = this.asks()
+    const attentionRequests = this.attentionRequests()
     for (const l of peers) {
       Object.assign(automations, l.snap?.automations ?? {})
       Object.assign(asks, l.snap?.asks ?? {})
+      Object.assign(attentionRequests, l.snap?.attentionRequests ?? {})
     }
-    return {
+    return this.withSecrets({
       name: 'Shepherdr',
       host: HOST,
       places,
@@ -455,6 +488,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       automations,
       artifacts: [...Object.values(this.artifacts.list).map((a) => this.artifactView(a)), ...peers.flatMap((l) => l.snap?.artifacts ?? [])].sort((a, b) => b.at - a.at),
       asks,
+      attentionRequests,
       last: Object.assign({}, ...peers.map((l) => l.snap?.last ?? {}), this.unread.last),
       read: this.unread.read,
       sections,
@@ -469,9 +503,21 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
         ['~', ...this.places.spaces.map((p) => p.name)],
         NAME,
         (id) => this.heartbeats.read(id, this.roleOf(id)),
-      ).concat(peers.flatMap((l) => (l.snap?.settings ?? []).filter((x) => x.machine === l.rec.machine))),
+        this.pushWarnings(),
+      ).concat(this.places.spaces.map((p) => {
+        const id = placeId.space(p.name)
+        this.engine.taskIds.ensure(id, p.key)
+        const seq = this.engine.taskIds.get(id)
+        return taskIdsSection(id, HOST, seq.prefix, seq.last + 1)
+      })).concat(this.places.spaces.map((p) => repositorySection(placeId.space(p.name), HOST, p.base))).concat(peers.flatMap((l) => (l.snap?.settings ?? []).filter((x) => x.machine === l.rec.machine))),
       user: this.user,
-    }
+    })
+  }
+
+  /** each level's Secrets page, after its other pages: the names kept there, never a value. The main machine's
+   *  snapshot has them for every machine (the vault is its own); a worker's has none */
+  private withSecrets(s: Snapshot): Snapshot {
+    return BOX ? s : { ...s, settings: secretPages(s.settings, this.vault.names()) }
   }
 
   chat(key: string): Chat | undefined {
@@ -883,7 +929,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       workspace: c.workspace,
       was: (c as { was?: string }).was,
       tab: c.tab,
-      system: coordinatorPrompt({ role: this.roleOf(id), name: c.label, path: c.path, machine: NAME }, this.places.mode(id)),
+      system: coordinatorPrompt({ role: this.roleOf(id), name: c.label, path: c.path, machine: NAME, chat: id }, this.places.mode(id)) + '\n\n' + privatePrompt(this.settings.instructions('coordinator', this.spaceKey(id))),
       env: agentEnv(id, ROOT),
     }
     return o.restart ? this.agents.restart(spec, o.restart) : this.agents.ensure(spec)
@@ -940,7 +986,10 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
    *  Settings too */
   private async restart(key: string, to: Partial<Harness>, save = false) {
     const x = this.restartable(key)
-    const h = fitHarness({ ...x.want, ...to, kind: to.kind ?? x.want.kind })
+    const requested = { ...x.want, ...to, kind: to.kind ?? x.want.kind }
+    const problem = harnessProblem(requested)
+    if (problem) throw new Error(problem)
+    const h = fitHarness(requested)
     // refused before anything is saved
     if (x.t && ended(x.t)) throw new Error(`${x.t.id} is Done already: it has no agent to restart.`)
     if (x.t && !x.t.worktree) throw new Error(`${x.t.id} hasn't started yet: it starts on what its brief says.`)
@@ -1090,11 +1139,39 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
               : ' Act on it by your Autopilot rules. Nothing worth saying: reply with only <no-reply>reason</no-reply>.'
       this.agents.send(id, hidden(`${prefix}${text}.${tail}`, 'news', about), { ensure: () => this.coordinator(id) }).catch(() => undefined)
     }
+    const requester = about?.task ? this.engine.task(about.task)?.requester : undefined
+    // Owner and home already heard above. The main home already receives the overview over the worker link.
+    const mainHome = requester && !BOX ? placeId.home() : undefined
+    if (requester && requester !== project && requester !== mainHome && !(requester === home && this.places.mode(home) === 'autopilot')) {
+      this.requestedNews.post({ to: requester, from: project, text, task: about!.task, event: about!.event })
+      void this.drainRequestedNews()
+    }
     // for the main machine's home space, when this is another machine's worker: its link carries it there (app.ts; the
     // main machine has no link, and hears its own above)
     this.emit('news', { place: project, line: text, kind, about })
     // one event each: a task that went wrong is failed, not needs-you too
     this.fireTaskAutomations(this.happened(kind, project, text, about?.task), project, about?.task)
+  }
+
+  private async drainRequestedNews() {
+    if (this.drainingNews) return
+    this.drainingNews = true
+    try {
+      await this.requestedNews.drain(
+        (chat) => chat.startsWith(`p:${HOST}:`),
+        async (n) => {
+          // Removed spaces and invented identities must not start a coordinator or receive task details.
+          if (!this.places.find(n.to) || !this.agents.record(n.to) || this.agents.record(n.to)?.finished) return
+          // Main home receives this event through the existing overview route.
+          if (n.to === placeId.home() && !BOX) return
+          const kind = ({ added: 'added', ready: 'ready', 'needs-you': 'need', merged: 'done', closed: 'done', stalled: 'stalled' } as const)[n.event as 'ready'] ?? 'need'
+          if (!this.wakes(n.to, this.happened(kind, n.from, n.text, n.task), `${n.from}: ${n.text}`)) return
+          const words = `${n.from}: ${n.text}. You requested this task. Its owning coordinator still handles it. Act only within the human's request; otherwise reply with only <no-reply>reason</no-reply>.`
+          await this.agents.send(n.to, hidden(words, 'news', { task: n.task, event: n.event }), { cid: `requested-news:${n.id}`, ensure: () => this.coordinator(n.to) })
+        },
+      )
+    } catch { /* keep it on disk until herdr/the coordinator can receive it */ }
+    finally { this.drainingNews = false }
   }
 
   /** news for the main machine's home space from another space, on any machine: its first line only, since that
@@ -1347,6 +1424,26 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
         return this.react(a.chat, a.message, a.emoji)
       case 'answer':
         return this.answer(a)
+      case 'secret': {
+        // kept on the main machine, whichever machine it is for: a worker never gets one from the screen
+        if (BOX) return { ok: false, error: 'Secrets are kept on the main machine.' }
+        const value = a.value === null ? null : String(a.value ?? '').replace(/[\r\n]+$/, '')
+        const r = this.vault.set(a.level, a.name, value)
+        if (!r.ok) return r
+        this.emit('snapshot')
+        // the agent that asked for it is told, by name, wherever it runs
+        if (a.card && value !== null) await this.act({ type: 'secret-saved', chat: a.card.chat, card: a.card.id, name: a.name, level: a.level })
+        return { ok: true }
+      }
+      case 'secret-saved': {
+        const posted = this.chats.log(a.chat).posted.find((x) => x.id === a.card && x.secret?.name === a.name)
+        if (!posted?.secret || !this.vault.has(a.level, a.name)) return { ok: false, error: 'That secret is not kept there.' }
+        const where = posted.secret.levels.find((l) => l.id === a.level)?.label ?? this.secretLevelName(a.level)
+        this.chats.post(a.chat, { id: a.card, secret: { ...posted.secret, saved: where } })
+        await this.send(a.chat, line.secret(this.user, a.name, where), [], true)
+        this.emit('chat', a.chat)
+        return { ok: true }
+      }
       case 'artifact-send':
       case 'artifact-note':
       case 'artifact-say': {
@@ -1399,32 +1496,8 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
         return {}
       }
       case 'model':
-      case 'effort': {
-        const r = this.agents.record(a.chat)
-        if (!r) return { ok: false }
-        // only what its CLI and model take: a model it lacks, or a level its model lacks, is refused
-        const send = (cmd: string) => (r.kind === 'claude' ? this.agents.send(a.chat, cmd, { idle: true }) : undefined)
-        if (a.type === 'model') {
-          const m = findModel(r.kind, a.model)
-          if (!m) return { ok: false, error: `${CLI_NAME[r.kind] ?? r.kind} has no model ${a.model}` }
-          r.model = m.label
-          await send(`/model ${m.id}`)
-          // a level the new model lacks becomes the nearest it has
-          const e = r.effort && nearest(m.efforts, r.effort)
-          if (r.effort && e !== r.effort.toLowerCase()) {
-            r.effort = e ?? ''
-            if (e) await send(`/effort ${e}`)
-          }
-        } else {
-          const e = a.effort.toLowerCase()
-          if (!effortsOf(r.kind, r.model).includes(e)) return { ok: false, error: `${findModel(r.kind, r.model)?.label ?? CLI_NAME[r.kind] ?? r.kind} takes no ${a.effort} effort` }
-          r.effort = e
-          await send(`/effort ${e}`)
-        }
-        this.agents.save()
-        this.emit('chat', a.chat)
-        return {}
-      }
+      case 'effort':
+        return { ok: false, error: 'Use the + menu agent controls and Restart to apply model or effort changes. Chat and work are preserved.' }
       case 'keys':
         await this.agents.keys(a.chat, a.keys)
         return {}
@@ -1434,6 +1507,25 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       case 'call':
         return {}
       case 'setting': {
+        if (a.key.startsWith('taskIds.')) {
+          const p = a.place && this.places.space(a.place)
+          if (!p) return { ok: false, error: 'Select a repository space in Settings.' }
+          try {
+            this.engine.taskIds.ensure(a.place!, p.key)
+            p.key = this.engine.taskIds.set(a.place!, a.key, a.value).prefix
+            this.places.save()
+            this.emit('snapshot')
+            return { ok: true }
+          } catch (e) { return { ok: false, error: (e as Error).message } }
+        }
+        if (a.key === 'space.base') {
+          if (!a.place || !a.value) return { ok: false, error: 'Choose a repository space and branch.' }
+          try {
+            await this.places.setBase(a.place, a.value)
+            this.emit('snapshot')
+            return { ok: true }
+          } catch (e) { return { ok: false, error: (e as Error).message } }
+        }
         // a plugin's switch: the human's own list, on the main machine
         if (a.key.startsWith(PLUGIN_KEY)) {
           const r = setPluginOn(a.key.slice(PLUGIN_KEY.length), a.value !== 'off')
@@ -1485,7 +1577,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       case 'restart-info': {
         try {
           const x = this.restartable(a.chat)
-          return { ok: true, info: restartInfo({ role: x.role, space: x.space, on: x.on, want: x.want, kinds: Object.keys(CLI_NAME).filter(this.engine.installed), working: this.agents.status(a.chat) === 'working' }) }
+          return { ok: true, info: restartInfo({ role: x.role, space: x.space, on: x.on, onKnown: !!this.agents.record(a.chat), want: x.want, kinds: Object.keys(CLI_NAME).filter(this.engine.installed), working: this.agents.status(a.chat) === 'working' }) }
         } catch (e) {
           return { ok: false, error: (e as Error).message }
         }
@@ -1860,8 +1952,16 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
 
   /* ---------- the shepherdr command ---------- */
 
-  async cli(args: string[], ctx: { chat?: string; cwd?: string; stdin?: string }): Promise<{ out: string; code: number }> {
+  async cli(args: string[], ctx: { chat?: string; cwd?: string; stdin?: string; local?: boolean; proof?: string }): Promise<{ out: string; code: number; secrets?: Record<string, string> }> {
     try {
+      // the values themselves, for the shepherdr command to put in a command's environment or a file: never printed,
+      // only with a worker-issued capability whose stored scope selects the secret chain
+      if (args[0] === 'secret' && (args[1] === 'run' || args[1] === 'env')) {
+        const owner = this.agents.secretAccess.authenticate(ctx.proof)
+        if (!owner || this.agents.record(owner.chat)?.finished) throw new Error('Secret access needs a current agent credential. Use the owning session command; older sessions must wait for route provisioning. No unauthenticated fallback.')
+        if (JSON.stringify(this.agents.secretScope(owner.chat)) !== JSON.stringify(owner.chain)) throw new Error('Secret credential scope is no longer valid.')
+        return { out: '', code: 0, secrets: this.secretValues(parseArgs(args).words.slice(2), owner.chain) }
+      }
       const out = await this.command(parseArgs(args), ctx)
       return { out: out.endsWith('\n') ? out : `${out}\n`, code: 0 }
     } catch (e) {
@@ -1941,6 +2041,13 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
           if (r.ok === false) throw new Error(r.error)
           return `${x.name} is called ${this.places.nameOf(x.id)} now.`
         }
+        if (a1 === 'set' && rest[0] === 'base') {
+          const pr = this.projectFor(p, ctx)
+          if (!rest[1]) throw new Error('shepherdr space set base <branch> --space NAME')
+          await this.places.setBase(pr.name, rest[1])
+          this.emit('snapshot')
+          return `${pr.name}: new tasks start from and merge into ${pr.base}. Existing tasks keep their target.`
+        }
         if (a1 === 'remove') {
           if (!rest[0]) throw new Error('shepherdr space remove <name>')
           const shown = this.places.find(rest[0])?.name ?? rest[0]
@@ -2004,7 +2111,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
         const id = `ask:${randomUUID().slice(0, 8)}`
         this.chats.post(ctx.chat, {
           id,
-          question: { id, title, kind: Object.keys(desc).length || p.flags.has('other') ? 'Question' : 'Form', choices: labels.map((label) => ({ label, description: desc[label] })), multi: p.flags.has('multi'), other: p.flags.has('other'), to: this.chatName(ctx.chat) },
+          question: { id, title, ordinary: p.flags.has('ordinary') || undefined, kind: Object.keys(desc).length || p.flags.has('other') ? 'Question' : 'Form', choices: labels.map((label) => ({ label, description: desc[label] })), multi: p.flags.has('multi'), other: p.flags.has('other'), to: this.chatName(ctx.chat) },
         })
         this.emit('chat', ctx.chat)
         this.emit('snapshot')
@@ -2042,7 +2149,8 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
         const next = nextWords(h.time, h.zone)
         const beat = `\n\nHeartbeat on Autopilot: ${timeWords(h.time, h.zone)}${next.length ? ` (next ${next.join(', ')})` : ''}; news that wakes it at once: ${eventWords(h.on).toLowerCase()}, the rest waits for the heartbeat. Each brings the place's HEARTBEAT.md, its standing checklist: shepherdr heartbeat [<place>] shows it, shepherdr heartbeat set [<place>] < file changes it.`
         const block = settingsBlock('<id>', { ways: this.settings.ways(pr), reviewer: this.settings.harness('reviewer', pr), agent: this.settings.harness('task', pr), by: this.settings.setBy(pr) })
-        return `${head}\n${this.settings.lines(pr, NAME)}${beat}${now}\n\nEvery new task's brief${pr ? ` in ${pr}` : ''} ends with:\n${block}\n\nFor one task, set any of these with task add: --set review.rounds=1 --set merge="ask me first" (--set agent=codex, model, effort, reviewer, reviewer.model, reviewer.effort too), or say so in its brief, which wins.`
+        const repo = pr ? this.places.byName(pr) : undefined
+        return `${head}${repo ? `\nBase branch: ${repo.base} (new tasks; per-task override: --base <branch>)` : ''}\n${this.settings.lines(pr, NAME)}${beat}${now}\n\nEvery new task's brief${pr ? ` in ${pr}` : ''} ends with:\n${block}\n\nFor one task, set any of these with task add: --set review.rounds=1 --set merge="ask me first" (--set agent=codex, model, effort, reviewer, reviewer.model, reviewer.effort too), or say so in its brief, which wins.`
       }
       case 'models': {
         const kinds = a1 ? [kindOf(a1)] : ['claude', 'codex', 'pi']
@@ -2059,7 +2167,14 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       case 'set':
       case 'unset': {
         const value = a0 === 'unset' ? null : rest.join(' ')
-        if (!a1 || (a0 === 'set' && !value)) throw new Error(`shepherdr ${a0} <key>${a0 === 'set' ? ' <value>' : ''}`)
+        if (!a1 || (a0 === 'set' && !value && !(a1.endsWith('.instructions') && rest.length))) throw new Error(`shepherdr ${a0} <key>${a0 === 'set' ? ' <value>' : ''}`)
+        if (a1 === 'space.base') {
+          if (a0 === 'unset' || !one(p, 'space')) throw new Error('Use shepherdr set space.base <branch> --space NAME; choose an explicit branch.')
+          const pr = this.projectFor(p, ctx)
+          await this.places.setBase(pr.name, value!)
+          this.emit('snapshot')
+          return `${pr.name}: base branch ${pr.base}. Existing tasks keep their target.`
+        }
         if (!CATALOG.some((s) => s.rows.some((r) => r.key === a1))) throw new Error(`No setting ${a1}; shepherdr show lists them`)
         // Everywhere unless it says --machine (this machine's own) or --space NAME (that space's own)
         const named = one(p, 'space')
@@ -2078,7 +2193,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
         const where = pr ? `${named}'s` : level === 'machine' ? `${NAME}'s` : "Everywhere's"
         const now = this.settings.get(a1, pr)
         // a trigger in words too, to tell the human
-        return `${a0 === 'unset' ? `${a1}: ${where} own is unset; it is ${now} now.` : `${a1} = ${now} (${where})`}${this.settings.words(a1, now).replace(/^\n\s*/, '\nIn words: ')}`
+        return `${a0 === 'unset' ? `${a1}: ${where} own is unset; it is ${now} now.` : `${a1} = ${now} (${where})`}${this.settings.words(a1, now).replace(/^\n\s*/, '\nIn words: ')}${a1.endsWith('.instructions') ? '\nUsed at the next start or restart; running agents are unchanged. Reviewer changes need a new or restarted task agent.' : ''}`
       }
       case 'automation': {
         const op = a1 ?? 'list'
@@ -2155,10 +2270,11 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       case 'doctor': {
         if (BOX) throw new Error(`shepherdr doctor checks every machine from the main one: run it there (${HOST} is run from it over SSH).`)
         const own = `${NAME} (this machine, the main one): herdr ${this.agents.reachable ? 'answers' : 'does not answer'}${this.browsers ? `; shared browser ${this.browsers.status().ready ? 'ready' : this.browsers.status().hint}` : ''}`
-        return [own, ...((await this.peers?.doctor()) ?? [])].join('\n')
+        return [own, ...this.pushWarnings().map((warning) => `Alerts: ${warning}`), ...((await this.peers?.doctor()) ?? [])].join('\n')
       }
       case 'secret': {
-        if (a1 !== 'elevenlabs' || !ctx.stdin?.trim()) throw new Error('echo "<key>" | shepherdr secret elevenlabs')
+        if (a1 !== 'elevenlabs') return this.secretCommand(a1, rest, p, ctx)
+        if (!ctx.stdin?.trim()) throw new Error('echo "<key>" | shepherdr secret elevenlabs')
         const s = readJson<Record<string, string>>('secrets.json', {})
         s.elevenlabs = ctx.stdin.trim()
         writeJson('secrets.json', s)
@@ -2166,6 +2282,81 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       }
     }
     throw new Error(`No command ${a0}; shepherdr help lists them`)
+  }
+
+  /* ---------- secrets ---------- */
+
+  /** the levels a command's secrets come from, most specific first: its space (the asking agent's, or the folder's),
+   *  this machine, Everywhere */
+  private secretChain(ctx: { chat?: string; cwd?: string }) {
+    const space = ctx.chat?.includes('/') ? this.engine.task(ctx.chat.split('/')[0])?.project : ctx.chat?.startsWith('p:') ? ctx.chat : ctx.cwd ? this.places.forPath(ctx.cwd) && placeId.space(this.places.forPath(ctx.cwd)!.name) : undefined
+    return [...(space ? [space] : []), placeId.machine(), 'all']
+  }
+
+  /** a level's name, as Settings shows it: Everywhere, this machine's, a space's */
+  private secretLevelName(level: string) {
+    if (level === 'all') return 'Everywhere'
+    if (level === placeId.machine()) return NAME
+    return level.startsWith('p:') ? (this.places.nameOf(level) ?? level.split(':').slice(2).join(':')) : level.slice(2)
+  }
+
+  /** the level a human's shepherdr secret set or rm is for: Everywhere (none), this machine, or one space */
+  private secretLevel(p: Parsed) {
+    if (one(p, 'space')) return placeId.space(this.projectFor(p, {}).name)
+    return p.flags.has('machine') ? placeId.machine() : 'all'
+  }
+
+  /** each name's value, for shepherdr secret run and env (names may come comma-separated) */
+  private secretValues(words: string[], chain: string[]) {
+    const names = words.flatMap((w) => w.split(',')).map((w) => w.trim()).filter(Boolean)
+    if (!names.length) throw new Error('shepherdr secret run NAME [NAME …] -- <command>, or shepherdr secret env NAME [NAME …] [--file .env]')
+    const bad = names.filter((n) => !SECRET_NAME.test(n))
+    if (bad.length) throw new Error(`Not a secret's name: ${bad.join(', ')} (letters, digits and _, like GITHUB_TOKEN)`)
+    const { found, missing } = this.vault.pick(names, chain)
+    if (missing.length) throw new Error(`No secret ${missing.join(', ')} here. Ask the human for it: shepherdr secret ask ${missing[0]} --why "<what it is for>", then end your turn.`)
+    return Object.fromEntries(Object.entries(found).map(([n, f]) => [n, f.value]))
+  }
+
+  private secretCommand(sub: string | undefined, rest: string[], p: Parsed, ctx: { chat?: string; cwd?: string; stdin?: string }): string {
+    const chain = this.secretChain(ctx)
+    const name = rest[0]
+    if (sub === 'list' || !sub) {
+      const all = this.vault.visible(chain)
+      if (!all.length) return 'No secrets here yet. Ask the human for one: shepherdr secret ask NAME --why "<what it is for>".'
+      return `${all.map((x) => `${x.name}  (${this.secretLevelName(x.level)}, saved ${age(x.at)} ago)`).join('\n')}\nUse one by name: shepherdr secret run NAME -- <command>, or shepherdr secret env NAME --file .env.`
+    }
+    if (sub === 'ask') {
+      if (!ctx.chat) throw new Error('shepherdr secret ask works from an agent Shepherdr started; add one yourself in Settings → Secrets, or with shepherdr secret set')
+      if (!name || !SECRET_NAME.test(name)) throw new Error('shepherdr secret ask NAME --why "<what it is for>" (NAME: letters, digits and _, like GITHUB_TOKEN)')
+      const had = this.vault.visible(chain).find((x) => x.name === name)
+      if (had && !p.flags.has('force')) throw new Error(`${name} is kept already (${this.secretLevelName(had.level)}): use it. If it is wrong or expired, ask for a new one with --force.`)
+      const id = `secret:${randomUUID().slice(0, 8)}`
+      const levels = chain.map((l) => ({ id: l, label: this.secretLevelName(l) }))
+      this.chats.post(ctx.chat, { id, secret: { id, name, why: one(p, 'why'), levels } })
+      this.emit('chat', ctx.chat)
+      this.emit('snapshot')
+      return `Asked: your chat shows the human a masked box for ${name}. End your turn now; a <secret name="${name}"> line tells you once it is kept. Never ask for it in plain words.`
+    }
+    // only the main machine writes the vault: one writer, so no save is lost to another's at the same moment
+    if ((sub === 'set' || sub === 'rm' || sub === 'remove') && BOX) throw new Error(`Secrets are kept on the main machine: set or remove them there, or in Settings → Secrets.`)
+    if (sub === 'set') {
+      if (!name || !SECRET_NAME.test(name)) throw new Error('shepherdr secret set NAME [--machine | --space NAME] < file (the value on stdin; none: Everywhere)')
+      if (!ctx.stdin?.replace(/[\r\n]+$/, '')) throw new Error(`Give the value on stdin, never as a word: shepherdr secret set ${name} < file, or pipe it in.`)
+      const level = this.secretLevel(p)
+      const r = this.vault.set(level, name, ctx.stdin.replace(/[\r\n]+$/, ''))
+      if (!r.ok) throw new Error(r.error)
+      this.emit('snapshot')
+      return `Saved ${name} for ${this.secretLevelName(level)}.`
+    }
+    if (sub === 'rm' || sub === 'remove') {
+      if (!name) throw new Error('shepherdr secret rm NAME [--machine | --space NAME]')
+      const level = this.secretLevel(p)
+      const r = this.vault.set(level, name, null)
+      if (!r.ok) throw new Error(`${r.error} (${this.secretLevelName(level)})`)
+      this.emit('snapshot')
+      return `Removed ${name} from ${this.secretLevelName(level)}.`
+    }
+    throw new Error('shepherdr secret list | ask NAME --why "…" | run NAME … -- <command> | env NAME … [--file .env] | set NAME [--machine | --space NAME] | rm NAME [--machine | --space NAME]')
   }
 
   /** where an artifact made here lives: the task's space, the coordinator's own space, the space you are in, else the
@@ -2282,8 +2473,8 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
     if (sub === 'add') {
       if (!rest[0]?.trim()) throw new Error('shepherdr task add "<title>" --desc "<the whole brief>"')
       if (p.flags.has('after')) throw new Error('--after needs the tasks it waits for: --after SHE-12,SHE-13')
-      const odd = [...Object.keys(p.opts), ...p.flags].filter((f) => !['brief', 'desc', 'space', 'after', 'later', 'agent', 'model', 'effort', 'reviewer', 'reviewer-model', 'reviewer-effort', 'set'].includes(f))
-      if (odd.length) throw new Error(`Task add takes no --${odd[0]}: only --desc, --space, --after, --later, --set, --agent, --model, --effort, --reviewer, --reviewer-model and --reviewer-effort`)
+      const odd = [...Object.keys(p.opts), ...p.flags].filter((f) => !['brief', 'desc', 'space', 'base', 'after', 'later', 'agent', 'model', 'effort', 'reviewer', 'reviewer-model', 'reviewer-effort', 'set'].includes(f))
+      if (odd.length) throw new Error(`Task add takes no --${odd[0]}: only --desc, --space, --base, --after, --later, --set, --agent, --model, --effort, --reviewer, --reviewer-model and --reviewer-effort`)
       // --set key=value: a How tasks work setting for this task, or what --agent, --reviewer and the like set
       const set: Record<string, string> = {}
       for (const pair of p.opts.set ?? []) {
@@ -2295,11 +2486,39 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       const bare = [...p.flags].filter((f) => f !== 'later')[0]
       if (bare) throw new Error(`--${bare} needs a value`)
       const title = checkTitle(rest[0])
-      const pr = this.projectFor(p, ctx)
+      const named = one(p, 'space')
+      if (named && !this.places.byName(named) && !this.places.byKey(named) && !this.places.space(named)) {
+        // Helpers reach their own worker. Delegate a foreign target through the owning main installation.
+        if (BOX && process.env.SHEPHERDR_MAIN_HOME) {
+          const server = JSON.parse(readFileSync(join(process.env.SHEPHERDR_MAIN_HOME, 'server.json'), 'utf8')) as { port: number }
+          const r = await fetch(`http://127.0.0.1:${server.port}/api/cli`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ args: taskAddArgs(rest, p), chat: this.requestedNews.known(ctx.chat) }),
+            signal: AbortSignal.timeout(20_000),
+          })
+          const result = await r.json() as { out: string; code: number }
+          if (result.code) throw new Error(result.out.trim())
+          return result.out.trim()
+        }
+        const targets = (this.peers?.list() ?? []).flatMap((l) => (l.snap?.places ?? []).filter((x) => !x.home && (x.id === named || x.name === named)).map((x) => ({ l, x })))
+        if (targets.length > 1) throw new Error('Several spaces have that name; use its full p:machine:space identity.')
+        if (targets.length === 1) {
+          const { l, x } = targets[0]
+          const args = taskAddArgs(rest, p, x.id.split(':').slice(2).join(':'))
+          const result = await this.onPeer<{ out: string; code: number }>(l, '/api/cli', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ args, chat: this.requestedNews.known(ctx.chat) }),
+          })
+          if (result.code) throw new Error(result.out.trim())
+          return result.out.trim()
+        }
+      }
+      const pr = named && this.places.space(named) ? this.places.space(named)! : this.projectFor(p, ctx)
+      await validateBase(pr.path, one(p, 'base') ?? pr.base)
       const after = p.opts.after ?? []
       const agent = harnessOf(p, this.settings)
       const reviewer = reviewerOf(p, this.settings)
-      const t = this.engine.add({ project: pr.name, title, desc: one(p, 'brief') ?? one(p, 'desc'), by: this.byWho(ctx), after, later: p.flags.has('later'), agent, reviewer, set })
+      const t = this.engine.add({ project: pr.name, base: one(p, 'base'), title, desc: one(p, 'brief') ?? one(p, 'desc'), by: this.byWho(ctx), requester: this.requestedNews.known(ctx.chat), after, later: p.flags.has('later'), agent, reviewer, set })
       const on = [CLI_NAME[t.agent!.kind] ?? t.agent!.kind, t.agent!.model, t.agent!.effort && `${t.agent!.effort} effort`].filter(Boolean).join(', ')
       if (t.after?.length) return `Added ${t.id}: ${t.title}, queued after ${t.after.join(', ')}. Its agent (${on}) reads the brief now and waits; Shepherdr tells it to go once ${t.after.length === 1 ? 'that task is' : 'they are all'} done.`
       if (p.flags.has('later')) return `Added ${t.id}: ${t.title}, for later. Its agent (${on}) reads the brief now and waits for a go (shepherdr task tell ${t.id} "go").`
@@ -2333,7 +2552,7 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
       case 'show': {
         const v = this.engine.view(t)
         if (p.flags.has('json')) return JSON.stringify(v, null, 2)
-        return [`${v.id} ${v.name}`, `State: ${v.state}${statusLine(v) ? ` · ${statusLine(v)}` : ''}${v.pinned ? ' · pinned' : ''}`, `Added: ${v.created}`, v.branch ? `Branch: ${v.branch}` : '', v.desc ? `\n${v.desc}` : ''].filter(Boolean).join('\n')
+        return [`${v.id} ${v.name}`, `State: ${v.state}${statusLine(v) ? ` · ${statusLine(v)}` : ''}${v.pinned ? ' · pinned' : ''}`, `Added: ${v.created}`, v.branch ? `Branch: ${v.branch}` : '', v.base ? `Merges into: ${v.base}` : '', v.desc ? `\n${v.desc}` : ''].filter(Boolean).join('\n')
       }
       case 'tell': {
         // a coordinator's go to a task that waits starts it only when this machine has room
@@ -2488,6 +2707,10 @@ function harnessOf(p: Parsed, settings: Settings): { kind?: string; model?: stri
   const cli = one(p, 'agent')
   const kind = cli === undefined ? undefined : kindOf(cli)
   if (cli !== undefined && !kind) throw new Error(`No CLI called ${cli}; herdr starts ${CLIS.join(', ')}`)
+  if (kind) {
+    const problem = harnessProblem({ kind })
+    if (problem) throw new Error(problem)
+  }
   const h = settings.harness('task')
   return { ...(kind ? { kind } : {}), ...fit(p, '', kind ?? h.kind, kind && kind !== h.kind ? undefined : h.model) }
 }
@@ -2542,4 +2765,9 @@ function sharedEverywhere(): Record<string, string> | null {
   } catch {
     return null
   }
+}
+
+/** Preserve all task options when a helper asks for a task on another machine. */
+function taskAddArgs(rest: string[], p: Parsed, space?: string): string[] {
+  return ['task', 'add', ...rest, ...Object.entries(p.opts).flatMap(([key, values]) => (key === 'space' && space ? [space] : values).flatMap((value) => [`--${key}`, value])), ...[...p.flags].map((key) => `--${key}`)]
 }

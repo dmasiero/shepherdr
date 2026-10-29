@@ -1,3 +1,4 @@
+import { actionable, attentionCounts } from './attention.ts'
 // The screen's small kernel: plugin slots, the store (server data + what's on screen), and the link to the server.
 import { useSyncExternalStore, type FC, type ReactNode } from 'react'
 import { buildId } from '@shared/build.ts'
@@ -5,7 +6,7 @@ import { expire, loadOutbox, prune, saveOutbox, settle, type Outgoing } from './
 import { keptOf, mayReload, type Kept } from './reload.ts'
 import { OPEN_WITHIN, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
 import { groupFor, groupTasks, loadAllDone, loadGroups, loadShut, namesFor, saveAllDone, saveGroups, saveShut, shownGroup, type GroupBy, type Groups, type TaskGroup } from './groups.ts'
-import { CHAT_MIN, fit as fitSidebars, focused, LEFT, loadSidebars, PANEL, RIGHT, saveSidebars, showPanel, toggleFocus as focusTo, type Sidebars } from './sidebars.ts'
+import { canDock, CHAT_READ, fit as fitSidebars, focused, loadSidebars, PANEL, RIGHT, saveSidebars, showPanel, toggleFocus as focusTo, type Sidebars } from './sidebars.ts'
 import { hush } from './motion.ts'
 import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
 import { setupGuarded } from './guard.tsx'
@@ -202,6 +203,8 @@ export interface UI {
   /** an attached picture opened full screen: a sent one by its message, one still in the message box by its file */
   photo: { chat: string; msg?: string; file?: { name: string; path: string } } | null
   search: boolean
+  /** initial scope for unified search; global entrances leave it empty */
+  searchScope?: { kind: 'all' } | { kind: 'chat' | 'space' | 'machine'; id: string }
   /** the Add a project dialog is open: true, or the name of the machine whose + opened it */
   adding: boolean | string
   /** chat key flipped to its terminal (a coordinator's; a task's terminal is an item of its side panel) */
@@ -282,7 +285,7 @@ function tabOf(t: string | null): UI['tab'] {
 }
 
 function deviceFor(w: number): Device {
-  return w < 640 ? 'phone' : w < 1024 ? 'tablet' : 'desktop'
+  return w < CHAT_READ + RIGHT.min ? 'phone' : w < 1024 ? 'tablet' : 'desktop'
 }
 
 const LISTS = 'shepherdr.lists'
@@ -657,7 +660,12 @@ addEventListener('popstate', (e) => {
 
 addEventListener('resize', () => {
   const d = deviceFor(innerWidth)
-  if (d !== state.ui.device) setUI({ device: d, drawer: false })
+  if (d !== state.ui.device || (state.ui.drawer && placesDocked(state.ui, state.snap))) setUI({ device: d, drawer: false })
+  else {
+    // Docking and compact task focus also change within a device class. Rewatch chats brought back by widening.
+    watchVisible()
+    emit()
+  }
 })
 
 /* ---------- server link ---------- */
@@ -1021,12 +1029,10 @@ export function removeSpace(placeId: string): Promise<{ ok?: boolean; error?: st
 /** What waits on you at a place: red counts its whole subtree, own only the place itself (its own coordinator's chat: the sidebar's count). */
 export function counts(snap: Snapshot, placeId: string) {
   const sub = subtree(snap, placeId)
-  const waits = (t: Task) => t.status === 'need' || t.status === 'ready'
-  const ts = snap.tasks.filter((t) => sub.includes(t.place) && !t.archived)
-  const asks = sub.filter((p) => snap.asks[p]).length
-  const waiting = ts.filter(waits).length
-  const own = ts.filter((t) => t.place === placeId && waits(t)).length + (snap.asks[placeId] ? 1 : 0)
-  return { red: waiting + asks, tasks: waiting, own }
+  const c = attentionCounts(snap, sub)
+  const own = attentionCounts(snap, [placeId])
+  // Legacy totals remain available for plugins; named categories are separate.
+  return { red: c.need + c.ready, tasks: snap.tasks.filter((t) => sub.includes(t.place) && !t.archived && actionable(t)).length, own: own.need + own.ready, need: c.need, ready: c.ready, ownNeed: own.need, ownReady: own.ready }
 }
 
 /* ---------- a place's tasks, grouped (groups.ts) ---------- */
@@ -1034,8 +1040,13 @@ export function counts(snap: Snapshot, placeId: string) {
 export { GROUPS, groupChoices, groupFor, namesFor, type GroupBy, type Groups, type TaskGroup } from './groups.ts'
 
 /** a list's tasks in their groups, in the order they show: more machines' under each machine's name */
-export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy) {
-  return groupTasks(snap.places, snap.machines ?? [], tasksIn(snap, list), by, list.level)
+export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy): TaskGroup[] {
+  const tasks = tasksIn(snap, list)
+  if (list.attention) return snap.places.flatMap((p) => (['need', 'ready'] as const).flatMap((status) => {
+    const rows = tasks.filter((t) => t.place === p.id && t.status === status)
+    return rows.length ? [{ key: `${p.id}|${status}`, label: `${p.name} · ${status === 'need' ? 'Needs you' : 'Ready'}`, note: machineName(snap.machines, p.machine), tasks: rows, names: { machine: false, project: false } }] : []
+  }))
+  return groupTasks(snap.places, snap.machines ?? [], tasks, by, list.level)
 }
 
 /** a list's task groups as this screen shows them: grouped as this device chose, Done cut short until Show all, a
@@ -1063,7 +1074,7 @@ export function toggleAllDone(listKey: string, key: string) {
 
 /** how lists of this level group their tasks (a place's level: 0 more machines', 1 one machine's) */
 export function setGroup(level: number, by: GroupBy) {
-  setUI((ui) => ({ groups: { ...ui.groups, [level === 0 ? 'all' : 'machine']: by }, cur: 0 }))
+  setUI((ui) => ({ groups: { ...ui.groups, [level === 0 ? 'all' : 'machine']: by }, lists: { ...ui.lists, chips: state.snap ? listChips(ui, state.snap) : [], at: ui.place }, cur: 0 }))
 }
 
 /** whether every word typed is in one of these, any case: ⌘K's search and the lists' filters */
@@ -1085,7 +1096,7 @@ export function setFilter(listKey: string, list: 'tasks' | 'artifacts', q: strin
 
 /** A list's tasks filtered: in their groups, every Done one, and then its archived ones; groups with none left out */
 export function filteredGroups(snap: Snapshot, list: ListView, q: string, ui: Pick<UI, 'groups'> = state.ui) {
-  const groups: TaskGroup[] = taskGroups(snap, list, groupFor(ui.groups, list.level))
+  const groups: TaskGroup[] = taskGroups(snap, { ...list, attention: false }, groupFor(ui.groups, list.level))
   const archived = archivedIn(snap, list)
   if (archived.length) groups.push({ key: 'archived', label: 'Archived', tasks: archived, names: namesFor(list.level) })
   return groups.map((g) => ({ ...g, tasks: g.tasks.filter((t) => taskMatches(t, q)) })).filter((g) => g.tasks.length)
@@ -1152,6 +1163,8 @@ export interface ListView {
   chips: string[]
   /** what its rows needn't say, as a place's level: 2 one space's, 1 one machine's, 0 more machines' */
   level: 0 | 1 | 2
+  /** Global Home’s default, before an explicit scope or search. */
+  attention?: boolean
 }
 
 const machineChip = (c: string) => c.startsWith('m:')
@@ -1176,7 +1189,8 @@ export function listChips(ui: UI, snap: Snapshot): string[] {
     const chips = l.chips.filter((c) => known(snap, c))
     if (chips.length || !l.chips.length) return chips
   }
-  return [placeOf(snap, ui.place).id]
+  const p = placeOf(snap, ui.place)
+  return p.home && p.machine === snap.host ? [] : p.home ? [`m:${p.machine}`] : [p.id]
 }
 
 export function listOf(snap: Snapshot, chips: string[]): Omit<ListView, 'search'> {
@@ -1190,7 +1204,7 @@ let lastList: { snap: Snapshot; lists: Lists; place: string; view: ListView } | 
 /** the lists as they show now: the same object while nothing they hang on changes, so a part can pick it */
 export function listView(ui: UI, snap: Snapshot): ListView {
   if (lastList && lastList.snap === snap && lastList.lists === ui.lists && lastList.place === ui.place) return lastList.view
-  const view = { ...listOf(snap, listChips(ui, snap)), search: listsPinned(ui, snap) ? '*pinned' : ui.place }
+  const view = { ...listOf(snap, listChips(ui, snap)), search: listsPinned(ui, snap) ? '*pinned' : ui.place, attention: !!placeOf(snap, ui.place).home && placeOf(snap, ui.place).machine === snap.host && !listsPinned(ui, snap) && ui.lists.at !== ui.place }
   lastList = { snap, lists: ui.lists, place: ui.place, view }
   return view
 }
@@ -1261,15 +1275,23 @@ function panelTerm(ui: UI, snap: Snapshot) {
 /** an open task in focus: it has the whole window, its coordinator chat and places hidden (desktop and tablet) */
 export function focusHere(ui: UI, snap: Snapshot | null) {
   if (ui.device === 'phone' || !snap || !taskOf(snap, ui.task) || (ui.settings && ui.device === 'desktop')) return false
-  return focused(ui.sidebars, panelHere(ui, snap))
+  const panel = panelHere(ui, snap)
+  return focused(ui.sidebars, panel) || compactPanel(ui, snap)
 }
 
-/** a window too narrow for places, the chat, tasks and the side panel at once draws places shut while the panel shows;
- *  focus draws it shut too */
+/** A tool left open while resizing must still leave its task chat readable. */
+function compactPanel(ui: UI, snap: Snapshot) {
+  return panelHere(ui, snap) && ui.sidebars.panelOpen && innerWidth < CHAT_READ + RIGHT.min + PANEL.min
+}
+
+/** Places can dock independently of the device label, using the actual requested column widths. */
+export function placesDocked(ui: UI, snap: Snapshot | null, width = innerWidth) {
+  return ui.device === 'desktop' && canDock(ui.sidebars, width, !!snap && panelHere(ui, snap))
+}
+
+/** Focus and the user's toggle hide docked places; insufficient room makes them a drawer instead. */
 export function placesDrawn(ui: UI, snap: Snapshot | null, width = innerWidth) {
-  if (!ui.sidebars.open || focusHere(ui, snap)) return false
-  const panel = !!snap && panelHere(ui, snap) && ui.sidebars.panelOpen
-  return !panel || width >= LEFT.min + CHAT_MIN + RIGHT.min + PANEL.min
+  return ui.sidebars.open && !focusHere(ui, snap) && placesDocked(ui, snap, width)
 }
 
 /** open an item: the panel's tab on a desktop, a full-screen sheet on a phone or tablet */
@@ -1289,7 +1311,11 @@ export function togglePanel() {
 
 /** focus on an open task, or back out of it: its coordinator chat shows again (desktop and tablet) */
 export function toggleFocus() {
-  setUI((ui) => ({ sidebars: focusTo(ui.sidebars, !!state.snap && panelHere(ui, state.snap)) }))
+  setUI((ui) => {
+    // Showing the coordinator on a narrow window needs the tool's room. Closing it also ends automatic focus.
+    if (state.snap && compactPanel(ui, state.snap)) return { sidebars: showPanel({ ...ui.sidebars, focus: false, focusAuto: false, wide: false }, false, innerWidth) }
+    return { sidebars: focusTo(ui.sidebars, !!state.snap && panelHere(ui, state.snap)) }
+  })
 }
 
 /** the side panel widened to most of the window, or back to its width; widening a hidden panel opens it (desktop) */
@@ -1301,6 +1327,7 @@ export function toggleWide() {
  *  In focus, it shows them and the coordinator chat again. */
 export function togglePlaces() {
   setUI((ui) => {
+    if (!placesDocked(ui, state.snap)) return { drawer: !ui.drawer }
     if (focusHere(ui, state.snap)) {
       const out = { ...ui, sidebars: { ...focusTo(ui.sidebars, true), open: true } }
       return { sidebars: placesDrawn(out, state.snap) ? out.sidebars : { ...out.sidebars, panelOpen: false } }

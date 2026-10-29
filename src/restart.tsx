@@ -1,25 +1,23 @@
-// Restarting an agent from the screen: a space's coordinator, or a task's agent. The sheet (from a ⋯ menu) shows what
-// it runs on now and what it restarts with, Settings' CLI, model and effort for its role, changed for this restart only
-// or saved as its space's. The hint above a chat's box says once Settings for its role say other than what its agent
-// runs on, and restarts it on them in one tap.
+// Restart picks for either chat role, used once or saved for its space. Opened from the + or ⋯ menu.
 import clsx from 'clsx'
+import { ChevronUpDownIcon } from '@heroicons/react/20/solid'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { Place, RestartCli, RestartInfo } from '@shared/types.ts'
 import { act, setUI, taskOf, useSnap, useStore } from './kernel.ts'
 import { Dialog } from './rowmenu.tsx'
 import { Pick, shown, Switch, TextValue } from './Settings.tsx'
-import { ic, MenuItem, Primary, RestartIcon } from './ui.tsx'
+import { EffortIcon, ic, MenuItem, ModelIcon, ModeIcon, Primary, RestartIcon } from './ui.tsx'
 
 /* ---------- the sheet ---------- */
 
-type Opening = { chat: string; name: string }
+type Opening = { chat: string; name: string; current?: boolean }
 let opening: Opening | null = null
 const listeners = new Set<() => void>()
 const subscribe = (f: () => void) => (listeners.add(f), () => void listeners.delete(f))
 
 /** open the restart sheet for a coordinator (chat: its place id) or a task's agent (ID/Agent); name: what it is called */
-export function openRestart(chat: string, name: string) {
-  opening = { chat, name }
+export function openRestart(chat: string, name: string, current = false) {
+  opening = { chat, name, current }
   listeners.forEach((f) => f())
 }
 
@@ -31,7 +29,7 @@ const close = () => {
 /** the sheet, while one is open: each anew, its picks fresh */
 export function RestartSheet() {
   const o = useSyncExternalStore(subscribe, () => opening)
-  return o ? <Sheet key={o.chat} chat={o.chat} name={o.name} /> : null
+  return o ? <Sheet key={o.chat} chat={o.chat} name={o.name} current={o.current} /> : null
 }
 
 /** "Restart agent" in a ⋯ menu */
@@ -55,7 +53,7 @@ const DEFAULT = 'default'
 const modelsOf = (c?: RestartCli) => c?.models ?? []
 const levelsOf = (c: RestartCli | undefined, model?: string) => (model ? modelsOf(c).find((m) => m.id === model)?.efforts : undefined) ?? c?.efforts ?? []
 
-function Sheet({ chat, name }: Opening) {
+function Sheet({ chat, name, current }: Opening) {
   const [info, setInfo] = useState<RestartInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -68,14 +66,16 @@ function Sheet({ chat, name }: Opening) {
       .then((r: { ok?: boolean; error?: string; info?: RestartInfo; waiting?: boolean }) => {
         if (!r.info) return setError(r.waiting ? 'Its machine is out of reach: restart it once it is back.' : r.error || 'It could not be restarted.')
         setInfo(r.info)
-        setKind(r.info.want.kind)
-        setModel(r.info.want.model ?? '')
-        setEffort(r.info.want.effort ?? '')
+        const pick = current ? r.info.on : r.info.want
+        setKind(pick.kind)
+        setModel(pick.model ?? '')
+        setEffort(pick.effort ?? '')
       })
       .catch((e: Error) => setError(e.message))
-  }, [chat])
+  }, [chat, current])
   const cli = info?.clis.find((c) => c.kind === kind)
   const levels = levelsOf(cli, model)
+  const unavailable = !!(model && cli?.models?.length && !cli.models.some((m) => m.id === model))
   const pickKind = (k: string) => {
     const c = info?.clis.find((x) => x.kind === k)
     setKind(k)
@@ -97,50 +97,46 @@ function Sheet({ chat, name }: Opening) {
   }
   const task = chat.includes('/')
   const other = !!info && kind !== info.on.kind
+  const changed = !!info && (kind !== info.want.kind || model !== (info.want.model ?? '') || effort !== (info.want.effort ?? ''))
   const label = (id: string) => (id ? (modelsOf(cli).find((m) => m.id === id)?.label ?? id) : DEFAULT)
   return (
     <Dialog
-      title={task ? `Restart ${name}’s agent?` : `Restart ${name}’s coordinator?`}
+      title={task ? `Restart ${name} agent?` : 'Restart coordinator?'}
       onCancel={close}
       buttons={
-        <Primary autoFocus disabled={!info || busy} onClick={go}>
+        <Primary autoFocus disabled={!info || busy || unavailable} onClick={go}>
           {busy ? 'Restarting…' : 'Restart'}
         </Primary>
       }
     >
       {info ? (
         <div data-restart className="flex flex-col gap-4">
-          <p>
-            Runs on {info.onWords} now.{info.working ? ' It is working: it stops cleanly first.' : ''}
-          </p>
           <div className="flex flex-col gap-2.5 text-fg">
             <Line label="Agent">
               <Pick label="Agent" value={cli?.name ?? kind} options={info.clis.map((c) => c.name)} onPick={(n) => pickKind(info.clis.find((c) => c.name === n)!.kind)} />
             </Line>
-            {cli?.models ? (
-              <Line label="Model">
-                {cli.models.length ? (
+            <Line label="Model">
+              {cli?.models ? (
+                cli.models.length ? (
                   <Pick label="Model" value={label(model)} options={[DEFAULT, ...cli.models.map((m) => m.label)]} onPick={(l) => pickModel(cli.models!.find((m) => m.label === l)?.id ?? '')} />
                 ) : (
                   <TextValue label="Model" value={model || DEFAULT} onEdit={() => undefined} onSave={(v) => pickModel(v.trim() === DEFAULT ? '' : v.trim())} />
-                )}
-              </Line>
-            ) : null}
+                )
+              ) : <span className="text-fg3">Default</span>}
+            </Line>
             {cli?.models && levels.length ? (
               <Line label="Effort">
                 <Pick label="Effort" value={effort || DEFAULT} options={[DEFAULT, ...levels]} ordered onPick={(v) => setEffort(v === DEFAULT ? '' : v)} />
               </Line>
+            ) : <Line label="Effort"><span className="text-fg3">Default</span></Line>}
+            {unavailable ? <p className="text-need-fg">{model} is unavailable. Choose Default or an available model before restarting.</p> : null}
+            {changed || save ? (
+              <Line label={saveWords(info)}>
+                <Switch label={saveWords(info)} on={save} onChange={setSave} />
+              </Line>
             ) : null}
-            <Line label={saveWords(info)}>
-              <Switch label={saveWords(info)} on={save} onChange={setSave} />
-            </Line>
           </div>
-          <p className="text-[0.8125rem] text-fg3 phone:text-[0.875rem]">
-            {other
-              ? `${cli?.name ?? shown(kind)} takes over with the chat so far${task ? ', the brief and the work on its branch' : ''}.`
-              : 'It resumes its session.'}{' '}
-            {task ? 'Its worktree and branch stay as they are.' : 'Its tasks keep going.'} What you send meanwhile waits for it.
-          </p>
+          {other ? <p className="text-sm text-fg3">{cli?.name ?? shown(kind)} starts a new session with this chat{task ? ', the brief and branch' : ''}.</p> : null}
           {error ? <p className="text-need-fg">{error}</p> : null}
         </div>
       ) : (
@@ -151,50 +147,20 @@ function Sheet({ chat, name }: Opening) {
 }
 
 /** "Save as nas's setting", for its role's agents there from now on */
-const saveWords = (i: RestartInfo) => `Save as ${!i.space || i.space === '~' ? 'the home space' : i.space}’s setting`
+const saveWords = (i: RestartInfo) => `Use for future ${i.role === 'task' ? 'task agents' : 'coordinators'} ${i.space ? `in ${i.space === '~' ? 'the home space' : i.space}` : 'on this machine'}`
 
 function Line({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-h-9 items-center justify-between gap-3">
-      <span className="truncate">{label}</span>
+      <span className="min-w-0">{label}</span>
       {children}
     </div>
   )
 }
 
-/* ---------- the hint above a chat's box ---------- */
-
-/** "Runs on Claude Code · Settings now say Codex · Restart": Restart starts it again on Settings at once */
-export function RestartHint({ chatKey }: { chatKey: string; cli: string }) {
-  const hint = useStore((s) => s.chats[chatKey]?.restart)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => setError(null), [hint?.want])
-  if (!hint) return null
-  const go = async () => {
-    setBusy(true)
-    const r = await act({ type: 'restart', chat: chatKey }).catch((e: Error) => ({ ok: false, error: e.message }))
-    setBusy(false)
-    setError(r.ok === false ? r.error || 'It could not be restarted.' : null)
-  }
-  return (
-    <div data-restart-hint className="flex justify-center pb-1.5">
-      <div className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-bubble py-1 pr-1 pl-2.5 text-[0.8125rem]/5 text-fg2 phone:text-[0.875rem]/5">
-        {/* narrow, what it runs on gives way first: what Settings now say stays whole */}
-        {error ? (
-          <span className="truncate">{error}</span>
-        ) : (
-          <>
-            <span className="min-w-8 truncate">Runs on {hint.on} </span>
-            <span className="max-w-[60%] shrink-0 truncate">· Settings now say {hint.want}</span>
-          </>
-        )}
-        <button type="button" disabled={busy} onClick={go} className="press-dim shrink-0 rounded-full px-1.5 font-medium text-fg enabled:hover:bg-hover disabled:opacity-40">
-          {busy ? 'Restarting…' : error ? 'Try again' : 'Restart'}
-        </button>
-      </div>
-    </div>
-  )
+/** Kept for plugin imports. The + menu replaces the old Settings mismatch banner. */
+export function RestartHint(_props: { chatKey: string; cli: string }) {
+  return null
 }
 
 /* ---------- in the ⋯ menus ---------- */
@@ -211,4 +177,25 @@ export function TaskRestartItem({ chatKey }: { chatKey: string }) {
 /** a coordinator chat's top-right menu (placeMenu) */
 export function PlaceRestartItem({ place }: { place: Place }) {
   return <RestartItem chat={place.chat} name={place.name} onPick={() => setUI({ menu: false })} />
+}
+
+/** Compact launch controls inside the composer + menu, shared by both chat roles. */
+export function AgentControls({ chatKey, cli }: { chatKey: string; cli: string }) {
+  const agent = useStore((s) => s.chats[chatKey]?.agent)
+  const model = agent?.runtime?.modelLabel ?? agent?.runtime?.model ?? 'Not reported'
+  const level = agent?.runtime?.effort
+  const effort = agent?.runtime?.effortUnsupported ? 'Not supported' : level ? (level === 'xhigh' ? 'Extra high' : level.charAt(0).toUpperCase() + level.slice(1)) : 'Not reported'
+  const open = () => {
+    setUI({ plus: null })
+    openRestart(chatKey, chatKey.includes('/') ? chatKey.split('/')[0] : 'this space', true)
+  }
+  return <div data-agent-controls>
+    {([['Agent', agent ? cli : `${cli} · unknown`, ModeIcon], ['Model', model, ModelIcon], ['Effort', effort, EffortIcon]] as const).map(([label, value, Icon]) =>
+      <MenuItem key={label} icon={<Icon className={ic} />} aria-label={`${label}: ${value}. Select and restart`} title={`${label}: ${value}. Select and restart`} onClick={open}>
+        <span className="flex min-w-0 items-center justify-between gap-4">
+          <span>{label}</span>
+          <span className="flex min-w-0 items-center gap-1 text-fg2"><span className="truncate">{value}</span><ChevronUpDownIcon className={`${ic} shrink-0`} /></span>
+        </span>
+      </MenuItem>)}
+  </div>
 }
