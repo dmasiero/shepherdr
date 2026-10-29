@@ -24,7 +24,9 @@ import { goLine, handOverLine, settingsBlock, prNewsLine, queuedLine, splitBrief
 import { inMins, type Retry } from '../retry.ts'
 import { pastTimes } from '../estimates.ts'
 import { CLI_NAME, kindOf, type Settings } from '../settings.ts'
-import * as G from './git.ts'
+// fork: forge.ts is git.ts with Gitea's pull requests beside GitHub's (FORK.md)
+import * as G from './forge.ts'
+import { followUp } from './follow-up.ts'
 import { Worktrees, type HerdrSpaces, type Made } from './worktrees.ts'
 
 export interface TaskRec {
@@ -1391,11 +1393,13 @@ export class Engine extends Emitter<Events> {
   }
 
   /** a GitHub step that could not reach GitHub says so, and did nothing */
-  private async onGitHub<T extends { ok: boolean }>(f: () => Promise<T>, failed: (why: string) => T): Promise<T> {
+  private async onGitHub<T extends { ok: boolean }>(f: () => Promise<T>, failed: (why: string) => T, t?: TaskRec): Promise<T> {
+    // fork: said in its forge's words (Gitea, tea) for a task whose repo is on Gitea
+    const words = (r: T) => G.forgeResult(r as T & { text?: string }, t && this.places.space(t.project)?.path)
     try {
-      return await f()
+      return words(await f())
     } catch (e) {
-      return failed((e as Error).message)
+      return words(failed((e as Error).message))
     }
   }
 
@@ -1404,7 +1408,7 @@ export class Engine extends Emitter<Events> {
    * one up to the branch. Its title is the task's, its words the summary and the brief's gist.
    */
   openPr(id: string): Promise<{ ok: boolean; text: string }> {
-    return this.onGitHub(() => this.openPrNow(this.req(id)), (text) => ({ ok: false, text }))
+    return this.onGitHub(() => this.openPrNow(this.req(id)), (text) => ({ ok: false, text }), this.task(id))
   }
 
   private async openPrNow(t: TaskRec): Promise<{ ok: boolean; text: string }> {
@@ -1419,7 +1423,13 @@ export class Engine extends Emitter<Events> {
     if (!pushed.ok) return { ok: false, text: `Could not push ${t.branch} to GitHub: ${(pushed.err || pushed.out).split('\n')[0]}` }
     let pr = await this.prOf(t, g, t.worktree)
     let opened = false
-    if (pr?.state === 'MERGED') return { ok: false, text: `PR #${pr.number} is merged on GitHub already: run shepherdr merge ${t.id} to mark it merged and clean up.` }
+    if (pr?.state === 'MERGED') {
+      // fork: its branch's work since goes in a follow-up pull request (follow-up.ts)
+      const f = await this.followUp(t, g, pr, !t.reported)
+      if (!f) return { ok: false, text: `PR #${pr.number} is merged on GitHub already: run shepherdr merge ${t.id} to mark it merged and clean up.` }
+      if ('error' in f) return { ok: false, text: f.error }
+      return { ok: true, text: `PR #${pr.number} was merged on GitHub already, and ${t.branch} has work since that it did not bring in: opened follow-up PR #${f.number}${t.reported ? '' : ' as a draft'}: ${f.url}` }
+    }
     if (!pr) {
       const o = await G.openPr(g, t.worktree, { branch: t.branch, base: t.base, title: t.title, body: this.prBody(t), draft: !t.reported })
       if ('error' in o) return { ok: false, text: `Pushed ${t.branch}, but GitHub did not open a pull request: ${o.error}` }
@@ -1484,7 +1494,7 @@ export class Engine extends Emitter<Events> {
 
   /** shepherdr checks: wait for GitHub's checks on the task's pull request, at the commit this machine has */
   checks(id: string, waitMs = CHECKS_WAIT): Promise<{ ok: boolean; text: string }> {
-    return this.onGitHub(() => this.checksNow(this.req(id), waitMs), (text) => ({ ok: false, text }))
+    return this.onGitHub(() => this.checksNow(this.req(id), waitMs), (text) => ({ ok: false, text }), this.task(id))
   }
 
   private async checksNow(t: TaskRec, waitMs: number): Promise<{ ok: boolean; text: string }> {
@@ -1574,7 +1584,7 @@ export class Engine extends Emitter<Events> {
     if (!t.landing || t.landing.nudged || (c.state !== 'pass' && c.state !== 'none') || this.agents.background(key)) return
     t.landing.nudged = true
     this.save()
-    const text = `GitHub's checks passed on PR #${n}: merge ${t.id} now (shepherdr merge ${t.id}), as your brief says.`
+    const text = G.forgeWords(`GitHub's checks passed on PR #${n}: merge ${t.id} now (shepherdr merge ${t.id}), as your brief says.`, this.places.space(t.project)?.path)
     await this.agents.send(key, hidden(text, 'github', { task: t.id, pr: String(n) }), { ensure: () => this.launch(t) }).catch(() => undefined)
   }
 
@@ -1623,12 +1633,12 @@ export class Engine extends Emitter<Events> {
     this.emit(
       'news',
       placeId.space(p.name),
-      [
+      G.forgeWords([
         `${p.base} went red on GitHub at ${now.sha.slice(0, 7)}: ${now.failed.map((x) => `${x.name} failed (${x.link})`).join(', ')}.`,
         `Merged since it was last green${green ? ` (${green.slice(0, 7)})` : ''}: ${merged.length ? merged.join('; ') : 'none Shepherdr can tell'}.`,
         tail ? `Its log ends:\n${quote(tail)}` : '',
         'A fix-forward task follows if you decide so: its brief names the failing run and these merges',
-      ].filter(Boolean).join('\n'),
+      ].filter(Boolean).join('\n'), p.path),
       'red',
       { task: ids[0] ?? '', event: 'main-red' },
       { red: p.base, text: `went red: ${now.failed.map((x) => x.name).join(', ')} failed` },
@@ -1657,7 +1667,7 @@ export class Engine extends Emitter<Events> {
     if (!run) {
       const repo = this.places.space(t.project)?.path ?? ''
       const now = (this.merging.get(repo) ?? Promise.resolve())
-        .then(() => this.onGitHub(() => this.mergeNow(t, !!opts.self), (error) => ({ ok: false, error: `Can't merge ${t.id}: ${error}` })))
+        .then(() => this.onGitHub(() => this.mergeNow(t, !!opts.self), (error) => ({ ok: false, error: `Can't merge ${t.id}: ${error}` }), t))
         // stopped short with nothing more to wait for (failed checks, GitHub refused): Ready again, or back at work
         .then((r) => (!r.ok && t.landing?.step === 'merge' && this.land(t), r))
       run = now
@@ -1757,7 +1767,16 @@ export class Engine extends Emitter<Events> {
     if (ahead) return { ok: false, error: `${t.base} here has ${ahead} commit${ahead === 1 ? '' : 's'} GitHub lacks: push ${t.base} (git push origin ${t.base}) or move them off it, then merge ${t.id} again. Nothing was merged.` }
     let pr = await this.prOf(t, g, wt)
     // merged on GitHub already (by hand, or a merge whose answer was lost): it only needs main here and marking
-    if (pr?.state === 'MERGED') return this.mergedOnGitHub(t, p, `PR #${pr.number} was merged on GitHub already`)
+    if (pr?.state === 'MERGED') {
+      // fork: unless its branch has work since that the merge did not bring in: that opens a follow-up pull request,
+      // which goes in as any other, once its agent merges again (follow-up.ts)
+      const f = await this.followUp(t, g, pr, false)
+      if (!f) return this.mergedOnGitHub(t, p, `PR #${pr.number} was merged on GitHub already`)
+      if ('error' in f) return { ok: false, error: f.error }
+      const why = `PR #${pr.number} was merged on GitHub already, and ${t.branch} has work since that it did not bring in: opened follow-up PR #${f.number} (${f.url}). Merge it with shepherdr merge ${t.id} as your brief says.`
+      if (!self) await this.sendBack(t, why)
+      return { ok: false, error: self ? why : `${why} Sent to ${t.id}'s agent.` }
+    }
     if ((await G.aheadCount(wt, t.base!)) === 0) return { ok: false, error: `${t.id} has no changes to merge` }
     // GitHub squash-merges a branch behind main as it is: rebasing it would make a new commit, and all its checks run
     // again (again each time main moves meanwhile). Only a real conflict is rebased here; a clash that merges cleanly
@@ -1826,6 +1845,17 @@ export class Engine extends Emitter<Events> {
     return this.mergedOnGitHub(t, p, `merged PR #${n} on GitHub${wait ? '' : ', not waiting for its checks'}`)
   }
 
+  /** fork: a merged pull request whose branch has work since gets a follow-up pull request, which becomes the task's
+   *  own (follow-up.ts); null when there is no work since */
+  private async followUp(t: TaskRec, g: G.GitHub, merged: G.Pr, draft: boolean) {
+    const f = await followUp(g, { id: t.id, title: t.title, branch: t.branch!, base: t.base!, worktree: t.worktree! }, merged, { body: this.prBody(t), draft, push: () => this.push(t) })
+    if (f && !('error' in f)) {
+      t.pr = { number: f.number, url: f.url }
+      this.save()
+    }
+    return f
+  }
+
   /** main here comes up to GitHub's, so the merge is here too (and Shepherdr's own update sees it), then it is marked */
   private async mergedOnGitHub(t: TaskRec, p: Space, note: string) {
     const up = await G.catchUp(p.path, t.base!)
@@ -1847,6 +1877,7 @@ export class Engine extends Emitter<Events> {
 
   /** what its agent must fix, written to it: it is at work again */
   private async sendBack(t: TaskRec, text: string) {
+    text = G.forgeWords(text, this.places.space(t.project)?.path)
     await this.agents.send(this.key(t), text, { ensure: () => this.launch(t) }).catch(() => undefined)
     this.youWrote(this.key(t))
   }

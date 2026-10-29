@@ -58,7 +58,7 @@ build, check and review the work is your own judgment.
    never staged, and a mocked test is no proof of what users see. A bug fix first reproduces the bug: the same repro
    failing before and passing after. A change too small to show gets a line in your chat instead. Its files stay out
    of the commit.
-5. **Rebase** on the base. On GitHub, `shepherdr pr <id>` pushes and opens a draft pull request; run it again after
+5. **Rebase** on the base. On GitHub (or Gitea), `shepherdr pr <id>` pushes and opens a draft pull request; run it again after
    each new commit. Once GitHub's checks passed on it, rebase again only for a conflict: each push runs them again.
 6. **Ready.** `shepherdr ready <id> --summary "<what changed>" --facts "<facts>"`. The summary is at most 160
    characters of plain words on what the human now sees or can do; detail goes in the chat or the proof. The facts are
@@ -85,7 +85,7 @@ Done or the merge question.
 
 - `shepherdr merge` reports a conflict: rebase, check, push and merge again, without asking. It says **You have a new
   message in your chat**: handle that first, then merge again.
-- News from GitHub after ready (a failed check, a review, a comment) is only passed on. A failure your change caused:
+- News from GitHub (or Gitea) after ready (a failed check, a review, a comment) is only passed on. A failure your change caused:
   fix it. One outside it (the base is red too): say so in one line. A clear wish that fits the brief: do it. Anything
   else goes to the human in one short message. Then `shepherdr ready` again.
 - A red check you can't fix, or a must-fix finding left open: report it ready with that at the front of the facts, and
