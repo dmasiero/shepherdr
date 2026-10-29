@@ -121,3 +121,16 @@ test('review relay waits for a successful native turn end, not idle or commentar
     expect(tasks.get(task.id)).toMatchObject({ reviewReport: 'No findings', reviewTurn: 'turn' })
   })
 })
+
+
+test('checks-only policy cannot silently squash a repository without GitHub checks', async () => {
+  await withTask(async ({ tasks, task, grant, repo }) => {
+    task.mergePolicy = 'checks'
+    const source = (tasks as unknown as { source: CoreSource }).source
+    source.store.set('task', task.id, task)
+    await tasks.ready(grant, task.id, 'Changed example')
+    await expect(tasks.merge(grant, task.id)).rejects.toThrow('requires verified GitHub checks')
+    expect(tasks.get(task.id)?.workflow).toBe('ready')
+    expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('before\n')
+  })
+})

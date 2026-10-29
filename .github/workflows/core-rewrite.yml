@@ -10,6 +10,8 @@ on:
       - 'server/app.ts'
       - 'server/source.ts'
       - 'shared/types.ts'
+      - 'shared/models.ts'
+      - 'server/live/models.ts'
       - 'plugins/terminal/**'
       - 'plugins/tasks/**'
       - 'src/kernel.ts'

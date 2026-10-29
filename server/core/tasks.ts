@@ -36,6 +36,8 @@ export interface CoreTask extends Task {
   effort?: string
   mergeCommit?: string
   localId?: string
+  reviewerModel?: string
+  reviewerEffort?: string
 }
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
@@ -75,30 +77,36 @@ export class CoreTasks {
     const folder = join(await this.source.agents.worktreeRoot(space.machine), space.name, branch.replaceAll('/', '-'))
     const after = input.after ?? []
     for (const dependency of after) if (!this.get(dependency)) throw new Refusal(`No such dependency: ${dependency}`)
+    const defaults = this.source.settings.launch('task', space.id, input.kind)
+    const reviewer = this.source.settings.agent('reviewer', space.id)
+    const merge = this.source.settings.get('brief.merge', space.id)
     const task: CoreTask = {
       id, localId, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
-      chat: `${id}/Agent`, kind: input.kind || caller.kind, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
-      mergePolicy: 'ask', review: { on: true, kind: 'codex', rounds: 3, mustFix: 'major' }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
+      chat: `${id}/Agent`, kind: input.kind || defaults.kind, model: input.model || defaults.model, effort: input.effort || defaults.effort, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
+      reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', review: { on: this.source.settings.get('brief.review', space.id) === 'on', kind: reviewer.kind, rounds: parseInt(this.source.settings.get('review.rounds', space.id)), mustFix: this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }
     this.save(task) // Number and record survive a failed worktree/agent start; never reuse their branch number.
     try {
       await this.source.files.exec(space.machine, ['mkdir', '-p', join(folder, '..')])
       await this.git.addWorktree({ machine: space.machine, folder: space.folder }, folder, branch, task.base!)
-      await this.launch(task, undefined, input.model, input.effort)
+      await this.launch(task, undefined, task.model, task.effort)
     } catch (error) { task.startError = (error as Error).message; task.workflow = 'todo'; this.save(task); throw error }
     this.card(task, task.workflow === 'queued' ? 'Queued after ' + after.join(', ') : task.workflow === 'todo' ? 'Waiting for your go' : 'Started')
     return task
   }
-  async launch(task: CoreTask, message?: string, model?: string, effort?: string) {
+  async launch(task: CoreTask, message?: string, model = task.model, effort = task.effort) {
     const space = this.source.space(task.place)
     if (!space) throw new Refusal('Task space is missing')
     let parent = this.source.agents.get(space.id)
-    if (!parent || this.source.agents.terminal(parent)?.state !== 'live') parent = await this.source.agents.launch(space, space.id, task.kind, '')
+    if (!parent || this.source.agents.terminal(parent)?.state !== 'live') {
+      const pick = this.source.settings.agent('coordinator', space.id)
+      parent = await this.source.agents.launch(space, space.id, pick.kind, '', pick)
+    }
     const wait = task.workflow === 'queued' ? `This task is queued after ${task.after?.join(', ')}. Read the brief, then wait for <go>. Do not start implementation yet.`
       : task.workflow === 'todo' ? 'Read the brief, then wait for the human’s go. Do not start implementation yet.' : ''
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
     const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. Use hc for child agents, messages and waits. Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
-    const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ask the human first\n${message ? `\n<go>${message}</go>` : ''}`
+    const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${message ? `\n<go>${message}</go>` : ''}`
     await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: true })
     await this.label(task)
   }
@@ -164,13 +172,15 @@ export class CoreTasks {
       if (!task.readyHead || head !== task.readyHead) throw new Refusal('Report this exact commit ready before merging')
       if (task.mergePolicy === 'ask' && task.approvedHead !== head) throw new Refusal('The human must approve this commit using its merge card first')
       if (!await this.git.clean(worktree)) throw new Refusal('The worktree has uncommitted work')
-      task.workflow = 'merging'; this.save(task); await this.label(task)
       const remote = await this.git.remote(repo)
+      if (task.mergePolicy === 'checks' && !remote) throw new Refusal('This merge requires verified GitHub checks; the repository has no GitHub remote')
       if (remote) {
         const pr = await this.git.pullRequest(worktree, task.branch!)
         if (pr.headRefOid !== head || pr.baseRefName !== task.base) throw new Refusal('The pull request head or base differs from the approved task')
         if (pr.state !== 'MERGED') {
+          if (task.mergePolicy === 'checks' && !pr.statusCheckRollup.length) throw new Refusal('No GitHub checks have reported for this commit')
           if (pr.statusCheckRollup.some(check => !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion || check.state || 'PENDING'))) throw new Refusal('GitHub checks are not green')
+          task.workflow = 'merging'; this.save(task); await this.label(task)
           await this.source.files.exec(task.machine, ['gh', 'pr', 'merge', String(pr.number), '--squash', '--match-head-commit', head, '--repo', remote], task.folder, undefined, 90)
         }
         const done = await this.git.pullRequest(worktree, task.branch!)
@@ -189,6 +199,7 @@ export class CoreTasks {
           const message = `${task.id}: ${task.name}\n\n${task.said || ''}${task.facts ? '\n\nFacts: ' + task.facts : ''}\n`
           task.mergeCommit = (await this.source.files.exec(task.machine, ['git', 'commit-tree', tree, '-p', base, '-F', '-'], task.repo, Buffer.from(message))).toString('utf8').trim()
           this.save(task) // Persist the prepared commit before the only base-ref/worktree change.
+          task.workflow = 'merging'; this.save(task); await this.label(task)
           await this.git.run(repo, ['merge', '--ff-only', task.mergeCommit])
         }
       }
@@ -243,13 +254,14 @@ export class CoreTasks {
       case 'pause':
         if (terminal?.state === 'live') await this.source.core.call('terminal.interrupt', { terminal: terminal.address })
         task.workflow = 'todo'; this.save(task); await this.label(task); return { ok: true }
-      case 'restart-info': return { ok: true, info: { role: 'task', space: task.place, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
-        onWords: agent?.kind ?? task.kind, want: { kind: task.kind, model: task.model, effort: task.effort }, working: agent?.state === 'working',
-        clis: [{ kind: 'claude', name: 'Claude Code' }, { kind: 'codex', name: 'Codex' }] } }
+      case 'restart-info': return { ok: true, info: { role: 'task', space: this.source.space(task.place)?.name, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
+        onWords: agent?.kind ?? task.kind, want: this.source.settings.agent('task', task.place), working: agent?.state === 'working',
+        clis: this.source.settings.clis(task.place) } }
       case 'restart':
         if (action.kind && action.kind !== 'claude' && action.kind !== 'codex') throw new Refusal('Choose Claude Code or Codex')
         if (terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
         task.kind = action.kind as AgentKind || task.kind; task.model = action.model || undefined; task.effort = action.effort || undefined
+        if (action.save) this.source.settings.saveAgent('task', task.place, { kind: task.kind, model: task.model, effort: task.effort })
         delete task.startError; this.save(task)
         await this.launch(task, 'Continue your agreed task. Preserve existing work.', task.model, task.effort)
         return { ok: true }
@@ -311,7 +323,7 @@ export class CoreTasks {
     const reviewHead = await this.git.head({ machine: task.machine, folder: task.folder })
     const reviewer = await this.source.agents.launch(space, `${task.id}/Reviewer-${round}`, task.review.kind,
       `Review commit ${reviewHead} against base ${task.base} and this brief:\n\n${task.desc}\n\nRead repository AGENTS.md, CLAUDE.md and REVIEW.md if present. Find what broke, was omitted or exceeded the brief. Report each finding with proof and critical/major/minor/trivial severity. Do not edit files or decide whether to merge. Finish with your findings as a final reply in your own chat; Shepherdr forwards that native reply to the parent. Do not use hc send or request permission to leave the read-only sandbox for reporting.`,
-      { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Finish with a final reply in your own native chat; the server forwards it to the parent. Never leave the read-only sandbox just to report. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub. Reviewer private instructions: none.' })
+      { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, model: task.reviewerModel, effort: task.reviewerEffort, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Finish with a final reply in your own native chat; the server forwards it to the parent. Never leave the read-only sandbox just to report. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub.' })
     task.reviewRound = round; task.reviewTerminal = reviewer.terminal; task.reviewChat = reviewer.chat
     task.reviewHead = reviewHead; delete task.reviewReport; delete task.reviewTurn; this.save(task)
     return reviewer.terminal

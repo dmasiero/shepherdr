@@ -18,6 +18,7 @@ import { CoreTasks } from './tasks.ts'
 import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
+import { CoreSettings } from './settings.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
@@ -36,6 +37,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly logs: CoreLogs
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
+  readonly settings: CoreSettings
   private local: { id: string; name: string }
   private machines: Machine[] = []
   private permissions = new Map<string, (answer: { allow: boolean }) => void>()
@@ -58,6 +60,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const changed = (chat: string) => { this.questions?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
     this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed, machine => this.machines.find(item => item.id === machine) ?? {})
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
+    this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => id === this.local.id ? this.local.name : this.machineName(id) || id, () => this.emit('snapshot'))
+    this.agents.settings = this.settings
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
@@ -142,6 +146,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       }).finally(() => this.discoveringHomes.delete(machine.id))
     }
     this.agents.reconcile(); this.emit('snapshot')
+    this.settings.probe(this.local.id)
+    for (const machine of this.machines.filter(item => item.state === 'connected')) this.settings.probe(machine.id)
   }
 
   status(agent?: CoreAgent): Status {
@@ -172,10 +178,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))],
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.store.all<Artifact>('artifact'), automations: {}, asks,
-      settings: [{ name: 'Agents', rows: [
-        { key: 'agent', label: 'Agent', value: this.agentKind(), options: ['claude', 'codex'] },
-        { key: 'user', label: 'Your name', value: this.store.get<string>('setting', 'user') || 'You', text: true },
-      ] }],
+      settings: this.settings.sections(),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
       read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
     }
@@ -241,9 +244,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         return { answered: true }
       }
       case 'setting':
-        if (action.value === null) this.store.delete('setting', action.key)
-        else this.store.set('setting', action.key, action.value)
-        this.emit('snapshot'); return {}
+        this.settings.set(action.key, action.value, action.place || 'all'); return {}
       case 'keys': case 'text': {
         const agent = this.agents.get(action.chat)
         const terminal = agent && this.agents.terminal(agent)
@@ -263,8 +264,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       }
       case 'restart-info': {
         const agent = this.agents.get(action.chat)
-        return { ok: true, info: { role: 'coordinator', space: action.chat, on: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
-          onWords: agent?.kind ?? this.agentKind(), want: { kind: this.agentKind() }, clis: [{ kind: 'claude', name: 'Claude Code' }, { kind: 'codex', name: 'Codex' }], working: agent?.state === 'working' } }
+        return { ok: true, info: { role: 'coordinator', space: this.space(action.chat)?.name, on: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
+          onWords: agent?.kind ?? this.agentKind(), want: this.settings.agent('coordinator', action.chat), clis: this.settings.clis(action.chat), working: agent?.state === 'working' } }
       }
       case 'restart': {
         const space = this.space(action.chat)
@@ -274,6 +275,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         if (terminal?.state === 'live') await this.core.call('terminal.kill', { terminal: terminal.address })
         const kind = action.kind || agent?.kind || this.agentKind()
         if (kind !== 'claude' && kind !== 'codex') throw new Error('Choose Claude Code or Codex')
+        if (action.save) this.settings.saveAgent('coordinator', space.id, { kind, model: action.model, effort: action.effort })
         await this.agents.launch(space, action.chat, kind, '', { model: action.model, effort: action.effort, resume: true })
         return {}
       }
@@ -297,7 +299,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         try {
           if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
           else if (task) await this.tasks.launch(task, item.text)
-          else await this.agents.launch(space, chat, agent?.kind ?? this.agentKind(), item.text, { resume: true })
+          else {
+            const pick = this.settings.agent('coordinator', space.id)
+            await this.agents.launch(space, chat, agent?.kind ?? pick.kind, item.text, agent ? { model: agent.model, effort: agent.effort, resume: true } : { ...pick, resume: true })
+          }
           const message = this.store.get<Message>(`message:${chat}`, item.id)
           if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
         } catch (error) {
@@ -337,7 +342,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   todo ID | task close ID
 Use hc for starting, messaging and waiting on core child agents. Never use a web URL or legacy helper for core commands.
 `, code: 0 }
-      if (args[0] === 'show') return { out: `Standalone Shepherdr on core\nSession: ${agent.role}\nAgent: ${agent.kind}\nMerge: ask the human first\n`, code: 0 }
+      if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
       if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
       if (args[0] === 'space' && args[1] === 'add') {

@@ -1,0 +1,150 @@
+import type { SettingRow, SettingSection, RestartCli } from '../../shared/types.ts'
+import { TABLE, nearest, parseCodex, type CliModels } from '../../shared/models.ts'
+import type { CoreStore } from './store.ts'
+import type { CoreFiles } from './files.ts'
+import type { AgentKind, CoreSpace } from './model.ts'
+
+export type Role = 'coordinator' | 'task' | 'reviewer'
+const names = { claude: 'Claude Code', codex: 'Codex' }
+export const kindOf = (word: string): AgentKind | undefined => Object.entries(names).find(([kind, name]) => [kind, name.toLowerCase()].includes(word.trim().toLowerCase()))?.[0] as AgentKind | undefined
+const roleRows = (role: Role, group: string): SettingRow[] => [
+  { group, key: `${role}.agent`, label: 'Agent', value: role === 'reviewer' ? 'Codex' : 'Claude Code', options: Object.values(names) },
+  { group, key: `${role}.model`, label: 'Model', value: 'default', text: true },
+  { group, key: `${role}.effort`, label: 'Effort', value: 'default', options: ['default', ...TABLE[role === 'reviewer' ? 'codex' : 'claude'].efforts] },
+]
+// Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
+const CATALOG: SettingSection[] = [
+  { name: 'Private instructions', about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
+    { key: 'coordinator.instructions', label: 'Coordinators', value: '', multiline: true },
+    { key: 'task.instructions', label: 'Task agents', value: '', multiline: true },
+    { key: 'reviewer.instructions', label: 'Reviewers', value: '', multiline: true },
+  ] },
+  { name: 'How tasks work', told: true, about: "Each new task's brief ends with these in its Settings block, each as the line shown. To change one for a single task, tell its coordinator.", rows: [
+    { key: 'brief.review', label: 'Review', value: 'on', options: ['on', 'off'] },
+    { key: 'review.mustFix', label: 'Must fix', value: 'major', options: ['critical', 'major', 'minor', 'trivial'] },
+    { key: 'review.rounds', label: 'Review rounds', value: '3 rounds', num: { min: 1, max: 10, unit: 'rounds', one: 'round' } },
+    { key: 'brief.merge', label: 'Merge', value: 'on its own', options: ['on its own', 'after GitHub checks', 'ask me first'] },
+    ...roleRows('reviewer', 'Reviewer'),
+  ] },
+  { name: 'Agents', about: "What each kind of agent starts with. Default is the agent's own model or effort.", rows: [...roleRows('task', 'Tasks'), ...roleRows('coordinator', 'Coordinators')] },
+]
+const rows = CATALOG.flatMap(section => section.rows)
+
+/** Explicit store + machine identity; importing this module never reads the live installation. */
+export class CoreSettings {
+  private probing = new Set<string>()
+  private saving = false
+  constructor(private store: CoreStore, private files: CoreFiles, private spaces: () => CoreSpace[], private machineName: (id: string) => string, private changed: () => void) {}
+  private chain(level = 'all'): string[] {
+    if (level === 'all') return ['all']
+    if (level.startsWith('m:')) return [level, 'all']
+    const space = this.spaces().find(item => item.id === level)
+    if (!space) throw new Error('No such settings level')
+    return [space.id, `m:${space.machine}`, 'all']
+  }
+  pick(key: string, level = 'all') {
+    for (const at of this.chain(level)) {
+      const value = this.store.get<string>('settings', `${at}\0${key}`)
+      if (value !== undefined) return { value, level: at }
+    }
+    return { value: rows.find(row => row.key === key)?.value ?? '', level: 'default' }
+  }
+  get(key: string, level = 'all') { return this.pick(key, level).value }
+  set(key: string, value: string | null, level = 'all') {
+    const row = rows.find(item => item.key === key)
+    if (!row) throw new Error(`No setting ${key}`)
+    this.chain(level)
+    if (value !== null) {
+      if (typeof value !== 'string' || value.length > (row.multiline ? 32_000 : 512)) throw new Error('Setting is too long')
+      if (key.endsWith('.model') && value !== 'default' && value) {
+        const role = key.split('.')[0] as Role, kind = kindOf(this.get(`${role}.agent`, level)) ?? 'claude'
+        if (this.catalog(kind, level).models.length && !this.findModel(kind, value, level)) throw new Error('Choose a model offered by this agent')
+      }
+      if (key.endsWith('.agent')) {
+        const kind = kindOf(value)
+        if (!kind) throw new Error('Choose Claude Code or Codex')
+        value = names[kind]
+      } else if (row.num) {
+        const match = value.match(/^(\d+)(?: rounds?)?$/)
+        const number = Number(match?.[1])
+        if (!match || number < row.num.min || number > row.num.max) throw new Error('Choose 1 to 10 review rounds')
+        value = `${number} ${number === 1 ? 'round' : 'rounds'}`
+      } else if (row.options && !key.endsWith('.effort') && !row.options.includes(value)) throw new Error('Choose one of the offered values')
+      else if (key.endsWith('.effort') && value !== 'default') {
+        const role = key.split('.')[0] as Role, config = this.agent(role, level)
+        if (!this.catalog(config.kind, level).efforts.includes(value)) throw new Error('This agent does not offer that effort')
+      }
+      this.store.set('settings', `${level}\0${key}`, value)
+    } else this.store.delete('settings', `${level}\0${key}`)
+    if (!this.saving) this.changed()
+  }
+  agent(role: Role, level: string) {
+    const kind = kindOf(this.get(`${role}.agent`, level)) ?? (role === 'reviewer' ? 'codex' : 'claude')
+    const raw = this.get(`${role}.model`, level), catalog = this.catalog(kind, level)
+    const model = raw === 'default' || !raw ? undefined : this.findModel(kind, raw, level)?.id ?? (!catalog.models.length ? raw : undefined)
+    const effort = nearest(catalog.models.find(item => item.id === model)?.efforts ?? catalog.efforts, this.get(`${role}.effort`, level))
+    return { kind, model, effort }
+  }
+  private findModel(kind: AgentKind, value: string, level: string) {
+    const catalog = this.catalog(kind, level), raw = value.toLowerCase()
+    return [...catalog.models, ...catalog.others ?? []].find(item => item.id.toLowerCase() === raw || item.label.toLowerCase() === raw || kind === 'claude' && ['opus', 'sonnet', 'haiku', 'fable'].includes(raw) && item.id.includes(`-${raw}-`))
+  }
+  launch(role: Role, level: string, kind?: AgentKind) {
+    const defaults = this.agent(role, level)
+    return !kind || kind === defaults.kind ? defaults : { kind, model: undefined, effort: undefined }
+  }
+  instructions(role: Role, level: string) {
+    const words = this.get(`${role}.instructions`, level)
+    return `Private instruction snapshot for this start. This replaces earlier snapshots, including when empty. Explicit human instructions and the brief win over private rules; follow repository/team AGENTS.md, CLAUDE.md and REVIEW.md too. If private and team rules conflict, explain and ask. Never copy private instructions into git, briefs, reports or GitHub. No secrets here.\nPrivate instructions for ${role}:\n${words || '(none)'}\n`
+  }
+  saveAgent(role: Role, level: string, input: { kind: string; model?: string; effort?: string }) {
+    this.saving = true
+    try {
+      this.store.db.transaction(() => {
+        this.set(`${role}.agent`, input.kind, level)
+        this.set(`${role}.model`, input.model || 'default', level)
+        this.set(`${role}.effort`, input.effort || 'default', level)
+      })()
+    } finally { this.saving = false }
+    this.changed()
+  }
+  private machine(level: string) { return level.startsWith('m:') ? level.slice(2) : this.spaces().find(item => item.id === level)?.machine }
+  catalog(kind: AgentKind, level: string): CliModels {
+    const machine = this.machine(level)
+    return machine && this.store.get<CliModels>('models', `${machine}:${kind}`) || TABLE[kind]
+  }
+  clis(level: string): RestartCli[] {
+    return (['claude', 'codex'] as const).map(kind => ({ kind, name: names[kind], ...this.catalog(kind, level) }))
+  }
+  sections(): SettingSection[] {
+    const levels = ['all', ...new Set(this.spaces().map(space => `m:${space.machine}`)), ...this.spaces().map(space => space.id)]
+    return levels.flatMap(level => CATALOG.map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
+      const picked = this.pick(row.key, level), inherited = this.chain(level).slice(1).map(at => this.pick(row.key, at)).find(value => value.level !== 'default') ?? { value: row.value, level: 'default' }
+      let dynamic = { ...row }
+      let value = picked.value
+      if (/\.(model|effort)$/.test(row.key)) {
+        const role = row.key.split('.')[0] as Role, config = this.agent(role, level), catalog = this.catalog(config.kind, level)
+        if (row.key.endsWith('.model')) {
+          dynamic = { ...dynamic, text: !catalog.models.length, options: ['default', ...catalog.models.map(model => model.label)] }
+          value = this.findModel(config.kind, picked.value, level)?.label ?? picked.value
+          if (picked.value !== 'default' && picked.value && !config.model) dynamic.warn = 'This model is unavailable for the selected agent. New starts use its default; choose a model or reset this value.'
+        }
+        else dynamic = { ...dynamic, options: ['default', ...(catalog.models.find(model => model.id === config.model)?.efforts ?? catalog.efforts)] }
+      }
+      const words = (at: string) => at === 'default' ? 'Shepherdr’s default' : at === 'all' ? 'Everywhere' : at.startsWith('m:') ? this.machineName(at.slice(2)) : this.spaces().find(space => space.id === at)?.name || at
+      return { ...dynamic, value, ...(picked.level === level ? { inherits: { value: inherited.value, from: words(inherited.level) } } : { from: words(picked.level) }) }
+    }) })))
+  }
+  describe(level: string) { return CATALOG.map(section => `${section.name}:\n${section.rows.filter(row => !row.key.endsWith('.instructions')).map(row => `- ${row.group ? row.group + ' ' : ''}${row.label}: ${this.get(row.key, level)}`).join('\n')}`).join('\n\n') + '\n' }
+  /** Query the CLI on its own machine, through core only. No app startup dependency. */
+  probe(machine: string) {
+    if (this.probing.has(machine)) return
+    const saved = this.store.get<CliModels>('models', `${machine}:codex`)
+    if (saved?.at && Date.now() - saved.at < 6 * 3_600_000) return
+    this.probing.add(machine)
+    void this.files.exec(machine, ['codex', 'debug', 'models'], undefined, undefined, 20).then(bytes => {
+      const catalog = parseCodex(bytes.toString('utf8'))
+      if (catalog) { this.store.set('models', `${machine}:codex`, { ...catalog, at: Date.now() }); this.changed() }
+    }).catch(() => {}).finally(() => this.probing.delete(machine))
+  }
+}

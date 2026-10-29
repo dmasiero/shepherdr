@@ -165,3 +165,23 @@ Remote task IDs retain their machine-local prefix/number, qualified by the core
 machine name in the combined app (e.g. probe/CORE-1), avoiding cross-machine
 collisions. Bare local IDs resolve only within the authenticated caller's space.
 Workflow remains separate from an unreachable agent's machine status.
+
+Open implementation risk: the development Codex launcher currently uses the CLI's
+one-invocation hook-trust bypass to exercise generated hooks. That flag also
+covers other enabled hooks; trusting generated hooks alone is insufficient to
+justify it for a final installation. Preserve native hook trust or vet every
+loaded source before the final acceptance/release. Do not call this resolved.
+
+Scoped task/agent Settings are now stored in the isolated core SQLite store,
+with Everywhere → stable machine → space inheritance and explicit empty private
+instruction overrides. Existing Settings and restart-sheet components are reused.
+Role defaults, model/effort picks, review policy and private launch snapshots are
+connected; backup, capacity, archive, browser, notification and other catalog
+sections remain pending. Native Codex model discovery travels through core exec.
+The pure legacy model catalog/parsers are shared without importing legacy state.
+Manual phone-width inspection changed a scratch space's task Agent to Codex and
+showed its scoped reset/inheritance controls; screenshot she301-settings-phone.png.
+Settings slice review: three rounds, cross-CLI model and resumed/parent launch
+choices fixed, checks-only merges fail closed without GitHub checks, and atomic
+save notifications fixed; final round found no unresolved critical/major issue.
+No local suites ran. Branch CI remains the check authority.
