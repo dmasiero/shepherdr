@@ -25,5 +25,5 @@ export default defineConfig({
   plugins: [pluginParts(), react(), tailwindcss()],
   resolve: { alias: { '@shared': at('./shared'), '@client': at('./src') } },
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 900 },
-  server: { host: '127.0.0.1', proxy: { '/api': { target: 'http://127.0.0.1:7787', ws: true } } },
+  server: { host: '127.0.0.1', allowedHosts: ['.ts.net'], proxy: { '/api': { target: process.env.SHEPHERDR_API_URL || 'http://127.0.0.1:7787', ws: true } } },
 })

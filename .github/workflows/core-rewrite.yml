@@ -5,6 +5,11 @@ on:
     branches: [work/301-build-shepherdr-2-1-on-core]
     paths:
       - 'server/core/**'
+      - 'helper/core-*.ts'
+      - 'bin/shepherdr'
+      - 'server/app.ts'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
       - 'test/core-*.test.ts'
       - '.github/workflows/core-rewrite.yml'
   workflow_dispatch:

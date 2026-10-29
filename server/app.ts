@@ -27,11 +27,16 @@ export interface AppOptions {
   host?: string
   /** update.json: how the last update of Shepherdr went, shown on every screen */
   updates?: string
+  /** Standalone core launcher identity; absent in the legacy application. */
+  health?: () => unknown
 }
 
-export function startApp({ source, dist, push, port, host = '127.0.0.1', updates }: AppOptions) {
+export function startApp({ source, dist, push, port, host = '127.0.0.1', updates, health }: AppOptions) {
   const live = new Set<ServerWebSocket<Sock>>()
-  const send = (ws: ServerWebSocket<Sock>, e: ServerEvent) => ws.send(JSON.stringify(e))
+  const send = (ws: ServerWebSocket<Sock>, e: ServerEvent) => {
+    if (ws.getBufferedAmount() > 1024 * 1024) { ws.close(1013, 'Reconnect for a fresh snapshot'); return }
+    ws.send(JSON.stringify(e))
+  }
 
   const calls = new Set<ServerWebSocket<Sock>>()
   /** about to restart for an update: no new voice call starts, so none is cut short */
@@ -125,6 +130,7 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
       }
 
       try {
+        if (path === '/api/health' && health) return json(health())
         if (path === '/api/chat') {
           const key = q.get('chat') ?? ''
           return json({ chat: source.chat(key) ?? null, status: source.chatStatus?.(key) })

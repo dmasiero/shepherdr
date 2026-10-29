@@ -1,0 +1,374 @@
+import { hostname, homedir } from 'node:os'
+import { basename, join } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { Emitter, type Source, type SourceEvents } from '../source.ts'
+import { nameProblem, slugify, type Action, type AddSpace, type Artifact, type Chat, type Folders, type Message, type Question, type Snapshot, type Status, type Task } from '../../shared/types.ts'
+import { CoreSession } from './session.ts'
+import { CoreStore } from './store.ts'
+import { CoreFiles } from './files.ts'
+import { CoreAgents } from './agents.ts'
+import { CoreLogs } from './logs.ts'
+import { Mailbox, type Grant, type MailRequest } from './mailbox.ts'
+import { prepareHome } from './home.ts'
+import type { CoreConfig } from './config.ts'
+import { coreEnvironment } from './config.ts'
+import type { AgentKind, CoreAgent, CoreSpace } from './model.ts'
+import { CoreTasks } from './tasks.ts'
+import { CoreQuestions } from './questions.ts'
+
+interface Machine { id: string; name: string; state: string; host?: string; version?: string }
+interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
+interface Upload { id: string; chat: string; path: string; name: string }
+interface PendingSend { id: string; chat: string; text: string; state: 'queued' | 'sending' | 'uncertain' }
+
+/** Product state is Shepherdr's; terminals, machine commands, files and agent children are core's. */
+export class CoreSource extends Emitter<SourceEvents> implements Source {
+  readonly kind = 'live' as const
+  quiescing = false
+  readonly core: CoreSession
+  readonly store: CoreStore
+  readonly files: CoreFiles
+  readonly mailbox: Mailbox
+  readonly agents: CoreAgents
+  readonly logs: CoreLogs
+  readonly tasks: CoreTasks
+  readonly questions: CoreQuestions
+  private local: { id: string; name: string }
+  private machines: Machine[] = []
+  private permissions = new Map<string, (answer: { allow: boolean }) => void>()
+  private faults = new Map<string, string>()
+  private hooks = new Map<Action['type'], (action: Action) => Promise<unknown>>()
+  private recovery?: ReturnType<typeof setInterval>
+  private recovering = false
+  private sending = new Set<string>()
+
+  constructor(readonly config: CoreConfig) {
+    super()
+    const installation = prepareHome(config.home)
+    this.store = new CoreStore(config.home)
+    this.local = this.store.get('meta', 'local') ?? { id: installation.id, name: hostname().split('.')[0] }
+    this.core = new CoreSession(config.socket)
+    this.files = new CoreFiles(this.core, machine => this.route(machine))
+    this.mailbox = new Mailbox(config.home, this.core, machine => this.route(machine), (grant, request, id) => this.mail(grant, request, id))
+    const changed = (chat: string) => { this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
+    this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed)
+    this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
+    this.tasks = new CoreTasks(this)
+    this.questions = new CoreQuestions(this)
+    this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot') })
+    this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
+    this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
+  }
+  async start() {
+    // A previous server's in-flight mailbox claim cannot be re-executed. Mark its cards honestly as interrupted.
+    for (const permission of this.store.all<Permission>('permission')) {
+      if (!permission.settled) {
+        permission.settled = true; permission.allow = false; permission.question.sent = -1; permission.question.said = 'Interrupted; ask again after reconnecting'
+        this.store.set('permission', permission.id, permission)
+        this.store.set(`message:${permission.chat}`, `permission-${permission.id}`, { id: `permission-${permission.id}`, who: 'agent', question: permission.question, at: Date.now() })
+        const agent = this.agents.get(permission.chat)
+        if (agent?.permission === permission.id) { delete agent.permission; this.store.set('agent', agent.chat, agent) }
+      }
+    }
+    for (const pending of this.store.all<PendingSend>('pending-send')) {
+      if (pending.state === 'sending') {
+        pending.state = 'uncertain'; this.store.set('pending-send', pending.id, pending)
+        const message = this.store.get<Message>(`message:${pending.chat}`, pending.id)
+        if (message) this.store.set(`message:${pending.chat}`, pending.id, { ...message, waiting: false, waitsFor: undefined })
+      }
+    }
+    await this.core.start(); await this.refresh(); this.logs.start()
+    this.recovery = setInterval(() => {
+      if (this.connected()) { void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
+      if (this.recovering || this.core.current.error?.includes('requires core')) return
+      this.recovering = true
+      // Restart the configured, isolated core after a crash. This never updates binaries or stops holders.
+      try {
+        const child = Bun.spawn([this.config.binary, 'server', 'start'], { env: coreEnvironment(this.config), stdout: 'ignore', stderr: 'ignore' })
+        const deadline = setTimeout(() => child.kill(), 10_000)
+        void child.exited.finally(() => { clearTimeout(deadline); this.recovering = false })
+      } catch { this.recovering = false }
+    }, 5000)
+  }
+  connected() { return this.core.current.connected }
+  registerAction(type: Action['type'], handler: (action: Action) => Promise<unknown>) { this.hooks.set(type, handler) }
+
+  async route(machine: string): Promise<string | undefined> {
+    if (machine === this.local.id) return undefined
+    const remote = this.machines.find(item => item.id === machine)
+    if (!remote) throw new Error('This machine is not connected through core')
+    if (remote.state !== 'connected') throw new Error(`${remote.name} is reconnecting`)
+    return remote.name
+  }
+  spaces() { return this.store.all<CoreSpace>('space') }
+  space(id: string) { return this.store.get<CoreSpace>('space', id) }
+  async refresh() {
+    const status = await this.core.call<{ core: { id: string; name: string } }>('server.status')
+    this.local = status.core; this.store.set('meta', 'local', this.local)
+    this.machines = (await this.core.call<{ machines: Machine[] }>('machine.list')).machines
+    const homeId = `p:${this.local.id}:~`
+    if (!this.space(homeId)) {
+      const folder = (await this.files.exec(this.local.id, ['sh', '-c', 'printf %s "$HOME"'])).toString('utf8')
+      this.store.set('space', homeId, { id: homeId, name: '~', home: true, machine: this.local.id, folder, base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+    }
+    this.agents.reconcile(); this.emit('snapshot')
+  }
+
+  status(agent?: CoreAgent): Status {
+    if (!this.connected()) return 'off'
+    if (!agent) return 'idle'
+    if (this.questions.open(agent.chat).length || this.store.all<Permission>('permission').some(item => item.chat === agent.chat && item.grant === agent.grant && !item.settled && item.expires > Date.now())) return 'need'
+    const terminal = this.agents.terminal(agent)
+    if (terminal?.state === 'finished') return 'idle'
+    if (agent.pid && terminal?.pid !== agent.pid) return 'need'
+    const word = terminal?.status?.state ?? agent.state
+    return word === 'blocked' || agent.permission ? 'need' : word === 'working' || word === 'starting' ? 'work' : 'idle'
+  }
+  snapshot(): Snapshot {
+    const spaces = this.spaces()
+    const asks: Record<string, string> = {}
+    for (const permission of this.store.all<Permission>('permission')) {
+      if (!permission.settled) asks[permission.chat] = permission.id
+    }
+    for (const row of this.questions.open()) asks[row.chat] = row.id
+    return {
+      name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
+      places: spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
+        level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.status(this.agents.get(space.id)), mode: space.mode, chat: space.id })),
+      machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
+        ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))],
+      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.store.all<Artifact>('artifact'), automations: {}, asks,
+      settings: [{ name: 'Agents', rows: [
+        { key: 'agent', label: 'Agent', value: this.agentKind(), options: ['claude', 'codex'] },
+        { key: 'user', label: 'Your name', value: this.store.get<string>('setting', 'user') || 'You', text: true },
+      ] }],
+      last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
+      read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
+    }
+  }
+  chatStatus(chat: string) { return this.status(this.agents.get(chat)) }
+  chat(key: string): Chat | undefined {
+    const agent = this.agents.get(key)
+    if (!agent && !this.space(key) && !this.tasks.forChat(key)) return undefined
+    const terminal = agent && this.agents.terminal(agent)
+    const status = this.status(agent)
+    return { key, messages: this.logs.messages(key), cli: agent?.kind ?? this.agentKind(), working: status === 'work',
+      failed: this.store.all<PendingSend>('pending-send').filter(item => item.chat === key && item.state === 'uncertain').map(item => ({ cid: item.id, error: 'Delivery was interrupted; check the chat before sending again' })),
+      finished: !!agent && terminal?.state === 'finished', agent: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort } }
+  }
+  private agentKind(): AgentKind { return this.store.get<string>('setting', 'agent') === 'codex' ? 'codex' : 'claude' }
+  post(chat: string, message: Message) {
+    this.logs.outgoing(chat, message)
+    this.store.set('last', chat, { chat, at: message.at ?? Date.now() }); this.emit('snapshot')
+  }
+  forwardQuestion(chat: string, question: Question, answer?: string, where: 'space' | 'task' = 'task') {
+    const task = this.tasks.forChat(chat)
+    if (!task) return
+    const id = `ask-${question.id}`, previous = this.store.get<Message>(`message:${task.place}`, id)
+    this.post(task.place, { id, who: 'agent', at: previous?.at ?? Date.now(), card: { id, task: task.id, status: answer ? this.tasks.view(task).status : 'need', text: answer ? 'Answered' : 'Needs you',
+      ask: { chat, questions: [question], open: answer === undefined, answered: answer === undefined ? undefined : { where, text: answer } } } })
+  }
+
+  async act(action: Action): Promise<unknown> {
+    if (this.quiescing) throw new Error('Shepherdr is stopping; retry after it reconnects')
+    const handler = this.hooks.get(action.type)
+    if (handler) return handler(action)
+    if ('chat' in action && this.tasks.forChat(action.chat) && ['pin', 'archive', 'pause', 'restart-info', 'restart', 'close', 'delete'].includes(action.type)) return this.tasks.act(action)
+    switch (action.type) {
+      case 'send': {
+        if (!action.text.trim()) return {}
+        const run = async () => {
+          const task = this.tasks.forChat(action.chat)
+          const space = this.space(action.chat) || task && this.space(task.place)
+          if (!space) throw new Error('No such coordinator space')
+          const id = action.cid || randomUUID()
+          this.store.set('pending-send', id, { id, chat: action.chat, text: action.text, state: 'queued' } satisfies PendingSend)
+          this.post(action.chat, { id, cid: action.cid, who: 'you', text: action.text, at: Date.now(), waiting: true, waitsFor: 'start' })
+          await this.flush(action.chat)
+          return { ok: true, waiting: !!this.store.get('pending-send', id) }
+        }
+        return action.cid ? this.store.command(action.cid, action, run) : run()
+      }
+      case 'answer': {
+        if (await this.tasks.answer(action.question, action.choice, action.chat)) return { ok: true }
+        if (await this.questions.answer(action)) return { ok: true }
+        const permission = this.store.get<Permission>('permission', action.question)
+        if (!permission || permission.chat !== action.chat || permission.settled) throw new Error('This request is no longer waiting for an answer')
+        if (permission.expires <= Date.now() || this.agents.get(action.chat)?.grant !== permission.grant) throw new Error('This permission belongs to an expired or replaced agent session')
+        if (action.choice !== 0 && action.choice !== 1) throw new Error('Choose Allow once or Deny')
+        const allow = action.choice === 0
+        permission.settled = true; permission.allow = allow; permission.question.sent = action.choice
+        this.store.set('permission', permission.id, permission)
+        const agent = this.agents.get(action.chat)
+        if (agent && agent.permission === permission.id) { delete agent.permission; agent.state = 'working'; this.store.set('agent', agent.chat, agent) }
+        this.post(action.chat, { id: `permission-${permission.id}`, who: 'agent', question: permission.question, at: Date.now() })
+        this.forwardQuestion(action.chat, permission.question, allow ? 'Allow once' : 'Deny', action.space ? 'space' : 'task')
+        this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
+        return { answered: true }
+      }
+      case 'setting':
+        if (action.value === null) this.store.delete('setting', action.key)
+        else this.store.set('setting', action.key, action.value)
+        this.emit('snapshot'); return {}
+      case 'keys': case 'text': {
+        const agent = this.agents.get(action.chat)
+        const terminal = agent && this.agents.terminal(agent)
+        if (!terminal || terminal.state !== 'live') throw new Error('This terminal is stopped')
+        if (action.type === 'keys') return this.core.call('terminal.keys', { terminal: terminal.address, keys: action.keys })
+        const stream = await this.core.attach(terminal.address, { data() {}, close() {} }, terminal.cols, terminal.rows)
+        stream.input(Buffer.from(action.text)); stream.close(); return {}
+      }
+      case 'read': this.store.set('meta', 'read', { ...this.store.get<Record<string, number>>('meta', 'read'), ...action.chats }); this.emit('snapshot'); return {}
+      case 'rename': this.store.set('name', action.id, action.name); this.emit('snapshot'); return {}
+      case 'react': {
+        const message = this.store.get<Message>(`message:${action.chat}`, action.message)
+        if (!message) throw new Error('No such message')
+        const previous = message.reactions ?? []
+        message.reactions = previous.some(item => item.emoji === action.emoji) ? previous.filter(item => item.emoji !== action.emoji) : [...previous, { emoji: action.emoji, by: 'me' }]
+        this.post(action.chat, message); return {}
+      }
+      case 'restart-info': {
+        const agent = this.agents.get(action.chat)
+        return { ok: true, info: { role: 'coordinator', space: action.chat, on: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
+          onWords: agent?.kind ?? this.agentKind(), want: { kind: this.agentKind() }, clis: [{ kind: 'claude', name: 'Claude Code' }, { kind: 'codex', name: 'Codex' }], working: agent?.state === 'working' } }
+      }
+      case 'restart': {
+        const space = this.space(action.chat)
+        if (!space) throw new Error('No such coordinator')
+        const agent = this.agents.get(action.chat)
+        const terminal = agent && this.agents.terminal(agent)
+        if (terminal?.state === 'live') await this.core.call('terminal.kill', { terminal: terminal.address })
+        const kind = action.kind || agent?.kind || this.agentKind()
+        if (kind !== 'claude' && kind !== 'codex') throw new Error('Choose Claude Code or Codex')
+        await this.agents.launch(space, action.chat, kind, '', { model: action.model, effort: action.effort, resume: true })
+        return {}
+      }
+      default: throw new Error(`This rewrite slice has not implemented ${action.type} yet; see the parity checklist`)
+    }
+  }
+
+  private async flush(chat: string) {
+    if (this.sending.has(chat) || !this.connected()) return
+    this.sending.add(chat)
+    try {
+      const pending = this.store.all<PendingSend>('pending-send').filter(item => item.chat === chat && item.state === 'queued')
+      for (const item of pending) {
+        const task = this.tasks.forChat(chat)
+        const space = this.space(chat) || task && this.space(task.place)
+        if (!space) return
+        const agent = this.agents.get(chat)
+        if (agent && (agent.state === 'starting' || agent.permission)) return
+        item.state = 'sending'; this.store.set('pending-send', item.id, item)
+        try {
+          if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
+          else if (task) await this.tasks.launch(task, item.text)
+          else await this.agents.launch(space, chat, agent?.kind ?? this.agentKind(), item.text, { resume: true })
+          const message = this.store.get<Message>(`message:${chat}`, item.id)
+          if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
+        } catch (error) {
+          item.state = 'uncertain'; this.store.set('pending-send', item.id, item)
+          const message = this.store.get<Message>(`message:${chat}`, item.id)
+          if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
+          this.faults.set(chat, (error as Error).message)
+          this.emit('chat', chat); return
+        }
+      }
+    } finally { this.sending.delete(chat) }
+  }
+
+  private async mail(grant: Grant, request: MailRequest, requestId: string): Promise<unknown> {
+    if (this.quiescing) throw new Error('Shepherdr is stopping; retry after it reconnects')
+    const agent = this.agents.get(grant.chat)
+    const terminal = agent && this.agents.terminal(agent)
+    if (!agent || agent.launch !== grant.session || agent.grant !== grant.id || terminal?.state !== 'live' || agent.pid && terminal.pid !== agent.pid) throw new Error('This session is no longer active')
+    if (request.action === 'cli') {
+      const input = request.args as { args?: unknown }
+      if (!Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')) throw new Error('Invalid command words')
+      const args = input.args as string[]
+      if (args[0] === 'show') return { out: `Standalone Shepherdr on core\nSession: ${agent.role}\nAgent: ${agent.kind}\nMerge: ask the human first\n`, code: 0 }
+      if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
+      if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
+      if (args[0] === 'space' && args[1] === 'add') {
+        if (agent.role !== 'coordinator') throw new Error('Only a coordinator can add a space')
+        const result = await this.addSpace({ machine: agent.machine, path: args[2] || '' })
+        return { out: result.place + '\n', code: 0 }
+      }
+      return this.tasks.cli(grant, args)
+    }
+    if (request.action !== 'permission') throw new Error('This command is not connected in this rewrite slice')
+    const input = request.args as { id?: string; tool?: string; input?: unknown }
+    if (typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/.test(input.id) || input.id !== requestId) throw new Error('Invalid permission request identity')
+    const previous = this.store.get<Permission>('permission', input.id)
+    if (previous && (previous.grant !== grant.id || previous.chat !== grant.chat)) throw new Error('Permission id belongs to another session')
+    if (previous?.settled) return { allow: previous.allow === true }
+    const question: Question = { id: input.id, title: `${agent.kind === 'claude' ? 'Claude Code' : 'Codex'} asks to use ${String(input.tool || 'a tool').slice(0, 100)}`,
+      kind: 'Question', choices: [{ label: 'Allow once' }, { label: 'Deny' }], to: grant.chat, noNote: true,
+      screen: JSON.stringify(input.input, null, 2)?.slice(0, 16_000) }
+    const permission: Permission = { id: input.id, chat: grant.chat, grant: grant.id, question, expires: request.expires }
+    this.store.set('permission', input.id, permission)
+    agent.state = 'blocked'; agent.permission = input.id; this.store.set('agent', agent.chat, agent)
+    this.post(grant.chat, { id: `permission-${input.id}`, who: 'agent', question, at: Date.now() })
+    this.forwardQuestion(grant.chat, question)
+    this.emit('alert', { id: input.id, from: 'Shepherdr', title: question.title, body: 'Waiting for your permission', go: { place: agent.space, focus: input.id }, tag: grant.chat,
+      card: { chat: grant.chat, question: input.id, choices: question.choices.map((choice, index) => ({ label: choice.label, choice: index })) } })
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        this.permissions.delete(input.id!)
+        permission.settled = true; permission.allow = false; permission.question.sent = -1; permission.question.said = 'Permission request expired'
+        this.store.set('permission', permission.id, permission)
+        this.post(grant.chat, { id: `permission-${input.id}`, who: 'agent', question: permission.question, at: Date.now() })
+        const current = this.agents.get(grant.chat)
+        if (current?.grant === grant.id && current.permission === permission.id) { delete current.permission; this.store.set('agent', current.chat, current) }
+        resolve({ allow: false })
+      }, Math.max(1, request.expires - Date.now() - 1000))
+      this.permissions.set(input.id!, answer => { clearTimeout(timer); resolve(answer) })
+    })
+  }
+
+  async folders(machine: string, path: string): Promise<Folders> {
+    const script = `const f=require('node:fs'),p=require('node:path'),o=require('node:os'),c=require('node:child_process');const raw=process.argv.at(-1),home=o.homedir(),target=p.resolve(raw==='~'?home:raw.startsWith('~/')?p.join(home,raw.slice(2)):raw);let x={path:target,exists:f.existsSync(target),dir:false,repo:null,entries:[]};if(x.exists){const real=f.realpathSync(target);if(real!==home&&!real.startsWith(home+p.sep))throw Error('Choose a folder in your home');x.dir=f.statSync(real).isDirectory();if(x.dir){let g=c.spawnSync('git',['-C',real,'rev-parse','--show-toplevel'],{encoding:'utf8'});x.repo=g.status===0?g.stdout.trim():null;x.entries=f.readdirSync(real,{withFileTypes:true}).filter(e=>e.isDirectory()&&!e.name.startsWith('.')).slice(0,200).map(e=>({name:e.name,path:p.join(real,e.name),repo:f.existsSync(p.join(real,e.name,'.git'))}));}}console.log(JSON.stringify(x))`
+    const result = JSON.parse((await this.files.exec(machine, [process.execPath, '-e', script, '--', path])).toString('utf8')) as Folders
+    for (const entry of result.entries) entry.added = this.spaces().some(space => space.machine === machine && space.folder === entry.path)
+    result.added = this.spaces().some(space => space.machine === machine && space.folder === result.repo)
+    return result
+  }
+  async addSpace(request: AddSpace) {
+    const folder = await this.folders(request.machine, request.path)
+    if (request.create && !folder.exists) {
+      // The parent must already resolve inside the user's home; the new leaf is a plain folder name.
+      const parent = await this.folders(request.machine, join(folder.path, '..'))
+      if (!parent.dir) throw new Error('Choose an existing parent folder')
+      await this.files.exec(request.machine, ['mkdir', '-p', folder.path])
+      await this.files.exec(request.machine, ['git', 'init', '--initial-branch=main', folder.path])
+    }
+    const repo = await this.folders(request.machine, folder.path)
+    if (!repo.repo) throw new Error('Choose a git repository')
+    const existing = this.spaces().find(space => space.machine === request.machine && space.folder === repo.repo)
+    if (existing) return { place: existing.id }
+    const name = request.name || slugify(basename(repo.repo))
+    const problem = nameProblem(name, this.spaces().filter(space => space.machine === request.machine).map(space => space.name))
+    if (problem) throw new Error(problem)
+    const id = `p:${request.machine}:${name}`
+    const base = (await this.files.exec(request.machine, ['git', 'symbolic-ref', '--short', 'HEAD'], repo.repo)).toString().trim()
+    this.store.set('space', id, { id, machine: request.machine, name, folder: repo.repo, base, prefix: name.replace(/[^a-z]/gi, '').slice(0, 4).toUpperCase() || 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+    this.emit('snapshot'); return { place: id }
+  }
+  watch(_chats: string[], _terms: string[]) {}
+  async artifact(id: string, version?: number) { return this.store.get<{ html: string; data?: unknown; sent?: string }>('artifact-version', `${id}:${version || this.store.get<Artifact>('artifact', id)?.v}`) }
+  async artifactThumb(_id: string, _dark: boolean) { return null }
+  async upload(chat: string, name: string, data: Uint8Array) {
+    if (!this.chat(chat)) throw new Error('No such chat')
+    if (data.length > 32 * 1024 * 1024) throw new Error('Attachment is too large')
+    const directory = join(this.config.home, 'uploads'); mkdirSync(directory, { recursive: true, mode: 0o700 })
+    const id = randomUUID(), path = join(directory, id + '-' + basename(name))
+    writeFileSync(path, data, { mode: 0o600, flag: 'wx' }); this.store.set('upload', id, { id, chat, path, name: basename(name) } satisfies Upload)
+    return path
+  }
+  async attachment(chat: string, path: string) {
+    const record = this.store.all<Upload>('upload').find(file => file.chat === chat && file.path === path)
+    return record ? new Blob([readFileSync(record.path)], { type: Bun.file(record.path).type }) : null
+  }
+  async drain() { this.quiescing = true; return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.logs.stop(); this.core.stop() }
+}

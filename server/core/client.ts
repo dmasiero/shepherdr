@@ -4,6 +4,10 @@ import { CORE_GENERATION, CORE_VERSION, FRAME, MAX_FRAME, FrameReader, encodeFra
 export class CoreError extends Error {
   constructor(readonly kind: string, message: string, readonly hint?: string) { super(message); this.name = 'CoreError' }
 }
+/** Deliberate product refusal whose message is safe for the owning agent/human to read. */
+export class Refusal extends Error {
+  constructor(message: string) { super(message); this.name = 'Refusal' }
+}
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 type Stream = { data(bytes: Buffer): void; close(reason: unknown): void }

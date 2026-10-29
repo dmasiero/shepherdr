@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { CoreError } from './client.ts'
+import { CoreError, Refusal } from './client.ts'
 import { seal, unseal, type Envelope, type MailCredential } from './envelope.ts'
 
 export interface DocConnection {
@@ -57,10 +57,14 @@ export class Mailbox {
   private db: Database
   private busy = new Set<string>()
   private again = new Set<string>()
+  private processing = new Map<string, Promise<void>>()
+  private replies = new Map<string, Promise<void>>()
+  private waiting = new Set<string>()
+  private closed = false
   readonly server: string
   constructor(home: string, private readonly connection: DocConnection,
     private readonly route: (machineId: string) => Promise<string | undefined>,
-    private readonly dispatch: (grant: Grant, request: MailRequest) => Promise<unknown>) {
+    private readonly dispatch: (grant: Grant, request: MailRequest, requestId: string) => Promise<unknown>) {
     mkdirSync(home, { recursive: true, mode: 0o700 })
     const path = join(home, 'mailbox.sqlite')
     this.db = new Database(path, { create: true })
@@ -88,6 +92,7 @@ export class Mailbox {
 
   revoke(chat: string) { this.db.query('UPDATE grants SET revoked=1 WHERE chat=?').run(chat) }
   active(): Grant[] {
+    if (this.closed) return []
     return (this.db.query('SELECT * FROM grants WHERE revoked=0').all() as GrantRow[]).map(row => this.grant(row))
   }
   /** Call after subscribing, every missed/reconnect, and each matching doc event. */
@@ -100,8 +105,10 @@ export class Mailbox {
   }
 
   async receive(id: string): Promise<void> {
+    if (this.closed) return
     if (this.busy.has(id)) { this.again.add(id); return }
     this.busy.add(id)
+    const jobs: Promise<void>[] = []
     try {
       do {
         this.again.delete(id)
@@ -112,21 +119,49 @@ export class Mailbox {
         const doc = await this.connection.call<Doc>('doc.get', { name: queueName(id, 'q'), on })
         const requests = queue(doc.value)
         for (const [requestId, envelope] of Object.entries(requests)) {
-          const response = await this.process(grant, requestId, envelope)
-          if (!response) continue // Forged messages get no oracle or side effect.
-          await changeDoc(this.connection, queueName(id, 'a'), on, answers => {
-            const next: Queue = Object.create(null)
-            for (const key of Object.keys(requests)) if (answers[key]) next[key] = answers[key]
-            next[requestId] = response
-            return next
+          const key = `${id}:${requestId}`
+          if (this.processing.has(key)) continue
+          if (this.processing.size >= 128) { this.waiting.add(id); break }
+          // A permission can wait for a human without blocking status, other questions, or new requests.
+          const job = this.respond(grant, requestId, envelope, on).finally(() => {
+            this.processing.delete(key)
+            if (!this.closed && this.waiting.size) {
+              const waiting = [...this.waiting]; this.waiting.clear()
+              for (const pending of waiting) void this.receive(pending).catch(() => {})
+            }
           })
+          this.processing.set(key, job); jobs.push(job)
+          void job.catch(() => {}) // A later snapshot/event retries publication from the durable journal.
         }
       } while (this.again.has(id))
     } finally { this.busy.delete(id) }
+    await Promise.allSettled(jobs)
   }
 
-  close() { this.db.close() }
+  private async respond(grant: Grant, id: string, envelope: Envelope, on: string | undefined) {
+    const response = await this.process(grant, id, envelope)
+    if (!response || this.closed || !this.get(grant.id)) return
+    // Only answer publication is serialized. Read the current queue so an old long-running request
+    // cannot discard replies belonging to requests added after it began.
+    const previous = this.replies.get(grant.id) ?? Promise.resolve()
+    const publish = previous.catch(() => {}).then(async () => {
+      if (this.closed || !this.get(grant.id)) return
+      const latest = queue((await this.connection.call<Doc>('doc.get', { name: queueName(grant.id, 'q'), on })).value)
+      if (!latest[id]) return
+      await changeDoc(this.connection, queueName(grant.id, 'a'), on, answers => {
+        const next: Queue = Object.create(null)
+        for (const key of Object.keys(latest)) if (answers[key]) next[key] = answers[key]
+        next[id] = response
+        return next
+      })
+    })
+    this.replies.set(grant.id, publish)
+    try { await publish } finally { if (this.replies.get(grant.id) === publish) this.replies.delete(grant.id) }
+  }
+
+  close() { this.closed = true; this.db.close() }
   private get(id: string): Grant | undefined {
+    if (this.closed) return
     const row = this.db.query('SELECT * FROM grants WHERE id=? AND revoked=0').get(id) as GrantRow | null
     return row ? this.grant(row) : undefined
   }
@@ -155,9 +190,10 @@ export class Mailbox {
     } else {
       // Commit the claim BEFORE effects. A crash cannot silently re-execute a merge or permission answer.
       this.db.query('INSERT INTO requests(grant_id,id,hash) VALUES(?,?,?)').run(grant.id, id, hash)
-      try { result = { ok: true, value: await this.dispatch(grant, request) } }
-      catch { result = { ok: false, uncertain: true, error: 'The action failed. Check its outcome before trying again.' } }
+      try { result = { ok: true, value: await this.dispatch(grant, request, id) } }
+      catch (error) { result = error instanceof Refusal ? { ok: false, error: error.message } : { ok: false, uncertain: true, error: 'The action failed. Check its outcome before trying again.' } }
     }
+    if (this.closed) return
     const response = seal(grant.credential, `${id}:${hash}`, 'response', result)
     this.db.query('INSERT INTO requests(grant_id,id,hash,response) VALUES(?,?,?,?) ON CONFLICT(grant_id,id) DO UPDATE SET response=excluded.response')
       .run(grant.id, id, hash, JSON.stringify(response))

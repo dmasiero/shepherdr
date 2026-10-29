@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreClient } from '../server/core/client.ts'
+import { CoreSession } from '../server/core/session.ts'
 
 const methods = ['terminal.run', 'terminal.list', 'terminal.get', 'terminal.label', 'terminal.attach', 'terminal.send', 'terminal.wait', 'events.subscribe', 'doc.get', 'doc.set', 'file.read', 'machine.exec']
 function frame(channel: number, body: string | Buffer, kind = 0) {
@@ -97,4 +98,20 @@ test('timeout does not repeat a write whose completion is unknown', async () => 
     writes++
     return NO_REPLY
   })
+})
+
+test('turn end state never changes a live terminal into a stopped process', async () => {
+  const terminal = { address: 't1', labels: {}, argv: ['agent'], cwd: '/work', created_ms: 1, state: 'live', cols: 80, rows: 24 }
+  await fixture(async (client, wire) => {
+    const session = new CoreSession(client.path)
+    const changed = Promise.withResolvers<void>()
+    session.onChange(view => { if (view.seq === 2) changed.resolve() })
+    try {
+      await session.start()
+      const notification = (seq: number, type: string, data: unknown) => JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { seq, type, terminal: 't1', data } }) + '\n'
+      wire.send(2, notification(1, 'status', { status: { state: 'idle' }, records: {}, reported: true }) + notification(2, 'turn', { turn: 1, state: 'idle' }))
+      await changed.promise
+      expect(session.current.terminals.get('t1')).toMatchObject({ state: 'live', status: { state: 'idle' }, turn: 1 })
+    } finally { session.stop() }
+  }, () => ({ channel: 2, seq: 0, terminals: [terminal] }))
 })

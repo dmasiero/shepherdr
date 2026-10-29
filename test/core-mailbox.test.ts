@@ -123,3 +123,35 @@ test('a consumed id cannot acknowledge a different action from a stale encrypted
     expect(called).toBe(1)
   } finally { mailbox.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('a waiting permission does not block status or lose newer replies', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-mail-concurrent-'))
+  const docs = new Documents()
+  let release!: () => void, entered!: () => void
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const effects: string[] = []
+  const mailbox = new Mailbox(home, docs, async () => 'box', async (_grant, request) => {
+    effects.push(request.action)
+    if (request.action === 'permission') { entered(); await waiting }
+    return request.action
+  })
+  try {
+    const grant = mailbox.issue('TASK-1/Agent', 'session', 'machine', ['permission', 'status'])
+    const first = randomUUID(), second = randomUUID()
+    const request = (action: string): MailRequest => ({ action, args: {}, created: Date.now(), expires: Date.now() + 60_000 })
+    docs.put(grant.credential, first, request('permission'))
+    const pending = mailbox.receive(grant.id)
+    await started
+    const queue = docs.docs.get(`box:shep-q-${grant.id}`)!
+    ;(queue.value as Record<string, unknown>)[second] = seal(grant.credential, second, 'request', request('status'))
+    queue.version++
+    await mailbox.receive(grant.id)
+    expect(docs.response(grant.credential, second)).toEqual({ ok: true, value: 'status' })
+    expect(effects).toEqual(['permission', 'status'])
+    release(); await pending
+    expect(docs.response(grant.credential, first)).toEqual({ ok: true, value: 'permission' })
+    expect(docs.response(grant.credential, second)).toEqual({ ok: true, value: 'status' })
+    expect(effects).toHaveLength(2)
+  } finally { release(); mailbox.close(); rmSync(home, { recursive: true, force: true }) }
+})

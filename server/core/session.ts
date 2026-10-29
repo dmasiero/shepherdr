@@ -134,8 +134,14 @@ export class CoreSession {
       case 'foreground':
         if (old) terminals.set(p.terminal, { ...old, foreground: p.data ?? null })
         break
-      default:
+      case 'turn':
+        // data.state is the PROGRAM word the turn ended on, never terminal process liveness.
+        if (old) terminals.set(p.terminal, { ...old, turn: data.turn as number })
+        break
+      case 'status': case 'size': case 'title': case 'keep':
         if (old) terminals.set(p.terminal, { ...old, ...data })
+        break
+      default: break // Additive future events cannot silently overwrite process/workflow state.
     }
     this.view = { ...this.view, terminals }; this.publish()
   }

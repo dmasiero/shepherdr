@@ -51,7 +51,7 @@ the documented `machine.add via` connection; actual remote SSH is not yet proven
 | Attach | First paint received via framed terminal.attach; cols/rows are required |
 | Event framing | Event channel is a newline-delimited byte stream; multiple messages can share a frame |
 | Event resync | New CoreSession observed disconnect, then epoch 2 with seq reset 29→1 and a second authoritative resync after isolated CLI restart |
-| Agent status | Claude Code 2.1.312 and Codex 0.163.0 emitted SessionStart/UserPromptSubmit/Stop with transcript paths in real isolated runs. Native OSC was not observed; hooks/logs are the source |
+| Agent status | Claude Code 2.1.312 and Codex 0.163.0 emitted SessionStart/UserPromptSubmit/Stop with transcript paths in real isolated runs. Both interactive CLIs also emitted native OSC 7501 (`reported: true`); hooks/logs and explicit core status are the sources |
 | Agent permissions | Both real interactive CLIs emitted PermissionRequest to a per-launch hook for a harmless scratch-file request. Claude hook denial visibly stopped it. Codex was stopped after its hook event; final denial completion still needs proof |
 | Mailbox authorization | AES-GCM request/reply with per-session grants and durable claims implemented. Actual roundtrip through second core succeeded; unauthorized action refused without dispatch. Product secret/card/merge dispatch not yet connected |
 
@@ -97,8 +97,14 @@ not evidence of a working feature.
 
 ## Final acceptance and deployment boundary
 
-Not yet verified: both real agents end-to-end; a real remote worktree/task through
-permission notification, artifact and merge; server/core restart mid-task; ten
+Coordinator evidence: Claude Code and Codex each answered two messages through the
+unchanged app. In the isolated preview, Codex t18/PID 983333 remained live across
+server and core restart during a 30-second tool call, then returned
+`SURVIVED_RESTART`. Standalone repeated start retained the same server PID; stop
+left core and agents alive. No live state or mappings changed.
+
+Not yet verified: full task lifecycle for both agents; a real remote worktree/task through
+permission notification, artifact and merge; ten
 minutes offline; every parity row; identical UX across device sizes.
 
 At approved cutover only: stop all legacy writers; make and verify a complete
@@ -108,3 +114,13 @@ fresh 2.1 at `~/.shepherdr`; never allow shared writes. Rollback stops 2.1 write
 preserves new state separately and restores verified legacy launch/home settings.
 The final runbook must specify exact installed service/config paths after their
 read-only inventory; this checklist does not authorize operational changes.
+
+## Current integration work
+
+Standalone lifecycle, native coordinator chat, durable command receipts, permission
+mailbox dispatch and an initial task/worktree/review/merge implementation are in
+the integration branch. These are not completed acceptance gates. Mailbox requests
+run concurrently so a human permission wait does not block status; answer writes
+remain serialized and retain responses for the current request queue. Helpers
+reconnect with the same authenticated request identity. New regression coverage
+runs only in branch CI. Local verification remains typecheck and manual inspection.
