@@ -56,7 +56,7 @@ Upstream's files change only where they hook in, each marked with a `fork:` comm
 shell (`flake.nix`: Bun, Node, gh, git), it runs `scripts/sync-upstream.sh`, which merges upstream's main into a
 `sync/upstream-<version>` branch in a worktree of its own, runs the fork's checks (`bun run typecheck`, the layer's
 tests above and `bun run build`, at the lowest priority: the one exception to AGENTS.md's no-tests rule, as it runs
-unattended, at night, before a merge no one reviews) and opens the sync pull request; renix merges it and raises its pin
+at night, before a merge no one reviews) and opens the sync pull request; renix merges it and raises its pin
 (`pkgs/shepherdr.nix`) to the new commit. A conflict (exit 3) or a failed check (exit 4) goes to an agent in that
 worktree, then the script goes on with `--continue`. By hand:
 
