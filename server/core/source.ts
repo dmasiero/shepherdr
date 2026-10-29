@@ -45,6 +45,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   private recovering = false
   private sending = new Set<string>()
   private refreshing?: Promise<void>
+  private discoveringHomes = new Set<string>()
 
   constructor(readonly config: CoreConfig) {
     super()
@@ -129,10 +130,16 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
     for (const machine of this.machines.filter(item => item.state === 'connected')) {
       const id = `p:${machine.id}:~`
-      if (!this.space(id)) {
-        const folder = (await this.files.exec(machine.id, ['sh', '-c', 'printf %s "$HOME"'])).toString('utf8')
-        this.store.set('space', id, { id, name: '~', home: true, machine: machine.id, folder, base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
-      }
+      if (this.space(id) || this.discoveringHomes.has(machine.id)) continue
+      this.discoveringHomes.add(machine.id)
+      // A disconnected remote must never delay or fail the local application startup.
+      void this.files.exec(machine.id, ['sh', '-c', 'printf %s "$HOME"']).then(bytes => {
+        if (!this.machines.some(item => item.id === machine.id)) return
+        this.store.set('space', id, { id, name: '~', home: true, machine: machine.id, folder: bytes.toString('utf8'), base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+        this.faults.delete(`machine:${machine.id}`); this.emit('snapshot')
+      }).catch(error => {
+        machine.state = 'unreachable'; this.faults.set(`machine:${machine.id}`, error.message); this.emit('snapshot')
+      }).finally(() => this.discoveringHomes.delete(machine.id))
     }
     this.agents.reconcile(); this.emit('snapshot')
   }
