@@ -26,6 +26,7 @@ export interface CoreAgent {
   grant: string
   hook: string
   transcript?: string
+  transcriptFormat?: 'codex-exec'
   session?: string
   started: number
   state: 'starting' | 'idle' | 'working' | 'blocked'
@@ -37,6 +38,7 @@ export interface AgentHook {
   at: number
   session?: string
   transcript?: string
+  transcriptFormat?: 'codex-exec'
   agent?: string
   model?: string
   tool?: string

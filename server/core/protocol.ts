@@ -17,6 +17,8 @@ export interface CoreTerminal {
   turn?: number
   pid?: number | null
   reason?: string | null
+  exit_code?: number | null
+  signal?: number | null
   created_ms: number
   cols: number
   rows: number

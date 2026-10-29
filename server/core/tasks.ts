@@ -30,6 +30,7 @@ export interface CoreTask extends Task {
   reviewHead?: string
   reviewReport?: string
   reviewTurn?: string
+  reviewFailure?: string
   mergeQuestion?: string
   startError?: string
   model?: string
@@ -325,7 +326,7 @@ export class CoreTasks {
       `Review commit ${reviewHead} against base ${task.base} and this brief:\n\n${task.desc}\n\nRead repository AGENTS.md, CLAUDE.md and REVIEW.md if present. Find what broke, was omitted or exceeded the brief. Report each finding with proof and critical/major/minor/trivial severity. Do not edit files or decide whether to merge. Finish with your findings as a final reply in your own chat; Shepherdr forwards that native reply to the parent. Do not use hc send or request permission to leave the read-only sandbox for reporting.`,
       { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, model: task.reviewerModel, effort: task.reviewerEffort, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Finish with a final reply in your own native chat; the server forwards it to the parent. Never leave the read-only sandbox just to report. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub.' })
     task.reviewRound = round; task.reviewTerminal = reviewer.terminal; task.reviewChat = reviewer.chat
-    task.reviewHead = reviewHead; delete task.reviewReport; delete task.reviewTurn; this.save(task)
+    task.reviewHead = reviewHead; delete task.reviewReport; delete task.reviewTurn; delete task.reviewFailure; this.save(task)
     return reviewer.terminal
   }
   async tick() {
@@ -336,7 +337,15 @@ export class CoreTasks {
         if (task.reviewChat && !task.reviewTurn) {
           const reviewer = this.source.agents.get(task.reviewChat)
           const end = this.source.store.all<LogEvent>(`event:${task.reviewChat}`).filter(event => event.kind === 'turn-end').at(-1)
-          if (reviewer && end?.kind === 'turn-end' && !end.aborted) {
+          const terminal = reviewer && this.source.agents.terminal(reviewer)
+          const completed = reviewer?.transcriptFormat !== 'codex-exec' || terminal?.state === 'finished' && terminal.exit_code === 0
+          if (reviewer && task.reviewFailure !== reviewer.launch && (end?.kind === 'turn-end' && end.aborted || reviewer.transcriptFormat === 'codex-exec' && terminal?.state === 'finished' && terminal.exit_code !== 0)) {
+            this.source.saveAndDeliver(task.chat, `review-failed-${reviewer.launch}`, '<review-failed>The reviewer stopped without a successful report. Do not treat its partial words as findings or report ready; request another fresh review.</review-failed>', () => {
+              task.reviewFailure = reviewer.launch; this.source.store.set('task', task.id, task)
+            })
+            this.source.emit('snapshot')
+          }
+          if (reviewer && completed && end?.kind === 'turn-end' && !end.aborted) {
             const messages = this.source.logs.messages(task.reviewChat).filter(message => message.who === 'agent' && message.text && (message.at ?? 0) <= end.at)
             const report = messages.at(-1)
             if (report?.text) {

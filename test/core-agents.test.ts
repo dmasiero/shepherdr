@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { CoreAgents } from '../server/core/agents.ts'
@@ -32,7 +32,8 @@ test('terminal confirmation preserves hooks received while terminal.run was pend
   const store = new CoreStore(home)
   try {
     let agents: CoreAgents
-    const core = { call: async () => {
+    const core = { call: async (_method: string, input: { argv: string[] }) => {
+      expect(input.argv).not.toContain('--dangerously-bypass-hook-trust')
       const record = agents.get('chat')!
       agents.hook(record, { id: 'fast-hook', event: 'SessionStart', at: Date.now(), session: 'native-session', transcript: '/native.jsonl' })
       return { address: 't1', pid: 123 }
@@ -44,5 +45,25 @@ test('terminal confirmation preserves hooks received while terminal.run was pend
     expect(result).toMatchObject({ terminal: 't1', pid: 123, state: 'idle', session: 'native-session', transcript: '/native.jsonl' })
     agents.hook(result, { id: 'answered-permission', event: 'PermissionRequest', at: Date.now() })
     expect(agents.get('chat')?.permission).toBeUndefined()
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})
+
+
+test('read-only Codex reviewers capture native JSON events without bypassing hook trust', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-review-start-')), store = new CoreStore(home)
+  try {
+    let argv: string[] = []
+    const core = { call: async (_method: string, input: { argv: string[] }) => { argv = input.argv; return { address: 't1', pid: 123 } } } as unknown as CoreSession
+    const mailbox = { issue: () => ({ id: 'review-grant', credential: {} }) } as unknown as Mailbox
+    const agents = new CoreAgents({ home, port: 17887, session: 'test', socket: '/unused', binary: 'hc' },
+      { format: 'shepherdr-core', schema: 1, id: 'installation' }, core, store, mailbox, async () => undefined, () => {})
+    const result = await agents.launch({ id: 'space', name: 'Example', machine: 'machine', folder: '/unused', base: 'main', prefix: 'EX', mode: 'regular', added: 1 },
+      'TASK-1/Reviewer-1', 'codex', 'Review only', { role: 'reviewer', readOnly: true })
+    expect(argv[1]).toEndWith('/helper/core-review.ts')
+    const launch = JSON.parse(readFileSync(argv[2], 'utf8'))
+    expect(launch.argv.slice(0, 5)).toEqual(['codex', 'exec', '--json', '--sandbox', 'read-only'])
+    expect(launch.argv).not.toContain('--dangerously-bypass-hook-trust')
+    expect(launch.argv.some((word: string) => word.startsWith('hooks.'))).toBe(false)
+    expect(result).toMatchObject({ transcript: launch.log, transcriptFormat: 'codex-exec', state: 'working' })
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
 })

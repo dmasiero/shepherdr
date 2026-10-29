@@ -92,7 +92,8 @@ export class CoreAgents {
       session: options.resume && previous?.kind === kind ? previous.session : undefined, model: options.model, effort: options.effort,
     }
     this.store.set('agent', chat, record)
-    const argv: string[] = [kind]
+    let argv: string[] = [kind]
+    const headless = kind === 'codex' && options.readOnly
     if (kind === 'claude') {
       argv.push('--settings', settings, '--append-system-prompt-file', instructions)
       if (options.readOnly) argv.push('--permission-mode', 'plan')
@@ -100,9 +101,10 @@ export class CoreAgents {
       if (options.model) argv.push('--model', options.model)
       if (options.effort) argv.push('--effort', options.effort)
     } else {
-      argv.push('--no-daemon', '--no-alt-screen', '--dangerously-bypass-hook-trust')
-      if (options.readOnly) argv.push('--sandbox', 'read-only', '--ask-for-approval', 'on-request')
-      for (const event of EVENTS.filter(e => !['Notification', 'PostToolUseFailure'].includes(e))) {
+      if (headless) argv.push('exec', '--json', '--sandbox', 'read-only')
+      else argv.push('--no-daemon', '--no-alt-screen')
+
+      for (const event of (headless ? [] : EVENTS).filter(e => !['Notification', 'PostToolUseFailure'].includes(e))) {
         argv.push('-c', `hooks.${event}=[{hooks=[{type="command",command=${toml(command)},timeout=${event === 'PermissionRequest' ? 3600 : 5}}]}]`)
       }
       argv.push('-c', `developer_instructions=${toml(roleWords)}`)
@@ -114,6 +116,15 @@ export class CoreAgents {
     // A native CLI can defer SessionStart until its first turn. An explicit, harmless restart turn
     // gives hooks a real readiness signal; no quiet-screen heuristic is used.
     argv.push('--', prompt || '<restart>Shepherdr restarted this coordinator. Read your role and wait for the human. Do not use tools or start work. Reply only <no-reply>Waiting for the human</no-reply>.</restart>')
+    if (headless) {
+      const log = join(directory, `${grant.id}.review.jsonl`)
+      const launchFile = join(directory, `${grant.id}.review-launch.json`)
+      await privateFile(log, '')
+      await privateFile(launchFile, JSON.stringify({ argv, log }))
+      record.transcript = log; record.transcriptFormat = 'codex-exec'; record.state = 'working'
+      this.store.set('agent', chat, record)
+      argv = [remote?.bun ?? process.execPath, join(root, 'helper/core-review.ts'), launchFile]
+    }
     const parent = options.parent && this.terminal(options.parent)
     const terminal = await this.core.call<CoreTerminal>('terminal.run', {
       argv, cwd: options.folder ?? space.folder, on,

@@ -6,7 +6,7 @@ const { browser, world, server } = await layout({ everything: true })
 
 describe.skipIf(!browser)('restarting an agent', () => {
   test('Settings mismatches show no banner and do not restart either role', async () => {
-    const p = world.snapshot().places.find((x) => !x.home)!
+    const p = world.snapshot().places.find((x) => x.id === world.tasks.find(task => task.id === 'GTM-17')!.place)!
     for (const task of [false, true]) {
       const key = task ? 'GTM-17/Agent' : p.chat
       const c = world.chats[key]
@@ -54,7 +54,7 @@ describe.skipIf(!browser)('restarting an agent', () => {
   }, 30_000)
 
   test('the sheet fits a phone, and Cancel leaves the agent as it was', async () => {
-    const p = world.snapshot().places.find((x) => !x.home)!
+    const p = world.snapshot().places.find((x) => x.id === world.tasks.find(task => task.id === 'GTM-17')!.place)!
     const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
     const page = await ctx.newPage()
     await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}`)
@@ -75,7 +75,7 @@ describe.skipIf(!browser)('restarting an agent', () => {
   }, 30_000)
 
   test('saving defaults is optional, scoped to the role, and sent only when selected', async () => {
-    const p = world.snapshot().places.find((x) => !x.home)!
+    const p = world.snapshot().places.find((x) => x.id === world.tasks.find(task => task.id === 'GTM-17')!.place)!
     for (const task of [false, true]) {
       const chat = task ? 'GTM-17/Agent' : p.chat
       world.chats[chat].agent = { kind: 'codex' }

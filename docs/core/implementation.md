@@ -166,11 +166,11 @@ machine name in the combined app (e.g. probe/CORE-1), avoiding cross-machine
 collisions. Bare local IDs resolve only within the authenticated caller's space.
 Workflow remains separate from an unreachable agent's machine status.
 
-Open implementation risk: the development Codex launcher currently uses the CLI's
+Historical implementation risk (follow-up below): the development Codex launcher used the CLI's
 one-invocation hook-trust bypass to exercise generated hooks. That flag also
 covers other enabled hooks; trusting generated hooks alone is insufficient to
-justify it for a final installation. Preserve native hook trust or vet every
-loaded source before the final acceptance/release. Do not call this resolved.
+justify it for a final installation. The follow-up below removes it; native
+trust first-run acceptance remains pending.
 
 Scoped task/agent Settings are now stored in the isolated core SQLite store,
 with Everywhere → stable machine → space inheritance and explicit empty private
@@ -185,3 +185,21 @@ Settings slice review: three rounds, cross-CLI model and resumed/parent launch
 choices fixed, checks-only merges fail closed without GitHub checks, and atomic
 save notifications fixed; final round found no unresolved critical/major issue.
 No local suites ran. Branch CI remains the check authority.
+
+Codex hook trust follow-up: the launch-wide bypass has now been removed. Interactive
+Codex keeps native /hooks review; untrusted hooks are skipped by Codex, and a
+starting chat explains how to review them in Terminal. First-run native trust
+still needs fresh manual acceptance. Read-only Codex reviewers now use the
+supported `codex exec --json` event stream (stdin closed), privately captured by
+a core-owned holder with a nine-minute limit. Successful report relay requires
+both native turn completion and a zero-exit finished holder; failures are told
+to the parent separately. No terminal text is used as chat or review results.
+Sources: https://learn.chatgpt.com/docs/non-interactive-mode and
+https://learn.chatgpt.com/docs/hooks (read 2026-10-29).
+The second-core task probe/REMO-1 actually committed 19b9707, completed a fresh
+headless Codex review, reached Ready, then merged its scratch change after the
+shared-browser merge card was selected and sent. Screenshots:
+she301-remote-ready.png and she301-remote-merged.png. This is same-host two-core
+acceptance, not a real SSH machine, physical phone or lock-screen push proof.
+Scoped trust/reviewer review: no critical/major findings; interrupted-review
+notification minor fixed. Full rewrite review and parity acceptance remain open.

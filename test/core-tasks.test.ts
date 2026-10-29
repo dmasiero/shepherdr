@@ -134,3 +134,25 @@ test('checks-only policy cannot silently squash a repository without GitHub chec
     expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('before\n')
   })
 })
+
+test('headless review relay waits for a successful core holder exit', async () => {
+  await withTask(async ({ tasks, task }) => {
+    const source = (tasks as unknown as { source: CoreSource }).source
+    const original = source.agents.get.bind(source.agents), chat = `${task.id}/Reviewer-1`
+    source.agents.get = key => key === chat ? { chat, launch: 'review-launch', role: 'reviewer', transcriptFormat: 'codex-exec', state: 'idle' } as ReturnType<typeof original> : original(key)
+    let state = 'live', code = 0
+    source.agents.terminal = (() => ({ address: 't1', state, exit_code: code })) as unknown as typeof source.agents.terminal
+    Object.defineProperty(source, 'logs', { value: { messages: () => [{ id: 'final', who: 'agent', text: 'No findings', at: 200 }] } })
+    source.store.set('task', task.id, { ...task, reviewChat: chat, reviewHead: 'head', reviewRound: 1 })
+    source.store.set(`event:${chat}`, 'turn', { kind: 'turn-end', id: 'turn', at: 300 })
+    await tasks.tick()
+    expect(tasks.get(task.id)?.reviewReport).toBeUndefined()
+    state = 'finished'; code = 1
+    await tasks.tick()
+    expect(tasks.get(task.id)?.reviewReport).toBeUndefined()
+    expect(tasks.get(task.id)?.reviewFailure).toBe('review-launch')
+    code = 0
+    await tasks.tick()
+    expect(tasks.get(task.id)?.reviewReport).toBe('No findings')
+  })
+})

@@ -7,6 +7,7 @@ import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
 import type { AgentHook, CoreAgent } from './model.ts'
 import { CoreError } from './client.ts'
+import { CoreReviewReader } from './review-reader.ts'
 
 interface Cursor { path: string; line: number; byte: number; reader?: Reader }
 interface SavedMessage extends Message { source?: string }
@@ -80,7 +81,7 @@ export class CoreLogs {
   private async transcript(agent: CoreAgent) {
     let cursor = this.logs.get(agent.chat)
     if (!cursor || cursor.path !== agent.transcript) {
-      cursor = { path: agent.transcript!, line: 1, byte: 0, reader: agent.kind === 'claude' ? new ClaudeReader() : new CodexReader() }
+      cursor = { path: agent.transcript!, line: 1, byte: 0, reader: agent.transcriptFormat === 'codex-exec' ? new CoreReviewReader() : agent.kind === 'claude' ? new ClaudeReader() : new CodexReader() }
       this.logs.set(agent.chat, cursor)
     }
     await this.lines(agent.machine, cursor, lines => {
@@ -94,6 +95,7 @@ export class CoreLogs {
     if (!current || current.launch !== agent.launch || current.grant !== agent.grant) return
     agent = current
     this.store.set(`event:${agent.chat}`, event.id + ':' + event.kind, event)
+    if (event.kind === 'session') { agent.session = event.sessionId; this.store.set('agent', agent.chat, agent) }
     if (event.kind === 'turn-start' || event.kind === 'turn-end') {
       if (!agent.permission) { agent.state = event.kind === 'turn-start' ? 'working' : 'idle'; this.store.set('agent', agent.chat, agent) }
     }
@@ -116,7 +118,7 @@ export class CoreLogs {
         this.store.delete('pending-send', optimistic.id)
         return
       }
-      if (/^\s*<(?:answer|review|go|restart|shepherdr|reaction|reaction-removed|artifact-sent|artifact-note|artifact-comment|browser-notes)\b/.test(event.text)) return
+      if (/^\s*<(?:answer|review|review-failed|go|restart|shepherdr|reaction|reaction-removed|artifact-sent|artifact-note|artifact-comment|browser-notes)\b/.test(event.text)) return
     }
     this.store.set(kind, event.id, { id: event.id, who: event.kind === 'user' ? 'you' : 'agent', text: event.text, at: event.at, source: event.id } satisfies SavedMessage)
   }
