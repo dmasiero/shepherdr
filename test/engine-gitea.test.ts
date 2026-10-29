@@ -198,6 +198,30 @@ describe('on Gitea: a pull request per task', () => {
     expect((await w.engine.merge(t.id, { self: true })).ok).toBe(true)
   })
 
+  test('a failure past many pages is still read; more pages than are read is unread, never passed', async () => {
+    const w = world()
+    const ok = Array.from({ length: 1000 }, (_, i) => ({ context: `ok ${i}`, status: 'success' }))
+    const g = onGitea({ statuses: [...ok, { context: 'late', status: 'failure' }] })
+    waitForChecks(w)
+    const { t } = await withWork(w, g.dir, 'gtmany', 'x.txt')
+    await w.engine.openPr(t.id)
+    // page 21: past the first fix's 20 pages
+    expect((await w.engine.checks(t.id, 0)).text).toContain("Gitea's checks failed on PR #1: late.")
+    const GT = await import('../server/live/engine/gitea.ts')
+    const at = { host: 'gitea.test', repo: 'acme/app', login: 'test' }
+    const head = sh('git rev-parse HEAD', t.worktree!)
+    GT.STATUS_PAGES.max = 3
+    try {
+      expect(await GT.statusesAt(at, g.dir, head)).toBeNull()
+      const c = await GT.prChecks(at, g.dir, 1)
+      expect(c.state).toBe('error')
+      g.set({ statuses: ok.slice(0, 149) })
+      expect((await GT.statusesAt(at, g.dir, head))!.length).toBe(149)
+    } finally {
+      GT.STATUS_PAGES.max = 100
+    }
+  })
+
   test("a conflict Gitea refuses (it only says to try later) is said as one; a head that moved is refused", async () => {
     const w = world()
     const g = onGitea()

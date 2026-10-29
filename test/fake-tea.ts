@@ -183,14 +183,14 @@ if (import.meta.main) {
     answer(201, list.at(-1))
   }
   if (path.match(/^repos\/[^/]+\/[^/]+\/commits\/[^/]+\/status$/)) {
-    // Gitea's combined status: the state of them all, and the statuses page by page
+    // Gitea's combined status, as Gitea 28 makes it: the statuses page by page, and both the state and total_count
+    // of that page's own
     const all = st.statuses ?? []
-    const has = (...x: string[]) => all.some((s) => x.includes(s.status))
-    const state = st.combined ?? (has('failure', 'error') ? 'failure' : has('pending') ? 'pending' : all.length ? 'success' : '')
     const limit = Number(q.get('limit') ?? 30)
     const page = Number(q.get('page') ?? 1)
     const statuses = all.slice((page - 1) * limit, page * limit)
-    // as Gitea 28 answers: total_count is this page's count
+    const has = (...x: string[]) => statuses.some((s) => x.includes(s.status))
+    const state = (page === 1 ? st.combined : undefined) ?? (has('failure', 'error') ? 'failure' : has('pending') ? 'pending' : statuses.length ? 'success' : '')
     answer(200, { state, total_count: statuses.length, statuses })
   }
   if (path === `${repo}/branch_protections`) answer(200, st.protections ?? [])
