@@ -128,12 +128,12 @@ Task agents
                                                  task show and the coordinator's news, not the card;
                                                  Ready to merge (done is its old name); a branch with no changes (an
                                                  answer, research) has nothing to merge and goes straight to Done
-  shepherdr pr <id>                              on GitHub: push its branch and open its pull request (a draft until
-                                                 ready) or push to the open one; run it again after new commits
-  shepherdr checks <id>                          wait for GitHub's checks on its pull request (up to 9 minutes); merging
-                                                 waits for them only when Settings say to
-  shepherdr merge <id>                           squash-merge into main (on GitHub through its pull request, as it is:
-                                                 rebased only on a conflict with main, without waiting for GitHub's
+  shepherdr pr <id>                              on GitHub or Gitea: push its branch and open its pull request (a
+                                                 draft until ready) or push to the open one; run it again after new commits
+  shepherdr checks <id>                          wait for the checks on its pull request, GitHub's or Gitea's (up to 9
+                                                 minutes); merging waits for them only when Settings say to
+  shepherdr merge <id>                           squash-merge into main (on GitHub or Gitea through its pull request,
+                                                 as it is: rebased only on a conflict with main, without waiting for its
                                                  checks unless Settings say to, refused on ones already failed; then
                                                  main here is pulled), mark merged, then put away
                                                  its agent, herdr space, worktree and branch (keeping unsaved or

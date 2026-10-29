@@ -82,6 +82,19 @@ describe('which forge a repo is on', () => {
     expect(await F.github(g.dir)).toBeNull()
   })
 
+  test("a Gitea space is said as one: its tasks' briefs name Gitea's checks, and its label is Gitea", async () => {
+    const w = world()
+    const g = onGitea()
+    waitForChecks(w)
+    const { t } = await started(w, g.dir, 'gtwords')
+    expect(F.forgeName(g.dir)).toBe('Gitea')
+    expect(t.desc).toContain("Merge it yourself once it works and Gitea's checks pass")
+    expect(t.desc).not.toContain('GitHub')
+    const plain = repo()
+    await F.github(plain)
+    expect(F.forgeName(plain)).toBe('GitHub')
+  })
+
   test("a login whose token Gitea refuses: nothing merges, here or there", async () => {
     const w = world()
     const g = onGitea({ refused: true })

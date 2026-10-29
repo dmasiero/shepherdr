@@ -76,6 +76,9 @@ export async function githubRemote(repo: string): Promise<string | null> {
   return (await github(repo))?.repo ?? null
 }
 
+/** the name of a repo's forge as Shepherdr says it: Gitea for one last read as on Gitea, else GitHub */
+export const forgeName = (repo?: string): 'Gitea' | 'GitHub' => (repo && giteaRepos.has(repo) ? 'Gitea' : 'GitHub')
+
 /** what Shepherdr says of a repo's pull request, in its forge's words: Gitea and tea for a repo on Gitea */
 export function forgeWords(text: string, repo?: string): string {
   if (!repo || !giteaRepos.has(repo)) return text
