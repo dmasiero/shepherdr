@@ -4,7 +4,7 @@
 // text could pick an option, or is still starting; then it goes in as soon as it can.
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, watch, type FSWatcher } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Emitter } from '../source.ts'
 import { readJson, writeJson } from '../store.ts'
 import type { TermScreen } from '../../shared/types.ts'
@@ -18,6 +18,30 @@ import * as task from './mfs.ts'
 import { boxDir, mirrored } from './mfs.ts'
 import { runSync } from './box.ts'
 import { leftAtPrompt } from './commands.ts'
+import { paneWrong, type Wrong } from './revive.ts'
+
+/** a log's name (its session id), wherever it lies: one named both by its mirrored path and by its own is one log */
+const logName = (f: string) => f.slice(f.lastIndexOf('/') + 1)
+
+/** the logs with each one once, where it first came, by the path it was named by last (a session carried to another
+ *  folder goes on there): the same log twice is read twice, and a big one holds up the server */
+export function uniqueLogs(logs: string[]): string[] {
+  const at = new Map<string, number>()
+  const out: string[] = []
+  for (const f of logs) {
+    const i = at.get(logName(f))
+    if (i === undefined) (at.set(logName(f), out.length), out.push(f))
+    else out[i] = f
+  }
+  return out
+}
+
+/** adds a log the record doesn't have yet; true when it was new */
+function addLog(r: AgentRecord, f: string): boolean {
+  if (r.logs.some((x) => logName(x) === logName(f))) return false
+  r.logs.push(f)
+  return true
+}
 
 /** a Claude Code session, copied into the project folder of the cwd it resumes in (Claude Code looks for it only
  *  there) from wherever it was written on that machine; its log path, or nothing when there is none */
@@ -55,6 +79,9 @@ export interface AgentRecord {
   env?: Record<string, string>
   /** where its hooks record what it reports of itself (Claude Code: readers/hooks.ts) */
   hooks?: string
+  /** the CLI, model and effort Settings said for its role when it last started on them: a change since is offered as
+   *  a restart in its chat (restart.ts) */
+  set?: { kind: string; model?: string; effort?: string }
 }
 
 export interface OutItem {
@@ -112,6 +139,9 @@ type Events = {
 /** where the hooks of the agents Shepherdr starts record their events */
 export const HOOKS_DIR = join(boxDir(), 'hooks')
 
+/** where an agent's instructions are kept for its CLI to read */
+const promptPath = (name: string) => join(boxDir(), 'prompts', `${name}.md`)
+
 /**
  * The one place an agent's status is decided. What the agent reports of itself wins: its CLI's own hooks today (Claude
  * Code, readers/hooks.ts), OSC 7501's program status once herdr passes that on (then only `said` changes). herdr's
@@ -151,6 +181,8 @@ export class Agents extends Emitter<Events> {
   private timer: ReturnType<typeof setInterval> | null = null
   private sub: Subscription
   private starting = new Map<string, Promise<AgentInfo | null>>()
+  /** agents being stopped for a restart: what you send waits for the one it starts */
+  private stopping = new Set<string>()
   private delivering = new Set<string>()
   /** what went in lately with a screen's id: the chat gives the id back once it reads the message from the log */
   private delivered: OutItem[] = []
@@ -203,7 +235,11 @@ export class Agents extends Emitter<Events> {
 
   constructor() {
     super()
-    for (const r of Object.values(this.records)) this.byName.set(r.name, r.key)
+    // records written before logs were kept once each
+    for (const r of Object.values(this.records)) {
+      r.logs = uniqueLogs(r.logs ?? [])
+      this.byName.set(r.name, r.key)
+    }
     this.sub = new Subscription(
       (e) => this.onEvent(e),
       () => this.refresh(),
@@ -422,14 +458,12 @@ export class Agents extends Emitter<Events> {
     const r = this.records[key]
     const s = a?.agent_session
     if (!r || !s) return
-    if (s.kind === 'path' && !r.logs.includes(mirrored(s.value))) {
-      r.logs.push(mirrored(s.value))
+    if (s.kind === 'path' && addLog(r, mirrored(s.value))) {
       this.save()
       this.emit('logs', key)
     } else if (s.kind === 'id' && r.kind === 'claude') {
       const p = claudeLogPath(r.cwd, s.value)
-      if (!r.logs.includes(p)) {
-        r.logs.push(p)
+      if (addLog(r, p)) {
         r.sessionId = s.value
         this.save()
         this.emit('logs', key)
@@ -447,7 +481,7 @@ export class Agents extends Emitter<Events> {
     if (!s || s.id === r.sessionId || s.at < r.started - 5000) return
     const log = s.log ? mirrored(s.log) : claudeLogPath(r.cwd, s.id)
     r.sessionId = s.id
-    if (!r.logs.includes(log)) r.logs.push(log)
+    addLog(r, log)
     this.save()
     this.emit('logs', key)
   }
@@ -459,8 +493,7 @@ export class Agents extends Emitter<Events> {
     if (!r || (r.kind === 'claude' && r.hooks)) return
     const look = () => {
       const f = findLog(r.kind, r.cwd, since - 1000)
-      if (!f || r.logs.includes(f)) return
-      r.logs.push(f)
+      if (!f || !addLog(r, f)) return
       // Claude Code and pi resume by the id in its name; Codex by its last log
       if (r.kind !== 'codex') r.sessionId = f.match(/([0-9a-f-]{36})\.jsonl$/)?.[1] ?? r.sessionId
       this.save()
@@ -476,8 +509,7 @@ export class Agents extends Emitter<Events> {
     if (!r) return
     const since = r.started - 5000
     const f = r.kind === 'claude' ? (r.sessionId ? claudeLogPath(r.cwd, r.sessionId) : findClaudeLog(r.cwd, since)) : r.kind === 'codex' ? findCodexLog(r.cwd, since) : r.kind === 'pi' ? findPiLog(r.cwd, since) : undefined
-    if (f && !r.logs.includes(f)) {
-      r.logs.push(f)
+    if (f && addLog(r, f)) {
       this.save()
       this.emit('logs', key)
     }
@@ -493,6 +525,30 @@ export class Agents extends Emitter<Events> {
   }
 
   /* ---------- starting ---------- */
+
+  /**
+   * Start this chat's agent again on what spec says: `before` first (its turn stopped; what it returns is the first
+   * message then, read once the turn is over), then its run ends and it starts, resuming its session on the same CLI.
+   * Meanwhile anything that would start it waits for this instead, and what you send waits and goes in after the first
+   * message. `before` throwing leaves it as it was.
+   */
+  restart(spec: Spec, before?: () => Promise<string | void>): Promise<AgentInfo | null> {
+    const p0 = this.starting.get(spec.key)
+    const p = (async () => {
+      await p0?.catch(() => undefined)
+      this.stopping.add(spec.key)
+      try {
+        const first = await before?.()
+        await this.finish(spec.key)
+        return await this.launch({ ...spec, ...(first ? { first } : {}) })
+      } finally {
+        this.stopping.delete(spec.key)
+        this.deliver(spec.key)
+      }
+    })().finally(() => this.starting.delete(spec.key))
+    this.starting.set(spec.key, p)
+    return p
+  }
 
   /** start (or resume) this chat's agent; resolves once herdr says it is ready for input */
   ensure(spec: Spec): Promise<AgentInfo | null> {
@@ -510,7 +566,7 @@ export class Agents extends Emitter<Events> {
     const resume = old && old.kind === spec.kind && (old.sessionId || old.logs.length)
     const r: AgentRecord = old ?? { ...spec, logs: [], started: Date.now() }
     const from = old?.cwd
-    Object.assign(r, { name: spec.name, kind: spec.kind, cwd: spec.cwd, workspace: spec.workspace, tab: spec.tab ?? r.tab, env: spec.env ?? r.env, access: spec.access ?? r.access, model: spec.model ?? r.model, effort: spec.effort ?? r.effort, system: spec.system ?? r.system, finished: false })
+    Object.assign(r, { name: spec.name, kind: spec.kind, cwd: spec.cwd, workspace: spec.workspace, tab: spec.tab ?? r.tab, env: spec.env ?? r.env, access: spec.access ?? r.access, model: spec.model ?? r.model, effort: spec.effort ?? r.effort, system: spec.system ?? r.system, set: spec.set ?? r.set, finished: false })
     r.started = Date.now()
     if (!resume) r.sessionId = r.kind === 'codex' ? undefined : randomUUID()
     // a run of its own: what its hooks record starts over
@@ -545,9 +601,9 @@ export class Agents extends Emitter<Events> {
       }
     }
     await this.refresh()
-    // CLIs without an option for extra instructions get them first, hidden from the chat. Both wait until the CLI is ready.
-    if (r.kind !== 'claude' && r.kind !== 'pi' && !resume && r.system) this.queue(r.key, hidden(r.system))
-    if (first) this.queue(r.key, first)
+    // CLIs without an option for extra instructions get them first, hidden from the chat. Both wait until the CLI is
+    // ready, ahead of what you sent meanwhile (a restart)
+    this.queue(r.key, [r.kind !== 'claude' && r.kind !== 'pi' && !resume && r.system ? hidden(r.system) : '', first ?? ''].filter(Boolean), true)
     setTimeout(() => this.deliver(r.key), 1000)
     setTimeout(() => this.discoverLog(r.key), 3000)
     setTimeout(() => this.discoverLog(r.key), 15000)
@@ -588,11 +644,62 @@ export class Agents extends Emitter<Events> {
 
   /** instructions go in a file: long text with quotes and newlines can't travel as a shell argument */
   private promptFile(r: AgentRecord) {
-    const dir = join(boxDir(), 'prompts')
-    task.mkdirSync(dir, { recursive: true })
-    const f = join(dir, `${r.name}.md`)
+    const f = promptPath(r.name)
+    task.mkdirSync(dirname(f), { recursive: true })
     task.writeFileSync(f, r.system ?? '')
     return f
+  }
+
+  /** the files Shepherdr starts its CLI with now, by flag: its hooks' settings and its instructions. One started with
+   *  others (herdr restored an older command after it restarted) runs without them */
+  filesOf(r: AgentRecord): Record<string, string> {
+    if (r.kind === 'claude') return { '--settings': join(HOOKS_DIR, `${r.name}.settings.json`), ...(r.system ? { '--append-system-prompt-file': promptPath(r.name) } : {}) }
+    if (r.kind === 'pi' && r.system) return { '--append-system-prompt': promptPath(r.name) }
+    return {}
+  }
+
+  /** what is wrong with this agent's run: gone from herdr, its CLI exited in its pane, or it runs on outdated files;
+   *  nothing while it is fine, null when herdr can't say. One on outdated files is left alone while herdr sees it at
+   *  work or asking (a turn is never cut for this); its hooks don't count, as what they last said may be from before */
+  async wrong(key: string): Promise<Wrong | undefined | null> {
+    const r = this.records[key]
+    const a = this.info(key)
+    if (!r) return undefined
+    if (!a) return 'gone'
+    const p = await herdr.processInfo(a.pane_id).catch(() => null)
+    // herdr didn't say: neither well nor wrong
+    if (!p) return null
+    const w = paneWrong(r.kind, p, this.filesOf(r))
+    return w === 'stale' && (a.agent_status === 'working' || a.agent_status === 'blocked') ? undefined : w
+  }
+
+  /** whether its hooks last said it was at work, even while it is gone: a turn its log shows over is over */
+  wasWorking(key: string) {
+    const r = this.records[key]
+    const said = r?.hooks ? this.hooks.read(mirrored(r.hooks)).said : undefined
+    return said?.state === 'working' && !this.endedSince?.(key, said.at)
+  }
+
+  /** being started or stopped right now */
+  busy(key: string) {
+    return this.starting.has(key) || this.stopping.has(key)
+  }
+
+  /** started again by `start` (that resumes its session), its pane closed first where it still holds it (its CLI
+   *  exited, or runs on outdated files). Meanwhile what you send waits for the one it starts, as in a restart */
+  async relaunch(key: string, close: boolean, start: () => Promise<unknown>) {
+    this.stopping.add(key)
+    try {
+      const a = close ? this.info(key) : undefined
+      if (a) {
+        await herdr.closePane(a.pane_id).catch(() => undefined)
+        await this.refresh()
+      }
+      await start()
+    } finally {
+      this.stopping.delete(key)
+      this.deliver(key)
+    }
   }
 
   /** the workspace labelled so, or the one still labelled `was` (never a repo's), renamed to it */
@@ -623,7 +730,8 @@ export class Agents extends Emitter<Events> {
   /** the same, without an agent herdr refused as not ready yet: that one is simply tried again */
   private heldBy(key: string, item?: Pick<OutItem, 'idle'>): Hold | undefined {
     const st = this.status(key)
-    if (st === 'gone' || this.info(key)?.interactive_ready === false) return 'start'
+    // stopping for a restart: what you send goes to the agent it starts on
+    if (st === 'gone' || this.stopping.has(key) || this.info(key)?.interactive_ready === false) return 'start'
     if (st === 'blocked' || this.menuUp?.(key)) return 'menu'
     if (item?.idle && st === 'working') return 'turn'
     return undefined
@@ -759,8 +867,13 @@ export class Agents extends Emitter<Events> {
     return this.failures.filter((f) => f.key === key && now - f.at < 600_000).map(({ cid, error }) => ({ cid, error }))
   }
 
-  private queue(key: string, text: string) {
-    this.outbox.push({ id: randomUUID(), key, text, at: Date.now() })
+  /** ahead: before what waits for this agent already */
+  private queue(key: string, texts: string[], ahead = false) {
+    if (!texts.length) return
+    const items = texts.map((text) => ({ id: randomUUID(), key, text, at: Date.now() }))
+    const i = ahead ? this.outbox.findIndex((o) => o.key === key) : -1
+    if (i < 0) this.outbox.push(...items)
+    else this.outbox.splice(i, 0, ...items)
     this.save()
   }
 
@@ -844,6 +957,20 @@ export class Agents extends Emitter<Events> {
     this.failures = this.failures.filter((f) => f.key !== key)
     this.stranded.delete(key)
     this.save()
+  }
+
+  /** a turn under way ended cleanly before its run ends (a restart): interrupted, then a few seconds for the CLI to
+   *  stop and write what it had; still at work after that, it throws and is left as it is */
+  async stopTurn(key: string, ms = 15_000) {
+    if (this.status(key) !== 'working') return
+    await this.interrupt(key)
+    for (const end = Date.now() + ms; this.status(key) === 'working'; ) {
+      if (Date.now() > end) throw new Error('It is still working after an interrupt: try again in a moment.')
+      await new Promise((r) => setTimeout(r, 500))
+      await this.refresh()
+    }
+    // what it wrote last reaches its log
+    await new Promise((r) => setTimeout(r, 500))
   }
 
   async interrupt(key: string) {
