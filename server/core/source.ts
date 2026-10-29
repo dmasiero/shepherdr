@@ -17,6 +17,7 @@ import type { AgentKind, CoreAgent, CoreSpace } from './model.ts'
 import { CoreTasks } from './tasks.ts'
 import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
+import { CoreError } from './client.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
@@ -52,7 +53,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.core = new CoreSession(config.socket)
     this.files = new CoreFiles(this.core, machine => this.route(machine))
     this.mailbox = new Mailbox(config.home, this.core, machine => this.route(machine), (grant, request, id) => this.mail(grant, request, id))
-    const changed = (chat: string) => { this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
+    const changed = (chat: string) => { this.questions?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
     this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed)
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
     this.tasks = new CoreTasks(this)
@@ -267,6 +268,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         if (!space) return
         const agent = this.agents.get(chat)
         if (item.launch && agent?.launch !== item.launch) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); continue }
+        if (item.launch && agent && this.agents.terminal(agent)?.state !== 'live') { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); continue }
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
@@ -276,6 +278,9 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           const message = this.store.get<Message>(`message:${chat}`, item.id)
           if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
         } catch (error) {
+          if (error instanceof CoreError && ['unavailable', 'blocked', 'status_mismatch', 'busy'].includes(error.kind)) {
+            item.state = 'queued'; this.store.set('pending-send', item.id, item); return
+          }
           item.state = 'uncertain'; this.store.set('pending-send', item.id, item)
           const message = this.store.get<Message>(`message:${chat}`, item.id)
           if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })

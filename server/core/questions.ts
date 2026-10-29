@@ -10,7 +10,15 @@ import type { CoreSource } from './source.ts'
 interface SavedQuestion { id: string; chat: string; grant: string; question: Question; answered: boolean }
 export class CoreQuestions {
   constructor(private readonly source: CoreSource) {}
-  open(chat?: string) { return this.source.store.all<SavedQuestion>('question').filter(row => !row.answered && (!chat || row.chat === chat)) }
+  open(chat?: string) { return this.source.store.all<SavedQuestion>('question').filter(row => !row.answered && (!chat || row.chat === chat) && this.source.agents.get(row.chat)?.grant === row.grant) }
+  reconcile(chat: string) {
+    for (const row of this.source.store.all<SavedQuestion>('question')) {
+      if (row.chat !== chat || row.answered || this.source.agents.get(chat)?.grant === row.grant) continue
+      row.answered = true; row.question.sent = -1; row.question.said = 'Session replaced; ask the agent for a fresh card'
+      this.source.store.set('question', row.id, row)
+      this.source.post(chat, { id: row.id, who: 'agent', question: row.question, at: Date.now() })
+    }
+  }
   create(grant: Grant, args: string[]) {
     const agent = this.source.agents.get(grant.chat)
     if (!agent || agent.role === 'reviewer') throw new Refusal('This session cannot ask workflow questions')
