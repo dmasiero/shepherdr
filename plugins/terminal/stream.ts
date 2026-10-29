@@ -6,7 +6,7 @@ export function streamInput(chat: string, message: { type: 'keys'; keys: string[
 export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: () => void) => void,
   reset: () => void, size: () => { cols: number; rows: number }, status: (text: string) => void) {
   let disposed = false, socket: WebSocket | undefined, retry: ReturnType<typeof setTimeout> | undefined
-  let attempt = 0, queued = 0, serial = 0, acknowledged = 0, painting = 0
+  let attempt = 0, queued = 0, serial = 0, acknowledged = 0, painting = 0, uncertain = false
   const send = (message: object) => {
     if (socket?.readyState !== WebSocket.OPEN) { status('Reconnecting… Input was not sent.'); return }
     if (socket.bufferedAmount > 64 * 1024 || serial - acknowledged >= 64) { status('Terminal is catching up. Input was not sent.'); return }
@@ -20,7 +20,7 @@ export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: 
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; url.search = ''; url.searchParams.set('chat', chat)
     const ws = socket = new WebSocket(url); ws.binaryType = 'arraybuffer'
     const generation = ++painting
-    ws.onopen = () => { serial = 0; acknowledged = 0; queued = 0; reset(); status(''); send({ type: 'open', ...size() }); attempt = 0 }
+    ws.onopen = () => { serial = 0; acknowledged = 0; queued = 0; reset(); status(uncertain ? 'Reconnected. Last input may have arrived; check before typing it again.' : ''); send({ type: 'open', ...size() }); attempt = 0 }
     ws.onmessage = event => {
       if (socket !== ws || disposed) return
       if (typeof event.data === 'string') {
@@ -34,7 +34,7 @@ export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: 
     }
     ws.onclose = () => {
       if (disposed || socket !== ws) return
-      const uncertain = serial > acknowledged
+      uncertain ||= serial > acknowledged
       status(uncertain ? 'Disconnected. Last input may have arrived; check before typing it again.' : 'Reconnecting…')
       retry = setTimeout(connect, Math.min(5000, 250 * 2 ** Math.min(attempt++, 5)))
     }

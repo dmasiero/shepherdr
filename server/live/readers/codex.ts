@@ -179,7 +179,7 @@ export class CodexReader implements Reader {
       } else if (l.type === 'event_msg' && (p.type === 'task_complete' || p.type === 'turn_aborted')) {
         const err = p.error
         if (err && typeof err === 'object') out.push({ kind: 'error', id: `error-${p.turn_id ?? offset}`, at: t, text: String(err.message ?? ''), code: typeof err.codex_error_info === 'string' ? err.codex_error_info : undefined })
-        out.push({ kind: 'turn-end', id: `turn-${p.turn_id ?? offset}`, at: t })
+        out.push({ kind: 'turn-end', id: `turn-${p.turn_id ?? offset}`, at: t, ...(p.type === 'turn_aborted' || err ? { aborted: true } : {}) })
       }
     }
     return out

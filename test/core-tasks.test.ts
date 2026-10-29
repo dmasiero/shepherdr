@@ -102,3 +102,22 @@ test('review-on ready requires a finished report for the exact commit', async ()
     await expect(tasks.ready(grant, task.id, 'Changed example')).rejects.toThrow('fresh review')
   })
 })
+
+test('review relay waits for a successful native turn end, not idle or commentary', async () => {
+  await withTask(async ({ tasks, task }) => {
+    const source = (tasks as unknown as { source: CoreSource }).source
+    const original = source.agents.get.bind(source.agents)
+    const chat = `${task.id}/Reviewer-1`
+    source.agents.get = key => key === chat ? { chat, launch: 'review-launch', role: 'reviewer', state: 'idle' } as ReturnType<typeof original> : original(key)
+    Object.defineProperty(source, 'logs', { value: { messages: () => [{ id: 'comment', who: 'agent', text: 'I will inspect', at: 100 }, { id: 'final', who: 'agent', text: 'No findings', at: 200 }] } })
+    source.store.set('task', task.id, { ...task, reviewChat: chat, reviewHead: 'head', reviewRound: 1 })
+    await tasks.tick()
+    expect(tasks.get(task.id)?.reviewReport).toBeUndefined()
+    source.store.set(`event:${chat}`, 'turn', { kind: 'turn-end', id: 'turn', at: 300, aborted: true })
+    await tasks.tick()
+    expect(tasks.get(task.id)?.reviewReport).toBeUndefined()
+    source.store.set(`event:${chat}`, 'turn', { kind: 'turn-end', id: 'turn', at: 300 })
+    await tasks.tick()
+    expect(tasks.get(task.id)).toMatchObject({ reviewReport: 'No findings', reviewTurn: 'turn' })
+  })
+})

@@ -8,6 +8,7 @@ import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import type { Grant } from './mailbox.ts'
 import { one, parseArgs, summaryOpts } from '../live/args.ts'
+import type { LogEvent } from '../live/readers/types.ts'
 
 export interface CoreTask extends Task {
   branch: string
@@ -27,6 +28,7 @@ export interface CoreTask extends Task {
   reviewChat?: string
   reviewHead?: string
   reviewReport?: string
+  reviewTurn?: string
   mergeQuestion?: string
   startError?: string
   model?: string
@@ -114,7 +116,7 @@ export class CoreTasks {
     if (!summary.trim() || summary.length > SUMMARY_MAX) throw new Refusal(`Write a summary of at most ${SUMMARY_MAX} characters`)
     if (!await this.git.clean({ machine: task.machine, folder: task.folder })) throw new Refusal('Commit or remove the worktree changes before reporting ready')
     task.readyHead = await this.git.head({ machine: task.machine, folder: task.folder })
-    if (task.review.on && (!task.reviewReport || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
+    if (task.review.on && (!task.reviewReport || !task.reviewTurn || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
     delete task.approvedHead
     task.said = summary; task.facts = facts; task.workflow = 'ready'
     this.save(task); await this.label(task); this.card(task, summary)
@@ -308,9 +310,9 @@ export class CoreTasks {
     const reviewHead = await this.git.head({ machine: task.machine, folder: task.folder })
     const reviewer = await this.source.agents.launch(space, `${task.id}/Reviewer-${round}`, task.review.kind,
       `Review commit ${reviewHead} against base ${task.base} and this brief:\n\n${task.desc}\n\nRead repository AGENTS.md, CLAUDE.md and REVIEW.md if present. Find what broke, was omitted or exceeded the brief. Report each finding with proof and critical/major/minor/trivial severity. Do not edit files or decide whether to merge. Finish with your findings as a final reply in your own chat; Shepherdr forwards that native reply to the parent. Do not use hc send or request permission to leave the read-only sandbox for reporting.`,
-      { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Use hc to report to the parent. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub. Reviewer private instructions: none.' })
+      { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Finish with a final reply in your own native chat; the server forwards it to the parent. Never leave the read-only sandbox just to report. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub. Reviewer private instructions: none.' })
     task.reviewRound = round; task.reviewTerminal = reviewer.terminal; task.reviewChat = reviewer.chat
-    task.reviewHead = reviewHead; delete task.reviewReport; this.save(task)
+    task.reviewHead = reviewHead; delete task.reviewReport; delete task.reviewTurn; this.save(task)
     return reviewer.terminal
   }
   async tick() {
@@ -318,14 +320,15 @@ export class CoreTasks {
     this.ticking = true
     try {
       for (const task of this.all()) {
-        if (task.reviewChat && !task.reviewReport) {
+        if (task.reviewChat && !task.reviewTurn) {
           const reviewer = this.source.agents.get(task.reviewChat)
-          if (reviewer?.state === 'idle' && this.source.agents.terminal(reviewer)?.status?.state === 'idle') {
-            const messages = this.source.logs.messages(task.reviewChat).filter(message => message.who === 'agent' && message.text)
+          const end = this.source.store.all<LogEvent>(`event:${task.reviewChat}`).filter(event => event.kind === 'turn-end').at(-1)
+          if (reviewer && end?.kind === 'turn-end' && !end.aborted) {
+            const messages = this.source.logs.messages(task.reviewChat).filter(message => message.who === 'agent' && message.text && (message.at ?? 0) <= end.at)
             const report = messages.at(-1)
             if (report?.text) {
-              this.source.saveAndDeliver(task.chat, `review-${reviewer.launch}`, `<review round="${task.reviewRound}" head="${task.reviewHead}">${report.text}</review>`, () => {
-                task.reviewReport = report.text; this.source.store.set('task', task.id, task)
+              this.source.saveAndDeliver(task.chat, `review-${reviewer.launch}-${end.id}`, `<review round="${task.reviewRound}" head="${task.reviewHead}">${report.text}</review>`, () => {
+                task.reviewReport = report.text; task.reviewTurn = end.id; this.source.store.set('task', task.id, task)
               })
               this.source.emit('snapshot')
             }

@@ -102,8 +102,12 @@ export class CoreLogs {
     if (event.kind === 'agent' && /^\s*<no-reply>[\s\S]*<\/no-reply>\s*$/.test(event.text)) return
     const kind = `message:${agent.chat}`
     if (event.kind === 'user') {
-      const delivery = this.store.all<{ id: string; chat: string; launch?: string; text: string; state: string }>('pending-send').find(item => item.chat === agent.chat && item.launch === agent.launch && item.state === 'sending' && item.text === event.text)
-      if (delivery) { this.store.delete('pending-send', delivery.id); this.store.delete(kind, `delivery-${delivery.id}`) }
+      const delivery = this.store.all<{ id: string; chat: string; launch?: string; text: string; state: string }>('pending-send').find(item => item.chat === agent.chat && (!item.launch || item.launch === agent.launch) && item.state === 'sending' && item.text === event.text)
+      if (delivery) {
+        this.store.delete('pending-send', delivery.id); this.store.delete(kind, `delivery-${delivery.id}`)
+        const optimistic = this.store.get<SavedMessage>(kind, delivery.id)
+        if (optimistic) { this.store.set(kind, delivery.id, { ...optimistic, source: event.id, waiting: false, waitsFor: undefined }); return }
+      }
       const previous = this.store.all<SavedMessage>(kind).filter(message => message.who === 'you')
       if (previous.some(message => message.source === event.id)) return
       const optimistic = previous.find(message => !message.source && message.text === event.text && Math.abs((message.at ?? 0) - event.at) < 120_000)

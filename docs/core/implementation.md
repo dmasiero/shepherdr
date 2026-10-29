@@ -79,7 +79,7 @@ not evidence of a working feature.
 | First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Pending |
 | Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Pending |
-| Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Pending |
+| Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. GitHub/conflicts/recovery still pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Pending |
 | Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Pending; legacy workers/mirror/tunnels must disappear |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Pending |
@@ -140,3 +140,12 @@ hooks, and hook EOF could block transcript polling. Fixes and regression tests
 are being checked in branch CI; this is still not final rewrite review. Manual
 restart also exposed replayed PermissionRequest hooks resurrecting answered cards;
 permission ownership now belongs only to authenticated mailbox dispatch.
+
+Proof artifact `hf2s` (SHE-301: Proof) records the actual coordinator chats,
+restart response, ready card, scratch merge and Terminal panel. It explicitly
+lists unverified capabilities. Three scoped integration review rounds found
+five initial majors, two additional session/expiry majors and one visibility
+major; all were fixed with regression coverage. The final complete-rewrite
+review remains pending. Manual acceptance then exposed premature reviewer
+commentary forwarding: relays now require a successful native turn-end marker
+and retain the reviewed commit. An aborted turn is not a completed review.

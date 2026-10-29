@@ -44,7 +44,7 @@ export type LogEvent =
   /** the agent's turn began: your message, news, or (Claude Code) its background work woke it */
   | { kind: 'turn-start'; id: string; at: number }
   /** the agent's turn ended (the CLI wrote its end-of-turn marker) */
-  | { kind: 'turn-end'; id: string; at: number }
+  | { kind: 'turn-end'; id: string; at: number; aborted?: boolean }
   /** the model's provider cut the turn off: its words, and the CLI's own code and HTTP status for it where it has them
    *  (retry.ts decides what it means) */
   | { kind: 'error'; id: string; at: number; text: string; code?: string; status?: number }
