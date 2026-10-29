@@ -176,6 +176,28 @@ describe('on Gitea: a pull request per task', () => {
     expect((await w.engine.merge(t.id, { self: true })).ok).toBe(true)
   })
 
+  test('statuses on more than one page are all read: a failure on a later page, or only in the combined state, fails', async () => {
+    const w = world()
+    const ok = Array.from({ length: 50 }, (_, i) => ({ context: `ok ${i}`, status: 'success' }))
+    const g = onGitea({ statuses: [...ok, { context: 'late', status: 'failure', target_url: '/acme/app/actions/runs/7/jobs/9' }] })
+    waitForChecks(w)
+    const { t } = await withWork(w, g.dir, 'gtpages', 'x.txt')
+    await w.engine.openPr(t.id)
+    const c = await w.engine.checks(t.id, 0)
+    expect(c.ok).toBe(false)
+    expect(c.text).toContain("Gitea's checks failed on PR #1: late.")
+    expect(g.gt().calls.some((x) => x.args.at(-1)!.includes('/status?limit=50&page=2'))).toBe(true)
+    expect((await w.engine.merge(t.id, { self: true })).ok).toBe(false)
+    // a page Shepherdr never reads (Gitea answered fewer than it counts): its combined state still fails it
+    g.set({ statuses: ok, combined: 'failure' })
+    expect((await w.engine.checks(t.id, 0)).text).toContain("Gitea's checks failed on PR #1: combined status (failure).")
+    g.set({ statuses: ok, combined: 'pending' })
+    expect((await w.engine.checks(t.id, 0)).text).toContain('still run')
+    g.set({ statuses: ok, combined: undefined })
+    expect((await w.engine.checks(t.id, 0)).text).toBe("Gitea's checks passed on PR #1 (50).")
+    expect((await w.engine.merge(t.id, { self: true })).ok).toBe(true)
+  })
+
   test("a conflict Gitea refuses (it only says to try later) is said as one; a head that moved is refused", async () => {
     const w = world()
     const g = onGitea()
