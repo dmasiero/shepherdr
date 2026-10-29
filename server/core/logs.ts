@@ -8,6 +8,7 @@ import type { CoreFiles } from './files.ts'
 import type { AgentHook, CoreAgent } from './model.ts'
 import { CoreError } from './client.ts'
 import { CoreReviewReader } from './review-reader.ts'
+import { chatMessages } from './chat.ts'
 
 interface Cursor { path: string; line: number; byte: number; reader?: Reader }
 interface SavedMessage extends Message { source?: string }
@@ -36,7 +37,7 @@ export class CoreLogs {
     } finally { this.busy = false }
   }
   messages(chat: string): Message[] {
-    return this.store.all<SavedMessage>(`message:${chat}`).sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message)
+    return chatMessages(this.store.all<SavedMessage>(`message:${chat}`).sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
   }
   outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); this.changed(chat) }
 
@@ -118,7 +119,7 @@ export class CoreLogs {
         this.store.delete('pending-send', optimistic.id)
         return
       }
-      if (/^\s*<(?:answer|review|review-failed|go|restart|shepherdr|reaction|reaction-removed|artifact-sent|artifact-note|artifact-comment|browser-notes)\b/.test(event.text)) return
+      if (/^\s*<(?:answer|review|review-failed|go|restart|shepherdr|artifact-sent|artifact-note|artifact-comment|browser-notes)\b/.test(event.text)) return
     }
     this.store.set(kind, event.id, { id: event.id, who: event.kind === 'user' ? 'you' : 'agent', text: event.text, at: event.at, source: event.id } satisfies SavedMessage)
   }

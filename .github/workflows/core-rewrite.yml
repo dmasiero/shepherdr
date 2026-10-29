@@ -15,12 +15,14 @@ on:
       - 'shared/types.ts'
       - 'shared/models.ts'
       - 'server/live/models.ts'
+      - 'plugins/chat/**'
       - 'plugins/terminal/**'
       - 'plugins/tasks/**'
       - 'src/kernel.ts'
       - 'src/restart.tsx'
       - 'shared/alerts.ts'
       - 'test/layout-restart.test.ts'
+      - 'test/layout-keyboard.test.ts'
       - 'vite.config.ts'
       - 'tsconfig.json'
       - 'test/core-*.test.ts'
@@ -62,6 +64,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: core-rewrite-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun x playwright-core install --only-shell chromium
-      - run: bun test test/layout-restart.test.ts
+      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-layout

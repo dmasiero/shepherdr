@@ -63,7 +63,12 @@ function Bubble({ msg, chat, from, out, last }: { msg: Message; chat: Chat; from
   }, [selecting])
   const keys = canReact
     ? {
-        onKeyDown: (e: KeyboardEvent) => e.key === 'Enter' && e.target === e.currentTarget && openBar(chat.key, msg.id),
+        onKeyDown: (e: KeyboardEvent) => {
+          if (e.key !== 'Enter' || e.target !== e.currentTarget) return
+          e.preventDefault()
+          e.stopPropagation()
+          openBar(chat.key, msg.id)
+        },
         tabIndex: 0,
         'aria-label': 'Message: press Enter to react',
       }

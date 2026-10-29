@@ -77,7 +77,7 @@ not evidence of a working feature.
 | Feature | Legacy baseline | 2.1 acceptance evidence |
 | --- | --- | --- |
 | First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; ordering/sections/first-run parity pending |
-| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; activity, attachments and reaction delivery still pending |
+| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; activity and full device parity pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Pending |
 | Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. GitHub/conflicts/recovery still pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Pending |
@@ -265,3 +265,25 @@ she301-artifact-light.png, she301-artifact-data-full.png and
 she301-remote-artifact.png. This is two cores on one host, not actual SSH.
 Final scoped artifact review round found no critical/major or additional minor
 findings. Local typecheck passed; branch CI pending. Full parity remains open.
+
+Chat parity slice: app-owned uploads are checked against their original chat and
+forwarded in bounded 2 MiB chunks through core, including binary files up to the
+existing 32 MiB upload limit. Each deliberate remote send gets a fresh private
+copy; prior links retain access to the original upload, with concurrent history
+updates merged. Filenames are normalized before chat-line formatting. Native
+attachment, reaction and reply tags use the same pure 2.0 language helpers.
+Manual shared-browser phone upload she301-upload-proof.txt reached second-core
+Claude, which read REMOTE_UPLOAD_CONTENT_OK and reacted to the file. A tap added
+the human side, another removed only that side, and native replies confirmed
+both events. Screenshot she301-chat-reactions.png. A manual ordinary HTTP send
+with reply identity produced a native QUOTED_REPLY_OK reply; both quote links
+appeared in the phone view (she301-chat-quoted-reply.png). This proves the backend
+and rendered quotes, not the phone swipe-to-reply gesture.
+Manual focus+Enter initially opened a task behind the message; the chat now
+consumes its own Enter. Repeating it opened the reaction bar and stayed in the
+coordinator. New GitHub layout regression covers that exact navigation conflict.
+Scoped review fixed quoted-name, stale-copy and concurrent-copy history minors;
+final scoped round found no unresolved critical/major or additional minor findings.
+Local typecheck passed; branch CI pending.
+Artifacts branch CI passed ca52a13a (run 40974536655): core regressions, legacy
+artifact/model regressions and restart layout. Proof hf2s updated to v3.

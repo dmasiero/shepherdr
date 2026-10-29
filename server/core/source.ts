@@ -21,10 +21,10 @@ import { CoreError } from './client.ts'
 import { CoreSettings } from './settings.ts'
 import { CoreSecrets } from './secrets.ts'
 import { CoreArtifacts } from './artifacts.ts'
+import { CoreChat } from './chat.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
-interface Upload { id: string; chat: string; path: string; name: string }
 interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' }
 
 /** Product state is Shepherdr's; terminals, machine commands, files and agent children are core's. */
@@ -42,6 +42,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly settings: CoreSettings
   readonly secrets: CoreSecrets
   readonly artifacts: CoreArtifacts
+  readonly chats: CoreChat
   private local: { id: string; name: string }
   private machines: Machine[] = []
   private permissions = new Map<string, (answer: { allow: boolean }) => void>()
@@ -70,6 +71,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.questions = new CoreQuestions(this)
     this.secrets = new CoreSecrets(this)
     this.artifacts = new CoreArtifacts(this, installation.id)
+    this.chats = new CoreChat(this, installation.id)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -223,14 +225,17 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if ('chat' in action && this.tasks.forChat(action.chat) && ['pin', 'archive', 'pause', 'restart-info', 'restart', 'close', 'delete'].includes(action.type)) return this.tasks.act(action)
     switch (action.type) {
       case 'send': {
-        if (!action.text.trim()) return {}
+        if (!action.text.trim() && !action.attachments?.length) return {}
         const run = async () => {
           const task = this.tasks.forChat(action.chat)
           const space = this.space(action.chat) || task && this.space(task.place)
           if (!space) throw new Error('No such coordinator space')
+          const text = await this.chats.text(action, space.machine)
           const id = action.cid || randomUUID()
-          this.store.set('pending-send', id, { id, chat: action.chat, text: action.text, state: 'queued' } satisfies PendingSend)
-          this.post(action.chat, { id, cid: action.cid, who: 'you', text: action.text, at: Date.now(), waiting: true, waitsFor: 'start' })
+          this.store.db.transaction(() => {
+            this.store.set('pending-send', id, { id, chat: action.chat, text, state: 'queued' } satisfies PendingSend)
+            this.post(action.chat, { id, cid: action.cid, who: 'you', text, at: Date.now(), waiting: true, waitsFor: 'start' })
+          })()
           await this.flush(action.chat)
           return { ok: true, waiting: !!this.store.get('pending-send', id) }
         }
@@ -268,11 +273,12 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       case 'read': this.store.set('meta', 'read', { ...this.store.get<Record<string, number>>('meta', 'read'), ...action.chats }); this.emit('snapshot'); return {}
       case 'rename': this.store.set('name', action.id, action.name); this.emit('snapshot'); return {}
       case 'react': {
-        const message = this.store.get<Message>(`message:${action.chat}`, action.message)
-        if (!message) throw new Error('No such message')
-        const previous = message.reactions ?? []
-        message.reactions = previous.some(item => item.emoji === action.emoji) ? previous.filter(item => item.emoji !== action.emoji) : [...previous, { emoji: action.emoji, by: 'me' }]
-        this.post(action.chat, message); return {}
+        const text = this.chats.reaction(action.chat, action.message, action.emoji), id = randomUUID()
+        this.store.db.transaction(() => {
+          this.store.set('pending-send', id, { id, chat: action.chat, text, state: 'queued' } satisfies PendingSend)
+          this.post(action.chat, { id, who: 'you', text, at: Date.now(), waiting: true })
+        })()
+        await this.flush(action.chat); return {}
       }
       case 'restart-info': {
         const agent = this.agents.get(action.chat)
@@ -454,18 +460,8 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
   async artifact(id: string, version?: number) { try { return this.artifacts.page(id, version) } catch { return undefined } }
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
-  async upload(chat: string, name: string, data: Uint8Array) {
-    if (!this.chat(chat)) throw new Error('No such chat')
-    if (data.length > 32 * 1024 * 1024) throw new Error('Attachment is too large')
-    const directory = join(this.config.home, 'uploads'); mkdirSync(directory, { recursive: true, mode: 0o700 })
-    const id = randomUUID(), path = join(directory, id + '-' + basename(name))
-    writeFileSync(path, data, { mode: 0o600, flag: 'wx' }); this.store.set('upload', id, { id, chat, path, name: basename(name) } satisfies Upload)
-    return path
-  }
-  async attachment(chat: string, path: string) {
-    const record = this.store.all<Upload>('upload').find(file => file.chat === chat && file.path === path)
-    return record ? new Blob([readFileSync(record.path)], { type: Bun.file(record.path).type }) : null
-  }
+  async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
+  async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
   async drain() { this.quiescing = true; return this.tasks.drain() }
   stop() { clearInterval(this.recovery); this.logs.stop(); this.core.stop() }
 }
