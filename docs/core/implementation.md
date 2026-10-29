@@ -312,3 +312,7 @@ regression in layout-keyboard.test.ts. All suites ran only on GitHub.
 A second harmless background shell printed BACKGROUND_OUTPUT_OK before a
 35-second wait. Opening its live job displayed that exact native output in the
 existing phone sheet (she301-native-background-output-live.png).
+
+Activity CI 40975708398 passed new core activity tests and all three layout
+files, but exposed stale legacy activity fixture doubles missing runtime and
+runtimeHook. The fixture now supplies both; branch CI is rerunning.

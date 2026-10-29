@@ -29,6 +29,9 @@ on:
       - 'vite.config.ts'
       - 'tsconfig.json'
       - 'test/core-*.test.ts'
+      - 'test/activity.test.ts'
+      - 'test/artifacts.test.ts'
+      - 'test/models.test.ts'
       - '.github/workflows/core-rewrite.yml'
   workflow_dispatch:
 permissions:
