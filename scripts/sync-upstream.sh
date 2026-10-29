@@ -79,7 +79,8 @@ branch=$(git rev-parse --abbrev-ref HEAD)
 case "$branch" in sync/upstream-*) ;; *) die "$dir is on $branch, not a sync/upstream-* branch" ;; esac
 
 # The fork's checks (FORK.md): the types, the tests of the fork's layer and the build, at the lowest priority. Not
-# the whole suite with its browser tests: GitHub's Check workflow runs that on main after the merge (AGENTS.md).
+# the whole suite with its browser tests: GitHub's Check workflow runs that on main after the merge. The one exception
+# to AGENTS.md's no-tests rule (FORK.md).
 tests="test/engine-gitea.test.ts test/engine-merge.test.ts test/source.test.ts test/voice-call.test.ts"
 say "running the fork's checks (bun install, bun run typecheck, bun test <the layer's tests>, bun run build)"
 log="$st.check.log"
