@@ -76,23 +76,23 @@ not evidence of a working feature.
 
 | Feature | Legacy baseline | 2.1 acceptance evidence |
 | --- | --- | --- |
-| First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Pending |
-| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Pending |
+| First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; ordering/sections/first-run parity pending |
+| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; activity, attachments and reaction delivery still pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Pending |
 | Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. GitHub/conflicts/recovery still pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Pending |
-| Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Pending; legacy workers/mirror/tunnels must disappear |
+| Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; real SSH/disconnect acceptance pending; old implementation removal pending |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Pending |
-| Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Pending |
+| Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; CI, env/set/rm and stale-scope acceptance pending |
 | Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Pending |
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Pending |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Pending |
-| Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Pending |
-| Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Pending |
+| Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; resizing/reconnect/files/diff/PR acceptance pending |
+| Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change inspected; other sections and full acceptance pending |
 | Health, alerts, unread/search, keyboard and mobile layouts | plugins/health; plugins/keyboard; src/layout* | Pending |
 | User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Pending; 2.0 API compatibility not required |
-| Standalone start/stop/status, installation and optional service | New requirement | Pending; no service enabled during testing |
+| Standalone start/stop/status, installation and optional service | New requirement | Partial: isolated idempotent start/status/stop + crash/core restart exercised; final install/service/cutover pending, no live service enabled |
 | Browser WebSocket resync, bounded output, duplicate-safe commands | server/app.ts; src | Pending |
 
 ## Final acceptance and deployment boundary
@@ -203,3 +203,30 @@ she301-remote-ready.png and she301-remote-merged.png. This is same-host two-core
 acceptance, not a real SSH machine, physical phone or lock-screen push proof.
 Scoped trust/reviewer review: no critical/major findings; interrupted-review
 notification minor fixed. Full rewrite review and parity acceptance remain open.
+
+Secrets slice in progress: explicit-home vault + existing masked cards and scoped
+Settings pages are wired. Agent list/ask/run/env use authenticated core mailbox;
+secret responses are encrypted before core docs and journal persistence. Scope
+comes only from the active launch's stored machine/space, not request labels.
+The agent-side helper runs locally with values in child environment and masks all
+nonempty values, including short/split stdout and stderr. Env output requires a
+git-ignored plain file. Review found the inherited short-secret masking gap,
+fixed with CI regressions; second round had no critical/major, and nonregular env
+target refusal minor was fixed. Real two-core secret use and CLI set/rm parity
+are still pending; do not mark this row complete.
+GitHub core + restart-layout jobs both passed commit 1f2bb1ea (run 40971184563).
+Native Codex trust was then accepted through its own hook browser in the shared
+Terminal panel, with the generated command/source inspected. All generated
+hooks showed active/trusted; a raw phone-input turn produced
+CODEX_NATIVE_TRUST_OK in the native transcript and chat. No bypass flag was
+present. This verifies the current local native setup path, not remote Codex
+setup or a claim that the extra native trust step can be skipped.
+The real resumed remote coordinator exposed stale absolute helper paths in its
+old conversation. Launches now publish the current SHEPHERDR_COMMAND and replace
+earlier routing instructions; a stale helper gets a repair message naming only
+its owning launch's current helper, never secret values. This does not change
+authority: the server still validates the private active-session grant. Third
+Secrets review found no unresolved critical/major. After a fresh start with this routing fix, the actual second-core coordinator
+used secret run successfully and returned REMOTE_SECRET_OK. Screenshot:
+she301-remote-secret-ok.png. Synthetic value only; actual SSH and complete secret
+CLI parity remain pending.

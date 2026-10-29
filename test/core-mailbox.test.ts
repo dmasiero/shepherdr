@@ -155,3 +155,18 @@ test('a waiting permission does not block status or lose newer replies', async (
     expect(effects).toHaveLength(2)
   } finally { release(); mailbox.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('secret response values stay encrypted in core docs and durable response journal', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-mail-secret-')), docs = new Documents()
+  const value = 'synthetic-secret-response-value'
+  const mailbox = new Mailbox(home, docs, async () => 'box', async () => ({ secrets: { DEMO: value } }))
+  try {
+    const grant = mailbox.issue('TASK-1/Agent', 'session', 'machine', ['secret']), id = randomUUID()
+    docs.put(grant.credential, id, { action: 'secret', args: { names: ['DEMO'] }, created: Date.now(), expires: Date.now() + 60_000 })
+    await mailbox.receive(grant.id)
+    expect(docs.response(grant.credential, id)).toEqual({ ok: true, value: { secrets: { DEMO: value } } })
+    expect(JSON.stringify([...docs.docs.values()])).not.toContain(value)
+    const db = new Database(join(home, 'mailbox.sqlite'), { readonly: true })
+    try { expect(JSON.stringify(db.query('SELECT * FROM requests').all())).not.toContain(value) } finally { db.close() }
+  } finally { mailbox.close(); rmSync(home, { recursive: true, force: true }) }
+})

@@ -19,6 +19,7 @@ import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
 import { CoreSettings } from './settings.ts'
+import { CoreSecrets } from './secrets.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
@@ -38,6 +39,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
+  readonly secrets: CoreSecrets
   private local: { id: string; name: string }
   private machines: Machine[] = []
   private permissions = new Map<string, (answer: { allow: boolean }) => void>()
@@ -57,13 +59,14 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.core = new CoreSession(config.socket)
     this.files = new CoreFiles(this.core, machine => this.route(machine))
     this.mailbox = new Mailbox(config.home, this.core, machine => this.route(machine), (grant, request, id) => this.mail(grant, request, id))
-    const changed = (chat: string) => { this.questions?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
+    const changed = (chat: string) => { this.questions?.reconcile(chat); this.secrets?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
     this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed, machine => this.machines.find(item => item.id === machine) ?? {})
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
     this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => id === this.local.id ? this.local.name : this.machineName(id) || id, () => this.emit('snapshot'))
     this.agents.settings = this.settings
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
+    this.secrets = new CoreSecrets(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -154,7 +157,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (!this.connected()) return 'off'
     if (!agent) return 'idle'
     if (!this.machineConnected(agent.machine)) return 'off'
-    if (this.questions.open(agent.chat).length || this.openPermissions(agent).length) return 'need'
+    if (this.secrets.open(agent.chat).length || this.questions.open(agent.chat).length || this.openPermissions(agent).length) return 'need'
     const terminal = this.agents.terminal(agent)
     if (terminal?.state === 'finished') return 'idle'
     if (agent.pid && terminal?.pid !== agent.pid) return 'need'
@@ -171,6 +174,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       if (!permission.settled) asks[permission.chat] = permission.id
     }
     for (const row of this.questions.open()) asks[row.chat] = row.id
+    for (const row of this.secrets.open()) asks[row.chat] = row.id
     return {
       terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
       places: spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
@@ -178,7 +182,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))],
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.store.all<Artifact>('artifact'), automations: {}, asks,
-      settings: this.settings.sections(),
+      settings: this.secrets.pages(this.settings.sections()),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
       read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
     }
@@ -245,6 +249,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
         return { answered: true }
       }
+      case 'secret': case 'secret-saved': return this.secrets.act(action)
       case 'setting':
         this.settings.set(action.key, action.value, action.place || 'all'); return {}
       case 'keys': case 'text': {
@@ -342,8 +347,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   ready ID --summary TEXT [--facts TEXT]
   merge ID (requires the human's exact-commit card approval)
   todo ID | task close ID
+  secret list | secret ask NAME --why TEXT [--force]
+  secret run NAME [NAME …] -- COMMAND | secret env NAME [NAME …] --file .env
 Use hc for starting, messaging and waiting on core child agents. Never use a web URL or legacy helper for core commands.
 `, code: 0 }
+      if (args[0] === 'secret') return { out: await this.secrets.cli(agent, args) + '\n', code: 0 }
       if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
       if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
@@ -354,6 +362,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
       }
       return this.tasks.cli(grant, args)
     }
+    if (request.action === 'secret') return this.secrets.use(agent, request.args)
     if (request.action !== 'permission') throw new Error('This command is not connected in this rewrite slice')
     const input = request.args as { id?: string; tool?: string; input?: unknown }
     if (typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/.test(input.id) || input.id !== requestId) throw new Error('Invalid permission request identity')

@@ -45,7 +45,7 @@ export class Vault {
     try {
       return JSON.parse(readFileSync(f, 'utf8')) as Store
     } catch (e) {
-      throw new Error(`Secrets can't be read from ${f} (${(e as Error).message}): fix or move that file; nothing was changed.`)
+      throw new Error(`Secrets can't be read from ${f} : fix or move that file; nothing was changed.`)
     }
   }
 

@@ -25,6 +25,7 @@ export interface CoreAgent {
   launch: string
   grant: string
   hook: string
+  command?: string
   transcript?: string
   transcriptFormat?: 'codex-exec'
   session?: string
