@@ -44,6 +44,8 @@ import { Unread } from './unread.ts'
 import { Monitor, meters, procLines, summary, topProcs, type HealthEvent, type Kind } from './health.ts'
 import { has, PLUGIN_KEY, pluginSection, setPluginOn } from '../plugins.ts'
 import { TOOK_OVER, type TookOver } from '../../scripts/take-over.ts'
+// fork: a space's forge said as it is, GitHub or Gitea (FORK.md)
+import { forgeName } from './engine/forge.ts'
 
 function userName(): string {
   const set = readJson<{ user?: string }>('config.json', {}).user
@@ -1758,12 +1760,12 @@ export class LiveSource extends Emitter<SourceEvents> implements Source {
           const path = rest[0] ?? ctx.cwd
           if (!path) throw new Error('shepherdr space add <path> [--name NAME]')
           const pr = await this.addAsSpace(path, one(p, 'name'))
-          return `Added ${this.places.nameOf(placeId.space(pr.name))} (${pr.path}) as a space; its tasks are ${pr.key}-1, ${pr.key}-2, …${pr.github ? ` GitHub: ${pr.github}.` : ' No GitHub remote: tasks merge here.'}`
+          return `Added ${this.places.nameOf(placeId.space(pr.name))} (${pr.path}) as a space; its tasks are ${pr.key}-1, ${pr.key}-2, …${pr.github ? ` ${forgeName(pr.path)}: ${pr.github}.` : ' No GitHub or Gitea remote: tasks merge here.'}`
         }
         if (a1 === 'list' || !a1)
           return this.places
             .shown()
-            .map((x) => (x.space ? `${x.name}  ${x.space.key}  ${x.space.path}${x.space.github ? `  github:${x.space.github}` : ''}` : `${x.name}  (home space)  ${boxHome()}`))
+            .map((x) => (x.space ? `${x.name}  ${x.space.key}  ${x.space.path}${x.space.github ? `  ${forgeName(x.space.path).toLowerCase()}:${x.space.github}` : ''}` : `${x.name}  (home space)  ${boxHome()}`))
             .join('\n')
         if (a1 === 'rename') {
           const x = rest[0] ? this.places.find(rest[0]) : undefined

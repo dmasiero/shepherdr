@@ -1005,7 +1005,8 @@ export class Engine extends Emitter<Events> {
     // each line that differs from Shepherdr's own says who set it: the coordinator's flags, or a level of Settings
     const by = { ...this.settings.setBy(p.name, set), ...(Object.keys(o.reviewer ?? {}).length ? { reviewer: 'task' as const } : {}), ...(Object.keys(o.agent ?? {}).length ? { agent: 'task' as const } : {}) }
     const ways = this.settings.ways(p.name, set)
-    const how = settingsBlock(id, { ways, reviewer, agent, by })
+    // fork: its Merge line names its space's forge (Gitea's checks, not GitHub's)
+    const how = G.forgeWords(settingsBlock(id, { ways, reviewer, agent, by }), p.path)
     const desc = [o.desc ?? (title !== o.title ? o.title : ''), o.later ? LATER : '', how].filter(Boolean).join('\n\n')
     const t: TaskRec = {
       id,

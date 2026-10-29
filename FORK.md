@@ -33,6 +33,10 @@ Upstream's files change only where they hook in, each marked with a `fork:` comm
   coordinators go through `forgeWords` (Gitea and tea, not GitHub and gh, for a Gitea repo); `openPrNow` and
   `mergeOnGitHub` open a follow-up for a merged pull request with work since.
 - `server/live/places.ts`: a space's forge repo from `forge.ts`.
+- `server/live/engine/engine.ts` (`add`): a new task's Settings block goes through `forgeWords` (its Merge line says
+  Gitea's checks in a Gitea space).
+- `server/live/source.ts`: `shepherdr space add` and `space list` name the space's forge (`forgeName`).
+- `server/live/args.ts`: the help of `pr`, `checks` and `merge` says GitHub or Gitea.
 - `server/live/worktree.ts`: the task panel's pull request asks Gitea for a Gitea repo.
 - `skill/shepherdr-agent/SKILL.md`, `skill/shepherdr-coordinator/SKILL.md`: "GitHub (or Gitea)".
 
