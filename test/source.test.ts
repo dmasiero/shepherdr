@@ -379,7 +379,7 @@ describe("a task's CLI, model and effort", () => {
       [['--model', 'opus;rm'], 'Write a model id'],
       [['--prio', 'high'], 'Task add takes no --prio'],
       [['--effort'], '--effort needs a value'],
-      [['--agent', 'gemini', '--model', 'x'], 'Claude Code, Codex and pi only'],
+      [['--agent', 'gemini', '--model', 'x'], 'gemini does not support Shepherdr chat'],
     ]) {
       const r = await src.cli(['task', 'add', 'Odd', '--desc', 'x', ...args], { chat: place })
       expect(r.code).toBe(1)
@@ -2175,6 +2175,7 @@ describe('startup menus before the first message', () => {
 describe('visible launch controls', () => {
   test('coordinator and task metadata comes from the launch record, never new Settings; old actions cannot claim an unapplied change', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'shep-controls-'))
+    execSync('git init -q -b main && git config user.email t@t && git config user.name T && echo hi > README.md && git add -A && git commit -qm init', { cwd: dir, shell: '/bin/sh' })
     const p = await src.places.add(dir, 'launch-controls')
     const place = placeId.space(p.name)
     const t = src.engine.add({ project: p.name, title: 'Launch controls', by: 'test', later: true })
