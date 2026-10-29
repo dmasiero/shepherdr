@@ -18,6 +18,8 @@ const { Worktrees } = await import('../server/live/engine/worktrees.ts')
 const { fakeHerdr } = await import('./fake-herdr.ts')
 
 const src = new LiveSource()
+// the real artifact check, before tests put their own in its place
+const defaultChecker = src.checker
 // herdr makes task worktrees: a stand-in on real git; no terminal opens for their agents (no herdr is there)
 const fake = fakeHerdr()
 fake.h.createTab = async () => {
@@ -1553,6 +1555,22 @@ describe('artifacts from the command', () => {
   writeFileSync(join(files, 'board.html'), '<h1>Board</h1>')
   writeFileSync(join(files, 'data.json'), '{"n":2}')
   const ok = async () => ({ errors: [], warnings: [], skipped: 'no browser in the test' })
+
+  // fork: herdr starts the server with no Shepherdr bin folder on its PATH
+  test("the check runs the plugin's own agent-browser, not one looked up on PATH", async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'shep-src-ab-'))
+    const fake = join(bin, 'agent-browser')
+    writeFileSync(fake, `#!/bin/sh\necho "$@" > ${JSON.stringify(join(bin, 'ran'))}\n`, { mode: 0o755 })
+    const was = process.env.SHEPHERDR_AGENT_BROWSER
+    process.env.SHEPHERDR_AGENT_BROWSER = fake
+    try {
+      await defaultChecker('<p>hi</p>')
+    } finally {
+      if (was === undefined) delete process.env.SHEPHERDR_AGENT_BROWSER
+      else process.env.SHEPHERDR_AGENT_BROWSER = was
+    }
+    expect(readFileSync(join(bin, 'ran'), 'utf8')).toContain('set viewport 390 844')
+  })
 
   test('made in a task chat: a card there, kept in its project; an update is a new version, data alone keeps the page', async () => {
     src.checker = ok
