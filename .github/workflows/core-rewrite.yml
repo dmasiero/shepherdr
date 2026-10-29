@@ -1,0 +1,30 @@
+# Isolated rewrite checks. This workflow never updates main, services, releases, or live state.
+name: Core rewrite
+on:
+  push:
+    branches: [work/301-build-shepherdr-2-1-on-core]
+    paths:
+      - 'server/core/**'
+      - 'test/core-*.test.ts'
+      - '.github/workflows/core-rewrite.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: core-rewrite-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  core:
+    if: github.ref == 'refs/heads/work/301-build-shepherdr-2-1-on-core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+        env:
+          SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-rewrite
+      - run: bun test test/core-*.test.ts
