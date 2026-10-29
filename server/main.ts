@@ -19,15 +19,19 @@ async function makeSource(): Promise<Source> {
 
 const source = await makeSource()
 const push = kind === 'live' && !process.env.SHEPHERDR_BOX ? new Push() : undefined
-if (push && 'devices' in source) (source as { devices: () => string[] }).devices = () => push.devices.map(deviceName)
+if (push && 'devices' in source && 'pushWarnings' in source) {
+  (source as { devices: () => string[] }).devices = () => push.devices.map(deviceName)
+  ;(source as { pushWarnings: () => string[] }).pushWarnings = () => push.warnings(deviceName)
+}
 // a worker for another machine (machines.ts) serves only its main machine, which pushes alerts itself
 const worker = !!process.env.SHEPHERDR_BOX
 const server = startApp({ source, dist: join(root, 'dist'), push: worker ? undefined : push, port, updates: worker ? undefined : join(HOME, 'update.json') })
 // a worker says which code it runs: the main server keeps it across its own restart while that is the same
 if (kind === 'live') writeJson('server.json', { port: server.port, pid: process.pid, code: worker ? (await import('./live/machines.ts')).codeVersion() : undefined })
+let tunnel: { stop(): void } | undefined
 if (worker) {
   // the agents there reach this worker's shepherdr command through an SSH tunnel to it
-  ;(await import('./live/tunnel.ts')).keepTunnel(server.port!)
+  tunnel = (await import('./live/tunnel.ts')).keepTunnel(server.port!)
   orphaned()
 }
 console.log(`shepherdr (${kind}) on http://127.0.0.1:${server.port}, ready ${Math.round(performance.now())} ms after start`)
@@ -41,6 +45,7 @@ function orphaned() {
       gone = 0
     } catch {
       if (++gone >= 10) {
+        tunnel?.stop()
         source.stop?.()
         process.exit(0)
       }
@@ -57,6 +62,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const)
     if (stopping) process.exit(0)
     stopping = true
     if (await source.drain?.()) await Bun.sleep(500)
+    tunnel?.stop()
     source.stop?.()
     server.stop()
     process.exit(0)

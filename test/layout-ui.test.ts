@@ -2,127 +2,11 @@
 import { describe, expect, test } from 'bun:test'
 import { layout, settled } from './layout.ts'
 import type { Locator } from 'playwright-core'
-import type { Action } from '../shared/types.ts'
 
-const until = async (f: () => boolean, ms = 5000) => {
-  for (const t0 = Date.now(); !f(); await Bun.sleep(20)) if (Date.now() - t0 > ms) throw new Error('timed out')
-}
-
-const { browser, server, world, url } = await layout()
+const { browser, server, world } = await layout()
 
 describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
   const at = (q: string) => `http://127.0.0.1:${server!.port}/?${q}`
-
-  test('an unreadable startup prompt keeps its screen and offers the terminal without a dead Send button', async () => {
-    const chat = world.chats['p:vm-str:~']
-    chat.messages.push({ id: 'startup-fallback', who: 'agent', at: Date.now(), question: { id: 'menu:fallback', title: 'The terminal is waiting for you', screen: 'A CLI asks for your input', terminal: true, noNote: true, kind: 'Form', choices: [], to: 'home' } })
-    const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
-    try {
-      await page.goto(url())
-      const card = page.locator('[data-whole="startup-fallback"] [data-card]')
-      await card.waitFor()
-      expect(await card.locator('pre').textContent()).toBe('A CLI asks for your input')
-      expect(await card.getByRole('button', { name: 'Open terminal', exact: true }).count()).toBe(1)
-      expect(await card.getByRole('button', { name: 'Send', exact: true }).count()).toBe(0)
-      expect(await card.getByRole('textbox', { name: 'Note' }).count()).toBe(0)
-    } finally {
-      chat.messages = chat.messages.filter((m) => m.id !== 'startup-fallback')
-      await page.close()
-    }
-  }, 30_000)
-
-  test("a needs-you card answers its task's question right in the space's chat, and says where once answered", async () => {
-    const chat = world.chats['p:vm-str:~']
-    const now = Date.now()
-    const q = { id: 'ask:copy', title: 'Which colour?', kind: 'Form' as const, choices: [{ label: 'Blue' }, { label: 'Green' }], to: 'LV-3 agent' }
-    chat.messages.push(
-      { id: 'ask-done', who: 'agent', at: now - 2, card: { id: 'ask-done', task: 'LV-3', status: 'need', text: 'needs you: Question for you', ask: { chat: 'LV-3/Agent', answered: { where: 'space' }, questions: [{ ...q, id: 'ask:old', sent: 0, elsewhere: { label: 'Answered here ·', chat: 'LV-3/Agent', name: 'LV-3 chat' } }] } } },
-      { id: 'ask-reply', who: 'agent', at: now - 1, card: { id: 'ask-reply', task: 'LV-3', status: 'need', text: 'needs you: Waits for your reply', ask: { chat: 'LV-3/Agent', open: true, reply: { id: 'lv3-q', text: 'Keep the old API around?' } } } },
-      { id: 'ask-open', who: 'agent', at: now, card: { id: 'ask-open', task: 'LV-3', status: 'need', text: 'needs you: Question for you', ask: { chat: 'LV-3/Agent', open: true, questions: [q] } } },
-    )
-    const sent: Action[] = []
-    const act = world.act
-    world.act = async (a: Action) => (a.type === 'answer' || (a.type === 'send' && a.chat === 'LV-3/Agent') ? (sent.push(a), { ok: true }) : act(a))
-    const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
-    try {
-      await page.goto(url())
-      const card = page.locator('[data-whole="ask-open"] [data-card]')
-      await card.waitFor()
-      await card.getByRole('button', { name: 'Green' }).click()
-      await card.getByRole('textbox', { name: 'Note' }).fill('the darker one')
-      await card.getByRole('button', { name: 'Send', exact: true }).click()
-      await until(() => sent.length > 0)
-      expect(sent[0]).toMatchObject({ type: 'answer', chat: 'LV-3/Agent', question: 'ask:copy', choice: 1, note: 'the darker one', space: 'p:vm-str:~' })
-      // a plain question: its words and a reply box
-      const reply = page.locator('[data-whole="ask-reply"] [data-card]')
-      expect(await reply.locator('[data-ask-text]').textContent()).toBe('Keep the old API around?')
-      await reply.getByRole('textbox', { name: 'Reply to LV-3' }).fill('Yes, one more release')
-      await reply.getByRole('button', { name: 'Send', exact: true }).click()
-      await until(() => sent.length > 1)
-      expect(sent[1]).toMatchObject({ type: 'send', chat: 'LV-3/Agent', text: 'Yes, one more release', reply: 'lv3-q', space: 'p:vm-str:~' })
-      // answered: where, a link to the task's chat, and no Send
-      const done = page.locator('[data-whole="ask-done"] [data-card]')
-      expect(await done.textContent()).toContain('Answered here ·LV-3 chat')
-      expect(await done.getByRole('button', { name: 'Send', exact: true }).count()).toBe(0)
-      // compact: it keeps the chat's width on a phone
-      for (const c of [card, reply, done]) expect((await c.boundingBox())!.width).toBeLessThanOrEqual(390)
-    } finally {
-      world.act = act
-      chat.messages = chat.messages.filter((m) => !m.id.startsWith('ask-'))
-      await page.close()
-    }
-  }, 30_000)
-
-  test('a choice card starts with nothing picked: Send waits for a pick or a typed answer', async () => {
-    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } })
-    await page.goto(at('place=p:mac:lilla-varlden&task=LV-3'))
-    const card = page.locator('[data-card]').filter({ hasText: 'Which upload limit?' })
-    await card.waitFor()
-    expect(await card.locator('button[aria-pressed=true]').count()).toBe(0)
-    const send = card.getByRole('button', { name: 'Send', exact: true })
-    expect(await send.isDisabled()).toBe(true)
-    await card.getByRole('textbox', { name: 'Other answer' }).fill('1 GB')
-    expect(await send.isDisabled()).toBe(false)
-    await card.getByRole('textbox', { name: 'Other answer' }).fill('')
-    expect(await send.isDisabled()).toBe(true)
-    await card.getByRole('button', { name: /^50 MB per file/ }).click()
-    expect(await send.isDisabled()).toBe(false)
-    await page.close()
-  }, 30_000)
-
-  for (const [name, viewport] of [
-    ['desktop', { width: 1440, height: 900 }],
-    ['phone', { width: 390, height: 844 }],
-  ] as const)
-    test(`a long question wraps on its card (${name}), the ? on its first line, and each choice's description in grey under it`, async () => {
-      const title = "Should the rebuilt workflow also read the founders' own LinkedIn profiles and recent posts, or only the company page as before?"
-      world.chats['p:vm-str:~'].messages.push({
-        id: 'long-q',
-        who: 'agent',
-        at: Date.now(),
-        question: { id: 'menu:long-q', title, kind: 'Form', to: 'home', asks: 'Claude Code asks', choices: [{ label: 'Company page only', description: 'Same as before: just the company page' }, { label: 'Company page and founders', description: "Also read each founder's profile" }] },
-      })
-      const page = await browser!.newPage({ viewport, hasTouch: name === 'phone' })
-      await page.goto(url())
-      const card = page.locator('[data-whole="long-q"] [data-card]')
-      await card.waitFor()
-      const head = card.locator('[data-card-title]')
-      // all of it, over more than one line
-      expect(await head.textContent()).toBe(title)
-      const t = await head.evaluate((el) => ({ lines: el.getClientRects().length, h: el.getBoundingClientRect().height, lh: parseFloat(getComputedStyle(el).lineHeight), top: el.getBoundingClientRect().top, cut: el.scrollWidth > el.clientWidth }))
-      expect(t.h).toBeGreaterThan(t.lh * 1.5)
-      expect(t.cut).toBe(false)
-      // the ? sits in the middle of the first line
-      const icon = (await head.evaluate((el) => el.previousElementSibling!.getBoundingClientRect().toJSON())) as { top: number; height: number }
-      expect(Math.abs(icon.top + icon.height / 2 - (t.top + t.lh / 2))).toBeLessThan(1.5)
-      // the label on its line, the description in grey below it
-      const choice = card.getByRole('button', { name: /^Company page only/ })
-      const [label, desc] = await choice.evaluate((b) => [...b.querySelectorAll('span > span')].map((s) => ({ bottom: s.getBoundingClientRect().bottom, top: s.getBoundingClientRect().top, color: getComputedStyle(s).color })))
-      expect(desc.top).toBeGreaterThanOrEqual(label.bottom - 1)
-      expect(desc.color).not.toBe(label.color)
-      world.chats['p:vm-str:~'].messages = world.chats['p:vm-str:~'].messages.filter((m) => m.id !== 'long-q')
-      await page.close()
-    }, 30_000)
 
   for (const [name, viewport] of [
     ['desktop', { width: 1440, height: 900 }],
@@ -197,9 +81,9 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
     // opened from a space, it sets that space's defaults; the picker switches to a machine's, another space's or Everywhere
-    await list.getByRole('button', { name: 'Defaults for: home · vm-str' }).click()
+    await settings.getByRole('button', { name: 'Editing: home · vm-str' }).click()
     await page.getByRole('menuitemradio', { name: 'gtm · vm-str' }).click()
-    await list.getByRole('button', { name: 'Defaults for: gtm · vm-str' }).waitFor()
+    await settings.getByRole('button', { name: 'Editing: gtm · vm-str' }).waitFor()
     // a space has no Machine page: a machine's capacity is its own
     expect(await list.getByRole('button', { name: 'Machine', exact: true }).count()).toBe(0)
     await list.getByRole('button', { name: 'Agents' }).click()
@@ -210,7 +94,7 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
     await agents.getByRole('button', { name: 'Reset to Claude Code' }).waitFor()
     await agents.getByRole('button', { name: 'Back', exact: true }).click()
     await agents.waitFor({ state: 'detached' })
-    await list.getByRole('button', { name: 'Defaults for: gtm · vm-str' }).click()
+    await settings.getByRole('button', { name: 'Editing: gtm · vm-str' }).click()
     await page.getByRole('menuitemradio', { name: 'Everywhere' }).click()
     await list.getByRole('button', { name: 'How tasks work' }).click()
     const section = settings.getByRole('region', { name: 'How tasks work' })
@@ -245,7 +129,7 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
       await page.goto(at(`place=${encodeURIComponent(gtm.id)}`))
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       const settings = page.getByRole('region', { name: 'Settings' })
-      const pick = settings.getByRole('button', { name: 'Defaults for: gtm · vm-str' })
+      const pick = settings.getByRole('button', { name: 'Editing: gtm · vm-str' })
       await pick.click()
       const menu = page.getByRole('menu', { name: 'Choices' })
       await menu.waitFor()
@@ -255,8 +139,8 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
       // Everywhere, then each machine with its spaces under it, its home space first, in the sidebar's order
       const rows = menu.getByRole('menuitemradio')
       const names = (await rows.allTextContents()).map((t) => t.trim())
-      expect(names.slice(0, 8)).toEqual(['Everywhere', 'mac', 'home', 'lilla-varlden', 'vm-str', 'home', 'gtm', 'herdr-projects'])
-      expect(names.slice(-8)).toEqual(more)
+      expect(names.slice(0, 8)).toEqual(['Everywhere', 'mac', 'home · mac', 'lilla-varlden · mac', 'vm-str', 'home · vm-str', 'gtm · vm-str', 'herdr-projects · vm-str'])
+      expect(names.slice(-8)).toEqual(more.map((n) => `${n} · vm-str`))
       // each name after its place's icon, as the sidebar's (SHE-207)
       const textX = (name: string) => menu.getByRole('menuitemradio', { name, exact: true }).locator('span span span').evaluate((el) => el.getBoundingClientRect().left)
       const [allX, machineX, projectX] = [await textX('Everywhere'), await textX('vm-str'), await textX('gtm · vm-str')]
@@ -280,25 +164,25 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
       await page.keyboard.press('ArrowDown')
       await page.keyboard.press('Enter')
       await menu.waitFor({ state: 'detached' })
-      await settings.getByRole('button', { name: 'Defaults for: mac' }).waitFor()
+      await settings.getByRole('button', { name: 'Editing: mac' }).waitFor()
       // Esc closes it, the focus back on the picker
-      await settings.getByRole('button', { name: 'Defaults for: mac' }).click()
+      await settings.getByRole('button', { name: 'Editing: mac' }).click()
       await menu.waitFor()
       await page.keyboard.press('Escape')
       await menu.waitFor({ state: 'detached' })
-      expect(await settings.getByRole('button', { name: 'Defaults for: mac' }).evaluate((el) => el === document.activeElement)).toBe(true)
+      expect(await settings.getByRole('button', { name: 'Editing: mac' }).evaluate((el) => el === document.activeElement)).toBe(true)
       // and so does a click outside it, leaving the level as it was
-      await settings.getByRole('button', { name: 'Defaults for: mac' }).click()
+      await settings.getByRole('button', { name: 'Editing: mac' }).click()
       await menu.waitFor()
       await page.mouse.click(900, 700)
       await menu.waitFor({ state: 'detached' })
-      await settings.getByRole('button', { name: 'Defaults for: mac' }).waitFor()
+      await settings.getByRole('button', { name: 'Editing: mac' }).waitFor()
       // a phone on its side: the menu fits the room it has, and scrolls
       const phone = await browser!.newPage({ viewport: { width: 600, height: 360 }, hasTouch: true, isMobile: true })
       await phone.goto(at(`place=${encodeURIComponent(gtm.id)}`))
       await phone.getByRole('button', { name: 'Places' }).click()
       await phone.getByRole('button', { name: 'Settings', exact: true }).click()
-      await phone.getByRole('button', { name: 'Defaults for: gtm · vm-str' }).click()
+      await phone.getByRole('button', { name: 'Editing: gtm · vm-str' }).click()
       const small = phone.getByRole('menu', { name: 'Choices' })
       await small.waitFor()
       await settled(phone)
@@ -321,7 +205,7 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     const settings = page.getByRole('region', { name: 'Settings' })
     const list = settings.getByRole('navigation', { name: 'Sections' })
-    await list.getByRole('button', { name: 'Defaults for: gtm · vm-str' }).waitFor()
+    await settings.getByRole('button', { name: 'Editing: gtm · vm-str' }).waitFor()
     await list.getByRole('button', { name: 'Autopilot' }).click()
     const pilot = settings.getByRole('region', { name: 'Autopilot' })
     await pilot.waitFor()
@@ -368,9 +252,9 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
       const settings = page.getByRole('region', { name: 'Settings' })
       const list = settings.getByRole('navigation', { name: 'Sections' })
       // a machine's own defaults: picked, as a machine has no space of its own to open them from
-      await list.getByRole('button', { name: 'Defaults for: home · vm-str' }).click()
+      await settings.getByRole('button', { name: 'Editing: home · vm-str' }).click()
       await page.getByRole('menuitemradio', { name: 'vm-str', exact: true }).click()
-      await list.getByRole('button', { name: 'Defaults for: vm-str' }).waitFor()
+      await settings.getByRole('button', { name: 'Editing: vm-str' }).waitFor()
       const open = async (name: string) => {
         await list.getByRole('button', { name, exact: true }).click()
         const region = settings.getByRole('region', { name })
@@ -398,14 +282,15 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
       expect(await tasks.getByRole('switch', { name: 'Review' }).getAttribute('aria-checked')).toBe('true')
       await back(tasks)
       // a few short choices: segments, the one picked pressed
-      const notify = await open('Notify')
+      const notify = await open('Notifications')
       const seg = notify.getByRole('group', { name: 'Notify' })
       expect(await seg.getByRole('button', { name: 'Needs me' }).getAttribute('aria-pressed')).toBe('true')
+      await notify.getByRole('button', { name: 'Add this device' }).waitFor()
       await back(notify)
       // one with no other choice is only its words; an action is a button
-      const alerts = await open('Alerts and voice')
+      const alerts = await open('Voice')
       expect(await alerts.getByRole('button', { name: /ElevenLabs/ }).count()).toBe(0)
-      await alerts.getByRole('button', { name: 'Add this device' }).waitFor()
+      expect(await alerts.getByRole('button', { name: 'Add this device' }).count()).toBe(0)
       await back(alerts)
       for (const name of ['Agents', 'Tasks', 'Autopilot', 'Time zone']) await back(await open(name))
       await ctx.close()

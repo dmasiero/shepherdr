@@ -9,9 +9,10 @@ import { ARTIFACT_DATA, ARTIFACT_HTML, thumb } from './artifacts.ts'
 import { DEMO_PRS, demoWorktree } from './code.ts'
 import { demoActivity } from './activity.ts'
 import { settingsBlock } from '../live/prompts.ts'
-import { CLI_NAME, defaultOf, kindOf } from '../live/settings.ts'
-import { harnessWords, restartClis } from '../live/restart.ts'
+import { CLI_NAME, repositorySection, defaultOf, kindOf } from '../live/settings.ts'
+import { harnessProblem, harnessWords, restartClis } from '../live/restart.ts'
 import { nextWords } from '../live/trigger.ts'
+import { secretPages, Vault } from '../live/secrets.ts'
 
 const DEFAULT_WAYS = { review: defaultOf('brief.review') !== 'off', mustFix: defaultOf('review.mustFix')!, rounds: Number.parseInt(defaultOf('review.rounds')!, 10), merge: defaultOf('brief.merge')!, waitChecks: defaultOf('brief.merge') === 'after GitHub checks' }
 const DEFAULT_REVIEWER = { kind: kindOf(defaultOf('reviewer.agent')!)! }
@@ -58,7 +59,7 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
   read: Record<string, number> = { '*': Date.now() + 1000 }
   // every brief ends with its Settings block, as a live one does: HP-204's with two lines changed, one by its
   // coordinator and one by its space
-  tasks: Task[] = D.tasks().map((t) => ({ ...(DEMO_PRS[t.id] ? { ...t, pr: DEMO_PRS[t.id] } : t), desc: `${t.desc}\n\n${settingsBlock(t.id, t.id === 'HP-204' ? { ways: { ...DEFAULT_WAYS, rounds: 1, merge: 'ask me first' }, reviewer: DEFAULT_REVIEWER, by: { rounds: 'task', merge: 'space' } } : { ways: DEFAULT_WAYS, reviewer: DEFAULT_REVIEWER })}` }))
+  tasks: Task[] = D.tasks().map((t) => ({ base: 'main', ...(DEMO_PRS[t.id] ? { ...t, pr: DEMO_PRS[t.id] } : t), desc: `${t.desc}\n\n${settingsBlock(t.id, t.id === 'HP-204' ? { ways: { ...DEFAULT_WAYS, rounds: 1, merge: 'ask me first' }, reviewer: DEFAULT_REVIEWER, by: { rounds: 'task', merge: 'space' } } : { ways: DEFAULT_WAYS, reviewer: DEFAULT_REVIEWER })}` }))
   chats: Record<string, Chat> = D.chats()
   asks: Record<string, string> = { ...D.ASKS }
   /** each machine's defaults at their levels, as live */
@@ -66,7 +67,10 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
   /** each place's HEARTBEAT.md as edited here */
   checklists: Record<string, string> = {}
   pluginsOff: string[] = []
+  bases: Record<string, string> = Object.fromEntries(this.places.filter((p) => p.level === 2 && !p.id.endsWith(':~')).map((p) => [p.id, 'main']))
   sections = D.settings(this.stores)
+  /** agents' secrets, in memory only */
+  vault = new Vault('', D.secrets())
   automations = structuredClone(D.AUTOMATIONS)
   artifacts: Artifact[] = D.artifacts()
   /** what each artifact's page sent, by the HTML version it was sent from */
@@ -114,6 +118,7 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
     if (quiet) cards[quiet.place].push(cardMessage({ id: 'card-main-red', red: 'main', text: 'went red: Check failed' }, at++))
     for (const c of Object.values(this.chats)) {
       c.controls = c.cli === 'Claude Code' ? CLAUDE_CONTROLS() : OTHER_CONTROLS()
+      c.agent = c.cli === 'Claude Code' ? { kind: 'claude', model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', effort: 'high' } : { kind: kindOf(c.cli) ?? 'codex' }
       for (const m of c.messages) m.at = at++
       if (cards[c.key]) c.messages.unshift(...cards[c.key])
     }
@@ -210,9 +215,17 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
       automations: this.automations,
       artifacts: this.artifacts,
       asks: this.asks,
+      attentionRequests: Object.fromEntries([
+        ...this.places.map((p) => [p.chat, [...new Set((this.chats[p.chat]?.messages ?? []).flatMap((m) => m.question && m.question.sent === undefined ? [m.question.id] : []))]] as [string, string[]]),
+        ...this.tasks.filter((t) => t.status === 'need' && !t.archived).map((t) => {
+          const key = t.agent?.chat ?? `${t.id}/Agent`
+          const ids = (this.chats[key]?.messages ?? []).flatMap((m) => m.question && m.question.sent === undefined ? [m.question.id] : [])
+          return [key, ids.length ? [...new Set(ids)] : ['attention']] as const
+        }),
+      ]),
       last: this.last(),
       read: this.read,
-      settings: this.sections,
+      settings: secretPages([...this.sections, ...Object.entries(this.bases).map(([id, base]) => repositorySection(id, id.split(':')[1], base))], this.vault.names()),
       demo: true,
       user: 'Elias',
     }
@@ -452,6 +465,20 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
       }
       case 'answer':
         return this.answer(a)
+      case 'secret': {
+        const r = this.vault.set(a.level, a.name, a.value === null ? null : a.value.replace(/[\r\n]+$/, ''))
+        if (!r.ok) return r
+        // the card that asked for it says where it is kept, and the chat shows what you gave: its name
+        const m = a.card && this.chats[a.card.chat]?.messages.find((x) => x.secret?.id === a.card!.id)
+        if (a.card && m?.secret && a.value !== null) {
+          const where = m.secret.levels.find((l) => l.id === a.level)?.label ?? a.level
+          m.secret = { ...m.secret, saved: where }
+          this.push(a.card.chat, { who: 'you', answered: 'Gave a secret', text: `${a.name}, for ${where}` })
+          setTimeout(() => this.push(a.card!.chat, { who: 'agent', text: `Thanks: ${a.name} is in. Posting the release notes now.` }), 900)
+        }
+        this.emit('snapshot')
+        return { ok: true }
+      }
       case 'artifact-send':
       case 'artifact-say':
       case 'artifact-note': {
@@ -505,15 +532,8 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
         return {}
       }
       case 'model':
-      case 'effort': {
-        const c = this.chats[a.chat]?.controls
-        if (c) {
-          if (a.type === 'model') c.model = Math.max(0, c.models.indexOf(a.model))
-          else c.effort = Math.max(0, c.efforts.indexOf(a.effort))
-        }
-        this.emit('chat', a.chat)
-        return {}
-      }
+      case 'effort':
+        return { ok: false, error: 'Use the + menu agent controls and Restart to apply model or effort changes. Chat and work are preserved.' }
       case 'text':
         this.termInput[a.chat] = (this.termInput[a.chat] ?? '') + a.text
         this.emit('terminal', a.chat, this.screen(a.chat))
@@ -548,6 +568,12 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
         return { ok: true }
       }
       case 'setting': {
+        if (a.key === 'space.base') {
+          if (!a.place || !(a.place in this.bases) || !a.value?.trim() || /[\s~^:?*\[\\]/.test(a.value)) return { ok: false, error: 'Choose a branch name.' }
+          this.bases[a.place] = a.value
+          this.emit('snapshot')
+          return { ok: true }
+        }
         // a plugin's switch: on at once here (a real install restarts with it)
         if (a.key.startsWith('plugin.')) {
           const name = a.key.slice('plugin.'.length)
@@ -599,13 +625,16 @@ export class DemoWorld extends Emitter<SourceEvents> implements Source {
         const t = this.task(a.chat.split('/')[0])
         const on = kindOf(c?.cli ?? '') ?? 'claude'
         const want = c?.restart ? (kindOf(c.restart.want) ?? on) : on
-        return { ok: true, info: { role: a.chat.includes('/') ? 'task' : 'coordinator', space: this.places.find((p) => p.id === (t?.place ?? a.chat))?.name, on: { kind: on }, onWords: c?.cli ?? 'Claude Code', want: { kind: want }, clis: restartClis(['claude', 'codex', 'pi']), working: t?.status === 'work' } }
+        return { ok: true, info: { role: a.chat.includes('/') ? 'task' : 'coordinator', space: this.places.find((p) => p.id === (t?.place ?? a.chat))?.name, on: c?.agent ?? { kind: on }, onWords: harnessWords(c?.agent ?? { kind: on }), want: { kind: want }, clis: restartClis(['claude', 'codex', 'pi']), working: t?.status === 'work' } }
       }
       case 'restart': {
         const c = this.chat(a.chat)
         if (!c) return { ok: false, error: 'No such chat.' }
         const kind = a.kind ?? (c.restart ? kindOf(c.restart.want) : undefined) ?? kindOf(c.cli) ?? 'claude'
+        const problem = harnessProblem({ kind, model: a.model, effort: a.effort })
+        if (problem) return { ok: false, error: problem }
         const words = harnessWords({ kind, model: a.model, effort: a.effort })
+        c.agent = { kind, model: a.model, effort: a.effort }
         c.cli = CLI_NAME[kind] ?? kind
         c.restart = undefined
         c.messages.push(cardMessage({ id: `restart-${id()}`, restart: true, text: `Restarted on ${words}` }, Date.now() + seq))

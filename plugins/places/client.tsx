@@ -26,7 +26,7 @@ import clsx from 'clsx'
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type LiHTMLAttributes, type ReactNode } from 'react'
 import { act, counts, definePlugin, getState, goPlace, manyMachines, openSplit, placeOf, removeSpace, setUI, splitClick, useSnap, useUI, type Pane, type UI } from '@client/kernel.ts'
 import { and, Dialog, RowMenu, RowMenuButton, useRowMenu } from '@client/rowmenu.tsx'
-import { BackIcon, BellIcon, BellSlashIcon, Count, DeleteIcon, DownIcon, HashIcon, ic, IconButton, List, MenuItem, MenuLabel, MenuSeparator, MenuSetting, Meta, NextIcon, PinnedIcon, PinTaskIcon, PlusIcon, Primary, ReadIcon, RemoveProjectIcon, RenameIcon, rowClass, RowText, SectionIcon, ServerIcon, SplitIcon, TasksIcon, UnpinIcon } from '@client/ui.tsx'
+import { BackIcon, BellIcon, BellSlashIcon, AttentionBadge, DeleteIcon, DownIcon, HashIcon, ic, IconButton, List, MenuItem, MenuLabel, MenuSeparator, MenuSetting, Meta, NextIcon, PinnedIcon, PinTaskIcon, PlusIcon, Primary, ReadIcon, RemoveProjectIcon, RenameIcon, rowClass, RowText, SectionIcon, ServerIcon, SplitIcon, TasksIcon, UnpinIcon } from '@client/ui.tsx'
 import { MarkRead, markPlaceRead, muted, placeUnread } from '@client/unread.ts'
 import { RestartItem } from '@client/restart.tsx'
 import { NOTIFY, NOTIFY_KEY, notifyOf, notifyRow } from '@shared/alerts.ts'
@@ -249,7 +249,8 @@ function mayGo(snap: Snapshot, p: Place, group: string) {
  *  reached; dimmed when muted, as Slack's muted channels, its count still red */
 function usePlaceRow({ p, snap, where }: { p: Place; snap: Snapshot; where?: string }) {
   const sel = useUI((u) => u.place === p.id)
-  const n = counts(snap, p.id).own
+  const c = counts(snap, p.id)
+  const n = c.own
   const fresh = placeUnread(snap, p)
   const quiet = muted(snap, p.id)
   const off = p.status === 'off' && !p.connecting
@@ -257,7 +258,7 @@ function usePlaceRow({ p, snap, where }: { p: Place; snap: Snapshot; where?: str
   return {
     sel,
     // what the row says aloud, its count and offline too
-    said: `${p.name}${where ? ` on ${where}` : ''}${p.home ? ', home space' : ''}${p.connecting ? ', connecting' : off ? ", can't reach" : n ? `, ${n} waiting on you` : ''}${fresh && !off ? ', unread' : ''}${pilot ? ', on Autopilot' : ''}${quiet ? ', muted' : ''}`,
+    said: `${p.name}${where ? ` on ${where}` : ''}${p.home ? ', home space' : ''}${p.connecting ? ', connecting' : off ? ", can't reach" : n ? `, ${c.ownNeed} need you, ${c.ownReady} ready here` : ''}${fresh && !off ? ', unread' : ''}${pilot ? ', on Autopilot' : ''}${quiet ? ', muted' : ''}`,
     fresh,
     // the Autopilot mark, then the space's # before the name, as Slack's channels have: grey, lit with the name where
     // it is open or something is new
@@ -276,7 +277,7 @@ function usePlaceRow({ p, snap, where }: { p: Place; snap: Snapshot; where?: str
     end: (
       <>
         {quiet ? <BellSlashIcon aria-hidden className={clsx(ic, 'text-fg3')} /> : null}
-        {p.connecting || off ? null : <Count n={n} label={`${n} waiting on you`} />}
+        {p.connecting || off ? null : <AttentionBadge need={c.ownNeed} ready={c.ownReady} scope="here" />}
       </>
     ),
   }
@@ -617,7 +618,7 @@ function Space({ p, snap, sort, at }: { p: Place; snap: Snapshot; sort: Sort; at
                 setTimeout(() => setRemoving(p))
               }}
             >
-              Remove
+              Remove from Shepherdr…
             </MenuItem>
           )}
         </PlaceMenu>
@@ -697,7 +698,7 @@ function RemoveBox({ p, snap }: { p: Place; snap: Snapshot }) {
         </Primary>
       }
     >
-      <p>Its folder and code stay on disk. Shepherdr only forgets it, and its coordinator closes.</p>
+      <p>Its files and folder stay on disk. Shepherdr only forgets it, and its coordinator closes.</p>
       <p className="mt-1.5">
         {open.length
           ? `${open.length > 1 ? `Its ${open.length} open tasks` : 'Its open task'}${open.length <= 4 ? ` (${and(open)})` : ''} ${open.length > 1 ? 'hide' : 'hides'} with it; ${open.length > 1 ? 'their worktrees and branches stay' : 'its worktree and branch stay'}. Add the space again to bring them and its chat back.`

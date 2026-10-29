@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'bun:test'
 import { layout } from './layout.ts'
 
-const { browser, server } = await layout({ everything: true })
+const { browser, server, world } = await layout({ everything: true })
 
 const ids = (rows: import('playwright-core').Locator) => rows.evaluateAll((li) => li.map((l) => l.textContent?.match(/[A-Z]+-\d+/)?.[0]))
 
@@ -81,4 +81,100 @@ describe.skipIf(!browser)('filtering the artifacts', () => {
     await page.locator('section[aria-label="Tasks"]').waitFor()
     await page.close()
   }, 30_000)
+})
+
+describe.skipIf(!browser)('Home attention defaults', () => {
+  test('fresh global Home separates actionable work by space, search overrides it, explicit scope and lock win', async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } })
+    // This file’s other cases explicitly select Everything. Here exercise a fresh device.
+    await page.addInitScript(() => localStorage.removeItem('shepherdr.lists'))
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/home`)
+    const panel = page.locator('section[aria-label="Tasks"]')
+    await panel.getByText('Actionable · all machines', { exact: true }).waitFor()
+    await panel.getByRole('button', { name: 'gtm · Ready · vm-str 1', exact: true }).waitFor()
+    expect(await ids(panel.locator('li'))).toContain('LV-3')
+    expect(await ids(panel.locator('li'))).not.toContain('HP-202')
+    const search = panel.getByRole('searchbox', { name: 'Filter tasks' })
+    await search.fill('HP-202')
+    await panel.getByText('HP-202', { exact: true }).waitFor()
+    await search.fill('')
+    await panel.getByRole('button', { name: 'Show all tasks', exact: true }).click()
+    await panel.getByText('HP-202', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Lock filters: keep them when switching spaces', exact: true }).click()
+    await page.getByRole('button', { name: /^lilla-varlden,/ }).click()
+    await panel.getByText('HP-202', { exact: true }).waitFor()
+    expect(await panel.getByText('Everything', { exact: true }).count()).toBe(1)
+    await page.close()
+  })
+})
+
+describe.skipIf(!browser)('no chat attention summary and quiet health', () => {
+  test('phone and desktop, light and dark: Home and space chats have cards without aggregate disclosures', async () => {
+    for (const width of [390, 1440]) for (const colorScheme of ['light', 'dark'] as const) {
+      const page = await browser!.newPage({ viewport: { width, height: 900 }, colorScheme })
+      try {
+        for (const place of ['vm-str/home', 'p:mac:~', 'p:vm-str:gtm']) {
+          await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(place)}`)
+          const messages = page.locator('[data-messages]')
+          await messages.waitFor()
+          expect(await messages.locator('[data-attention]').count()).toBe(0)
+          expect(await messages.getByText(/\d+ need you · \d+ ready/).count()).toBe(0)
+          expect(await messages.getByText(/^Task updates ·/).count()).toBe(0)
+          if (place === 'p:vm-str:gtm') {
+            await messages.getByText('Rerun CI on main?', { exact: true }).waitFor()
+            await messages.getByRole('button', { name: /Needs you GTM-14 needs you/ }).waitFor()
+            await messages.getByRole('button', { name: /Ready GTM-15 is ready/ }).waitFor()
+          }
+        }
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
+  test('chat stays free of aggregate summaries with matching or filtered Tasks, preserving questions and health', async () => {
+    const page = await browser!.newPage({ viewport: { width: 820, height: 1180 } })
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=p:mac:~`)
+    const panel = page.locator('section[aria-label="Tasks"]')
+    await panel.getByText('LV-3', { exact: true }).waitFor()
+    expect(await page.locator('[data-attention]').count()).toBe(0)
+    await panel.getByRole('searchbox', { name: 'Filter tasks' }).fill('LV-3')
+    expect(await page.locator('[data-attention]').count()).toBe(0)
+    expect(await page.getByText(/^Task updates ·/).count()).toBe(0)
+    await page.getByRole('button', { name: /^Machine health/ }).click()
+    const health = page.getByRole('dialog', { name: 'mac health' })
+    await health.waitFor()
+    expect(await health.textContent()).toContain('Alert limit crossed')
+    expect(await health.textContent()).toContain('18%') // Healthy CPU still available beside the disk warning.
+    await page.keyboard.press('Escape')
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=p:vm-str:gtm`)
+    await page.getByText('Rerun CI on main?', { exact: true }).waitFor()
+    expect(await page.locator('[data-attention]').count()).toBe(0)
+    expect(await page.getByText(/3 need you · 1 ready/).count()).toBe(0)
+    // Tasks still counts its own requests, excluding the coordinator question.
+    expect(await panel.getByLabel('2 needs you, 1 ready · panel scope', { exact: true }).count()).toBe(1)
+    await page.close()
+  })
+})
+
+describe.skipIf(!browser)('Home on a single machine', () => {
+  test('host Home remains actionable when there are no peers', async () => {
+    const places = world.places
+    const machines = world.machines
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } })
+    try {
+      world.places = places.filter((p) => p.machine === world.snapshot().host).map((p) => p.home ? { ...p, level: 1 } : p)
+      world.machines = machines.filter((m) => m.machine === world.snapshot().host)
+      await page.addInitScript(() => localStorage.removeItem('shepherdr.lists'))
+      await page.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/home`)
+      const panel = page.locator('section[aria-label="Tasks"]')
+      await panel.getByText('Actionable · all machines', { exact: true }).waitFor()
+      expect(await ids(panel.locator('li'))).toContain('GTM-15')
+      expect(await ids(panel.locator('li'))).not.toContain('HP-202')
+    } finally {
+      world.places = places
+      world.machines = machines
+      await page.close()
+    }
+  })
 })

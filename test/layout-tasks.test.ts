@@ -327,30 +327,45 @@ describe.skipIf(!browser)('grouped tasks and the keyboard', () => {
       const ctx = await browser!.newContext({ viewport: { width: 1440, height: 900 } })
       const page = await ctx.newPage()
       await page.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/home`)
-      await page.waitForSelector('section[aria-label="Tasks"] li')
+      const taskRows = 'section[aria-label="Tasks"] li[data-flip]'
+      await page.waitForSelector(taskRows)
       await page.getByRole('button', { name: 'Group tasks' }).click()
       await page.getByRole('menuitemradio', { name: /^Space/ }).click()
       await page.locator('body').click({ position: { x: 600, y: 500 } })
-      const rows = await page.$$eval('section[aria-label="Tasks"] li', (li) => li.map((l) => l.textContent?.match(/^[A-Z]+-[A-Z0-9]+/)?.[0]))
+      // The footer has automation list items too; only task rows belong to the arrow-key order.
+      const automations = page.locator('section[aria-label="Tasks"] li[aria-expanded]')
+      expect(await automations.count()).toBe(3)
+      const rows = await page.$$eval(taskRows, (li) => li.map((l) => (l as HTMLElement).dataset.flip!))
+      const focused = () => page.$$eval(taskRows, (li) => (li.find((l) => l.className.includes('var(--focus)')) as HTMLElement | undefined)?.dataset.flip)
       const seen: (string | undefined)[] = []
       for (let i = 0; i < rows.length; i++) {
         if (i) await page.keyboard.press('ArrowDown')
         else await page.keyboard.press('ArrowUp')
-        seen.push(await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Tasks"] li')].find((li) => li.className.includes('var(--focus)'))?.textContent?.match(/^[A-Z]+-[A-Z0-9]+/)?.[0]))
+        seen.push(await focused())
       }
       // every press lands on the next row you can see, lilla-varlden's, then gtm's five Done ones and straight on to herdr-projects
       expect(seen).toEqual(rows)
+      // The footer stays visible, but extra presses stop at the last task, then walk back up.
+      await page.keyboard.press('ArrowDown')
+      expect(await focused()).toBe(rows.at(-1))
+      const back = [await focused()]
+      for (let i = 1; i < rows.length; i++) {
+        await page.keyboard.press('ArrowUp')
+        back.push(await focused())
+      }
+      expect(back).toEqual([...rows].reverse())
+      expect(await automations.count()).toBe(3)
       expect(rows.filter((r) => r?.startsWith('GTM-')).length).toBe(5 + 5)
       await page.getByRole('button', { name: 'Show all 8' }).click()
-      expect(await page.locator('section[aria-label="Tasks"] li').count()).toBe(rows.length + 3)
+      expect(await page.locator(taskRows).count()).toBe(rows.length + 3)
       // remembered on this device: a reload still shows them all, and Show less cuts them short again
       await page.reload()
-      await page.waitForSelector('section[aria-label="Tasks"] li')
-      expect(await page.locator('section[aria-label="Tasks"] li').count()).toBe(rows.length + 3)
+      await page.waitForSelector(taskRows)
+      expect(await page.locator(taskRows).count()).toBe(rows.length + 3)
       await page.getByRole('button', { name: 'Show less' }).click()
-      expect(await page.locator('section[aria-label="Tasks"] li').count()).toBe(rows.length)
+      expect(await page.locator(taskRows).count()).toBe(rows.length)
       await page.reload()
-      await page.waitForSelector('section[aria-label="Tasks"] li')
+      await page.waitForSelector(taskRows)
       await page.getByRole('button', { name: 'Show all 8' }).waitFor()
       await ctx.close()
     } finally {
@@ -422,21 +437,21 @@ describe.skipIf(!browser)('To do always shows; Automations only once there is on
       const tasks = page.locator('section[aria-label="Tasks"]')
       await tasks.locator('li').first().waitFor()
       expect(await headings(page)).toEqual(['Needs you', 'To do'])
-      await expect(tasks.getByText('Nothing waiting.', { exact: true }).isVisible()).resolves.toBe(true)
+      await expect(tasks.getByText('No tasks to do yet. Ask a coordinator to add one.', { exact: true }).isVisible()).resolves.toBe(true)
       expect(await tasks.getByText(/automations/i).count()).toBe(0)
       await ctx.close()
     }
     // a tablet, the same
     const tablet = await browser!.newPage({ viewport: { width: 900, height: 800 } })
     await tablet.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent('p:mac:lilla-varlden')}`)
-    await tablet.getByText('Nothing waiting.', { exact: true }).waitFor()
+    await tablet.getByText('No tasks to do yet. Ask a coordinator to add one.', { exact: true }).waitFor()
     expect(await tablet.locator('section[aria-label="Tasks"]').getByText(/automations/i).count()).toBe(0)
     await tablet.close()
     // and on a phone's Tasks tab
     const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, colorScheme: 'light' })
     const page = await ctx.newPage()
     await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent('p:mac:lilla-varlden')}&tab=tasks`)
-    await page.getByText('Nothing waiting.', { exact: true }).waitFor()
+    await page.getByText('No tasks to do yet. Ask a coordinator to add one.', { exact: true }).waitFor()
     expect(await page.getByText(/automations/i).count()).toBe(0)
     await ctx.close()
   }, 30_000)
@@ -457,6 +472,30 @@ describe.skipIf(!browser)('To do always shows; Automations only once there is on
     await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent('p:vm-str:gtm')}&tab=tasks`)
     await page.locator('li[aria-expanded]', { hasText: 'Flaky tests' }).waitFor()
     await expect(page.getByText('Automations', { exact: true }).isVisible()).resolves.toBe(true)
+    await ctx.close()
+  }, 30_000)
+
+  test("everything (no chips) shows every space's automations, each under its space's name; one space's keep their plain heading (desktop, phone)", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } })
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/home`)
+    const tasks = page.locator('section[aria-label="Tasks"]')
+    await tasks.locator('li[aria-expanded]', { hasText: 'Flaky tests' }).waitFor()
+    const heading = tasks.locator('[data-heading="Automations"]')
+    expect(await heading.allInnerTexts()).toEqual([expect.stringMatching(/^Automations · gtm/)])
+    expect(await tasks.locator('li[aria-expanded]').count()).toBe(3)
+    // one space's own list: the heading as it was, no name
+    await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent('p:vm-str:gtm')}`)
+    await tasks.locator('li[aria-expanded]', { hasText: 'Flaky tests' }).waitFor()
+    expect(await heading.innerText()).not.toContain('·')
+    await page.close()
+    const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+    const phone = await ctx.newPage()
+    await phone.goto(`http://127.0.0.1:${server!.port}/?place=vm-str/home&tab=tasks`)
+    await phone.locator('li[aria-expanded]', { hasText: 'Flaky tests' }).waitFor()
+    const label = phone.locator('[data-heading="Automations"]')
+    await expect(label.isVisible()).resolves.toBe(true)
+    expect(await label.innerText()).toMatch(/^Automations · gtm/)
+    expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
     await ctx.close()
   }, 30_000)
 
@@ -551,7 +590,7 @@ describe.skipIf(!browser)('archiving a task', () => {
     await row.waitFor({ state: 'detached' })
     await page.keyboard.press('Control+k')
     await page.getByRole('combobox', { name: 'Search or jump to' }).or(page.getByLabel('Search or jump to').locator('input')).first().fill('HP-202')
-    const hit = page.getByRole('option').filter({ hasText: 'Voice call drops on mute' })
+    const hit = page.getByRole('group', { name: 'Tasks', exact: true }).getByRole('option').filter({ hasText: 'Voice call drops on mute' })
     await hit.waitFor()
     expect(await hit.textContent()).toContain('Archived')
     await hit.click()

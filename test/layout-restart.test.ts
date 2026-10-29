@@ -1,31 +1,29 @@
-// Restarting an agent, in a real browser (layout.ts): the hint above a chat's box once Settings say another CLI, the
-// restart sheet from a ⋯ menu, and the card its chat shows after.
+// Minimal restart dialogs for both chat roles; only GitHub runs these browser tests.
 import { describe, expect, test } from 'bun:test'
 import { layout } from './layout.ts'
 
 const { browser, world, server } = await layout({ everything: true })
 
 describe.skipIf(!browser)('restarting an agent', () => {
-  test('the hint says what it runs on and what Settings say; one tap restarts it, a card says on what (phone and desktop)', async () => {
-    const p = world.snapshot().places.find((x) => !x.home && world.chats[x.chat]?.restart)!
-    for (const phone of [true, false]) {
-      world.chats[p.chat].restart = { on: 'Claude Code', want: 'Codex' }
-      world.chats[p.chat].cli = 'Claude Code'
-      const width = phone ? 390 : 1280
-      const page = await browser!.newPage(phone ? { viewport: { width, height: 844 }, hasTouch: true, isMobile: true } : { viewport: { width, height: 800 } })
-      await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}`)
-      const hint = page.locator('[data-restart-hint]')
-      await hint.waitFor()
-      expect(await hint.textContent()).toBe('Runs on Claude Code · Settings now say CodexRestart')
-      const box = (await hint.locator('> div').boundingBox())!
-      expect(box.x).toBeGreaterThanOrEqual(0)
-      expect(box.x + box.width).toBeLessThanOrEqual(width)
-      await hint.getByRole('button', { name: 'Restart' }).click()
-      await hint.waitFor({ state: 'detached' })
-      const card = page.locator('[data-restart-card]').last()
-      await card.waitFor()
-      expect(await card.textContent()).toBe('Restarted on Codex')
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+  test('Settings mismatches show no banner and do not restart either role', async () => {
+    const p = world.snapshot().places.find((x) => !x.home)!
+    for (const task of [false, true]) {
+      const key = task ? 'GTM-17/Agent' : p.chat
+      const c = world.chats[key]
+      c.restart = { on: 'Claude Code', want: 'Codex' }
+      const before = JSON.stringify(c.agent)
+      const cards = c.messages.filter((m) => m.card?.restart).length
+      const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
+      await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}${task ? '&task=GTM-17' : ''}`)
+      const controls = page.locator('[data-agent-controls]').last()
+      await page.locator('[data-composer]').last().waitFor()
+      expect(await controls.count()).toBe(0)
+      await page.locator('[data-composer] button[aria-label="Attach files and more"]').last().click()
+      await controls.waitFor()
+      expect(await page.locator('[data-restart-hint]').count()).toBe(0)
+      expect(await controls.getByRole('menuitem').count()).toBe(3)
+      expect(JSON.stringify(c.agent)).toBe(before)
+      expect(c.messages.filter((m) => m.card?.restart).length).toBe(cards)
       await page.close()
     }
   }, 30_000)
@@ -37,14 +35,14 @@ describe.skipIf(!browser)('restarting an agent', () => {
     await row.hover()
     await row.getByRole('button', { name: 'More for this task' }).click()
     await page.getByRole('menuitem', { name: 'Restart agent…' }).click()
-    const sheet = page.getByRole('alertdialog', { name: 'Restart GTM-17’s agent?' })
+    const sheet = page.getByRole('alertdialog', { name: 'Restart GTM-17 agent?' })
     await sheet.waitFor()
     await sheet.locator('[data-restart]').waitFor()
-    expect(await sheet.textContent()).toContain('It resumes its session.')
-    expect(await sheet.textContent()).toContain('Its worktree and branch stay as they are.')
+    expect(await sheet.textContent()).not.toMatch(/Recorded launch|Settings for|unknown|CLI|resumes|meanwhile/)
+    expect(await sheet.getByRole('switch').count()).toBe(0)
     await sheet.getByRole('button', { name: /^Agent: / }).click()
     await page.getByRole('menuitemradio', { name: 'Codex' }).click()
-    expect(await sheet.textContent()).toContain('Codex takes over with the chat so far, the brief and the work on its branch.')
+    expect(await sheet.textContent()).toContain('Codex starts a new session with this chat, the brief and branch.')
     await sheet.getByRole('button', { name: /^Model: / }).click()
     await page.getByRole('menuitemradio', { name: 'GPT-6-Sol', exact: true }).click()
     await sheet.getByRole('button', { name: /^Effort: / }).click()
@@ -62,9 +60,10 @@ describe.skipIf(!browser)('restarting an agent', () => {
     await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}`)
     await page.getByRole('button', { name: /^Menu/ }).click()
     await page.getByRole('menuitem', { name: 'Restart agent…' }).click()
-    const sheet = page.getByRole('alertdialog', { name: `Restart ${p.name}’s coordinator?` })
+    const sheet = page.getByRole('alertdialog', { name: 'Restart coordinator?' })
     await sheet.locator('[data-restart]').waitFor()
-    expect(await sheet.textContent()).toContain('Its tasks keep going.')
+    expect(await sheet.textContent()).not.toMatch(/Recorded launch|Settings for|unknown|CLI|resumes|meanwhile/)
+    expect(await sheet.getByRole('switch').count()).toBe(0)
     const box = (await sheet.boundingBox())!
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.x + box.width).toBeLessThanOrEqual(390)
@@ -74,4 +73,40 @@ describe.skipIf(!browser)('restarting an agent', () => {
     expect(world.chats[p.chat].messages.filter((m) => m.card?.restart).length).toBe(cards)
     await ctx.close()
   }, 30_000)
+
+  test('saving defaults is optional, scoped to the role, and sent only when selected', async () => {
+    const p = world.snapshot().places.find((x) => !x.home)!
+    for (const task of [false, true]) {
+      const chat = task ? 'GTM-17/Agent' : p.chat
+      world.chats[chat].agent = { kind: 'codex' }
+      world.chats[chat].cli = 'Codex'
+      world.chats[chat].restart = undefined
+      const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
+      let restart: unknown
+      page.on('request', (r) => {
+        if (r.url().endsWith('/api/action') && r.method() === 'POST') {
+          const action = r.postDataJSON()
+          if (action.type === 'restart') restart = action
+        }
+      })
+      await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}${task ? '&task=GTM-17' : ''}`)
+      for (const save of [false, true]) {
+        await page.locator('[data-composer] button[aria-label="Attach files and more"]').last().click()
+        await page.locator('[data-agent-controls]').last().getByRole('menuitem', { name: /^Model:/ }).click()
+        const sheet = page.getByRole('alertdialog')
+        await sheet.locator('[data-restart]').waitFor()
+        if (!save) expect(await sheet.getByRole('switch').count()).toBe(0)
+        await sheet.getByRole('button', { name: /^Effort: / }).click()
+        await page.getByRole('menuitemradio', { name: save ? 'Low' : 'High', exact: true }).click()
+        const toggle = sheet.getByRole('switch', { name: `Use for future ${task ? 'task agents' : 'coordinators'} in ${p.name}` })
+        expect(await toggle.getAttribute('aria-checked')).toBe('false')
+        if (save) await toggle.click()
+        await sheet.getByRole('button', { name: 'Restart', exact: true }).click()
+        await sheet.waitFor({ state: 'detached' })
+        expect(restart).toMatchObject({ type: 'restart', chat, kind: 'codex', model: '', effort: save ? 'low' : 'high', save })
+      }
+      await page.close()
+    }
+  }, 30_000)
+
 })

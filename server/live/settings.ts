@@ -6,6 +6,7 @@
 // Settings come in two groups: what agents are told (only words in their prompts) and how Shepherdr runs (the rest).
 // The main machine keeps the Everywhere level; a worker for another machine (machines.ts) reads it from the main
 // machine's file as it changes, and its shepherdr set for Everywhere is run there.
+import { CHAT_KINDS, chatProblem } from './readers/index.ts'
 import { cpus, totalmem } from 'node:os'
 import { NOTIFY, NOTIFY_DEFAULT, NOTIFY_KEY } from '../../shared/alerts.ts'
 import type { SettingSection, TriggerRow } from '../../shared/types.ts'
@@ -15,7 +16,7 @@ import { settingsBlock, settingsLines, SEVERITIES, type Said, type Ways } from '
 import { effortFor, effortsOf, findModel, knowsModels, LEVELS, modelsOf } from './models.ts'
 import { eventRules, eventsText, eventWords, nextWords, OWN_ZONE, timeRule, timeWords, validZone, type EventRule } from './trigger.ts'
 
-/** every agent kind herdr can start (any of them works; chats are read for the ones with a log reader) */
+/** every agent kind herdr can start (interactive chat requires runtime log discovery and a reader) */
 const FALLBACK_KINDS = ['pi', 'claude', 'codex', 'gemini', 'cursor', 'devin', 'agy', 'cline', 'omp', 'mastracode', 'opencode', 'copilot', 'kimi', 'kiro', 'droid', 'amp', 'grok', 'hermes', 'kilo', 'qodercli', 'qwen', 'letta', 'maki', 'muse']
 
 function herdrKinds(): string[] {
@@ -34,10 +35,11 @@ function herdrKinds(): string[] {
 const NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', pi: 'pi', opencode: 'OpenCode', qodercli: 'Qoder', agy: 'Antigravity', omp: 'Oh My Pi', mastracode: 'Mastra Code', copilot: 'GitHub Copilot' }
 const nameOf = (kind: string) => NAMES[kind] ?? kind[0].toUpperCase() + kind.slice(1)
 const KINDS = herdrKinds()
-// the three with log readers first, then the rest as herdr lists them
-const ORDER = ['claude', 'codex', 'pi', ...KINDS.filter((k) => !['claude', 'codex', 'pi'].includes(k))].filter((k) => KINDS.includes(k))
+// chat-readable kinds first, then the rest as herdr lists them
+const ORDER = [...CHAT_KINDS, ...KINDS.filter((k) => !CHAT_KINDS.includes(k))].filter((k) => KINDS.includes(k))
 
 export const CLIS: string[] = ORDER.map(nameOf)
+export const CHAT_CLIS = ORDER.filter((kind) => CHAT_KINDS.includes(kind)).map(nameOf)
 export const KIND: Record<string, string> = Object.fromEntries(ORDER.map((k) => [nameOf(k), k]))
 export const CLI_NAME: Record<string, string> = Object.fromEntries(ORDER.map((k) => [k, nameOf(k)]))
 
@@ -98,10 +100,10 @@ export interface Num {
   zero?: boolean
 }
 
-type Row = { label: string; key: string; value: string; options?: string[]; text?: boolean; fixed?: boolean; group?: string; num?: Num }
+type Row = { label: string; key: string; value: string; options?: string[]; text?: boolean; multiline?: boolean; fixed?: boolean; group?: string; num?: Num }
 /** the levels a section's defaults may be set at (all three when none): a machine's capacity has no space level;
  *  alerts and voice are one for all */
-type Section = { name: string; about?: string; rows: Row[]; levels?: LevelKind[]; told?: boolean }
+type Section = { name: string; about?: string; rows: Row[]; levels?: LevelKind[]; told?: boolean; prompt?: boolean }
 
 /** when this machine's tasks may start, and when its coordinator hears that the machine struggles (health.ts) */
 export interface MachineLimits {
@@ -152,6 +154,16 @@ const OLD_VALUES: Record<string, Record<string, string>> = { 'brief.merge': { 'b
 
 export const CATALOG: Section[] = [
   {
+    name: 'Private instructions',
+    prompt: true,
+    about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.',
+    rows: [
+      { label: 'Coordinators', key: 'coordinator.instructions', value: '', multiline: true },
+      { label: 'Task agents', key: 'task.instructions', value: '', multiline: true },
+      { label: 'Reviewers', key: 'reviewer.instructions', value: '', multiline: true },
+    ],
+  },
+  {
     // what Shepherdr adds to the end of every new task's brief
     name: 'How tasks work',
     told: true,
@@ -173,12 +185,12 @@ export const CATALOG: Section[] = [
   {
     // which agent (CLI), model and effort each kind of agent starts with
     name: 'Agents',
-    about: "What each kind of agent starts with. Default is the agent's own model or effort. Backup takes a task over when its agent can't go on. A coordinator can pick others for one task.",
+    about: "What each kind of agent starts with. Default is the agent's own model or effort. Backup takes a task over when its agent can't go on. Chat choices need a chat log reader; other installed CLIs cannot show replies here. Headless review is separate.",
     rows: [
-      ...agentRows('Tasks', 'task', [...CLIS], 'default', 'default'),
-      ...agentRows('Coordinators', 'coordinator', [...CLIS], 'default', 'default'),
+      ...agentRows('Tasks', 'task', [...CHAT_CLIS], 'default', 'default'),
+      ...agentRows('Coordinators', 'coordinator', [...CHAT_CLIS], 'default', 'default'),
       // a backup agent takes a task over where its agent can't go on (engine.ts cantGoOn)
-      { group: 'Backup', label: 'Agent', key: 'task.fallback', value: 'Codex', options: ['off', ...CLIS] },
+      { group: 'Backup', label: 'Agent', key: 'task.fallback', value: 'Codex', options: ['off', ...CHAT_CLIS] },
       { group: 'Backup', label: 'Model', key: 'backup.model', value: 'default', text: true },
       { group: 'Backup', label: 'Effort', key: 'backup.effort', value: 'default', options: [...EFFORTS] },
     ],
@@ -357,7 +369,8 @@ export class Settings {
     if (!KEYS.includes(key)) return { ok: false, error: `No setting ${key}` }
     if (!levelsOf(key).includes(kindOfLevel(l))) return { ok: false, error: levelsOf(key).includes('machine') ? `${key} is set Everywhere or for one machine, not a space.` : `${key} is set Everywhere only.` }
     if (value !== null) {
-      const err = refuse(key, value) ?? this.unfit(key, value, l)
+      const chat = key === 'task.agent' || key === 'coordinator.agent' || (key === 'task.fallback' && value.trim().toLowerCase() !== 'off')
+      const err = refuse(key, value) ?? (chat ? chatProblem(kindOf(value) ?? value) : undefined) ?? this.unfit(key, value, l)
       if (err) return { ok: false, error: err }
       const num = numOf(key)
       // a number is kept with its unit, however it was written ("13", "1.5x", "80 %")
@@ -451,6 +464,13 @@ export class Settings {
     return Object.fromEntries(Object.entries(all).filter(([, v]) => v)) as Partial<Record<Said, SetBy>>
   }
 
+  /** A launch snapshot, with the same per-role inheritance as other settings. Never part of a task's saved brief. */
+  instructions(role: 'coordinator' | 'task' | 'reviewer', space?: string): string {
+    const p = this.pick(`${role}.instructions`, space ? { space } : 'machine')
+    const scope = { all: 'Everywhere', machine: 'this machine', space: `space ${space}`, default: 'default' }[p.from]
+    return `Private instructions for ${role} (from ${scope}):\n${p.value.trim() || '(none)'}`
+  }
+
   /** Autopilot's heartbeat at a level */
   heartbeat(l: Level = 'machine'): Heartbeat {
     return { time: this.pick('heartbeat.when', l).value, on: eventRules(this.pick('heartbeat.on', l).value), zone: this.zone() }
@@ -516,13 +536,13 @@ export class Settings {
     const l: Level = space ? { space } : 'machine'
     const name = { space: 'this space', machine: host, all: 'Everywhere', default: 'default' }
     const keys = (told: boolean) =>
-      CATALOG.filter((s) => !!s.told === told).flatMap((s) => s.rows.filter((r) => r.key !== 'alerts').map((r) => {
+      CATALOG.filter((s) => !!(s.told || s.prompt) === told).flatMap((s) => s.rows.filter((r) => r.key !== 'alerts').map((r) => {
         const p = this.pick(r.key, l)
         // a trigger in words, as the human hears it; the rule as kept under it, for an agent to change
         const words = this.words(r.key, p.value)
         return words ? `${r.key.padEnd(22)} ${words.trim()}  (${name[p.from]})\n${''.padEnd(23)}as written: ${p.value}` : `${r.key.padEnd(22)} ${p.value}  (${name[p.from]})`
       }))
-    return `What agents are told (words in each new brief's Settings block):\n${keys(true).join('\n')}\n\nHow Shepherdr runs:\n${keys(false).join('\n')}`
+    return `What agents are told (private launch instructions and new briefs):\n${keys(true).join('\n')}\n\nHow Shepherdr runs:\n${keys(false).join('\n')}`
   }
 
   /** a trigger setting in plain words, on a line after its value; nothing for the others */
@@ -544,7 +564,7 @@ export class Settings {
   /** the pages of every level this machine holds: Everywhere (the main machine's, which its others share), this
    *  machine, and each of its spaces. `checklist`: the HEARTBEAT.md of a level's place (its id), shown last under
    *  Autopilot */
-  sections(devices: string[], machines: { name: string; state: string }[], plugins: SettingSection | null, host = 'this machine', spaces: string[] = [], name = host, checklist?: (place: string) => string): SettingSection[] {
+  sections(devices: string[], machines: { name: string; state: string }[], plugins: SettingSection | null, host = 'this machine', spaces: string[] = [], name = host, checklist?: (place: string) => string, pushWarnings: string[] = []): SettingSection[] {
     const levels: { l: Level; id: string }[] = [
       { l: 'all', id: 'all' },
       { l: 'machine', id: `m:${host}` },
@@ -560,7 +580,7 @@ export class Settings {
         ? { 'brief.review': text('review'), 'reviewer.agent': text('reviewer'), 'review.mustFix': text('mustFix'), 'review.rounds': text('rounds'), 'brief.merge': text('merge') }
         : {}
       return s.rows.map((r) => {
-        if (r.key === 'alerts') return { ...r, value: devices.length ? devices.join(', ') : 'No device yet' }
+        if (r.key === 'alerts') return { ...r, value: devices.length ? devices.join(', ') : 'No device yet', warn: pushWarnings.length ? `${pushWarnings.length} device${pushWarnings.length === 1 ? '' : 's'} could not receive the last alert.\n${pushWarnings.slice(0, 3).join('\n')}${pushWarnings.length > 3 ? '\nMore details: shepherdr doctor' : ''}` : undefined }
         const p = this.pick(r.key, l)
         const here = p.from === kindOfLevel(l)
         const up = above(l)
@@ -575,8 +595,10 @@ export class Settings {
       })
     }
     const note = (s: Section, l: Level) =>
-      s.name === 'How tasks work'
-        ? { note: settingsBlock('<id>', { ways: this.waysAt(l), reviewer: this.harnessAt('reviewer', l), by: this.setByAt(l) }) }
+      s.name === 'Private instructions'
+        ? { noteTitle: 'When rules take effect', note: 'Used at the next start or restart. Saving leaves running agents alone. A resumed session may remember old rules: the new snapshot replaces those private rules. Task agents pass the reviewer snapshot from their own latest start to each review; restart the task agent to refresh it.' }
+        : s.name === 'How tasks work'
+          ? { note: settingsBlock('<id>', { ways: this.waysAt(l), reviewer: this.harnessAt('reviewer', l), by: this.setByAt(l) }) }
         : s.name === AUTOPILOT
           ? autopilotNote()
           : s.name === 'Machine'
@@ -594,7 +616,7 @@ export class Settings {
           ...note(s, l),
           level: id,
           ...(s.levels?.length === 1 ? { global: true } : {}),
-          ...(s.told ? { told: true } : {}),
+          ...(s.told || s.prompt ? { told: true } : {}),
           ...(l === 'all' ? {} : { machine: host }),
         })),
       ),
@@ -684,6 +706,7 @@ export function machineNote(l: MachineLimits, cores = cpus().length, memGb = Mat
 
 /** why a value can't be set, or nothing */
 export function refuse(key: string, value: string): string | undefined {
+  if (key.endsWith('.instructions') && (value.length > 16000 || value.includes('\0'))) return 'Use at most 16,000 characters, without null characters. Keep secrets in Secrets.'
   const cli = key === 'task.agent' || key === 'coordinator.agent' || (key === 'task.fallback' && value.trim().toLowerCase() !== 'off')
   if (cli && !kindOf(value)) return `${value} is not an agent herdr can start.`
   if (key === 'reviewer.agent' && !REVIEWERS.includes(CLI_NAME[kindOf(value) ?? ''] ?? '')) return `Pick one of: ${REVIEWERS.join(' · ')}.`
@@ -742,3 +765,9 @@ export function numValue(n: Num, value: string): string | undefined {
   const unit = x === 1 && n.one ? n.one : n.unit
   return unit ? `${x}${unit.startsWith('×') || unit === '%' ? '' : ' '}${unit}` : String(x)
 }
+
+/** A repository's own destination; it has no machine or Everywhere fallback. */
+export const repositorySection = (level: string, machine: string, base: string): SettingSection => ({
+  name: 'Repository', machine, level,
+  rows: [{ key: 'space.base', label: 'Base branch', value: base, text: true, hint: 'New tasks start from and merge into this branch. Existing tasks keep their target.' }],
+})

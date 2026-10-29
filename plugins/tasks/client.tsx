@@ -31,6 +31,7 @@ import {
   placeOf,
   registry,
   setFilter,
+  setChips,
   setGroup,
   setUI,
   toggleAllDone,
@@ -335,7 +336,7 @@ function whereOf(snap: Snapshot, t: Task, names: TaskGroup['names']) {
 /** what to ask for a task where none is: the one space's coordinator, else any */
 function noTasks(snap: Snapshot, list: ListView) {
   const one = list.level === 2 ? snap.places.find((p) => p.id === list.chips[0]) : undefined
-  return one ? `No tasks yet. Ask ${one.name} to add one.` : 'No tasks here yet.'
+  return one ? `No tasks yet. Ask ${one.name} to add one.` : 'No tasks yet. Ask a coordinator to add one.'
 }
 
 /** The lists' tasks: what their chips hold (placeId, the place picked, is for plugins of old) */
@@ -367,7 +368,8 @@ function TaskList(_: { placeId: string }) {
     return (
       <>
         <ListChips alone />
-        <Empty>{noTasks(snap, view)}</Empty>
+        <Empty>{view.attention ? 'No tasks need you or are ready.' : noTasks(snap, view)}</Empty>
+        {view.attention ? <LinkButton onClick={() => setChips(view.chips)}>Show all tasks</LinkButton> : null}
         {footer}
       </>
     )
@@ -376,6 +378,10 @@ function TaskList(_: { placeId: string }) {
   return (
     <>
       <TaskFilter listKey={view.search} order={order} />
+      {view.attention && !q ? <div className="flex items-center justify-between gap-2 px-3 pt-2 text-[0.8125rem] text-fg2 phone:px-4 phone:text-[0.9375rem]">
+        <span>Actionable · all machines</span>
+        <LinkButton onClick={() => setChips(view.chips)}>Show all tasks</LinkButton>
+      </div> : null}
       {/* one flat run of keyed parts: a group showing or going never makes the ones after it start over; only the
           rows and what sits between them glide (data-flip), never what holds them, so no move adds to another */}
       <div ref={list} className="relative">
@@ -414,7 +420,7 @@ function TaskList(_: { placeId: string }) {
               ) : (
                 // only To do shows empty; with no tasks at all it says how one comes
                 <div data-flip={`empty:${g.key}`}>
-                  <Empty className="pt-0.5 text-fg3">{order.length ? 'Nothing waiting.' : noTasks(snap, view)}</Empty>
+                  <Empty className="pt-0.5 text-fg3">{order.length ? 'No tasks to do yet. Ask a coordinator to add one.' : noTasks(snap, view)}</Empty>
                 </div>
               )}
               {g.more || g.less ? (
@@ -425,7 +431,7 @@ function TaskList(_: { placeId: string }) {
             </div>,
           ]
         })}
-        {q && !groups.length ? <Empty className="pt-3 text-fg3">No tasks match “{q}”.</Empty> : null}
+        {q && !groups.length ? <Empty className="pt-3 text-fg3">No tasks match “{q}”. Try another search or change the filters.</Empty> : null}
         {footer}
       </div>
     </>
@@ -577,7 +583,7 @@ function ArchivedList({ list: view }: { list: ListView }) {
           ))}
         </List>
       ) : (
-        <Empty className="pt-0.5 text-fg3">Nothing archived.</Empty>
+        <Empty className="pt-0.5 text-fg3">No archived tasks. Archive a task from its menu to keep it here.</Empty>
       )}
       <Empty className="pt-3 text-fg3">Archived tasks keep their chat and summary. Search finds them too.</Empty>
     </div>
@@ -590,8 +596,10 @@ const GROUP_WORDS: Record<GroupBy, string> = { status: 'Status', machine: 'Machi
  *  and then space (place, the place picked, is for plugins of old) */
 function TasksMenu(_: { place: Place }) {
   const snap = useSnap()!
-  const level = useStore((s) => listView(s.ui, snap).level)
-  const by = groupFor(useUI((u) => u.groups), level)
+  const view = useStore((s) => listView(s.ui, snap))
+  const level = view.level
+  const chosen = useUI((u) => u.groups)
+  const by = view.attention ? 'project' : groupFor(chosen, level)
   const phone = useUI((u) => u.device === 'phone')
   const [open, setOpen] = useState(false)
   const choices = groupChoices(level)
@@ -667,15 +675,16 @@ function ranAt(ms: number) {
 const small = 'text-[0.8125rem] phone:text-[0.9375rem]'
 
 /**
- * A space's automations, at the bottom once it has one: its name, then when it runs and the task it adds, cut short.
+ * A space's automations, at the bottom once it has one (everything, every space's): its name, then when it runs and the task it adds, cut short.
  * A tap opens it in full with its last runs, and runs it now, pauses or removes it. Each run adds a new task with a
  * fresh agent. Only agents add or change them, through the shepherdr command, when asked in the chat: none, no section.
  */
 function Automations({ place, list }: { place: Place; list?: ListView }) {
   const snap = useSnap()!
-  // each space the chips name has its own; a machine's or everything, none
-  const spaces = list ? list.chips.flatMap((c) => snap.places.filter((p) => p.id === c)) : [place]
-  return spaces.map((p) => <SpaceAutomations key={p.id} place={p} note={spaces.length > 1 ? p.name : undefined} />)
+  // each space the chips name has its own; everything (no chips), every space's, each with its name; a machine's, none
+  const all = !!list && !list.chips.length
+  const spaces = !list ? [place] : all ? snap.places : list.chips.flatMap((c) => snap.places.filter((p) => p.id === c))
+  return spaces.map((p) => <SpaceAutomations key={p.id} place={p} note={all || spaces.length > 1 ? p.name : undefined} />)
 }
 
 function SpaceAutomations({ place, note }: { place: Place; note?: string }) {
