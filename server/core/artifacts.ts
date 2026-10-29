@@ -103,7 +103,7 @@ export class CoreArtifacts {
     const bun = await this.source.agents.bun(agent.machine)
     const script = `const f=require('node:fs'),p=require('node:path'),o=require('node:os'),x=JSON.parse(await Bun.stdin.text());const dir=p.join(o.homedir(),'.cache/shepherdr-artifacts',x.id);f.mkdirSync(dir,{recursive:true,mode:0o700});const s=f.lstatSync(dir);if(!s.isDirectory()||s.isSymbolicLink()||(s.mode&0o077)||s.uid!==process.getuid()||f.realpathSync(dir)!==dir)throw Error('Artifact exports need a private real directory');const file=p.join(dir,x.name);f.writeFileSync(file,Buffer.from(x.data,'base64'),{mode:0o600,flag:'wx'});process.stdout.write(file)`
     const id = this.installation
-    return (await this.source.files.exec(agent.machine, [bun, '-e', script], undefined, Buffer.from(JSON.stringify({ id, name: basename(name), data: Buffer.from(bytes).toString('base64') })))).toString('utf8')
+    return (await this.source.files.exec(agent.machine, [bun, '-e', script], undefined, Buffer.from(JSON.stringify({ id, name: `${randomBytes(6).toString('hex')}-${basename(name)}`, data: Buffer.from(bytes).toString('base64') })))).toString('utf8')
   }
   private async report(agent: CoreAgent, result: CheckResult) {
     const shots = result.shots!
