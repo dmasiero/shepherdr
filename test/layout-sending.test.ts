@@ -87,6 +87,37 @@ describe.skipIf(!browser)('what you send shows at once', () => {
     expect(await page.evaluate(() => localStorage.getItem('shepherdr.outbox'))).toBeNull()
     await page.close()
   }, 30_000)
+  test('one still on its way can be taken out from ⋯ beside it; a reload drops day-old ones', async () => {
+    const page = await browser!.newPage({ viewport: { width: 1280, height: 800 } })
+    await page.goto(url())
+    const box = page.getByRole('textbox', { name: /Message/ })
+    await box.waitFor()
+    let release!: () => void
+    sending.hold = new Promise((r) => (release = r))
+    await box.fill('Stuck one')
+    await page.getByRole('button', { name: 'Send' }).click()
+    await bubbles(page, 'Stuck one').waitFor()
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('shepherdr.outbox')!)[0])
+    // ⋯ beside it, on hover, offers Remove (before a reload: that cuts the send off, and it fails)
+    await bubbles(page, 'Stuck one').hover()
+    await page.locator('[data-msg^="out:"]').getByRole('button', { name: 'More' }).click()
+    await page.getByRole('menu', { name: 'Message' }).getByRole('menuitem', { name: 'Remove' }).click()
+    await bubbles(page, 'Stuck one').waitFor({ state: 'detached' })
+    expect(await page.evaluate(() => localStorage.getItem('shepherdr.outbox'))).toBeNull()
+    // a day-old one, saved by an earlier visit, is gone after a reload (one for a chat that is gone too, but only with
+    // every machine in reach, and this world has one out of reach: outbox.test.ts). Put in as the page loads: the send
+    // the reload cuts off saves the outbox as it goes
+    await page.addInitScript((o) => {
+      const out = [{ ...o, cid: 'new', text: 'Just now', state: 'failed', error: 'Not sent.', at: Date.now() }, { ...o, cid: 'old', text: 'From yesterday', state: 'sent', at: Date.now() - 25 * 3_600_000 }]
+      localStorage.setItem('shepherdr.outbox', JSON.stringify(out))
+    }, saved)
+    await page.reload()
+    await bubbles(page, 'Just now').waitFor()
+    expect(await bubbles(page, 'From yesterday').count()).toBe(0)
+    release()
+    sending.hold = null
+    await page.close()
+  }, 30_000)
 })
 
 describe.skipIf(!browser)('replies', () => {

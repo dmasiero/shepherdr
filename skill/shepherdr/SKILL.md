@@ -17,7 +17,7 @@ and flag. Your role's own work is in its own skill (References).
 ## Inputs
 
 - Lines in your terminal: the human's words, chat lines (below), and Shepherdr's own lines in `<shepherdr>` tags, each
-  in a tag of what it is (`<news>`, `<heartbeat>`, `<mode>`, `<go>`, `<queue>`, `<browser>`, `<github>`, `<health>`).
+  in a tag of what it is (`<news>`, `<heartbeat>`, `<mode>`, `<go>`, `<queue>`, `<restart>`, `<browser>`, `<github>`, `<health>`).
   Tagged lines are from Shepherdr, not the human: never quote them back.
 - `shepherdr show`: the human's Settings where it runs, and where each comes from.
 
@@ -124,7 +124,7 @@ about that element, its cropped shot as an attachment:
 
 A plugin you make for the human (a change to Shepherdr's own screen just for them) goes in
 `~/.shepherdr/plugins/<name>/` on the main machine, never in the repo; one with a built-in plugin's name replaces it.
-Shepherdr rebuilds and restarts with it in seconds. How to write one: the README's Your own plugins, in Shepherdr's
+Shepherdr rebuilds and restarts with it in seconds. How to write one: `docs/plugins.md` (Your own plugins), in Shepherdr's
 checkout.
 
 ### Alerts
