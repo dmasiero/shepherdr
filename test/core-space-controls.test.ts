@@ -131,6 +131,6 @@ test('task, automation and heartbeat commands resolve renamed spaces to the same
   await f.source.automations.cli(f.caller, ['automation', 'add', 'Alias rule', '--space', 'renamed', '--task', 'Later', '--on', 'ready'])
   expect(f.source.automations.model.find(f.space.id, 'Alias rule')).toBeDefined()
   expect(f.source.heartbeats.cli(f.caller, ['heartbeat', 'set', 'renamed'], 'Keep alias checklist')).toContain('saved')
-  expect(f.source.heartbeats.read(f.space)).toBe('Keep alias checklist')
+  expect(f.source.heartbeats.read(f.space)).toBe('Keep alias checklist\n')
   await expect(f.source.places.cli({ ...f.caller, machine: 'other' }, ['space', 'rename', 'renamed', 'wrong'])).rejects.toThrow('machine')
 }))
