@@ -91,4 +91,3 @@ export function viewNote(command: string, shown: string) {
 
 /** how long a command has to open its menu or view before the screen is read */
 export const VIEW_MS = 2500
-

@@ -47,4 +47,3 @@ describe("each CLI's log says what cut its turn off", () => {
     expect(providerError('Something odd happened')).toEqual({ passing: false, reason: 'Provider error' })
   })
 })
-

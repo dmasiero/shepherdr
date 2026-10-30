@@ -117,4 +117,3 @@ export function privatePrompt(own: string, reviewer?: string): string {
     ]),
   ].join('\n\n')
 }
-
