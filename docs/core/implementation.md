@@ -1994,3 +1994,24 @@ Autopilot comparison retained the existing layout; its policy description names 
 and now uses public Claude Code/Codex names. The baseline also appends read-only Wake-up diagnostic rows after the
 editable groups, so that ordering is preserved. CI asserts the restored Agents group order. Local typecheck passed.
 These changes postdate the third full fresh-eyes review; no fourth round or new review claim was added.
+
+### Fresh installation found and corrected repository creation (2026-10-30)
+
+Started a wholly separate private home/core session on loopback ports 17896/17897. The real phone-width UI opened
+with a fresh home, created a new scratch space, and native Claude replied FRESH_INSTALL_CHAT_OK. Cleanup then
+reproduced a real defect: the Create space promise said “first commit”, but `git rev-parse HEAD` failed because
+only git init had run. Existing non-Git folders were also refused despite the UI offering to initialize them.
+
+The core-only initializer now handles a new leaf or an existing ordinary folder within that machine's home,
+creates an empty First commit on main, leaves all existing files untracked/unchanged, and verifies HEAD. It never
+initializes home itself or a folder outside home. Existing repositories remain unchanged. Initialization strips
+inherited Git repository/index/config routing variables and disables commit hooks/signing for this empty setup
+commit. Adding an unborn existing repository now refuses with an explicit first-commit explanation rather than
+registering a space whose tasks cannot start. The app still uses only documented core exec for remote work.
+
+Manual after-check: the real UI created she301-fresh-fixed-20261030 with f2483d3 First commit. It also converted
+she301-existing-folder-20261030 to 841270e First commit while held.txt retained SHE301_EXISTING_FOLDER_BYTES and
+remained untracked. Its native Claude coordinator started real Codex research task SHEE-1, whose separate worktree
+has that exact HEAD and an empty committed tree: FRESH_REPO_REAL_CODEX_WORKTREE_EMPTY_HEAD_SOURCE_BYTES_OK.
+No live state/service/agent/sharing configuration changed. CI coverage exercises both folder cases, unchanged
+existing repository, preserved untracked bytes and refusal of home itself. Only typecheck ran locally.

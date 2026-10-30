@@ -1,3 +1,4 @@
+import { newRepository } from './new-repository.ts'
 import { humanName } from './human-name.ts'
 import { coreSpaceName } from './space-names.ts'
 import { repositorySection } from '../common/space-settings.ts'
@@ -625,15 +626,11 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   }
   async addSpace(request: AddSpace) {
     const folder = await this.folders(request.machine, request.path)
-    if (request.create && !folder.exists) {
-      // The parent must already resolve inside the user's home; the new leaf is a plain folder name.
-      const parent = await this.folders(request.machine, join(folder.path, '..'))
-      if (!parent.dir) throw new Error('Choose an existing parent folder')
-      await this.files.exec(request.machine, ['mkdir', '-p', folder.path])
-      await this.files.exec(request.machine, ['git', 'init', '--initial-branch=main', folder.path])
-    }
+    if (request.create && !folder.repo) await newRepository(this.files, request.machine, await this.agents.bun(request.machine), folder.path)
     const repo = await this.folders(request.machine, folder.path)
     if (!repo.repo) throw new Error('Choose a git repository')
+    try { await this.tasks.git.head({ machine: request.machine, folder: repo.repo }) }
+    catch { throw new Error('The repository needs a first commit before it can become a space') }
     const saved = this.store.all<CoreSpace>('space')
     const existing = saved.find(space => space.machine === request.machine && space.folder === repo.repo)
     if (existing) {
