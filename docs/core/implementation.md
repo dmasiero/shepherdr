@@ -649,3 +649,8 @@ under Yours. This used Vite, not a full build. Automatic compilation, fallback, 
 not manually verified here. The Vite preview explicitly uses `--no-plugin-updates`, so inspection cannot silently
 invoke the prohibited local build checks. Actual SSH, physical-phone/audio and remaining feature acceptance are
 still delivery gates. Prior branch checks at d9fb40d3 passed both jobs (40985361547).
+
+Plugin update CI 40986360653: layout job passed; real API-2 client/server compilation plus server syntax fallback
+passed (4.4 seconds), as did live HTTP/WS asset publication and the staged-state/CAS regression. Seven updater
+unit cases stopped at fixture creation because its nested home used default 0755, correctly refused by prepareHome.
+The fixture now creates that directory with 0700; production privacy checks remain unchanged.

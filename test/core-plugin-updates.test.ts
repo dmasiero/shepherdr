@@ -12,7 +12,7 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'core-plugin-updates-')), home = join(dir, 'home'), app = join(dir, 'app')
   file(join(app, 'plugins.json'), '{"plugins":[]}'); mkdirSync(join(app, 'node_modules'))
   file(join(app, 'public/pin.txt'), 'started code')
-  mkdirSync(home)
+  mkdirSync(home, { mode: 0o700 })
   prepareHome(home)
   file(join(home, 'plugins/hello/shepherdr.json'), '{"api":2}')
   file(join(home, 'plugins/hello/server.ts'), `export default { api: 2, name: 'hello', about: '', setup(c) { c.handle('count', () => { const n = (c.state.get('n') || 0) + 1; c.state.set('n', n); return n }) } }`)
