@@ -16,7 +16,8 @@ test('core child uses its fixed local session, authentic controls await forwardi
   const browser = new Browsers({ bin: fake.bin, owns: id => id === session, env: () => ({ ...fake.env, AGENT_BROWSER_NAMESPACE: 'sc-123456789abc', AGENT_BROWSER_SESSION: session, AGENT_BROWSER_PROFILE: join(fake.dir, session) }), host: 'test', user: () => 'Elias', working: () => true, tell: (_, text) => news.push(text) })
   const bridge = browser.attach(session, { send: raw => messages.push(JSON.parse(raw)), close() {} })
   try {
-    await until(() => fake.streamSocks.size === 1)
+    // Server acceptance can precede the client's open/status callbacks on a busy runner.
+    await until(() => messages.some(message => message.type === 'state' && message.connected))
     await expect(bridge.message(JSON.stringify({ type: 'input_keyboard', eventType: 'keyDown', key: 'Enter' }))).rejects.toThrow()
     expect(fake.fromPanel).toHaveLength(0)
     await bridge.message(JSON.stringify({ type: 'take' }))
