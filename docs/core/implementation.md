@@ -1352,3 +1352,5 @@ Common-command CI 41014476428 passed layout and 388 regressions but exposed a re
 - Failed task creation preserves its record but currently reports a raw start error without its saved task ID. Improve the refusal so agents do not accidentally create a duplicate while retrying.
 - Verify/fix the familiar Needs you state for a native task turn ending without ready/Todo, while retaining Working for recorded background jobs. Current task view can still show Working for an idle root.
 - Finish clean Stop checkout removal/recreation, held-work Close/Delete and active foreground Pause acceptance, GitHub merge/recovery flow, remaining Autopilot/home/profile and device/voice parity, obsolete legacy-source removal and complete cutover inventory. These remain required scope, not follow-ups removed from delivery.
+
+Task-news CI 41015326546 passed layout and 396 regressions, finding one fake fixture that emitted failed news for a live working task with no failure evidence. The fixture now stores the explicit start failure it claims to report. Product stale-evidence validation remains unchanged; rerun is required.

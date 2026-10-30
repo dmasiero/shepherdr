@@ -76,7 +76,9 @@ test('home Autopilot receives original-space news through its own configured wak
   for (const id of ['main-home', 'remote-home']) f.source.store.set('space', id, { ...f.source.space(id)!, mode: 'autopilot' })
   const wakes: { event: unknown; home: string }[] = []
   f.source.pilots.wakes.news = (event, home) => { wakes.push({ event, home }) }
-  f.source.news.record(f.task, 'failed', 10)
+  const failed = { ...f.task, workflow: 'todo' as const, startError: 'Expected start failure' }
+  f.source.store.set('task', failed.id, failed)
+  f.source.news.record(failed, 'failed', 10)
   expect(wakes).toEqual([{ home: 'main-home', event: { event: 'failed', title: f.task.name, branch: f.task.branch, space: 'app' } }, { home: 'remote-home', event: { event: 'failed', title: f.task.name, branch: f.task.branch, space: 'app' } }])
   f.source.news.deliver(10)
   expect(f.sent.map(item => item.chat)).toEqual(['app'])
