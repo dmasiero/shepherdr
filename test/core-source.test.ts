@@ -194,3 +194,29 @@ test('durable GitHub work intents activate follow-up delivery while check remind
     expect(source.store.get('pending-send', 'github-work')).toMatchObject({ work: true, launch: 'launch' })
   } finally { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+
+test('main-home identity uses the stable core machine key independently of display order or rename', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-main-identity-'))
+  const source = new CoreSource({ home, port: 0, socket: '/unused', session: 'test', binary: 'hc' })
+  try {
+    source.core.current.connected = true
+    source.core.call = async <T>(method: string) => {
+      if (method === 'server.status') return { core: { id: 'main-stable-id', name: 'Z main box' } } as T
+      if (method === 'machine.list') return { machines: [{ id: 'remote-stable-id', name: 'A remote box', state: 'connected' }] } as T
+      throw Error('Unexpected core method')
+    }
+    source.files.exec = async () => Buffer.from(home)
+    source.settings.probe = () => {}
+    await source.refresh(); await Bun.sleep(0)
+    const snapshot = source.snapshot()
+    expect(snapshot.host).toBe('main-stable-id')
+    expect(snapshot.places.find(place => place.home && place.machine === snapshot.host)?.id).toBe('p:main-stable-id:~')
+    expect(snapshot.machines.find(machine => machine.machine === snapshot.host)?.name).toBe('Z main box')
+    source.store.set('name', 'm:main-stable-id', 'Renamed main')
+    expect(source.snapshot().host).toBe('main-stable-id')
+    expect(source.voices.tools('p:main-stable-id:~').name).toBe('Renamed main:home')
+    source.settings.set('task.agent', 'Codex', 'm:main-stable-id')
+    expect(source.snapshot().settings!.find(section => section.name === 'Agents' && section.level === 'p:main-stable-id:~')?.rows.find(row => row.key === 'task.agent')?.from).toBe('Renamed main')
+  } finally { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
+})

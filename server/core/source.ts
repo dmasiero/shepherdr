@@ -108,7 +108,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const changed = (chat: string) => { this.reconcilePermissions(chat); this.questions?.reconcile(chat); this.secrets?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
     this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed, machine => this.machines.find(item => item.id === machine) ?? {})
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) }, (chat, message) => this.fresh(chat, message), agent => this.pilots.usage.observe(agent))
-    this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => id === this.local.id ? this.local.name : this.machineName(id) || id, () => this.emit('snapshot'))
+    this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => this.store.get<string>('name', `m:${id}`) || (id === this.local.id ? this.local.name : this.machineName(id) || id), () => this.emit('snapshot'))
     this.agents.settings = this.settings
     this.places = new CorePlaces(this)
     this.tasks = new CoreTasks(this)
@@ -250,7 +250,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       else if (this.status(agent) === 'need') attentionRequests[agent.chat] = ['attention']
     }
     return {
-      terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
+      terminalTransport: 'core', name: 'Shepherdr', host: this.local.id, user: this.store.get<string>('setting', 'user') || 'You',
       ...this.places.present(spaces.map(space => ({ id: space.id, name: coreSpaceName(this, space), machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },

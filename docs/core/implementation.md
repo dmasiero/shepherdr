@@ -1934,3 +1934,22 @@ The existing fresh-query Enter behavior is retained. No style/layout redesign.
 The originally failing identity-navigation regression is unchanged and remains the
 CI regression. Typecheck passed; shared-browser before/after inspected. No local
 browser suite ran.
+
+### Stable main-machine identity and readable machine labels
+
+The real All entrance exposed a major identity/presentation mismatch: snapshot.host
+held the main machine's readable name, while Place.machine holds core's stable ID.
+The retained UI could not identify its main home, fell back to the first sorted
+remote home, and lost the intended all-machine overview. Before, All opened probe's
+home and its machine filter. After, All opens the main core home and shows Home ·
+every machine / Everything; Show all tasks includes both GITH-2 and probe/REMO-2.
+No agent, workflow or file changed for this comparison.
+
+Snapshot.host now holds the stable main machine key. Browser/voice/secret labels
+resolve readable names from the machine list; new Task.on values name their CLI.
+Settings inheritance descriptions honor explicit machine display names. Health
+cards likewise show names, not core IDs; old raw-ID card copies are adapted only
+when rendering, without changing their stored identity or already-readable history.
+Regression coverage uses deliberately different main ID/name, remote ordering,
+renames, voice/Settings names, future health events and read-only old-card display.
+Only typecheck ran locally; shared-browser before/after captured and inspected.

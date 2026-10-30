@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { CoreSource } from '../server/core/source.ts'
-import type { Question } from '../shared/types.ts'
+import type { Message, Question } from '../shared/types.ts'
 
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'core-card-display-'))
@@ -73,5 +73,19 @@ test('merged and replaced merge cards close in original and forwarded chats with
     await expect(f.source.tasks.answer(q.id, 0, task.chat)).rejects.toThrow('no longer current')
     task.workflow = 'ready'; task.mergeQuestion = 'new-request'; f.source.store.set('task', task.id, task)
     expect(f.source.chat(task.chat)!.messages[0].question?.closed).toBe('This merge request is no longer current')
+  } finally { f.close() }
+})
+
+
+test('health cards display machine names without rewriting stored identity or historical labels', () => {
+  const f = fixture()
+  try {
+    const machine = f.source.localMachineId()
+    f.source.store.set('name', `m:${machine}`, 'Readable computer')
+    const original: Message = { id: 'health-proof', who: 'agent', card: { id: 'health-proof', text: 'CPU crossed its alert limit', health: { machine, level: 'over' } } }
+    expect(f.source.cards.messages('space', [original])[0].card?.health?.machine).toBe('Readable computer')
+    expect(original.card?.health?.machine).toBe(machine)
+    const historical: Message = { ...original, card: { ...original.card!, health: { machine: 'Previously named computer', level: 'over' } } }
+    expect(f.source.cards.messages('space', [historical])[0].card?.health?.machine).toBe('Previously named computer')
   } finally { f.close() }
 })

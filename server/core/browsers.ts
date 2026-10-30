@@ -1,3 +1,4 @@
+import { machineName } from '../../shared/types.ts'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { BrowserFrames, browserPacket } from './browser-protocol.ts'
@@ -139,7 +140,7 @@ export class CoreBrowsers {
       const profile = task.machine === this.source.localMachineId() ? join(this.source.config.home, 'browser', session) : join(dirname(runtime.root), 'browser', session)
       if (agent.browser.namespace !== browserNamespace(this.installation) || agent.browser.session !== session || agent.browser.profile !== profile) throw Error('This agent has a different browser binding; restart it before opening its browser')
       const id = randomUUID(), key = randomBytes(32).toString('hex'), config = join(runtime.sessions, id + '.browser.json')
-      const input = { key, session, namespace: agent.browser.namespace, profile, bin: runtime.bin, host: this.source.machineName(task.machine) || this.source.snapshot().host }
+      const input = { key, session, namespace: agent.browser.namespace, profile, bin: runtime.bin, host: machineName(this.source.snapshot().machines, task.machine) }
       const script = `const f=require('node:fs'),p=require('node:path'),x=JSON.parse(await Bun.stdin.text());f.mkdirSync(p.dirname(x.path),{recursive:true,mode:0o700});const s=f.lstatSync(p.dirname(x.path));if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==process.getuid()||(s.mode&0o077)||f.realpathSync(p.dirname(x.path))!==p.dirname(x.path))throw Error('Browser launch directory must be private');f.writeFileSync(x.path,JSON.stringify(x.config),{flag:'wx',mode:0o600})`
       await this.source.files.exec(task.machine, [runtime.bun, '-e', script], undefined, Buffer.from(JSON.stringify({ path: config, config: input })))
       record = { id, key, config, task: task.id, chat: task.chat, launch: agent.launch, machine: task.machine, root: runtime.root, bun: runtime.bun,

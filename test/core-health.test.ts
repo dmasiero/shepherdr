@@ -1,3 +1,4 @@
+import type { Message } from '../shared/types.ts'
 import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,17 +10,18 @@ import type { CoreSource } from '../server/core/source.ts'
 import type { CoreTask } from '../server/core/tasks.ts'
 import type { CoreFiles } from '../server/core/files.ts'
 
-async function fixture(run: (context: { source: CoreSource; health: CoreHealth; tasks: CoreTask[]; state: { load: number; memory: number; online: boolean }; calls: string[][]; events: string[] }) => Promise<void>) {
-  const home = mkdtempSync(join(tmpdir(), 'shep-health-')), store = new CoreStore(home), tasks: CoreTask[] = [], calls: string[][] = [], events: string[] = []
+async function fixture(run: (context: { source: CoreSource; health: CoreHealth; tasks: CoreTask[]; state: { load: number; memory: number; online: boolean }; calls: string[][]; events: string[]; posts: Message[] }) => Promise<void>) {
+  const home = mkdtempSync(join(tmpdir(), 'shep-health-')), store = new CoreStore(home), tasks: CoreTask[] = [], calls: string[][] = [], events: string[] = [], posts: Message[] = []
   const state = { load: 2, memory: 40, online: true }
   const source = { store, connected: () => true, machineConnected: () => state.online, machineIds: () => ['box'], quiescing: false,
     agents: { bun: async () => process.execPath, get: () => undefined }, automations: { zone: () => 'UTC', event: async () => { events.push('health') } },
-    spaces: () => [{ id: 'p:box:~', machine: 'box', home: true }], tasks: { all: () => tasks, get: (id: string) => tasks.find(task => task.id === id), view: (task: CoreTask) => ({ ...task, status: 'work' }), tick: async () => {} }, post() {}, emit() {}, retryPending() {},
+    snapshot: () => ({ machines: [{ id: 'm:box', machine: 'box', name: 'Readable box' }] }),
+    spaces: () => [{ id: 'p:box:~', machine: 'box', home: true }], tasks: { all: () => tasks, get: (id: string) => tasks.find(task => task.id === id), view: (task: CoreTask) => ({ ...task, status: 'work' }), tick: async () => {} }, post(_chat: string, message: Message) { posts.push(message) }, emit() {}, retryPending() {},
     files: { exec: async (_machine: string, argv: string[]) => { calls.push(argv); return Buffer.from(JSON.stringify({ at: Date.now(), cores: 8, load: state.load, memTotal: 1000, memUsed: state.memory * 10, disks: [], gpus: [] })) } },
   } as unknown as CoreSource
   Object.assign(source, { settings: new CoreSettings(store, {} as CoreFiles, () => [], id => id, () => {}) })
   const health = new CoreHealth(source)
-  try { await run({ source, health, tasks, state, calls, events }) }
+  try { await run({ source, health, tasks, state, calls, events, posts }) }
   finally { health.stop(); await health.drain(); store.close(); rmSync(home, { recursive: true, force: true }) }
 }
 
@@ -48,10 +50,11 @@ test('core samples one machine through exec, holds unknown/stale/overloaded star
   expect(health.room('box')).toContain('reconnecting')
 }))
 
-test('health events use hysteresis and persisted watch prevents repeats after restart', async () => fixture(async ({ source, health, state, events }) => {
+test('health events use hysteresis and persisted watch prevents repeats after restart', async () => fixture(async ({ source, health, state, events, posts }) => {
   state.memory = 95
   await health.refresh(); await health.refresh()
   expect(events).toHaveLength(1)
+  expect(posts[0].card?.health?.machine).toBe('Readable box')
   const resumed = new CoreHealth(source)
   try {
     await resumed.refresh(); expect(events).toHaveLength(1)

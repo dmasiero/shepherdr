@@ -1,3 +1,4 @@
+import { machineName } from '../../shared/types.ts'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { busy, judge, levels, meters, type Kind, type Sample, type Watch } from '../health.ts'
@@ -77,7 +78,7 @@ export class CoreHealth {
     if (home) for (const event of events) {
       const text = `${event.kind === 'herdr' ? 'core' : event.kind === 'cpu' ? 'CPU' : event.kind[0].toUpperCase() + event.kind.slice(1)} ${event.what === 'over' ? 'crossed its alert limit' : 'is back under its limit'}`
       const id = `health-${machine}-${event.kind}-${Date.now()}`
-      this.source.post(home.id, { id, who: 'agent', at: Date.now(), card: { id, text, status: event.what === 'over' ? 'need' : 'work', health: { level: event.what === 'over' ? 'over' : 'ok', machine } } })
+      this.source.post(home.id, { id, who: 'agent', at: Date.now(), card: { id, text, status: event.what === 'over' ? 'need' : 'work', health: { level: event.what === 'over' ? 'over' : 'ok', machine: machineName(this.source.snapshot().machines, machine) } } })
       const agent = this.source.agents.get(home.id)
       if (agent && this.source.agents.terminal(agent)?.state === 'live') this.source.saveAndDeliver(home.id, id + '-news', `<health>${text}. Current meters: ${JSON.stringify(meters(sample, this.source.settings.machineLimits(machine), next))}. Inspect the machine before changing tasks.</health>`, () => {}, true)
       await this.source.automations.event({ event: 'health' }, home.id)

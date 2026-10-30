@@ -30,7 +30,10 @@ export class CoreCards {
     return question
   }
   messages(chat: string, messages: Message[]): Message[] {
+    const healthMachines = messages.some(message => message.card?.health) ? this.source.snapshot().machines : undefined
     return messages.map(message => {
+      const health = message.card?.health, machine = health && healthMachines?.find(machine => machine.machine === health.machine)
+      if (machine) message = { ...message, card: { ...message.card!, health: { ...health!, machine: machine.name } } }
       const question = message.question && this.question(chat, message.question)
       const ask = message.card?.ask
       if (!ask?.questions) return question ? { ...message, question } : message

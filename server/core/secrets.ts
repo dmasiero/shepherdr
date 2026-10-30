@@ -1,3 +1,4 @@
+import { machineName } from '../../shared/types.ts'
 import { Refusal } from './client.ts'
 import { randomUUID } from 'node:crypto'
 import { Vault, SECRET_NAME, secretPages } from '../common/secrets.ts'
@@ -20,7 +21,7 @@ export class CoreSecrets {
       this.source.store.set(`message:${chat}`, request.id, { id: request.id, who: 'agent', text: `The request for ${request.ask.name} belonged to the previous session. Ask again if it is still needed.`, at: Date.now() })
     }
   }
-  private name(level: string) { return level === 'all' ? 'Everywhere' : level.startsWith('m:') ? this.source.machineName(level.slice(2)) || this.source.snapshot().host : this.source.space(level)?.name || level }
+  private name(level: string) { return level === 'all' ? 'Everywhere' : level.startsWith('m:') ? machineName(this.source.snapshot().machines, level.slice(2)) : this.source.space(level)?.name || level }
   private level(level: string) {
     if (level !== 'all' && !this.source.spaces().some(space => space.id === level || `m:${space.machine}` === level)) throw new Refusal('Choose an existing machine or space')
   }

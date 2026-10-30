@@ -1,3 +1,4 @@
+import { machineName } from '../../shared/types.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { startVoice, type VoiceTools } from '../voice.ts'
 import type { CoreSource } from './source.ts'
@@ -14,14 +15,15 @@ export class CoreVoice {
     }
     const resolve = (name?: string) => {
       const word = (name || chat).trim().toLowerCase()
-      const matches = targets().filter(target => [target.key, target.name, `${this.source.machineName(target.machine) || this.source.snapshot().host}:${target.name}`].some(value => value.toLowerCase() === word))
+      const snapshot = this.source.snapshot()
+      const matches = targets().filter(target => [target.key, target.name, `${machineName(snapshot.machines, target.machine)}:${target.name}`].some(value => value.toLowerCase() === word))
       if (matches.length !== 1) throw Error(matches.length ? 'Several chats match; use machine:name or the full chat key.' : 'No such chat. Use overview to find its full name.')
       if (!this.source.machineConnected(matches[0].machine)) throw Error('That machine is unavailable; its saved chat may be stale.')
       return matches[0]
     }
     const own = resolve()
     return {
-      name: `${this.source.machineName(own.machine) || this.source.snapshot().host}:${own.name}`,
+      name: `${machineName(this.source.snapshot().machines, own.machine)}:${own.name}`,
       send: async (text, to, command) => {
         const target = resolve(to)
         const result = await this.source.act({ type: 'send', cid: command || randomUUID(), chat: target.key, text }) as { waiting?: boolean }

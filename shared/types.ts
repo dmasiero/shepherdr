@@ -839,6 +839,7 @@ export type WorktreeAsk = { task: string } & ({ what: 'files' } | { what: 'file'
 export interface Snapshot {
   terminalTransport?: 'core'
   name: string
+  /** Main machine's stable key; its human-facing name is in machines. */
   host: string
   /** every space, in the sidebar's order: each machine's home space first */
   places: Place[]
