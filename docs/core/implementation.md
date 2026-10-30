@@ -794,3 +794,21 @@ Round 2 reported no findings. Typecheck passed; CI regressions cover the hostile
 rules. Standard main/linked worktrees are supported; arbitrary separate Git-directory layouts fail closed here.
 Runtime gateway/launch/actual containment remains unimplemented and unverified. Policy commit b9f3f05c passed both
 GitHub jobs (40989188435). No core or app API is exposed by these preparation modules.
+Contained-side command/hook/bootstrap plumbing is being added next. The command client has bounded Unix HTTP
+request/reply sizes, stable request IDs, explicit uncertain timeout errors and cancellation. It carries no core
+credential. Secret run/env stay inside the isolated namespace and use the existing masking/ignored-file helper.
+Native transcript capture opens no-follow/nonblocking regular files inside the namespace, sends bounded byte
+chunks, rotates batches, retains offsets only after acknowledgement, and reports failures rather than claiming
+complete history. Source paths never instruct the outside wrapper to open a host file.
+
+Review round 1 found a major same-size/unchanged-tail rewrite being missed; the extracted capture reader now checks
+mtime/ctime too and has filesystem regression coverage. A minor final-drain deadline excluded an in-flight batch;
+periodic requests now abort and final batches share the one shutdown signal. Outer gateway/launch/policy wiring
+is still absent; these scripts are not invoked by the preview and do not establish working Autopilot proof.
+Containment-preparation commit 6197f4c5 passed both branch CI jobs (40989700430).
+Contained helper review round 2 caught a second major: truncation/replacement by an empty native log omitted its
+reset packet. Empty resets now require acknowledgement before committing the cursor; retry identity is preserved.
+Round 3 reported no remaining findings. Added actual filesystem/Unix-client regressions cover multi-chunk bytes,
+append offsets, same-size rewrites, empty resets/lost acknowledgements, batch fairness, removed unread files,
+response/request bounds, refusals, uncertainty and cancellation. Typecheck passed. Actual outer/runtime integration
+and namespace/provider acceptance are still pending, so this slice does not complete the Autopilot parity row.
