@@ -1920,3 +1920,17 @@ CLI refusal; permission/other failures remain unavailable with no alternate acco
 Regression coverage checks host pinning, invalid/truncated job lists, terminal
 controls and refusal behavior. Typecheck passed; actual new-tail delivery is next.
 Primary API reference: [GitHub workflow job logs](https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run).
+
+### Search race: real repro and retained layout
+
+Rewrite run 41037269798 passed core/types/build and production-plugin jobs, but its
+layout job exposed the existing search debounce race: a pointer click selected the
+old artifact (a5) before the newly typed query settled, opening the wrong place.
+Reproduced in the real core app: search Remote core proof, immediately type
+no-such-she301-artifact, click the still-visible old artifact. Before, it opened
+9788e43f despite the new query. After, old hits are removed during Filtering and
+stale pointer picks cannot close/navigate the dialog; the URL remains github-proof.
+The existing fresh-query Enter behavior is retained. No style/layout redesign.
+The originally failing identity-navigation regression is unchanged and remains the
+CI regression. Typecheck passed; shared-browser before/after inspected. No local
+browser suite ran.
