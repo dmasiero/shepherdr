@@ -1,3 +1,4 @@
+import { archiveAfterMs } from '../../../shared/archive.ts'
 import { TaskIds } from '../task-ids.ts'
 import { trustWorktree } from '../trust.ts'
 // The tasks engine. A task is added by a coordinator and at once gets one agent, in its own git worktree and branch
@@ -240,10 +241,7 @@ const branchFor = (t: TaskRec) => `work/${t.n}-${G.slug(t.title)}`
 const labelOf = (t: TaskRec) => `${t.id} ${t.title}`
 
 /** "7 days", "1 day", "off": how long a Done task stays before it archives itself (tasks.archiveAfter); null: never */
-export function archiveAfterMs(v: string) {
-  const m = v.trim().match(/^(\d+)(\s*days?)?$/i)
-  return m && Number(m[1]) > 0 ? Number(m[1]) * 86_400_000 : null
-}
+export { archiveAfterMs } from '../../../shared/archive.ts'
 
 /** leftovers of finished tasks are swept up this long after starting, and then every hour */
 const SWEEP_FIRST = 20_000

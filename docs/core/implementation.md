@@ -744,3 +744,17 @@ product IDs. Bare IDs retain own-machine precedence. Added collision coverage; w
 The same native coordinator then read both tasks after the isolated app restart and returned QUEUE_STATUS_OK:
 REMO-5 To do/todo; REMO-6 Queued/queued, still after probe/REMO-5. Shared-browser phone screenshot
 `/tmp/she301-queue-validation-phone.png` inspected. This is a same-host second-core run, not actual SSH.
+
+## Done task archiving (2026-10-30)
+
+Restored the existing Tasks settings section, Archive Done after default 7 days, scoped overrides and off. The pure
+interval parser is shared with the legacy engine without importing its live storage. Core queue ticks archive only
+ended tasks whose deadline passed, whose space exists, and whose agents have no active/unconfirmed native work.
+This is metadata only: no kill, branch/worktree deletion or history removal. Pin clears when archived; bringing a
+task back records a new delay so it does not immediately disappear again. Archived queues remain paused.
+
+Fresh scoped review round 1 found no findings. Typecheck passed; time-boundary/native-work/unarchive/file-preservation
+and inherited-setting regressions are written for GitHub. The actual phone Settings control saved remote-demo's
+1 day override while all other scopes stayed 7 days (`/tmp/she301-archive-settings-phone.png`, inspected), then Reset
+restored its inherited 7 days. No simulated aged screenshot is offered as real timed-archive proof; a real-day timer
+run is unverified. Queue commit fefdf726 passed both branch CI jobs (40988550257).

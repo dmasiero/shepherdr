@@ -83,3 +83,13 @@ test('machine limits support fractional cores and percentages only at machine or
   expect(() => settings.set('machine.maxTasks', '2', 'p:box:one')).toThrow()
   expect(settings.sections().some(section => section.name === 'Machine' && section.level === 'p:box:one')).toBe(false)
 }))
+
+test('Done archiving keeps familiar scoped defaults, off and inherited reset', () => fixture(settings => {
+  expect(settings.get('tasks.archiveAfter', 'p:box:one')).toBe('7 days')
+  settings.set('tasks.archiveAfter', '1 day', 'm:box')
+  settings.set('tasks.archiveAfter', 'off', 'p:box:one')
+  expect(settings.get('tasks.archiveAfter', 'p:box:one')).toBe('off')
+  expect(settings.get('tasks.archiveAfter', 'p:box:two')).toBe('1 day')
+  settings.set('tasks.archiveAfter', null, 'p:box:one')
+  expect(settings.get('tasks.archiveAfter', 'p:box:one')).toBe('1 day')
+}))

@@ -17,6 +17,7 @@ const roleRows = (role: Role, group: string): SettingRow[] => [
 ]
 // Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
 const CATALOG: SettingSection[] = [
+  { name: 'Tasks', about: "Done tasks move to their place's Archived list after this long.", rows: [{ label: 'Archive Done after', key: 'tasks.archiveAfter', value: '7 days', num: { min: 1, max: 3650, unit: 'days', one: 'day', off: true } }] },
   { name: 'Notify', about: "Which alerts a place's coordinator chat sends you. All: every new message too. Needs me: its questions and alerts. Off: none, and its row stays quiet. Tasks alert you either way. A place can set its own from its menu in the sidebar.", rows: [{ label: 'Notify', key: NOTIFY_KEY, value: NOTIFY_DEFAULT, options: [...NOTIFY] }] },
   { name: 'Machine', about: "When a machine starts more tasks, and when its coordinator hears that it struggles. Set one machine's own to fit its cores and memory.", rows: [
     { group: 'Working tasks', label: 'Max tasks working at once', key: 'machine.maxTasks', value: '10', num: { min: 1, max: 200 } },

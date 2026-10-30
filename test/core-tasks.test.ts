@@ -254,3 +254,27 @@ test('task show reports current workflow instead of its initial cached Working t
     expect(shown).toMatchObject({ workflow: 'todo', status: 'todo', state: 'To do' })
   })
 })
+
+test('Done auto-archive respects native work, scoped off and unarchive delay without touching files', async () => {
+  await withTask(async ({ tasks, task, grant, worktree }) => {
+    const source = (tasks as unknown as { source: CoreSource }).source
+    const now = Date.now(), day = 86_400_000
+    let interval = '7 days', phase = 'working'
+    Object.assign(source, { space: () => ({ id: task.place }), settings: { get: () => interval } })
+    Object.assign(source.agents, { all: () => [{ ...source.agents.get(task.chat)!, state: phase }] })
+    source.store.set('task', task.id, { ...task, workflow: 'closed', doneAt: now - 8 * day, pinned: now - 8 * day })
+    expect(tasks.autoArchive(now)).toBe(0) // A live conversation must not vanish.
+    phase = 'idle'; interval = 'off'
+    expect(tasks.autoArchive(now)).toBe(0)
+    interval = '7 days'
+    expect(tasks.autoArchive(now)).toBe(1)
+    expect(tasks.get(task.id)).toMatchObject({ archived: now })
+    expect(tasks.get(task.id)?.pinned).toBeUndefined()
+    expect(readFileSync(join(worktree, 'example.txt'), 'utf8')).toBe('after\n')
+    await tasks.act({ type: 'archive', chat: task.chat, on: false })
+    expect(tasks.get(task.id)?.unarchived).toBeGreaterThanOrEqual(now)
+    expect(tasks.autoArchive(now + day)).toBe(0)
+    expect(tasks.autoArchive(now + 8 * day)).toBe(1)
+    await expect(tasks.cli(grant, ['task', 'show', task.id])).resolves.toHaveProperty('out')
+  })
+})

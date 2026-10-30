@@ -11,6 +11,7 @@ import { one, parseArgs, summaryOpts } from '../live/args.ts'
 import type { LogEvent } from '../live/readers/types.ts'
 import { reserveTaskId } from './ids.ts'
 import { taskDependencies } from './dependencies.ts'
+import { archiveAfterMs } from '../../shared/archive.ts'
 
 export interface CoreTask extends Task {
   branch: string
@@ -42,6 +43,7 @@ export interface CoreTask extends Task {
   capacity?: string
   reservedAt?: number
   reservedChats?: string[]
+  unarchived?: number
   reviewerModel?: string
   reviewerEffort?: string
 }
@@ -325,7 +327,9 @@ export class CoreTasks {
         if (action.on) this.source.cancelQueued?.(task.chat)
         if (action.on && terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
         if (action.on) await this.source.browsers?.close(task.id, task.workflow === 'merged' || task.workflow === 'closed')
-        task.archived = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
+        task.archived = action.on ? Date.now() : undefined
+        if (action.on) delete task.pinned; else task.unarchived = Date.now()
+        this.save(task); return { ok: true }
       case 'pause':
         this.source.cancelQueued?.(task.chat)
         if (terminal?.state === 'live') await this.source.core.call('terminal.interrupt', { terminal: terminal.address })
@@ -423,10 +427,27 @@ export class CoreTasks {
     task.reviewHead = reviewHead; delete task.reviewReport; delete task.reviewTurn; delete task.reviewFailure; this.save(task)
     return reviewer.terminal
   }
+  /** Metadata only: automatic archiving never kills a process, removes a worktree or erases history. */
+  autoArchive(now = Date.now()) {
+    if (this.source.quiescing || !this.source.connected()) return 0
+    let count = 0
+    for (const task of this.all()) {
+      if (task.archived || this.busy(task.id) || !['merged', 'closed'].includes(task.workflow) || !this.source.space(task.place)) continue
+      const ms = archiveAfterMs(this.source.settings.get('tasks.archiveAfter', task.place))
+      if (ms === null || !task.doneAt || now - Math.max(task.doneAt, task.unarchived ?? 0) < ms) continue
+      const active = this.source.agents.all().filter(agent => agent.chat.startsWith(`${task.id}/`)).some(agent =>
+        this.source.agents.terminal(agent)?.state !== 'finished' && ['starting', 'working', 'blocked'].includes(agent.state))
+      if (active) continue
+      task.archived = now; delete task.pinned; this.source.store.set('task', task.id, task); count++
+    }
+    if (count) this.source.emit('snapshot')
+    return count
+  }
   async tick() {
     if (this.source.quiescing || this.ticking || !this.source.connected()) return
     this.ticking = true
     try {
+      this.autoArchive()
       for (const task of this.all()) {
         if (this.changing.has(task.id) || this.merging.has(task.id)) continue
         if (task.reviewChat && !task.reviewTurn) {
