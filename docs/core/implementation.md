@@ -758,3 +758,30 @@ and inherited-setting regressions are written for GitHub. The actual phone Setti
 1 day override while all other scopes stayed 7 days (`/tmp/she301-archive-settings-phone.png`, inspected), then Reset
 restored its inherited 7 days. No simulated aged screenshot is offered as real timed-archive proof; a real-day timer
 run is unverified. Queue commit fefdf726 passed both branch CI jobs (40988550257).
+Done archive commit 7745118a passed both branch CI jobs (40988728424). Proof hf2s v9 includes actual queue status
+and scoped archive-setting images; light/dark artifact check screenshots inspected.
+
+## Autopilot containment work (in progress)
+
+The existing Linux bubblewrap prerequisite is available on this VM: harmless `bwrap --unshare-all --ro-bind / /
+-- /bin/true` exited zero. This only establishes namespace availability, not product containment or Autopilot proof.
+The core socket must never be mounted into a contained agent. The intended local mediation runs as that agent's
+core child wrapper: a private Unix gateway fixes its server-issued identity, forwards product commands only through
+the authenticated core doc mailbox, and mediates allowed HTTPS. It is not an SSH/worker fallback or an additional
+network door to Shepherdr. The app owns shared run policy/budgets; no authority comes from labels/request text.
+
+Before enabling controls: prove filesystem/network/PID/core isolation, provider startup, native logs and status,
+run-owned children/reviewers, checked git checkpoint/PR/merge, shared limits, restart recovery, wake/news behavior
+and explicit stop/keep-workers outcomes. Existing legacy git entry points need a containment-specific audit: an
+agent-writable repository script referenced by a Git filter/hook must not execute outside containment. No shortcut
+of running an unrestricted agent under an Autopilot label is acceptable. UI controls remain unoffered until wired.
+The first new Autopilot module is app-private run policy only (`server/core/pilot-policy.ts`), not connected to
+launch or exposed as working controls yet. It persists config snapshots, exact chat/launch/role/task bindings,
+owned task IDs, shared traffic, monotonic reported usage, runtime/parallel limits and stop/keep-workers states.
+It deliberately has no remote socket or label authority. Its command gate is only one layer: integration must
+also check target ownership, configured secret names and exact-head merge approval in the product handlers.
+These missing connections are requirements, not claims already satisfied. Coverage is written for branch CI.
+Private policy review round 1 caught a major stale stop retry reviving old worker authority. Stop transitions are now
+monotonic/idempotent, terminal runs cannot revive, and cleanup confirmation requires stopping/failed state. Its
+private-host-suffix minor is fixed too; actual destination DNS/IP checks remain required in the gateway. Round 2
+reported no remaining findings. Typecheck passed. This model is not yet Autopilot runtime/containment acceptance.
