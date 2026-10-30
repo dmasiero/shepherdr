@@ -28,12 +28,24 @@ test('stable hooks at EOF do not block subsequent native transcript lines', asyn
     expect(logs.messages('chat').map(message => message.text)).toEqual(['first', 'second'])
     expect(incoming).toEqual(['first', 'second'])
     const user = (text: string) => JSON.stringify({ timestamp: '2026-10-29T12:00:01Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }) + '\n'
-    appendFileSync(agent.transcript, user('<queue>Wait for DEMO-2.</queue>') + user('My actual follow-up'))
+    appendFileSync(agent.transcript, user('<queue>Wait for DEMO-2.</queue>') + user('<hc>t2 exited (exit 129). Read: hc read t2</hc>') + user('My actual follow-up'))
     await logs.poll()
     expect(logs.messages('chat').filter(message => message.who === 'you').map(message => message.text)).toEqual(['My actual follow-up'])
     expect(faults).toEqual([])
     writeFileSync(agent.transcript, assistant('replacement')); await logs.poll()
     expect(logs.messages('chat').some(message => message.text === 'replacement')).toBe(true)
+  } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
+})
+
+test('old native core notices stay hidden while actual human messages and agent explanations remain', () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-log-core-notice-')), store = new CoreStore(home)
+  const logs = new CoreLogs({} as CoreAgents, {} as CoreFiles, store, () => {}, () => {})
+  try {
+    const text = '<hc>t2 exited (exit 129). Read: hc read t2</hc>'
+    store.set('message:chat', 'native', { id: 'native', source: 'native', who: 'you', text, at: 1 })
+    store.set('message:chat', 'human', { id: 'human', source: 'human-native', who: 'you', text, at: 2 })
+    store.set('message:chat', 'agent', { id: 'agent', source: 'agent', who: 'agent', text: 'The child finished safely.', at: 3 })
+    expect(logs.messages('chat').map(message => message.id)).toEqual(['human', 'agent'])
   } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
 })
 

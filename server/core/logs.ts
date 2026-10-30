@@ -47,7 +47,9 @@ export class CoreLogs {
   }
 
   messages(chat: string): Message[] {
-    return chatMessages(this.store.all<SavedMessage>(`message:${chat}`).sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
+    return chatMessages(this.store.all<SavedMessage>(`message:${chat}`)
+      .filter(message => !(message.who === 'you' && message.source === message.id && /^\s*<hc>[\s\S]*<\/hc>\s*$/.test(message.text ?? '')))
+      .sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
   }
   outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); if (message.who !== 'you') this.incoming(chat, message); this.changed(chat) }
 
@@ -118,7 +120,7 @@ export class CoreLogs {
         this.store.delete('pending-send', optimistic.id)
         return
       }
-      if (/^\s*<(?:answer|review|review-failed|go|queue|restart|mode|heartbeat|shepherdr|artifact-sent|artifact-note|artifact-comment|browser-notes|browser|health)\b/.test(event.text)) return
+      if (/^\s*<(?:hc|answer|review|review-failed|go|queue|restart|mode|heartbeat|shepherdr|artifact-sent|artifact-note|artifact-comment|browser-notes|browser|health)\b/.test(event.text)) return
     }
     const message = { id: event.id, who: event.kind === 'user' ? 'you' as const : 'agent' as const, text: event.text, at: event.at, source: event.id } satisfies SavedMessage
     this.store.set(kind, event.id, message)
