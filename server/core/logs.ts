@@ -10,8 +10,9 @@ import { CoreNativeFile } from './native-file.ts'
 import { CoreReviewReader } from './review-reader.ts'
 import { chatMessages } from './chat.ts'
 
-interface Cursor { path: string; file: CoreNativeFile; reader?: Reader }
+interface Cursor { path: string; file: CoreNativeFile; reader?: Reader; reset?: () => void }
 interface SavedMessage extends Message { source?: string }
+interface CleanupReceipt { launch: string; receipt: string; seen: boolean; complete: boolean; offset?: number }
 
 /** Native transcripts and explicit hooks only. No terminal reads or screen-status heuristics. */
 export class CoreLogs {
@@ -57,7 +58,7 @@ export class CoreLogs {
     const bun = await this.agents.bun(machine)
     // Bound each poll so a long history does not starve hooks or other chats.
     for (let count = 0; count < 4; count++) {
-      const batch = await cursor.file.read(this.files, machine, bun, () => cursor.reader?.reset?.(cursor.path))
+      const batch = await cursor.file.read(this.files, machine, bun, () => { cursor.reader?.reset?.(cursor.path); cursor.reset?.() })
       if (batch.oversized) {
         const text = 'A native log record exceeds the 64 MiB display limit and was skipped. Later records will still load.'
         this.error(chat, text)
@@ -80,16 +81,42 @@ export class CoreLogs {
       }
     })
   }
+  cleanupComplete(agent: CoreAgent, receipt: string) {
+    const saved = this.store.get<CleanupReceipt>('task-cleanup-receipt', agent.chat)
+    return saved?.launch === agent.launch && saved.receipt === receipt && saved.complete
+  }
   private async transcript(agent: CoreAgent) {
     let cursor = this.logs.get(agent.chat)
     if (!cursor || cursor.path !== agent.transcript) {
       cursor = { path: agent.transcript!, file: new CoreNativeFile(agent.transcript!), reader: agent.transcriptFormat === 'codex-exec' ? new CoreReviewReader() : agent.kind === 'claude' ? new ClaudeReader() : new CodexReader() }
       this.logs.set(agent.chat, cursor)
     }
+    cursor.reset = () => {
+      const receipt = this.store.get<CleanupReceipt>('task-cleanup-receipt', agent.chat)
+      if (receipt?.launch === agent.launch && !receipt.complete) { receipt.seen = false; delete receipt.offset; this.store.set('task-cleanup-receipt', agent.chat, receipt) }
+    }
     await this.lines(agent.chat, agent.machine, cursor, lines => {
-      const events = cursor!.reader!.parse(lines, cursor!.path)
-      this.store.db.transaction(() => { for (const event of events) this.apply(agent, event) })()
-      if (events.length) this.changed(agent.chat)
+      const receipt = this.store.get<CleanupReceipt>('task-cleanup-receipt', agent.chat)
+      let count = 0
+      this.store.db.transaction(() => {
+        if (receipt?.launch === agent.launch && !receipt.complete) {
+          // A private unpredictable response token binds this exact command to a
+          // later captured native turn end, without trusting hook idle or clocks.
+          for (const line of lines) {
+            if (line.text.includes(receipt.receipt)) { receipt.seen = true; receipt.offset = line.offset }
+            const events = cursor!.reader!.parse([line], cursor!.path); count += events.length
+            for (const event of events) {
+              this.apply(agent, event)
+              if (receipt.seen && receipt.offset !== undefined && line.offset >= receipt.offset && event.kind === 'turn-end') receipt.complete = true
+            }
+          }
+          this.store.set('task-cleanup-receipt', agent.chat, receipt)
+        } else {
+          const events = cursor!.reader!.parse(lines, cursor!.path); count = events.length
+          for (const event of events) this.apply(agent, event)
+        }
+      })()
+      if (count) this.changed(agent.chat)
     })
   }
   private apply(agent: CoreAgent, event: LogEvent) {

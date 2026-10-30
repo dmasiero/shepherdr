@@ -94,3 +94,36 @@ test('poll slots rotate so more than four chats on one machine all make progress
     for (const agent of agents) expect(logs.messages(agent.chat).map(message => message.text)).toEqual([agent.chat])
   } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('completion cleanup requires its private command receipt and later captured native turn end, not Stop idle', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-log-cleanup-')), store = new CoreStore(home)
+  const agent = { chat: 'TASK-1/Agent', machine: 'machine', launch: 'one', grant: 'grant', kind: 'claude', hook: join(home, 'hooks'), transcript: join(home, 'native'), state: 'idle' } as import('../server/core/model.ts').CoreAgent
+  const row = (value: unknown) => JSON.stringify(value) + '\n'
+  const user = (id: string) => row({ type: 'user', uuid: id, timestamp: '2026-10-29T12:00:00Z', message: { role: 'user', content: id } })
+  const final = (id: string, text: string) => row({ type: 'assistant', timestamp: '2026-10-29T12:00:01Z', message: { id, role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } })
+  writeFileSync(agent.hook, '')
+  writeFileSync(agent.transcript!, user('earlier') + final('old', 'Earlier reply'))
+  const files = { exec: async (_machine: string, argv: string[], _cwd: string, input: Uint8Array) => {
+    const result = Bun.spawnSync(argv, { stdin: input }); if (result.exitCode) throw Error(result.stderr.toString()); return result.stdout
+  } } as unknown as CoreFiles
+  const agents = { all: () => [agent], get: () => agent, hook: () => { agent.state = 'idle' }, bun: async () => process.execPath } as unknown as CoreAgents
+  store.set('task-cleanup-receipt', agent.chat, { launch: 'one', receipt: 'private-finish-token', seen: false, complete: false })
+  let logs = new CoreLogs(agents, files, store, () => {}, () => {})
+  try {
+    appendFileSync(agent.hook, row({ id: 'stop', event: 'Stop', at: 1 }))
+    await logs.poll()
+    expect(agent.state).toBe('idle'); expect(logs.cleanupComplete(agent, 'private-finish-token')).toBe(false)
+    appendFileSync(agent.transcript!, user('new') + row({ type: 'assistant', timestamp: '2026-10-29T12:00:02Z', message: { id: 'call', role: 'assistant', content: [{ type: 'tool_use', id: 'ready', name: 'Bash', input: { command: 'shepherdr ready TASK-1' } }] } }) +
+      row({ type: 'user', uuid: 'result', timestamp: '2026-10-29T12:00:03Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'ready', content: 'Done; private-finish-token' }] } }))
+    await logs.poll(); expect(logs.cleanupComplete(agent, 'private-finish-token')).toBe(false)
+    // Restart/re-read must not mistake an earlier historical end for the current completion.
+    logs.stop(); logs = new CoreLogs(agents, files, store, () => {}, () => {})
+    await logs.poll(); expect(logs.cleanupComplete(agent, 'private-finish-token')).toBe(false)
+    appendFileSync(agent.transcript!, final('finished', 'FINAL_REPLY_CAPTURED_OK'))
+    await logs.poll()
+    expect(logs.messages(agent.chat).some(message => message.text === 'FINAL_REPLY_CAPTURED_OK')).toBe(true)
+    expect(logs.cleanupComplete(agent, 'private-finish-token')).toBe(true)
+    expect(logs.cleanupComplete({ ...agent, launch: 'replacement' }, 'private-finish-token')).toBe(false)
+    expect(logs.cleanupComplete(agent, 'other-token')).toBe(false)
+  } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
+})

@@ -31,7 +31,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
   const state = { terminal: 'live' }
   const grant = { id: 'grant', chat: task.chat, session: 'launch', machine: task.machine, actions: [] } as unknown as Grant
   const source = {
-    store, config: { home: store.home },
+    store, config: { home: store.home }, space: () => ({ id: 'space', name: 'demo', machine: 'machine', folder: repo, mode: 'regular', base: 'main', prefix: 'DEMO', added: 1 }), settings: { get: () => 'off' },
     files: { exec: async (_machine: string, argv: string[], cwd?: string, input?: Uint8Array) => {
       const result = Bun.spawnSync(argv, { cwd, env, stdin: input ?? 'ignore' })
       if (result.exitCode !== 0) throw new Error(result.stderr.toString())
@@ -374,5 +374,121 @@ test('authenticated comment drill-down preserves full bodies and returns one bou
     expect(second.comments[0].id).toBe('i2'); expect(second.next).toBeUndefined()
     await expect(tasks.cli(grant, ['checks', task.id, '--comments', '--offset', '-1'])).rejects.toThrow('offset')
     await expect(tasks.cli({ ...grant, chat: 'another' }, ['checks', task.id, '--comments'])).rejects.toThrow('does not own')
+  })
+})
+
+function finishableTask(tasks: CoreTasks, state: { terminal: string }, killed: () => void = () => {}) {
+  const source = (tasks as unknown as { source: CoreSource }).source
+  const task = tasks.all()[0]!, agent = source.agents.get(task.chat)!
+  const terminal = { address: 't1', pid: 1, created_ms: 1, get state() { return state.terminal }, labels: {} } as import('../server/core/protocol.ts').CoreTerminal
+  source.machineConnected = () => true
+  Object.assign(source, { mailbox: { revoke() {} }, logs: { cleanupComplete: () => true } })
+  source.denyPermissions = () => {}
+  source.agents.all = () => [agent]; source.agents.terminal = () => terminal
+  ;(source.core.current.terminals as Map<string, typeof terminal>).set('t1', terminal)
+  source.core.call = async <T>(method: string) => { if (method === 'terminal.kill') { killed(); state.terminal = 'finished' }; return {} as T }
+  return source
+}
+
+test('a clean research answer becomes Done without a code review and waits for native idle before cleanup', async () => {
+  await withTask(async ({ tasks, task, grant, repo, worktree, git, state }) => {
+    git(worktree, 'reset', '--hard', 'main')
+    const source = (tasks as unknown as { source: CoreSource }).source
+    task.review.on = true; source.store.set('task', task.id, task)
+    let status = 'work', stopped = 0
+    source.status = () => status as ReturnType<CoreSource['status']>
+    finishableTask(tasks, state, () => { stopped++ })
+    const answer = await tasks.cli(grant, ['ready', task.id, '--summary', 'Research answer completed', '--facts', 'No code changes'])
+    expect(answer.out).toContain('Done; nothing to merge')
+    expect(tasks.get(task.id)).toMatchObject({ workflow: 'closed', said: 'Research answer completed', facts: 'No code changes', cleanupPending: true })
+    expect(tasks.get(task.id)?.mergeQuestion).toBeUndefined()
+    await tasks.tick(); expect(stopped).toBe(0); expect(existsSync(worktree)).toBe(true)
+    status = 'idle'
+    await tasks.tick()
+    expect(stopped).toBe(1); expect(existsSync(worktree)).toBe(false)
+    expect(await tasks.git.branchHead({ machine: task.machine, folder: repo }, task.branch)).toBeUndefined()
+    expect(tasks.get(task.id)?.cleanupPending).toBeUndefined()
+    await expect(tasks.cli(grant, ['todo', task.id])).rejects.toThrow('Done')
+    await expect(tasks.act({ type: 'pause', chat: task.chat })).rejects.toThrow('Done')
+    await expect(tasks.deliver(task.id, task.chat, 'Start again')).rejects.toThrow('Done')
+    await expect(tasks.act({ type: 'restart', chat: task.chat })).rejects.toThrow('Done')
+  })
+})
+
+test('finished cleanup preserves a late native write and reports retained work', async () => {
+  await withTask(async ({ tasks, task, grant, worktree, git, state }) => {
+    git(worktree, 'reset', '--hard', 'main')
+    const source = (tasks as unknown as { source: CoreSource }).source
+    await tasks.ready(grant, task.id, 'Answer completed')
+    finishableTask(tasks, state, () => { writeFileSync(join(worktree, 'late.txt'), 'Retain this\n') })
+    await tasks.tick()
+    expect(readFileSync(join(worktree, 'late.txt'), 'utf8')).toBe('Retain this\n')
+    expect(tasks.get(task.id)).toMatchObject({ workflow: 'closed', kept: ['uncommitted changes'] })
+    expect(tasks.get(task.id)?.cleanupPending).toBeUndefined()
+    expect(source.store.all<Message>(`message:${task.chat}`).some(message => message.text?.includes('Kept its work'))).toBe(true)
+  })
+})
+
+test('a branch-read error is not treated as an absent branch during finished cleanup', async () => {
+  await withTask(async ({ tasks, task, grant, worktree, git, state }) => {
+    git(worktree, 'reset', '--hard', 'main')
+    const source = (tasks as unknown as { source: CoreSource }).source
+    await tasks.ready(grant, task.id, 'Answer completed')
+    finishableTask(tasks, state)
+    const original = tasks.git.branchHead.bind(tasks.git)
+    tasks.git.branchHead = async () => { throw Error('Core disconnected while reading refs') }
+    await tasks.tick()
+    expect(existsSync(worktree)).toBe(true)
+    expect(tasks.get(task.id)).toMatchObject({ workflow: 'closed', cleanupPending: true, cleanupError: expect.stringContaining('disconnected') })
+    tasks.git.branchHead = original
+    source.store.set('task', task.id, { ...tasks.get(task.id)!, cleanupChecked: 0 })
+    await tasks.tick(); expect(existsSync(worktree)).toBe(false)
+    expect(tasks.get(task.id)?.cleanupPending).toBeUndefined()
+  })
+})
+
+test('automatic finished cleanup retains a checkout used by an unrelated core terminal', async () => {
+  await withTask(async ({ tasks, task, grant, worktree, git, state }) => {
+    git(worktree, 'reset', '--hard', 'main')
+    await tasks.ready(grant, task.id, 'Answer completed')
+    const source = finishableTask(tasks, state)
+    const other = { address: 't9', state: 'live', cwd: worktree + '/subfolder', pid: 99, created_ms: 99, labels: {} } as import('../server/core/protocol.ts').CoreTerminal
+    ;(source.core.current.terminals as Map<string, typeof other>).set('t9', other)
+    await tasks.tick()
+    expect(existsSync(worktree)).toBe(true)
+    expect(other.state).toBe('live')
+    expect(tasks.get(task.id)).toMatchObject({ cleanupPending: true, cleanupError: expect.stringContaining('Another core terminal') })
+    other.state = 'finished'
+    source.store.set('task', task.id, { ...tasks.get(task.id)!, cleanupChecked: 0 })
+    await tasks.tick(); expect(existsSync(worktree)).toBe(false)
+  })
+})
+
+test('deferred cleanup removes an exact squashed task branch while preserving its merge on main', async () => {
+  await withTask(async ({ tasks, task, grant, repo, worktree, state }) => {
+    await tasks.ready(grant, task.id, 'Changed example')
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat)
+    const merged = await tasks.merge(grant, task.id)
+    expect(merged.cleanupPending).toBe(true)
+    finishableTask(tasks, state)
+    await tasks.tick()
+    expect(existsSync(worktree)).toBe(false)
+    expect(await tasks.git.branchHead({ machine: task.machine, folder: repo }, task.branch)).toBeUndefined()
+    expect(await tasks.git.contains({ machine: task.machine, folder: repo }, 'main', merged.mergeCommit!)).toBe(true)
+    expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('after\n')
+  })
+})
+
+test('deferred cleanup retains commits made after the recorded squash head', async () => {
+  await withTask(async ({ tasks, task, grant, worktree, git, state }) => {
+    await tasks.ready(grant, task.id, 'Changed example')
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat)
+    await tasks.merge(grant, task.id)
+    writeFileSync(join(worktree, 'later.txt'), 'Keep later commit\n'); git(worktree, 'add', '.'); git(worktree, 'commit', '-m', 'later work')
+    finishableTask(tasks, state)
+    await tasks.tick()
+    expect(readFileSync(join(worktree, 'later.txt'), 'utf8')).toBe('Keep later commit\n')
+    expect(tasks.get(task.id)).toMatchObject({ workflow: 'merged', kept: ['unmerged commits'] })
+    expect(tasks.get(task.id)?.cleanupPending).toBeUndefined()
   })
 })

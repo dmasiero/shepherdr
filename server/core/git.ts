@@ -23,6 +23,15 @@ export class CoreGit {
   async run(repo: RepoLocation, args: string[], timeout = 30, stdin?: string, additional?: string[]) { return (await this.execute(repo, 'git', args, timeout, stdin, additional)).toString('utf8').trim() }
   async ghRun(repo: RepoLocation, args: string[], timeout = 60, stdin?: string) { return (await this.execute(repo, 'gh', args, timeout, stdin)).toString('utf8').trim() }
   async head(repo: RepoLocation, ref = 'HEAD') { return this.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]) }
+  async branchHead(repo: RepoLocation, branch: string) {
+    const ref = `refs/heads/${branch}`
+    const rows = (await this.run(repo, ['for-each-ref', '--format=%(refname) %(objectname)', ref])).split('\n')
+    const row = rows.find(row => row.startsWith(ref + ' '))
+    if (!row) return undefined
+    const head = row.slice(ref.length + 1)
+    if (!/^[a-f0-9]{40,64}$/.test(head)) throw Error('Git returned an invalid branch identity')
+    return head
+  }
   async clean(repo: RepoLocation) { return !(await this.run(repo, ['status', '--porcelain'])).length }
   async remote(repo: RepoLocation) {
     if (!(await this.run(repo, ['remote'])).split('\n').includes('origin')) return undefined

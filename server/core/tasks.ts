@@ -63,6 +63,11 @@ export interface CoreTask extends Task {
   reportedAt?: number
   launchAttempt?: string
   readyAt?: number
+  cleanupPending?: boolean
+  cleanupReceipt?: string
+  cleanupChecked?: number
+  cleanupError?: string
+  kept?: string[]
 }
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
@@ -234,6 +239,7 @@ export class CoreTasks {
     return this.change(id, async () => {
       const task = this.get(id)
       if (!task) throw new Refusal('This task was removed; nothing was sent')
+      if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
       const agent = this.source.agents.get(chat)
       if (this.forChat(chat)?.id !== id) throw new Refusal('This chat does not belong to that task')
       if (task.workflow !== 'working') {
@@ -253,6 +259,7 @@ export class CoreTasks {
     task = this.get(task.id) || (() => { throw new Refusal('No such task') })()
     const space = this.source.space(task.place)
     if (!space) throw new Refusal('Task space is missing')
+    if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
     const prior = this.source.agents.get(task.chat)
     if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
     const capacity = (task.workflow !== 'todo' || task.pilot) && this.source.health?.room(task.machine, task.id)
@@ -294,9 +301,17 @@ export class CoreTasks {
     const task = this.get(id)
     if (!task) throw new Refusal('No such task')
     this.assert(grant, task)
+    if (['merged', 'closed'].includes(task.workflow)) return task
     if (!summary.trim() || summary.length > SUMMARY_MAX) throw new Refusal(`Write a summary of at most ${SUMMARY_MAX} characters`)
     if (!await this.git.clean({ machine: task.machine, folder: task.folder })) throw new Refusal('Commit or remove the worktree changes before reporting ready')
     task.readyHead = await this.git.head({ machine: task.machine, folder: task.folder })
+    if (await this.git.contains({ machine: task.machine, folder: task.repo }, task.base, task.readyHead)) {
+      task.said = summary; task.facts = facts; task.workflow = 'closed'; task.status = 'done'; task.doneAt = Date.now(); task.outcome = 'done'; task.cleanupPending = true
+      this.finishReceipt(task, grant)
+      delete task.reservedAt; delete task.approvedHead; delete task.mergeQuestion; delete task.report
+      this.save(task); await this.label(task); this.card(task, summary)
+      return task
+    }
     if (task.review.on && (!task.reviewReport || !task.reviewTurn || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
     delete task.approvedHead
     task.said = summary; task.facts = facts; task.workflow = 'ready'; task.readyAt = Date.now(); delete task.reservedAt
@@ -382,7 +397,8 @@ export class CoreTasks {
           await this.git.run(repo, ['merge', '--ff-only', task.mergeCommit])
         }
       }
-      task.workflow = 'merged'; task.status = 'done'; task.doneAt = Date.now(); task.outcome = 'done'
+      task.workflow = 'merged'; task.status = 'done'; task.doneAt = Date.now(); task.outcome = 'done'; task.cleanupPending = true
+      this.finishReceipt(task, grant)
       this.save(task); await this.label(task); this.card(task, task.said || 'Merged')
       await this.source.browsers?.close(task.id, true).catch(() => this.source.post(task.chat, { id: 'browser-cleanup-pending', who: 'agent', text: 'The task merged. Browser cleanup is waiting for its machine to reconnect.', at: Date.now() }))
       return task
@@ -442,6 +458,7 @@ export class CoreTasks {
         if (action.on) delete task.pinned; else task.unarchived = Date.now()
         this.save(task); return { ok: true }
       case 'pause':
+        if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
         this.source.cancelQueued?.(task.chat)
         if (terminal?.state === 'live') await this.source.core.call('terminal.interrupt', { terminal: terminal.address })
         await this.source.browsers?.close(task.id)
@@ -450,6 +467,7 @@ export class CoreTasks {
         onWords: agent?.kind ?? task.kind, want: this.source.settings.agent('task', task.place), working: agent?.state === 'working',
         clis: this.source.settings.clis(task.place) } }
       case 'restart':
+        if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
         if (action.kind && action.kind !== 'claude' && action.kind !== 'codex') throw new Refusal('Choose Claude Code or Codex')
         const current = this.source.pilots.policy.current(task.place)
         const owned = task.pilot && this.source.pilots.policy.get(task.pilot)
@@ -476,8 +494,7 @@ export class CoreTasks {
     if (block && !block.split('\n').includes(`branch refs/heads/${task.branch}`)) throw new Refusal('This worktree now belongs to another branch; it was left untouched')
     const held: string[] = []
     if (block && !await this.git.clean({ machine: task.machine, folder: task.folder })) held.push('uncommitted changes')
-    let head: string | undefined
-    try { head = await this.git.head(repo, task.branch) } catch { /* a failed setup may have made no branch */ }
+    const head = await this.git.branchHead(repo, task.branch)
     if (head && !await this.git.contains(repo, task.base!, head)) {
       const squashed = task.workflow === 'merged' && task.readyHead === head && task.mergeCommit && await this.git.contains(repo, task.base!, task.mergeCommit)
       if (!squashed) held.push('unmerged commits')
@@ -507,17 +524,53 @@ export class CoreTasks {
     // Re-read after agents exit: a worker may have written more while cleanup awaited its exit.
     const remaining = await this.held(task)
     if (remaining.held.length && !force) return { ok: false, held: remaining.held, stopped: true }
-    if (!remaining.held.length) {
-      const repo = { machine: task.machine, folder: task.repo }, head = remaining.branch ? await this.git.head({ machine: task.machine, folder: task.repo }, task.branch) : undefined
-      if (head && !await this.git.contains(repo, task.base, head)) throw new Refusal('The task branch changed during cleanup; its work was kept')
-      if (remaining.worktree) await this.git.run(repo, ['worktree', 'remove', task.folder])
-      if (head) await this.git.run(repo, ['update-ref', '-d', `refs/heads/${task.branch}`, head])
-    }
+    if (!remaining.held.length) await this.putAway(task, remaining)
+
     if (summary !== undefined) task.said = summary.trim()
     if (facts !== undefined) task.facts = facts
     task.workflow = 'closed'; task.doneAt = Date.now(); task.outcome = 'done'; task.status = 'done'
     this.save(task); await this.label(task); this.card(task, task.said || 'Marked done; nothing merged')
     return { ok: true, kept: remaining.held }
+  }
+  private async putAway(task: CoreTask, state: Awaited<ReturnType<CoreTasks['held']>>) {
+    const name = this.source.machineName?.(task.machine)
+    const holder = [...this.source.core.current.terminals.values()].find(terminal => terminal.state !== 'finished' &&
+      (terminal.address.includes('/') ? terminal.address.slice(0, terminal.address.indexOf('/')) : undefined) === name &&
+      (terminal.cwd === task.folder || terminal.cwd?.startsWith(task.folder + '/')))
+    if (holder) throw new Refusal('Another core terminal still uses this worktree; its work was kept')
+    const repo = { machine: task.machine, folder: task.repo }, head = state.branch ? await this.git.head(repo, task.branch) : undefined
+    const squashed = task.workflow === 'merged' && head === task.readyHead && task.mergeCommit && await this.git.contains(repo, task.base, task.mergeCommit)
+    if (head && !squashed && !await this.git.contains(repo, task.base, head)) throw new Refusal('The task branch changed during cleanup; its work was kept')
+    if (state.worktree) await this.git.run(repo, ['worktree', 'remove', task.folder])
+    if (head) await this.git.run(repo, ['update-ref', '-d', `refs/heads/${task.branch}`, head])
+  }
+  private finishReceipt(task: CoreTask, grant: Grant) {
+    const agent = this.source.agents.get(task.chat)
+    if (grant.chat !== task.chat || !agent) return
+    task.cleanupReceipt = `shepherdr-finished-${randomUUID()}`
+    this.source.store.set('task-cleanup-receipt', task.chat, { launch: agent.launch, receipt: task.cleanupReceipt, seen: false, complete: false })
+  }
+  private async cleanupFinished(task: CoreTask) {
+    const agent = this.source.agents.get(task.chat)
+    if (agent && this.source.agents.terminal(agent)?.state !== 'finished' &&
+      (this.source.status(agent) !== 'idle' || !task.cleanupReceipt || !this.source.logs.cleanupComplete(agent, task.cleanupReceipt))) return
+    if (!this.source.machineConnected(task.machine) || Date.now() - (task.cleanupChecked ?? 0) < 60000) return
+    await this.change(task.id, async () => {
+      task.cleanupChecked = Date.now(); this.save(task)
+      try {
+        await this.stopAgents(task, true)
+        const state = await this.held(task)
+        if (!state.held.length) await this.putAway(task, state)
+        task.kept = state.held.length ? state.held : undefined
+        delete task.cleanupPending; delete task.cleanupError
+        this.save(task)
+        if (task.kept?.length) this.source.post(task.chat, { id: `kept-${task.doneAt}`, who: 'agent', text: `The task is Done. Kept its work: ${task.kept.join(', ')}.`, at: Date.now() })
+      } catch (error) {
+        const message = String((error as Error).message).slice(0, 1000)
+        if (task.cleanupError !== message) this.source.post(task.chat, { id: `cleanup-${task.doneAt}`, who: 'agent', text: `The task is Done. Cleanup will retry; its work was kept. ${message}`, at: Date.now() })
+        task.cleanupError = message; this.save(task)
+      }
+    })
   }
   async remove(task: CoreTask, force = false) { return this.change(task.id, () => this.removeNow(task, force)) }
   private async removeNow(task: CoreTask, force = false) {
@@ -587,6 +640,7 @@ export class CoreTasks {
       this.autoArchive()
       for (const task of this.all()) {
         if (this.changing.has(task.id) || this.merging.has(task.id)) continue
+        if (task.cleanupPending && ['merged', 'closed'].includes(task.workflow)) { await this.cleanupFinished(task); continue }
         if (task.reviewChat && !task.reviewTurn) {
           const reviewer = this.source.agents.get(task.reviewChat)
           const end = this.source.store.all<LogEvent>(`event:${task.reviewChat}`).filter(event => event.kind === 'turn-end').at(-1)
@@ -676,8 +730,8 @@ export class CoreTasks {
     }
     if (verb === 'ready' || verb === 'done') {
       const summary = summaryOpts(parsed, rest)
-      await this.ready(grant, id, summary.said || '', summary.facts)
-      return text(`${id} is ready`)
+      const result = await this.ready(grant, id, summary.said || '', summary.facts)
+      return text(`${id} is ${result.workflow === 'closed' ? 'Done; nothing to merge' : result.workflow === 'merged' ? 'Merged' : 'ready'}${result.cleanupReceipt ? `\nInternal completion receipt: ${result.cleanupReceipt}; do not repeat it in chat.` : ''}`)
     }
     if (verb === 'pr' || verb === 'task' && sub === 'pr') return text(await this.pr(grant, id))
     if (verb === 'checks') {
@@ -702,8 +756,11 @@ export class CoreTasks {
       return text((await this.git.pullRequest({ machine: task.machine, folder: task.folder }, task.branch!)).statusCheckRollup)
     }
     if (verb === 'review') return text(`Fresh reviewer started: ${await this.review(grant, id)}\nIts native final reply will be forwarded to your chat. Wait for that report before ready; do not read terminal screens as the review result.`)
-    if (verb === 'merge' || verb === 'task' && sub === 'merge') return text(`${(await this.merge(grant, id)).id} is merged`)
-    if (verb === 'todo') return this.change(id, async () => { task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return text(`${id} is To do`) })
+    if (verb === 'merge' || verb === 'task' && sub === 'merge') {
+      const result = await this.merge(grant, id)
+      return text(`${result.id} is merged${result.cleanupReceipt ? `\nInternal completion receipt: ${result.cleanupReceipt}; do not repeat it in chat.` : ''}`)
+    }
+    if (verb === 'todo') return this.change(id, async () => { if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work'); task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return text(`${id} is To do`) })
     if (verb === 'task' && sub === 'tell') { await this.source.act({ type: 'send', cid: randomUUID(), chat: task.chat, text: rest.slice(1).join(' ') }); return text('Saved for delivery through core') }
     if (verb === 'task' && sub === 'queue') return this.change(id, async () => {
       if (['merged', 'closed', 'merging'].includes(task.workflow)) throw new Refusal(`${task.id} is already ${task.workflow}; its queue cannot change`)
