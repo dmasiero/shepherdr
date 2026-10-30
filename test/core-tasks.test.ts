@@ -373,7 +373,7 @@ test('authenticated comment drill-down preserves full bodies and returns one bou
     const second = JSON.parse((await tasks.cli(grant, ['checks', task.id, '--comments', '--offset', '1'])).out)
     expect(second.comments[0].id).toBe('i2'); expect(second.next).toBeUndefined()
     await expect(tasks.cli(grant, ['checks', task.id, '--comments', '--offset', '-1'])).rejects.toThrow('offset')
-    await expect(tasks.cli({ ...grant, chat: 'another' }, ['checks', task.id, '--comments'])).rejects.toThrow('does not own')
+    await expect(tasks.cli({ ...grant, chat: 'another' }, ['checks', task.id, '--comments'])).rejects.toThrow('no longer current')
   })
 })
 
