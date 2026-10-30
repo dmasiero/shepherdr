@@ -961,3 +961,7 @@ per-call async isolation and literal path handling. Remote helper provisioning i
 uncontained repositories keep their existing route. No contained product command or UI was enabled by this wiring.
 Fresh wiring review round 1 found no findings; after the CI correction round 2 also found none. Local typecheck
 passed; integration and real-Git regressions await GitHub. Full Autopilot/SSH/feature parity remains incomplete.
+Checked-Git wiring 33dcb38a passed the GitHub core job, including all actual-Git and panel guard regressions
+(40996417951). Its layout job hit a pre-existing browser fixture race: the follow-up ps sweep could still see a
+just-killed fake Chrome. That fixture now waits for its owned subprocess exits before asserting the next sweep.
+No production browser code or timing allowance was changed. A passing complete rerun remains pending.

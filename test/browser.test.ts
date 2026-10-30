@@ -277,6 +277,8 @@ describe('a task’s browser', () => {
       await until(() => streamSocks.size === 1)
       panel.end()
       expect((await b.closeIdle(now + 19 * MIN)).sort()).toEqual(['SHE-92', 'SHE-94'])
+      // Wait for killed fixture processes to disappear before asking ps for another sweep.
+      for (const p of [used, watched]) expect(await Promise.race([p.exited, wait(3000).then(() => 'running')])).not.toBe('running')
       // off: never
       expect(await b.closeIdle(now + 24 * 60 * MIN)).toEqual([])
       expect(off.exitCode).toBeNull()
