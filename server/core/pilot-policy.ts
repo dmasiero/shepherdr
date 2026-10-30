@@ -169,6 +169,7 @@ export class CorePilotPolicy {
     }
     if (['ask', 'plan', 'alert'].includes(command)) return run
     if (command === 'artifact' && ['list', 'show'].includes(op)) return run
+    if (command === 'artifact' && ['new', 'update', 'check', 'rm', 'remove', 'delete'].includes(op) && actor.role !== 'reviewer') return run
     throw new Refusal('This action needs the human; the isolated permission profile does not allow it')
   }
 }

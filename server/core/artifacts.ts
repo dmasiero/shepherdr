@@ -56,6 +56,7 @@ export class CoreArtifacts {
   thumb(id: string, dark: boolean) { this.get(id); const data = this.source.store.get<string>('artifact-thumb', `${id}:${dark ? 'dark' : 'light'}`); return data ? new Blob([Buffer.from(data, 'base64')], { type: 'image/png' }) : null }
 
   private async read(agent: CoreAgent, path: string, cwd: string, max: number, image = false): Promise<Buffer> {
+    if (agent.pilot) return Buffer.from(await this.contained(agent, { op: 'read', path, max }), 'base64')
     const bun = await this.source.agents.bun(agent.machine)
     const script = `const f=require('node:fs'),p=require('node:path'),o=require('node:os'),x=JSON.parse(await Bun.stdin.text());const file=f.realpathSync(p.resolve(x.cwd,x.path));const within=(file,root)=>file===root||file.startsWith(root+p.sep);for(let root of [x.home,p.join(o.homedir(),'.shepherdr'),p.join(o.homedir(),'.shepherdr-legacy'),p.join(o.homedir(),'.local/share/shepherdr-agents'),p.join(o.homedir(),'.codex'),p.join(o.homedir(),'.claude'),p.join(o.homedir(),'.ssh')]){try{root=f.realpathSync(root)}catch{}if(within(file,root)&&!(root===x.home&&['inbox','uploads','artifacts',...(x.image?['checks']:[])].some(dir=>within(file,p.join(root,dir)))))throw Error('Private files cannot be imported into artifacts')};const fd=f.openSync(file,f.constants.O_RDONLY|f.constants.O_NOFOLLOW);try{const s=f.fstatSync(fd);if(!s.isFile()||s.nlink>1||s.size>x.max)throw Error('Artifact input is not a regular file under the size limit');const b=f.readFileSync(fd);if(b.length>x.max)throw Error('Artifact input grew past its size limit');process.stdout.write(b.toString('base64'))}finally{f.closeSync(fd)}`
     return Buffer.from((await this.source.files.exec(agent.machine, [bun, '-e', script], undefined, Buffer.from(JSON.stringify({ path, cwd, max, image, home: this.source.config.home })))).toString('utf8'), 'base64')
@@ -100,10 +101,22 @@ export class CoreArtifacts {
     return result
   }
   private async export(agent: CoreAgent, name: string, bytes: Uint8Array) {
+    if (agent.pilot) return this.contained(agent, { op: 'export', name, data: Buffer.from(bytes).toString('base64') })
     const bun = await this.source.agents.bun(agent.machine)
     const script = `const f=require('node:fs'),p=require('node:path'),o=require('node:os'),x=JSON.parse(await Bun.stdin.text());const dir=p.join(o.homedir(),'.cache/shepherdr-artifacts',x.id);f.mkdirSync(dir,{recursive:true,mode:0o700});const s=f.lstatSync(dir);if(!s.isDirectory()||s.isSymbolicLink()||(s.mode&0o077)||s.uid!==process.getuid()||f.realpathSync(dir)!==dir)throw Error('Artifact exports need a private real directory');const file=p.join(dir,x.name);f.writeFileSync(file,Buffer.from(x.data,'base64'),{mode:0o600,flag:'wx'});process.stdout.write(file)`
     const id = this.installation
     return (await this.source.files.exec(agent.machine, [bun, '-e', script], undefined, Buffer.from(JSON.stringify({ id, name: `${randomBytes(6).toString('hex')}-${basename(name)}`, data: Buffer.from(bytes).toString('base64') })))).toString('utf8')
+  }
+  private async contained(agent: CoreAgent, operation: { op: 'read'; path: string; max: number } | { op: 'export'; name: string; data: string }) {
+    if (!agent.pilot) throw new Refusal('No contained artifact runtime')
+    const run = this.source.pilots.policy.actor(agent.pilot.run, this.source.pilots.actor(agent))
+    const space = this.source.space(run.place), task = this.source.tasks.forChat(agent.chat)
+    if (!space || run.machine !== agent.machine || task && task.pilot !== run.id) throw new Refusal('This artifact runtime does not belong to this run')
+    const runtime = await this.source.agents.browserRuntime(agent.machine)
+    const out = await this.source.files.exec(agent.machine, [runtime.bun, join(runtime.root, 'helper/core-pilot-artifact.ts')], undefined,
+      Buffer.from(JSON.stringify({ ...operation, captures: agent.pilot.captures, cwd: task?.folder ?? space.folder, repo: space.folder })))
+    this.source.pilots.policy.actor(agent.pilot.run, this.source.pilots.actor(agent))
+    return out.toString('utf8')
   }
   private async report(agent: CoreAgent, result: CheckResult) {
     const shots = result.shots!
@@ -117,17 +130,18 @@ export class CoreArtifacts {
     try { return await this.command(agent, args, cwd) } finally { if (verb === 'update') this.updating.delete(id) }
   }
   private async command(agent: CoreAgent, args: string[], cwd: string) {
-    if (agent.role === 'reviewer') throw new Refusal('Reviewers cannot publish artifacts')
     const parsed = parseArgs(args), [, verb = 'list', id, file] = parsed.words
     const spaceFlag = one(parsed, 'space'), space = spaceFlag ? this.source.spaces().find(space => space.machine === agent.machine && (space.id === spaceFlag || space.name === spaceFlag)) : undefined
     if (spaceFlag && !space) throw new Refusal('No such space on this machine')
-    if (verb === 'list') return this.list().filter(artifact => !space || artifact.place === space.id).map(artifact => `${artifact.id} v${artifact.v} ${artifact.title}`).join('\n') || 'No artifacts here yet.'
+    if (agent.pilot && (space && space.id !== agent.space || ['show', 'update', 'rm', 'remove', 'delete'].includes(verb) && this.get(id).place !== agent.space)) throw new Refusal('This artifact belongs to another space')
+    if (verb === 'list') return this.list().filter(artifact => (!space || artifact.place === space.id) && (!agent.pilot || artifact.place === agent.space)).map(artifact => `${artifact.id} v${artifact.v} ${artifact.title}`).join('\n') || 'No artifacts here yet.'
     if (verb === 'show') {
       const artifact = this.get(id), version = this.version(artifact), page = this.page(id)
       const html = await this.export(agent, `${id}-${version.n}-${randomBytes(3).toString('hex')}.html`, Buffer.from(page.html))
       const data = page.data === undefined ? undefined : await this.export(agent, `${id}-${version.n}-${randomBytes(3).toString('hex')}.json`, Buffer.from(JSON.stringify(page.data)))
       return `${id} “${artifact.title}” v${version.n}\nHTML: ${html}\nData: ${data || 'none'}\nVersions:\n${[...artifact.versions].reverse().map(version => `v${version.n} ${version.by}${version.note ? ' · ' + version.note : ''}`).join('\n')}`
     }
+    if (agent.role === 'reviewer') throw new Refusal('Reviewers cannot publish artifacts')
     if (['rm', 'remove', 'delete'].includes(verb)) { await this.act({ type: 'artifact-delete', place: this.get(id).place, artifact: id }); return 'Artifact removed' }
     if (!['new', 'update', 'check'].includes(verb)) throw new Refusal('Use artifact new, update, check, show, list or remove')
     const previous = verb === 'update' ? this.get(id) : undefined
@@ -143,6 +157,7 @@ export class CoreArtifacts {
     const report = result ? await this.report(agent, result) : ''
     const thumbs = result?.shots ? { light: readFileSync(result.shots.light).toString('base64'), dark: readFileSync(result.shots.dark).toString('base64') } : undefined
     const current = this.source.agents.get(agent.chat)
+    if (agent.pilot) this.source.pilots.policy.actor(agent.pilot.run, this.source.pilots.actor(agent))
     const terminal = current && this.source.agents.terminal(current)
     if (current?.grant !== agent.grant || current.launch !== agent.launch || terminal?.state !== 'live' || agent.pid && terminal.pid !== agent.pid || !this.source.mailbox.permits(agent.grant, { chat: agent.chat, session: agent.launch, machine: agent.machine }, 'artifact')) throw new Refusal('This artifact request belongs to a stopped, revoked or replaced session; nothing was published')
     let newId = randomBytes(4).toString('hex')
