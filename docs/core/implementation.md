@@ -1145,3 +1145,10 @@ installation, agent or service changed. This is local-core acceptance, not an ex
 Scoped review: two rounds, no must-fix; stale recovery-warning minor fixed and covered. New regressions cover mutation
 drain, saved keep-workers recovery, offline waits, tightening and warning cleanup. Only typecheck ran locally and
 passed. SSH syntax correction e9a512ca passed both GitHub jobs (41002281238).
+
+### Real SSH transport check (2026-10-30)
+
+- HEAD `257826f2`: branch GitHub run `41002731923` passed both core and layout jobs. This includes durable human mode-off/limit returns and mutation-drain regression coverage; no local test suite was run.
+- A disposable foreground native OpenSSH daemon bound only to `127.0.0.1:17956`, with temporary account/host keys and pinned known-hosts, carried the documented core `machine add --via 'ssh …' --session she301ssh --temp` connection. Both ends used pinned core 0.1.14, generation 1. No installation, live service, Tailscale mapping, legacy state or human task changed.
+- Actual core API calls over that connection passed `machine.exec`, `file.read`, document CAS/get and the combined remote document event. Remote child `ssh-proof/t2` retained its live PID after parent `ssh-proof/t1` ended (`CORE_REAL_SSH_LOOPBACK_OK`). The first probe used an incorrectly qualified remote parent; the corrected probe used the destination-local parent ID, as the product launcher already does.
+- Both probe terminals were confirmed finished; the temporary machine alias, isolated remote core, foreground SSH daemon, keys and state were removed. This proves the actual SSH byte transport and core routing on one physical host. It does **not** prove external-host provisioning/reconnection, native agent execution across an external SSH link, or physical-phone/lock-screen acceptance. The separately attempted Mac SSH connection still times out on port 22.
