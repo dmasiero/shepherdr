@@ -4,6 +4,32 @@ This is an implementation checklist, not a release or a claim of parity. Work is
 `work/301-build-shepherdr-2-1-on-core`; do not merge it into live-followed main until
 the complete acceptance run and approved cutover.
 
+## Current result (2026-10-30)
+
+The standalone rewrite is implemented on the dedicated branch, with real native
+Claude Code/Codex runs, same-host core remote lifecycle/review/merge, authenticated
+mailbox, restart/offline recovery and the retained UI. It is not a deployed release
+or a verified full-parity result. The unchecked gates below are acceptance gates,
+not an absence of implementation. Historical slice notes remain below for audit;
+the later dated entries supersede their pending statements.
+
+- Full GitHub Check **41031514810 passed** at 7bd30e01 (all three shards, types, build).
+- Rewrite check **41032009696 passed** at de674bb8, including real-source Settings.
+- Rewrite **41032408275 passed** at b8ad5df0, including the real production plugin compiler: compiled edit/replacement, persistent state and last-good fallback (11 assertions; 4.12 s on GitHub).
+- Final full review: three rounds. Round 1's two Settings majors and round 2's
+  failed-base observer major/context minor fixed; round 3 reported no remaining
+  concrete critical/major findings at ed75b57e. Later manual Settings feedback and
+  navigation fixes, plus added production-compiler coverage, postdate that review.
+- Proof artifact **hf2s v27** contains actual branch runs and explicit limits.
+- **External vm-ssa acceptance skipped**, as Elias instructed: no saved address or
+  working trusted connection was available. No access configuration changed.
+- Still unverified: physical phone/lock-screen/offline return, actual ElevenLabs
+  voice (no key in isolated state), native provider-failure takeover, product GitHub
+  merge/main-check observation (configured check-read 403), installed service/macOS
+  behavior, manual production plugin/device acceptance and every-feature side-by-side UX parity.
+- Nothing merged into main; no live state, agents, services, sharing mapping,
+  credentials, version, tag, release or publication changed. v2.0 stays preserved.
+
 ## Baseline and safety
 
 - Verified origin/main: `ebb17d585c82906b788a8473237921802920b5c5` (SHE-295).
@@ -84,13 +110,13 @@ not evidence of a working feature.
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Partial: actual merge and synthetic secret cards answered in phone-width preview; stale permission cards disable correctly; native GITH-3 multi-choice and two-step plan approved, followed by clean research Done; physical lock-screen and complete native permission parity pending |
 | Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; loopback SSH transport checked; external vm-ssa acceptance skipped for missing configured address/host trust; external disconnect acceptance unverified; legacy transport/launcher removal and native tool-environment recovery passed scoped review and branch CI |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; real targeted versioned note reached native keeper, same-artifact update appeared live, and disposable artifact deletion removed stored versions/list entry; device parity still pending |
-| Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; real scoped run/env/ignored-file refusal and removal revocation passed; main-home scope isolation passed; private human CLI scoped set/replace/rm passed; UI Replace and full device acceptance pending |
+| Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; real scoped run/env/ignored-file refusal and removal revocation passed; main-home scope isolation passed; private human CLI scoped set/replace/rm passed; UI Replace consumed the replacement in native Claude, then UI removal revoked access; full device acceptance pending |
 | Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Partial: real second-core browser frames, takeover, navigation, fit, markup crop and native BROWSER_NOTES_OK shown; app restart retained takeover. Agent-only open was detected without a viewer and one-minute expiry closed its Chrome. Real SSH and full device parity pending |
-| Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
+| Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Implemented with bounded private provider bridge and CI coverage; page/control visible. Actual ElevenLabs call unverified: isolated home has no API key; no live credentials borrowed |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Partial: real contained Claude/Codex runs, child checkpoint/review, phone on/wake/off, contained restart/outlive children, durable keep-workers return/completion and post-report usage limit. Full events/browser/limit/device acceptance pending; contained Autopilot remains Linux-only as in legacy |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Partial: native coordinator saved rules/checklist; actual Run now and scheduled-once tasks answered; app restart preserved state; real failed and 20-minute quiet rules each produced exactly one native handler; complete recurrence/events/device parity pending |
 | Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; phone Files and added-file Diff inspected through second core; resizing/reconnect and actual PR acceptance pending |
-| Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change and native runtime model before/after inspected; observed runtime is separate from launch choices; other sections and full acceptance pending |
+| Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change and native runtime model before/after inspected; observed runtime is separate from launch choices; real Repository/base and Task IDs/prefix/forward-only numbering exercised by native INCQ-40; global Time zone, Plugins and Machines restored after legacy UI comparison; full acceptance pending |
 | Health, alerts, unread/search, keyboard and mobile layouts | plugins/health; plugins/keyboard; src/layout* | Partial: phone unread/search/attention and keyboard reaction bar checked; machine capacity held/delivered messages; complete health/alerts/device parity pending |
 | User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Partial: API-2 client/server action and retained state inspected; isolated hot rebuild/switch/fallback code and CI coverage added, production/manual acceptance and full gating parity pending; 2.0 plugins require migration |
 | Standalone start/stop/status, installation and optional service | New requirement | Partial: isolated idempotent start/status/stop + crash/core restart exercised; final install/service/cutover pending, no live service enabled |
@@ -1776,3 +1802,21 @@ TypeScript retaining last-good compiled assets/runtime. It is explicitly enabled
 only by SHEPHERDR_REAL_PLUGIN_BUILD=1 in that job; ordinary suite runs skip that
 costly build case. It has not run locally. This adds production-path coverage beyond
 injected compiler fixtures, not physical-device or authenticated native-agent proof.
+
+The additional production-plugin job in rewrite run 41032408275 passed: actual
+production client/server compiler, edited assets/runtime, durable counter and
+invalid-TypeScript last-good fallback (11 assertions, 4.12 seconds on GitHub).
+The VM did not run that build. PR #507 is draft and explicitly not for merge/deploy.
+The restored source fixture base/prefix are main/INCL; historical INCQ-40 retains
+she301-settings-next and is Done; next number remains forward-only. Native keeper
+confirmed removal of only its temporary artifact-note source fixture. The separate
+legacy UI reference processes were stopped after screenshots; main preview and
+existing native tasks remain untouched.
+
+A further harmless foreground-shell Pause attempt created only scratch INCL-41.
+Its native Claude Bash policy refused `sleep 60; printf LONG_TOOL_FINISHED` before
+execution, directing Monitor/background usage and explicitly forbidding chained
+sleep workarounds. No policy bypass, alternate wait or authentication change was
+attempted. That long-shell interruption remains unverified; the earlier native
+foreground-analysis Pause is distinct evidence. The operator selected Stop here
+and requested clean research-only completion, preserving all other work.
