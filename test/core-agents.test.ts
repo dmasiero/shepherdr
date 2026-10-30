@@ -89,3 +89,27 @@ test('ordinary replacement preserves both private launch identities for later de
     expect(store.all('pilot-capture')).toHaveLength(0)
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+for (const kind of ['claude', 'codex'] as const) test(`${kind} coordinator launch includes house rules, full role guide and authoritative core routing`, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-agent-guide-')), store = new CoreStore(home)
+  try {
+    let argv: string[] = [], env: Record<string, string> = {}
+    const core = { call: async (_method: string, input: { argv: string[]; env: Record<string, string> }) => { argv = input.argv; env = input.env; return { address: 't1', pid: 123 } } } as unknown as CoreSession
+    const mailbox = { issue: () => ({ id: 'guide-grant', credential: {} }) } as unknown as Mailbox
+    store.set('meta', 'local', { id: 'machine' })
+    const agents = new CoreAgents({ home, port: 17887, session: 'test', socket: '/unused', binary: 'hc' },
+      { format: 'shepherdr-core', schema: 1, id: 'installation' }, core, store, mailbox, async () => undefined, () => {})
+    await agents.launch({ id: 'home', name: '~', home: true, machine: 'machine', folder: '/unused', base: 'main', prefix: 'EX', mode: 'regular', added: 1 }, 'home', kind, 'Wait')
+    const words = kind === 'claude' ? readFileSync(argv[argv.indexOf('--append-system-prompt-file') + 1], 'utf8') : JSON.parse(argv.find(word => word.startsWith('developer_instructions='))!.slice('developer_instructions='.length)) as string
+    expect(words).toContain('# Shepherdr coordinator')
+    expect(words).toContain('### Chat lines you receive')
+    expect(words).toContain('The main machine\'s home space')
+    expect(words).toContain('Your role is the main machine’s home coordinator')
+    expect(words).toContain('repeat with `--after`')
+    expect(words).toContain(`Your authoritative authenticated command is ${env.SHEPHERDR_COMMAND}`)
+    expect(words).toContain('Never borrow another launch’s credential')
+    expect(words).not.toContain('which uses `helper/main.sock`')
+    expect(env.SHEPHERDR_CORE_CREDENTIAL).toBe(join(home, 'sessions/guide-grant.credential.json'))
+    if (kind === 'codex') expect(argv.some(word => word.startsWith('shell_environment_policy.set=') && word.includes(env.SHEPHERDR_CORE_CREDENTIAL))).toBe(true)
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})
