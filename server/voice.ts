@@ -62,7 +62,7 @@ async function createAgent(key: string, runtime: VoiceRuntime): Promise<string> 
     },
     platform_settings: {
       auth: { enable_auth: true },
-      overrides: { conversation_config_override: { agent: { prompt: { prompt: true } } } },
+      overrides: { conversation_config_override: { agent: { prompt: { prompt: true } } } }, // fork: the first_message override isn't allowed any more
       privacy: { record_voice: false, retention_days: 0 },
     },
   }
