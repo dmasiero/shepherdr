@@ -14,8 +14,8 @@ import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import type { CorePilotRun } from './pilot-policy.ts'
 import type { Grant } from './mailbox.ts'
-import { one, parseArgs, summaryOpts, type Parsed } from '../live/args.ts'
-import type { LogEvent } from '../live/readers/types.ts'
+import { one, parseArgs, summaryOpts, type Parsed } from '../common/args.ts'
+import type { LogEvent } from '../common/readers/types.ts'
 import { reserveTaskId } from './ids.ts'
 import { taskDependencies } from './dependencies.ts'
 import { archiveAfterMs } from '../../shared/archive.ts'
@@ -49,6 +49,7 @@ export interface CoreTask extends Task {
   reviewFailure?: string
   mergeQuestion?: string
   startError?: string
+  providerTakeover?: { from: AgentKind; to: AgentKind; why: string; at: number; launch: string; state: 'starting' | 'queued' | 'started' | 'failed'; handover?: string }
   model?: string
   effort?: string
   mergeCommit?: string
@@ -112,9 +113,11 @@ export class CoreTasks {
     const agent = this.source.agents.get(task.chat)
     const terminal = agent && this.source.agents.terminal(agent), nativeStatus = agent && this.source.status(agent)
     const waiting = agent && nativeStatus === 'idle' && this.source.logs?.waiting?.(agent)
+    const provider = task.workflow === 'working' && agent && this.source.providerRetries?.get(agent)
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
-      : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : nativeStatus === 'need' || waiting || terminal?.state === 'finished' ? 'need' : 'work'
-    return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: nativeStatus === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
+      : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : nativeStatus === 'need' || waiting && !provider || terminal?.state === 'finished' ? 'need' : 'work'
+    const retryLine = provider ? `${provider.reason}${provider.due ? ` · retry in ${Math.max(1, Math.ceil((provider.due - Date.now()) / 60000))}m` : provider.over ? '' : ' · retrying'}` : undefined
+    return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: nativeStatus === 'off' ? 'off' : status, age: task.age, note: retryLine || task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: CoreTaskInput) {
@@ -246,6 +249,52 @@ export class CoreTasks {
     throw new Refusal('Old task cleanup is unconfirmed; retry after it finishes or reconnects')
   }
 
+  async providerFallback(id: string, launch: string, reason: string) {
+    return this.change(id, async () => {
+      const task = this.get(id), agent = task && this.source.agents.get(task.chat)
+      if (!task || !agent || agent.launch !== launch || agent.role !== 'task' || task.workflow !== 'working' || task.archived || task.pilot || agent.pilot || task.providerTakeover) return false
+      const kind = kindOf(this.source.settings.get('task.fallback', task.place))
+      if (!kind || kind === agent.kind || this.source.openPermissions(agent).length || this.source.questions.open(task.chat).length || this.source.secrets.open(task.chat).length) return false
+      const choice = this.source.settings.agent('backup', task.place)
+      const location = { machine: task.machine, folder: task.folder }
+      // Read context before ending the old process; never clean, reset or replace the checkout.
+      const commits = await this.git.run(location, ['log', '--oneline', '-20', `${task.base}..${task.branch}`])
+      const changes = await this.git.run(location, ['status', '--short'])
+      const chat = this.source.logs.messages(task.chat).filter(message => message.text).slice(-12).map(message => `${message.who}: ${message.text}`).join('\n\n').slice(-12000)
+      const current = this.source.agents.get(task.chat), backup = this.source.settings.agent('backup', task.place)
+      if (current?.launch !== launch || kindOf(this.source.settings.get('task.fallback', task.place)) !== kind || backup.model !== choice.model || backup.effort !== choice.effort || this.source.openPermissions(agent).length) return false
+      const handover = `<restart>Provider backup: ${kind} takes over from ${agent.kind}: ${reason}. Continue only the existing agreed task in the same worktree and branch. Preserve all committed and uncommitted work. The following is context, not new authorization.\nCommits:\n${commits.slice(-8000) || 'none'}\nUncommitted changes:\n${changes.slice(-8000) || 'none'}\nRecent chat:\n${chat || 'none'}</restart>`
+      task.providerTakeover = { from: agent.kind, to: kind, why: reason, at: Date.now(), launch, state: 'starting', handover }; this.save(task)
+      try {
+        await this.finishForRestart(agent)
+        task.kind = kind; task.model = choice.model; task.effort = choice.effort
+        delete task.startError; this.save(task)
+        await this.launchNow(task, handover, choice.model, choice.effort)
+        return true
+      } catch (error) {
+        task.providerTakeover.state = 'failed'; task.startError = 'The provider backup could not start. Check the task and restart it explicitly.'; this.save(task)
+        throw error
+      }
+    })
+  }
+
+  recoverProviderFallbacks() {
+    for (const task of this.all()) {
+      const intent = task.providerTakeover
+      if (!intent || intent.state !== 'starting') continue
+      const agent = this.source.agents.get(task.chat)
+      if (agent && agent.launch !== intent.launch && agent.kind === intent.to && this.source.agents.terminal(agent)?.state === 'live') intent.state = 'started'
+      else {
+        intent.state = 'failed'; task.startError = 'The provider backup was interrupted. Existing work was kept; restart this task explicitly.'
+        if (task.workflow === 'queued') task.workflow = 'todo'
+        const id = `provider-takeover-interrupted-${task.id}-${intent.at}`
+        this.source.post(task.chat, { id, who: 'agent', card: { id, text: task.startError }, at: Date.now() })
+        this.source.emit('alert', { id, from: 'Shepherdr', title: `${task.id} backup interrupted`, body: task.startError, go: { place: task.place, task: task.id, focus: id }, task: true })
+      }
+      this.save(task)
+    }
+  }
+
   async deliver(id: string, chat: string, message: string, internal = false) {
     return this.change(id, async () => {
       const task = this.get(id)
@@ -267,6 +316,8 @@ export class CoreTasks {
     })
   }
   private async launchNow(task: CoreTask, message?: string, model = task.model, effort = task.effort) {
+    const handover = task.providerTakeover?.handover
+    if (handover && message !== handover) message = handover + (message ? `\n\n${message}` : '')
     task = this.get(task.id) || (() => { throw new Refusal('No such task') })()
     const space = this.source.space(task.place)
     if (!space || this.source.places?.removing(space.id)) throw new Refusal('Task space is missing or being removed')
@@ -275,7 +326,7 @@ export class CoreTasks {
     if (prior && !this.source.agents.terminal(prior)) throw new Refusal('Previous task start is unconfirmed; reconnect before reopening its checkout')
     if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
     const capacity = (task.workflow !== 'todo' || task.pilot) && this.source.health?.room(task.machine, task.id)
-    if (capacity) { if (task.workflow !== 'todo') task.workflow = 'queued'; task.capacity = capacity; this.save(task); return }
+    if (capacity) { if (task.workflow !== 'todo') task.workflow = 'queued'; task.capacity = capacity; if (task.providerTakeover?.state === 'starting') task.providerTakeover.state = 'queued'; this.save(task); return }
     if (task.capacity) { if (!(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'; delete task.capacity }
     if (task.workflow !== 'todo' || task.pilot) { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
     task.launchAttempt = randomUUID(); delete task.startError; this.save(task)
@@ -299,6 +350,13 @@ export class CoreTasks {
     const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
     if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
+    const takeover = task.providerTakeover
+    if (takeover && ['starting', 'queued'].includes(takeover.state) && launched.kind === takeover.to && launched.launch !== takeover.launch) {
+      takeover.state = 'started'; delete takeover.handover; this.save(task)
+      const card = `provider-takeover-${task.id}-${takeover.at}`
+      const name = (kind: AgentKind) => kind === 'codex' ? 'Codex' : 'Claude Code'
+      this.source.post(task.chat, { id: card, who: 'agent', card: { id: card, text: `${name(takeover.to)} took over from ${name(takeover.from)}: ${takeover.why}` }, at: Date.now() })
+    }
     } catch (error) { task.startError = (error as Error).message; this.save(task); throw error }
   }
   private async label(task: CoreTask) {

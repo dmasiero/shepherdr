@@ -1,4 +1,4 @@
-import type { LogEvent } from '../live/readers/types.ts'
+import type { LogEvent } from '../common/readers/types.ts'
 import type { StepRec } from '../activity.ts'
 
 /** Only the displayed tail is cached. Native text/output stays in its source file. */

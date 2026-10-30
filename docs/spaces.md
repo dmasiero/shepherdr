@@ -1,6 +1,6 @@
 # Spaces
 
-Run many coding agents across machines from a phone, tablet or desktop. Shepherdr is a herdr plugin: one private web
+Run many coding agents across machines from a phone, tablet or desktop. Shepherdr is a standalone herdr-core client: one private web
 app on your tailnet (installable on a phone) with your spaces in a sidebar, as herdr has them: a space is a folder on
 a machine plus a name, with its own coordinator. Each machine is a section, as Slack's: its emoji (a server icon without
 one) and its name, both set in its ⋯ menu's Rename machine and kept for every device, with its spaces under it, its
@@ -17,7 +17,7 @@ pick; × takes one off and **+ Filter** adds a space or a machine from the sideb
 the chips while the middle changes (a task from them opens in the middle); unpinned, they follow again. Chips and pin
 are remembered on the device; a phone's scroll sideways. Every agent, coordinator or
 task agent, gets the same chat: replies, reactions, files, search, talk-to-type, voice calls and artifacts. A task's chat
-also has a side panel: its live herdr terminal, its files, its diff against main and its pull request.
+also has a side panel: its live core terminal, its files, its diff against main and its pull request.
 
 - Every machine has at least one space: its **home space**, at its home folder (~), named `home`. It can be renamed
   but not removed; it comes first under its machine until dragged, and moves like any space. Its coordinator also looks after the machine: health, load and

@@ -102,7 +102,7 @@ describe.skipIf(!browser)('chat agent choices', () => {
 
 describe.skipIf(!browser)('Task IDs space settings', () => {
   test('shows only for its space, with two fields and a useful refusal', async () => {
-    const { taskIdsSection } = await import('../server/live/task-ids.ts')
+    const { taskIdsSection } = await import('../server/common/task-ids.ts')
     const before = world.sections
     const level = 'p:vm-str:gtm'
     world.sections = [...before, taskIdsSection(level, 'vm-str', 'GAME', 100)]

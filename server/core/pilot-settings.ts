@@ -1,7 +1,7 @@
 import type { SettingSection } from '../../shared/types.ts'
 import { TABLE } from '../../shared/models.ts'
 import { pilotHosts, type CorePilotConfig } from './pilot-policy.ts'
-import { timeRule } from '../live/trigger.ts'
+import { timeRule } from '../common/trigger.ts'
 import type { CoreSettings } from './settings.ts'
 import { kindOf } from './settings.ts'
 

@@ -4,7 +4,7 @@
 // the coordinator's chat (that is Autopilot's heartbeat, heartbeat.ts, on the same kind of trigger).
 import { randomUUID } from 'node:crypto'
 import type { Automation as AutomationView } from '../shared/types.ts'
-import { eventsText, fromSchedule, matches, nextRun, nextWords, triggerWords, type EventRule, type Happened, type Trigger } from './live/trigger.ts'
+import { eventsText, fromSchedule, matches, nextRun, nextWords, triggerWords, type EventRule, type Happened, type Trigger } from './common/trigger.ts'
 
 /** the task each run adds */
 export interface Template {

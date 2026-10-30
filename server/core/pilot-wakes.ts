@@ -1,9 +1,9 @@
 import type { SettingSection } from '../../shared/types.ts'
 import { randomUUID } from 'node:crypto'
 import type { CoreSource } from './source.ts'
-import { matches, eventRules, type Happened } from '../live/trigger.ts'
+import { matches, eventRules, type Happened } from '../common/trigger.ts'
 import type { CorePilotRun } from './pilot-policy.ts'
-import type { LogEvent } from '../live/readers/types.ts'
+import type { LogEvent } from '../common/readers/types.ts'
 
 interface Wake { id: string; run: string; launch: string; at: number; reason: string; state: 'waiting' | 'queued' | 'delivered' | 'done' | 'uncertain'; text?: string; sent?: string }
 /** A wake is bound to one private coordinator launch; reconnect never repeats an uncertain delivery. */

@@ -3,13 +3,13 @@ import { TABLE, nearest, parseCodex, type CliModels } from '../../shared/models.
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
 import type { MachineLimits } from '../health.ts'
-import { timeRule, timeWords, nextWords, eventRules, eventWords, validZone, OWN_ZONE } from '../live/trigger.ts'
+import { timeRule, timeWords, nextWords, eventRules, eventWords, validZone, OWN_ZONE } from '../common/trigger.ts'
 import { PILOT_SETTINGS, corePilotConfig } from './pilot-settings.ts'
 import { pilotHosts } from './pilot-policy.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import { NOTIFY, NOTIFY_DEFAULT, NOTIFY_KEY } from '../../shared/alerts.ts'
 
-export type Role = 'coordinator' | 'task' | 'reviewer'
+export type Role = 'coordinator' | 'task' | 'reviewer' | 'backup'
 const names = { claude: 'Claude Code', codex: 'Codex' }
 export const kindOf = (word: string): AgentKind | undefined => Object.entries(names).find(([kind, name]) => [kind, name.toLowerCase()].includes(word.trim().toLowerCase()))?.[0] as AgentKind | undefined
 const roleRows = (role: Role, group: string): SettingRow[] => [
@@ -45,7 +45,11 @@ const CATALOG: SettingSection[] = [
     { key: 'brief.merge', label: 'Merge', value: 'on its own', options: ['on its own', 'after GitHub checks', 'ask me first'] },
     ...roleRows('reviewer', 'Reviewer'),
   ] },
-  { name: 'Agents', about: "What each kind of agent starts with. Default is the agent's own model or effort.", rows: [...roleRows('task', 'Tasks'), ...roleRows('coordinator', 'Coordinators')] },
+  { name: 'Agents', about: "What each kind of agent starts with. Default is the agent's own model or effort.", rows: [...roleRows('task', 'Tasks'),
+    { group: 'Backup', key: 'task.fallback', label: 'Agent', value: 'Codex', options: ['off', ...Object.values(names)] },
+    { group: 'Backup', key: 'backup.model', label: 'Model', value: 'default', text: true },
+    { group: 'Backup', key: 'backup.effort', label: 'Effort', value: 'default', options: ['default', ...TABLE.codex.efforts] },
+    ...roleRows('coordinator', 'Coordinators')] },
 ]
 const rows = CATALOG.flatMap(section => section.rows)
 
@@ -87,11 +91,12 @@ export class CoreSettings {
         const role = key.split('.')[0] as Role | 'autopilot', kind = this.agent(role, level).kind
         if (this.catalog(kind, level).models.length && !this.findModel(kind, value, level)) throw new Error('Choose a model offered by this agent')
       }
-      if (key.endsWith('.agent')) {
+      if (key.endsWith('.agent') || key === 'task.fallback' && value.toLowerCase() !== 'off') {
         const kind = kindOf(value)
         if (!kind && !(key === 'autopilot.agent' && value === 'inherit')) throw new Error('Choose Claude Code or Codex')
         if (kind) value = names[kind]
-      } else if (row.num) {
+      } else if (key === 'task.fallback' && value.toLowerCase() === 'off') value = 'off'
+      else if (row.num) {
         if ((row.num.off || row.num.zero) && value === 'off') value = 'off'
         else {
           const match = value.match(/^(\d+(?:[.,]\d+)?)(.*)$/), number = Number(match?.[1]?.replace(',', '.')), unit = match?.[2]?.trim().replace(/^x(?=\s|$)/, '×')
@@ -117,7 +122,7 @@ export class CoreSettings {
       const effort = this.get('autopilot.effort', level)
       return { kind, model, effort: effort === 'inherit' ? base.effort : effort === 'default' ? undefined : effort }
     }
-    const kind = kindOf(this.get(`${role}.agent`, level)) ?? (role === 'reviewer' ? 'codex' : 'claude')
+    const kind = kindOf(this.get(role === 'backup' ? 'task.fallback' : `${role}.agent`, level)) ?? (role === 'reviewer' || role === 'backup' ? 'codex' : 'claude')
     const raw = this.get(`${role}.model`, level), catalog = this.catalog(kind, level)
     const model = raw === 'default' || !raw ? undefined : this.findModel(kind, raw, level)?.id ?? (!catalog.models.length ? raw : undefined)
     const effort = nearest(catalog.models.find(item => item.id === model)?.efforts ?? catalog.efforts, this.get(`${role}.effort`, level))

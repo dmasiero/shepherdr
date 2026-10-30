@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { parseArgs, one } from '../server/live/args.ts'
+import { parseArgs, one } from '../server/common/args.ts'
 import { taskOptions, validateTaskSettings } from '../server/core/task-options.ts'
 
 test('one-task aliases preserve 2.0 precedence without changing inherited settings', () => {

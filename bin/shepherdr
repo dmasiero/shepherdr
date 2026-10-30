@@ -17,4 +17,10 @@ fi
 case "$1:$2" in
   secret:set|secret:rm|secret:remove) exec bun "$here/helper/core-operator.ts" "$@" ;;
 esac
-exec perl "$here/helper/route.pl" "$here/server/cli.ts" "$@"
+case "$1" in
+  help|--help|"")
+    printf '%s\n' 'shepherdr start | stop | status [--home PATH]' 'shepherdr secret set NAME [--machine | --space NAME] < file' 'shepherdr secret rm NAME [--machine | --space NAME]' 'Agent commands use the owning launch-provisioned helper and core mailbox.'
+    exit 0 ;;
+esac
+printf '%s\n' 'This standalone command has no legacy HTTP routing. Use the owning authenticated agent helper, or open the app. Use hc for core terminals and agents.' >&2
+exit 1

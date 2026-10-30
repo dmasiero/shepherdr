@@ -22,6 +22,7 @@ import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
 import { CoreSettings } from './settings.ts'
 import { CoreSecrets } from './secrets.ts'
+import { CoreProviderRetries } from './provider-retries.ts'
 import { CoreArtifacts } from './artifacts.ts'
 import { CoreChat } from './chat.ts'
 import { CoreActivity } from './activity.ts'
@@ -72,6 +73,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   plugins: CorePlugins
   pluginUpdates?: CorePluginUpdates
   readonly secrets: CoreSecrets
+  readonly providerRetries: CoreProviderRetries
   readonly artifacts: CoreArtifacts
   readonly chats: CoreChat
   readonly activities: CoreActivity
@@ -109,6 +111,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.questions = new CoreQuestions(this)
     this.cards = new CoreCards(this)
     this.secrets = new CoreSecrets(this)
+    this.providerRetries = new CoreProviderRetries(this)
     this.artifacts = new CoreArtifacts(this, installation.id)
     this.chats = new CoreChat(this, installation.id)
     this.activities = new CoreActivity(this)
@@ -143,10 +146,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       agent.permission = this.openPermissions(agent)[0]?.id
       this.store.set('agent', agent.chat, agent)
     }
-    await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start(); this.github.start()
+    await this.core.start(); await this.refresh(); this.tasks.recoverProviderFallbacks(); this.logs.start(); this.automations.start(); this.health.start(); this.github.start()
     this.recovery = setInterval(() => {
       if (!this.quiescing) void this.pilots.lifecycle.tick().then(() => this.pilots.completion.tick()).catch(error => this.faults.set('pilot-lifecycle', error.message))
       if (!this.quiescing) { this.pilots.wakes.tick(); this.news.deliver() }
+      if (!this.quiescing) void this.providerRetries.tick().catch(error => this.faults.set('provider-retry', error.message))
       if (!this.quiescing) void this.pilots.usage.poll().catch(error => this.faults.set('pilot-usage', error.message))
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return
@@ -221,7 +225,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (terminal?.state === 'finished') return 'idle'
     if (agent.pid && terminal?.pid !== agent.pid) return 'need'
     const word = terminal?.status?.state ?? agent.state
-    return word === 'blocked' || agent.permission ? 'need' : word === 'working' || word === 'starting' ? 'work' : 'idle'
+    if (word === 'blocked' || agent.permission) return 'need'
+    const provider = this.providerRetries.get(agent)
+    if (provider) return provider.over ? 'need' : 'work'
+    return word === 'working' || word === 'starting' ? 'work' : 'idle'
   }
   openPermissions(agent: CoreAgent) {
     return this.store.all<Permission>('permission').filter(item => item.chat === agent.chat && item.grant === agent.grant && !item.settled && item.expires > Date.now())
@@ -315,6 +322,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           const space = this.space(action.chat) || task && this.space(task.place)
           if (!space) throw new Error('No such coordinator space')
           const prepare = async () => {
+            this.providerRetries.clear(action.chat)
             const text = await this.chats.text(action, space.machine)
             const id = action.cid || randomUUID()
             this.store.db.transaction(() => {
@@ -417,6 +425,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   }
 
   cancelQueued(chat: string) {
+    this.providerRetries.clear(chat)
     this.store.db.transaction(() => {
       for (const item of this.store.all<PendingSend>('pending-send').filter(item => item.chat === chat && item.state === 'queued')) {
         item.state = 'cancelled'; this.store.set('pending-send', item.id, item)
@@ -441,6 +450,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       const pending = this.store.all<PendingSend>('pending-send').filter(item => item.chat === chat && item.state === 'queued')
       for (const item of pending) {
         if (this.quiescing) return
+        if (item.id.startsWith('provider-retry-') && !this.store.get('pending-send', item.id)) continue
         const task = this.tasks.forChat(chat)
         const space = this.space(chat) || task && this.space(task.place)
         if (!space) return
@@ -451,6 +461,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
+          if (!item.id.startsWith('provider-retry-')) this.providerRetries.clear(chat)
           if (task) await this.tasks.deliver(task.id, chat, item.text, !!item.launch && !item.work)
           else if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
           else {

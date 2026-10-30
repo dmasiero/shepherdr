@@ -1,9 +1,9 @@
 // Fictional data for the demo source: the same world the frozen prototype shows, so a reviewer can put the
 // build and the prototype side by side. Nothing here is real.
 import { apart, type Artifact, type Automation, type Chat, type Machine, type MachineHealth, type Message, type Place, type SettingSection, type Task, type TaskAgent } from '../../shared/types.ts'
-import { firstChecklist } from '../live/heartbeat.ts'
-import { nextWords, timeRule, timeWords } from '../live/trigger.ts'
-import { Settings } from '../live/settings.ts'
+import { firstChecklist } from '../heartbeat.ts'
+import { nextWords, timeRule, timeWords } from '../common/trigger.ts'
+import { Settings } from '../common/settings.ts'
 import { pluginCatalog, pluginsPage } from '../plugins.ts'
 import type { PluginEntry } from '../../scripts/build-plugins.ts'
 import { demoJobs, demoTurn } from './activity.ts'

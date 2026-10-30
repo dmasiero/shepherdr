@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Action, Message, Reaction } from '../../shared/types.ts'
-import { agentLines, excerpt, findQuoted, line, parseReply, parseUserLine, userLines } from '../live/chatlines.ts'
+import { agentLines, excerpt, findQuoted, line, parseReply, parseUserLine, userLines } from '../common/chatlines.ts'
 import type { CoreSource } from './source.ts'
 
 interface Upload { id: string; chat: string; path: string; name: string; copies?: Record<string, string>; paths?: string[] }

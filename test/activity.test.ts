@@ -6,15 +6,14 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { glance, jobsWords, rowsOf, say, testResult, took } from '../shared/activity.ts'
-import { activityOf, cutOutput, lineOf } from '../server/live/activity.ts'
-import { ClaudeReader, readerFor } from '../server/live/readers/index.ts'
-import { notices } from '../server/live/readers/claude.ts'
-import { claudeStep, codexItem, commandSay, commandWords } from '../server/live/readers/steps.ts'
+import { activityOf, cutOutput, lineOf } from '../server/activity.ts'
+import { ClaudeReader, readerFor } from '../server/common/readers/index.ts'
+import { notices } from '../server/common/readers/claude.ts'
+import { claudeStep, codexItem, commandSay, commandWords } from '../server/common/readers/steps.ts'
 import type { Step } from '../shared/types.ts'
-import type { LogEvent } from '../server/live/readers/types.ts'
+import type { LogEvent } from '../server/common/readers/types.ts'
 
 process.env.SHEPHERDR_HOME ??= mkdtempSync(join(tmpdir(), 'shep-act-'))
-const { Chats } = await import('../server/live/chats.ts')
 
 describe('words', () => {
   test('an action said as a command reads done and doing; a word that is no verb stays', () => {
@@ -257,138 +256,3 @@ describe('codex reader: steps and background work', () => {
 })
 
 /* ---------- a chat built from a log ---------- */
-
-function world(kind: 'claude' | 'codex', status: () => string, runs: () => string | undefined = () => undefined) {
-  const dir = mkdtempSync(join(tmpdir(), 'shep-act-log-'))
-  const log = join(dir, `${S}.jsonl`)
-  writeFileSync(log, '')
-  const agents = {
-    record: () => ({ kind, logs: [log], sessionId: S, cwd: '/work/app' }),
-    status,
-    stillRuns: runs,
-    background: runs,
-    reviewers: { list: () => [] },
-    sentLately: () => [],
-    waiting: () => [],
-    typedSince: () => [],
-    failedLately: () => [],
-    holdOf: () => undefined,
-    info: () => undefined,
-    runtime: () => undefined,
-    runtimeHook: () => undefined,
-  }
-  const chats = new Chats(agents as never, (k) => k, () => 'You')
-  const add = (...objs: object[]) => appendFileSync(log, objs.map((o) => `${JSON.stringify(o)}\n`).join(''))
-  return { chats, add, dir, log }
-}
-
-describe('a chat from its log', () => {
-  test('a turn’s rows sit just before its last reply; its steps and output come when asked', () => {
-    let st = 'working'
-    const w = world('claude', () => st)
-    w.add(
-      user('u1', 'Fix the test', typed),
-      use('a1', 'toolu_1', 'Bash', { command: 'bun test' }),
-      result('u2', 'toolu_1', '1 fail\n\x1b[31mexpected 2\x1b[0m'),
-      said('a2', 'msg_r1', { type: 'text', text: 'Looking.' }),
-      use('a3', 'toolu_2', 'Edit', { file_path: '/work/app/a.ts', old_string: 'x', new_string: 'y' }),
-    )
-    // the turn runs: its step on now
-    let c = w.chats.chat('T-1/Agent')
-    expect(c.live).toMatchObject({ steps: 2, now: { id: 'toolu_2', kind: 'edit', doing: 'Editing a.ts' } })
-    expect(c.messages.some((m) => m.activity)).toBe(false)
-    w.add(result('u3', 'toolu_2', 'ok', { structuredPatch: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 1, lines: ['-x', '+y'] }] }), said('a4', 'msg_r2', { type: 'text', text: 'Fixed.' }, 'end_turn'), turnEnd('s1'))
-    st = 'idle'
-    c = w.chats.chat('T-1/Agent')
-    expect(c.live).toBeUndefined()
-    const at = c.messages.findIndex((m) => m.activity)
-    expect(c.messages.map((m) => m.text ?? 'activity')).toEqual(['Fix the test', 'Looking.', 'activity', 'Fixed.'])
-    const a = c.messages[at].activity!
-    expect(a.rows.map((r) => [r.text, r.failed, r.added, r.removed])).toEqual([
-      ['Ran tests: 1 failed', undefined, undefined, undefined],
-      ['Edited a.ts', undefined, 1, 1],
-    ])
-    const steps = w.chats.activity({ chat: 'T-1/Agent', what: 'turn', id: a.id })
-    expect('steps' in steps && steps.steps.map((s) => [s.kind, s.title, s.detail, s.output])).toEqual([
-      ['run', 'Ran tests', 'bun test', true],
-      ['edit', 'Edited a.ts', '/work/app/a.ts', true],
-    ])
-    expect(w.chats.activity({ chat: 'T-1/Agent', what: 'output', id: 'toolu_1' })).toEqual({ output: '1 fail\nexpected 2' })
-    // an edit's output is its diff
-    expect(w.chats.activity({ chat: 'T-1/Agent', what: 'output', id: 'toolu_2' })).toEqual({ output: '@@ -3,1 +3,1 @@\n-x\n+y' })
-  })
-
-  test('news it answered with nothing shows no line', () => {
-    const w = world('claude', () => 'idle')
-    w.add(
-      user('u1', '<shepherdr><heartbeat>Look around.</heartbeat></shepherdr>', { origin: { kind: 'human' } }),
-      use('a1', 'toolu_1', 'Bash', { command: 'shepherdr task list' }),
-      result('u2', 'toolu_1', 'none'),
-      said('a2', 'msg_r1', { type: 'text', text: '<no-reply>nothing to do</no-reply>' }, 'end_turn'),
-      turnEnd('s1'),
-    )
-    expect(w.chats.chat('p:x').messages.filter((m) => m.activity)).toEqual([])
-  })
-
-  test('background work shows while it runs, with what each does now, and opens to its steps or output', () => {
-    let runs: string | undefined = 'agents'
-    const w = world('claude', () => 'idle', () => runs)
-    const sub = join(w.dir, S, 'subagents')
-    mkdirSync(sub, { recursive: true })
-    writeFileSync(join(sub, 'agent-ag1.jsonl'), `${JSON.stringify(use('b1', 'toolu_9', 'Read', { file_path: '/w/call.ts' }, { isSidechain: true }))}\n`)
-    const out = join(w.dir, 'bsh1.output')
-    writeFileSync(out, '✓ starts a call\n✓ mute keeps the call\n')
-    w.add(
-      user('u1', 'Check it', typed),
-      use('a1', 'toolu_1', 'Bash', { command: 'bun run test voice', run_in_background: true }),
-      result('u2', 'toolu_1', `Command running in background with ID: bsh1. Output is being written to: ${out}. You will be notified.`, { backgroundTaskId: 'bsh1' }),
-      use('a2', 'toolu_2', 'Agent', { description: 'Review the mute fix', run_in_background: true }),
-      result('u3', 'toolu_2', 'Async agent launched successfully.', { isAsync: true, agentId: 'ag1', description: 'Review the mute fix' }),
-      said('a3', 'msg_r1', { type: 'text', text: 'Both run.' }, 'end_turn'),
-      turnEnd('s1'),
-    )
-    const c = w.chats.chat('T-2/Agent')
-    expect(c.jobs?.map((j) => [j.kind, j.title, j.now, j.more])).toEqual([
-      ['shell', 'Running tests', '✓ mute keeps the call', 'output'],
-      ['agent', 'Review the mute fix', 'Reading call.ts', 'steps'],
-    ])
-    expect(w.chats.activity({ chat: 'T-2/Agent', what: 'job', id: 'bsh1' })).toEqual({ output: '✓ starts a call\n✓ mute keeps the call' })
-    const steps = w.chats.activity({ chat: 'T-2/Agent', what: 'job', id: 'ag1' })
-    expect('steps' in steps && steps.steps.map((s) => s.title)).toEqual(['Read call.ts'])
-    // a push only when something changed
-    expect(w.chats.jobsChanged('T-2/Agent')).toBe(true)
-    expect(w.chats.jobsChanged('T-2/Agent')).toBe(false)
-    appendFileSync(out, '✓ hang up ends the call\n')
-    expect(w.chats.jobsChanged('T-2/Agent')).toBe(true)
-    // its session says nothing runs any more: none, whatever the log missed
-    runs = undefined
-    expect(w.chats.chat('T-2/Agent').jobs).toBeUndefined()
-  })
-})
-
-describe('a long chat log', () => {
-  test('is read a piece at a time: the server answers between pieces, and the chat comes whole', async () => {
-    const w = world('claude', () => 'idle')
-    // about 12 MB: a long-lived coordinator's log
-    const pad = 'x'.repeat(20_000)
-    for (let i = 0; i < 600; i++) w.add(user(`u${i}`, `prompt ${i}`, typed), said(`a${i}`, `msg_${i}`, { type: 'text', text: `reply ${i} ${pad}` }, 'end_turn'))
-    let ticks = 0
-    const tick = setInterval(() => ticks++, 0)
-    const done = new Promise<void>((r) => (w.chats.onRead = () => r()))
-    expect(w.chats.pull('T-1/Agent')).toBe(true)
-    // the first pull read only a piece
-    const first = w.chats.chat('T-1/Agent').messages.length
-    expect(first).toBeGreaterThan(0)
-    expect(first).toBeLessThan(1200)
-    await done
-    clearInterval(tick)
-    expect(ticks).toBeGreaterThan(1)
-    const msgs = w.chats.chat('T-1/Agent').messages
-    expect(msgs).toHaveLength(1200)
-    expect(msgs.at(-1)?.text).toStartWith('reply 599 ')
-    // what it writes next is read as before
-    w.add(user('u600', 'one more', typed))
-    expect(w.chats.pull('T-1/Agent')).toBe(true)
-    expect(w.chats.chat('T-1/Agent').messages.at(-1)?.text).toBe('one more')
-  })
-})

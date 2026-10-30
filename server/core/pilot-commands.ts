@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { one, parseArgs } from '../live/args.ts'
+import { one, parseArgs } from '../common/args.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Grant } from './mailbox.ts'

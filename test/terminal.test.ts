@@ -6,7 +6,6 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { colsOf, fitFont, frame, MAX, MIN, PAD } from '../plugins/terminal/screen.ts'
-import { herdr } from '../server/live/herdr.ts'
 
 describe('the screen', () => {
   test("its width is the pane's; from an older machine (no size), the widest line without its colours", () => {
@@ -32,38 +31,5 @@ describe('the screen', () => {
     // a phone's is below the floor: the screen pans sideways; a wide desktop's is above the cap
     expect(fitFont(390, 138, 0.6)).toBeLessThan(MIN)
     expect(fitFont(1600, 80, 0.6)).toBeGreaterThan(MAX)
-  })
-})
-
-describe("herdr's pane size", () => {
-  const dir = mkdtempSync(join(tmpdir(), 'shep-sock-'))
-  const path = join(dir, 'herdr.sock')
-  const asked: { method: string; params: Record<string, unknown> }[] = []
-  const server = createServer((sock) => {
-    sock.on('data', (d) => {
-      const req = JSON.parse(d.toString().trim())
-      asked.push(req)
-      const panes = [
-        { pane_id: 'w1:p1', rect: { x: 0, y: 0, width: 90, height: 40 } },
-        { pane_id: 'w1:p2', rect: { x: 91, y: 0, width: 47, height: 40 } },
-      ]
-      sock.end(`${JSON.stringify({ id: req.id, result: { type: 'pane_layout', layout: { panes } } })}\n`)
-    })
-  })
-  const listening = new Promise<void>((r) => server.listen(path, r))
-  const before = process.env.HERDR_SOCKET_PATH
-  afterAll(() => {
-    server.close()
-    rmSync(dir, { recursive: true, force: true })
-    if (before === undefined) delete process.env.HERDR_SOCKET_PATH
-    else process.env.HERDR_SOCKET_PATH = before
-  })
-
-  test("is its own rect in its tab's layout, in cells", async () => {
-    await listening
-    process.env.HERDR_SOCKET_PATH = path
-    expect(await herdr.size('w1:p2')).toEqual({ cols: 47, rows: 40 })
-    expect(asked.at(-1)).toMatchObject({ method: 'pane.layout', params: { pane_id: 'w1:p2' } })
-    expect(await herdr.size('w9:p9')).toBeNull()
   })
 })

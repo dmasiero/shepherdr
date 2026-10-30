@@ -5,7 +5,7 @@ import { browserNamespace, browserSession } from './browser-id.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreTerminal } from './protocol.ts'
 import type { BrowserDown, BrowserUp, BrowserNote } from '../../shared/browser.ts'
-import { line } from '../live/chatlines.ts'
+import { line } from '../common/chatlines.ts'
 import type { Action } from '../../shared/types.ts'
 import type { CoreClient } from './client.ts'
 

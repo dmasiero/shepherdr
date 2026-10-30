@@ -1,10 +1,9 @@
 # Tasks
 
-- A task is one agent, started at once in its own git worktree and branch from its chosen base (`work/<n>-<slug>`). herdr makes
-  the worktree (`herdr worktree create`) from the space's own herdr space (its coordinator's), so the task's herdr
-  space nests under it in herdr's sidebar. With no herdr space of the repo open, herdr opens one for it, and Shepherdr closes
-  it again with the last task if you never used it. Your own checkout is never touched. A fresh worktree gets a copy
-  of the ignored files the repo's `.worktreeinclude` names (`.env` and the like); nothing else runs. A task has no
+- A task is one core child agent in its own git worktree and branch from its chosen base (`work/<n>-<slug>`).
+  Shepherdr creates the checkout through core-owned execution; it does not create a terminal-herdr space or show
+  the task in herdr-app. Its outlive-parent lifetime is independent of a coordinator restart. The base checkout is
+  preserved. A task has no
   settings: its brief is all the agent goes by. The coordinator writes the work and your wishes for it ("wait until I
   say go", "skip the review", "ask me before merging"), and Shepherdr ends every brief with its Settings block,
   one plain line per setting that shapes how the agent works, the source it follows: whether it is reviewed and by whom (the reviewer tags each finding critical, major, minor or trivial; the agent fixes
@@ -49,20 +48,16 @@
   a task stays Working, its line saying why and when (`Provider overloaded · retry in 2m`). Only when the fifth try is
   cut off too does it need you (`Provider overloaded, still after 5 tries`); a coordinator says so in its chat, with an
   alert. Errors waiting can't fix (signed out, out of allowance, a model that isn't there) go to you at once. Anything
-  written to the agent starts the count again. Each CLI's log says what cut it off (`server/live/retry.ts` decides).
+  written to the agent starts the count again. Each CLI's log says what cut it off (`server/common/provider-error.ts` decides).
 - When a task's agent can't go on (out of allowance, signed out, its provider still down after the tries), its
-  **backup agent** takes over, once: Settings → Agents → Tasks → Backup (`task.fallback`, Codex unless set, or off).
+  **backup agent** takes over, once: Settings → Agents → Backup (`task.fallback`, Codex unless set, or off).
   It starts in the same worktree and branch, on its CLI's own model, with the brief and a short handover: who it takes
   over from and why, the branch's commits, what lies uncommitted and the chat so far. A card in the task's chat says
-  so. If the backup can't go on either, or isn't installed, the task needs you.
-- Status, coordinators' too, is what the agent reports of itself. Every Claude Code Shepherdr starts gets a settings
-  file of its own (`--settings`, in `~/.shepherdr/hooks/`; your own settings are never touched) whose hooks record
-  each event: a turn starts or ends, what still runs in the background as it ends, a permission prompt (a subagent's
-  too), its question tool, a plan. A turn cut short (Esc, a prompt turned down) runs no hook; its transcript says it
-  ended. herdr's reading of the screen counts only where the agent reports nothing: Codex (its hooks each need
-  trusting in a dialog first, and it writes OSC 7501 itself, which herdr will pass on), pi (it tells only a turn's
-  end), an agent started before this, or a menu up between turns that no hook tells of. One function (`statusFrom` in
-  `server/live/agents.ts`) decides, so taking herdr's OSC 7501 program status once it passes that on is one change.
+  so. Contained Autopilot tasks keep their selected run policy and never switch provider automatically. If the backup can't go on either, or isn't installed, the task needs you.
+- Status comes from native logs/hooks and explicit OSC 7501 reports. Both Claude Code and Codex receive their
+  launch-specific hook configuration; personal settings are not changed. A native ended turn with no recorded
+  background work needs you, but remains a Working task until its workflow changes. Process liveness never means
+  Done. Shepherdr does not infer status from the terminal screen. Missing observations remain unknown.
 - On a repo with a GitHub remote that `gh` is logged in to, each task gets a pull request. The shepherdr-agent skill runs
   `shepherdr pr <id>`: it pushes the branch and opens a draft (its title the task's, its words the agent's summary, the
   brief's gist and a "Generated with" footer), and pushes to it again after new commits. `shepherdr checks <id>` waits

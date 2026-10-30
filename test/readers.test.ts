@@ -3,9 +3,9 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claudeLogPath, findClaudeLog, findCodexLog, findPiLog, piSessionDir } from '../server/live/readers/find.ts'
-import { LogTail, readerFor } from '../server/live/readers/index.ts'
-import type { LogEvent } from '../server/live/readers/types.ts'
+import { claudeLogPath, findClaudeLog, findCodexLog, findPiLog, piSessionDir } from '../server/common/readers/find.ts'
+import { LogTail, readerFor } from '../server/common/readers/index.ts'
+import type { LogEvent } from '../server/common/readers/types.ts'
 
 const parse = (cli: string, objs: object[]) =>
   readerFor(cli)!.parse(

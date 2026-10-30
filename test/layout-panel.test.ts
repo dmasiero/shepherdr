@@ -1,7 +1,7 @@
 // A task's side panel: terminal, files, diff, pull request and browser, in a real browser (layout.ts).
 import { describe, expect, test } from 'bun:test'
 import type { Page } from 'playwright-core'
-import { Browsers, browserEnv } from '../server/live/browser.ts'
+import { Browsers, browserEnv } from '../server/demo/browser.ts'
 import { fakeAgentBrowser } from './fake-agent-browser.ts'
 import { layout, settled, until } from './layout.ts'
 

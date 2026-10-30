@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreSource } from '../server/core/source.ts'
 import { outputFromLine } from '../server/activity.ts'
-import type { LogEvent } from '../server/live/readers/types.ts'
+import type { LogEvent } from '../server/common/readers/types.ts'
 
 test('native activity renders before its reply and reads only a recorded output location through core', async () => {
   const root = mkdtempSync(join(tmpdir(), 'shep-activity-')), source = new CoreSource({ home: join(root, 'app'), port: 17887, session: 'test', socket: '/unused', binary: 'hc' })

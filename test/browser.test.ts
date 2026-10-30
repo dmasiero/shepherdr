@@ -7,9 +7,9 @@ import { join } from 'node:path'
 
 const home = mkdtempSync(join(tmpdir(), 'shep-browser-'))
 process.env.SHEPHERDR_HOME = home
-const { Browsers, browserEnv, profileOf, usedMark, chromesIn, elapsed } = await import('../server/live/browser.ts')
-const { describe: describeEl } = await import('../server/live/pick.ts')
-const { line, parseBrowserNotes } = await import('../server/live/chatlines.ts')
+const { Browsers, browserEnv, profileOf, usedMark, chromesIn, elapsed } = await import('../server/demo/browser.ts')
+const { describe: describeEl } = await import('../server/browser-pick.ts')
+const { line, parseBrowserNotes } = await import('../server/common/chatlines.ts')
 const { toUrl, shortUrl } = await import('../shared/browser.ts')
 const { fit, keyEvent, pinAt, shotRect, toPage } = await import('../plugins/browser/input.ts')
 import { launch } from './chromium.ts'

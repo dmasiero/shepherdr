@@ -1,5 +1,5 @@
 // Shared heartbeat state and prompts, with explicit product storage.
-import { nextRun } from './live/trigger.ts'
+import { nextRun } from './common/trigger.ts'
 /** the checklist a coordinator starts with, by what it does: a space's work; a home space's its machine's too; the
  *  main machine's home space's every machine's overview too */
 export function firstChecklist(role: 'space' | 'home' | 'main') {

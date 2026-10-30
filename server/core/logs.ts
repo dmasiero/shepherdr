@@ -1,6 +1,6 @@
-import { ClaudeReader } from '../live/readers/claude.ts'
-import { CodexReader } from '../live/readers/codex.ts'
-import type { LogEvent, Reader } from '../live/readers/types.ts'
+import { ClaudeReader } from '../common/readers/claude.ts'
+import { CodexReader } from '../common/readers/codex.ts'
+import type { LogEvent, Reader } from '../common/readers/types.ts'
 import type { Message } from '../../shared/types.ts'
 import type { CoreAgents } from './agents.ts'
 import type { CoreStore } from './store.ts'
@@ -57,6 +57,17 @@ export class CoreLogs {
       .sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
   }
   /** An ended native turn is Needs you only after current-log capture, with no recorded background work. */
+  providerTurn(agent: CoreAgent): { complete: boolean; cut?: Extract<LogEvent, { kind: 'error' }> } {
+    const cursor = this.logs.get(agent.chat)
+    if (!cursor || cursor.path !== agent.transcript || !cursor.caughtUp || cursor.loading || cursor.gap || !cursor.ended) return { complete: false }
+    const events = this.store.all<LogEvent>(`event:${agent.chat}`).filter(event => Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000).sort((a, b) => a.at - b.at)
+    const activity = activityOf(events)
+    if (activity.open || activity.jobs.length || !events.some(event => event.kind === 'turn-end')) return { complete: false }
+    const last = events.findLast(event => event.kind === 'error' || event.kind === 'turn-start' || event.kind === 'user')
+    const terminal = this.agents.terminal(agent)
+    if (last?.kind === 'error' && (terminal?.status_ms ?? 0) > last.at && ['working', 'starting'].includes(terminal?.status?.state ?? '')) return { complete: false }
+    return { complete: true, ...(last?.kind === 'error' ? { cut: last } : {}) }
+  }
   waiting(agent: CoreAgent) {
     const cursor = this.logs.get(agent.chat)
     if (agent.role !== 'task') return false

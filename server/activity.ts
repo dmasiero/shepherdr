@@ -1,7 +1,7 @@
 // Pure native activity projection, shared by the legacy and core adapters.
 import { glance, rowsOf } from '../shared/activity.ts'
 import type { Job, Step, TurnActivity } from '../shared/types.ts'
-import type { LogEvent, OutputAt } from './live/readers/types.ts'
+import type { LogEvent, OutputAt } from './common/readers/types.ts'
 
 export type StepRec = Step & { where?: OutputAt }
 

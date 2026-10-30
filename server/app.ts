@@ -145,7 +145,7 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
           return json({ chat: source.chat(key) ?? null, status: source.chatStatus?.(key) })
         }
         if (path === '/api/snapshot') return json(source.snapshot())
-        // which Shepherdr answers: a start from another plugin folder or version stops it (scripts/plugin.ts)
+        // Diagnostic build identity; standalone lifecycle ownership comes from its private run record.
         if (path === '/api/version') return json(running())
         // the updater restarts the server only once it has stopped new calls and none is on; both at once, so no call
         // can start in between. It lifts the stop again while it waits for a call to end.

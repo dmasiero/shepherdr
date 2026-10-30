@@ -79,11 +79,12 @@ not evidence of a working feature.
 | First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; phone sections/order/moves/rename and restart persistence checked; full device/first-run parity pending |
 | Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; native activity rows and recorded read output shown; background child details, large logs and full device parity pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Partial: real dependency validation/capacity delivery; phone Restart preserves To do and unfinished file; explicit contained resume/ordinary relocation; task options; confirmed Stop of replacement and retired-root child; pin/archive/unarchive/stopped-task pause. Clean Close/research Done, regular coordinator Restart, clean Stop/removal and message-driven checkout recreation verified; native ended-turn Needs you and restart notice/PID preservation verified. Held-work Stop/Close/Delete and failure exit codes verified. Active native foreground Pause verified with same live PID/unchanged work; long shell-tool interruption and full parity pending |
+| Provider retries and configured backup agent | server/live/retry.ts; server/live/engine/engine.ts cantGoOn | Implemented: native completed-log failure classifier, durable 1/2/4/8m retries, explicit-message reset, one-shot ordinary backup with retained checkout/handover, capacity and interrupted-start recovery. Two scoped reviews passed after a minor queued-context fix; CI and real native provider-failure/handover acceptance pending. Contained tasks do not auto-switch, matching legacy |
 | Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. Real private GitHub PR creation, exact-head Ready/draft promotion, published-comment native follow-up, conflict/rebase leased push, external merge and dirty-base sync/cleanup verified. Product check-dependent merge remains unverified (configured GitHub check-read 403); full checks/main-red/device parity pending |
-| Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Partial: actual merge and synthetic secret cards answered in phone-width preview; stale permission cards disable correctly; physical lock-screen, plans/multi-choice and complete native permission parity pending |
-| Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; loopback SSH transport checked; external vm-ssa acceptance skipped for missing configured address/host trust; actual external disconnect acceptance and old implementation removal pending |
+| Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Partial: actual merge and synthetic secret cards answered in phone-width preview; stale permission cards disable correctly; native GITH-3 multi-choice and two-step plan approved, followed by clean research Done; physical lock-screen and complete native permission parity pending |
+| Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; loopback SSH transport checked; external vm-ssa acceptance skipped for missing configured address/host trust; external disconnect acceptance unverified; legacy transport/launcher removal implemented and scoped review passed, branch CI pending |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; notes/delete/device parity still pending |
-| Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; CI, env/set/rm and stale-scope acceptance pending |
+| Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; real scoped run/env/ignored-file refusal and removal revocation passed; main-home scope isolation passed; private human CLI scoped set/replace/rm passed; UI Replace and full device acceptance pending |
 | Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Partial: real second-core browser frames, takeover, navigation, fit, markup crop and native BROWSER_NOTES_OK shown; app restart retained takeover. Agent-only open was detected without a viewer and one-minute expiry closed its Chrome. Real SSH and full device parity pending |
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Partial: real contained Claude/Codex runs, child checkpoint/review, phone on/wake/off, contained restart/outlive children, durable keep-workers return/completion and post-report usage limit. Full events/browser/limit/device acceptance pending; contained Autopilot remains Linux-only as in legacy |
@@ -1474,3 +1475,51 @@ GITH-3 had no persisted added news, while its Done news was present and delivere
 Marker: NATIVE_MULTI_CHOICE_PLAN_APPROVAL_RESEARCH_DONE_NO_ADDED_ECHO_OK.
 Automation/Autopilot added-event processing is unchanged. Scoped fresh review had
 no findings, and meaningful no-echo/delivery CI cases were written, not run locally.
+
+
+### Standalone transport removal and provider recovery (2026-10-30)
+
+Removed executable terminal-herdr plugin/LiveSource/supervisor entrypoints, old
+SSH worker/mirror/tunnel/remote API bridge and installed legacy helper templates
+from this rewrite branch. Pure native readers/parsers/Vault and fictional demo
+formatters moved to server/common; unchanged UI remains. The optional demo browser
+is now local-only, with all remote SSH/sharing paths removed. Package start selects
+the standalone core launcher; credentialed agents still select their own encrypted
+mailbox, and credentialless commands never fall back to the old HTTP route.
+Primary installation/development/machine/upgrade docs now describe core, and
+core/cutover.md contains the explicit later backup/relocation/rollback sequence.
+No live source/state/service/mapping/ref was changed. Isolated preview restart
+succeeded; current native helper returned AFTER_LEGACY_REMOVAL_OK. Human scoped secret CLI also passed again.
+
+Cleanup review found an actual missing baseline capability: provider retry and
+configured backup. Implemented server/core/provider-retries.ts from native error
+records only, using the retained primary classifier in common/provider-error.ts.
+Retries wait 1/2/4/8 minutes and use durable duplicate-safe pending sends. Explicit
+messages cancel/reset old observations. Lasting/exhausted failures ask the human
+or switch an ordinary task once to its configured backup, retaining the same branch,
+checkout bytes, brief, commits/status and recent chat. Contained runs never switch
+provider automatically, matching verified legacy's t.pilot exclusion. Backup
+model/effort controls are restored with the original visible labels.
+
+Takeover records its intent before ending the owned process. A capacity hold retains
+its handover until a replacement is confirmed; an interrupted ambiguous takeover
+requires explicit restart. Reviews: provider scope two rounds, one minor capacity/
+context issue fixed, final none; cleanup scope two rounds, one major missing retry
+capability fixed, final none. Tests cover native error fixtures, durable timing/reset,
+identity gates, one-shot/context/queued backup and interrupted/contained refusal.
+Legacy transport-specific tests were removed with their deleted implementations;
+pure reader/activity/vault/frame/health/UI regressions were retained/retargeted and
+core integration suites replace the old runtime tests. Suites/build run on GitHub,
+not this VM. Real provider failure/backoff/automatic native takeover is unverified.
+
+Manual phone check restored Settings → Agents → Backup with Agent/Model/Effort.
+Switched only github-proof's Backup to Off, independently observed that scoped
+snapshot, then used Reset to Codex and verified the override was removed.
+Marker: BACKUP_SCOPED_OFF_AND_RESET_OK; screenshot inspected:
+she301-backup-settings-phone.png (Off state before the reset acknowledgement).
+Main and v2.0 remote refs still equal the verified legacy baseline.
+
+Next explicit baseline audit item: ignored-file `.worktreeinclude` seeding was
+provided by terminal-herdr worktree creation, while the core rewrite currently
+uses Git worktree creation directly. Its ordinary/contained semantics must be
+verified and implemented safely before full worktree parity can be claimed.

@@ -2,9 +2,9 @@ import { activityOf, cutOutput, lineOf, outputFromLine, shown, type JobRec, type
 import type { ActivityAnswer, ActivityAsk, Message } from '../../shared/types.ts'
 import { CoreNativeFile } from './native-file.ts'
 import { CoreChildSteps } from './child-steps.ts'
-import { ClaudeReader } from '../live/readers/claude.ts'
-import { CodexReader } from '../live/readers/codex.ts'
-import type { LogEvent, Reader } from '../live/readers/types.ts'
+import { ClaudeReader } from '../common/readers/claude.ts'
+import { CodexReader } from '../common/readers/codex.ts'
+import type { LogEvent, Reader } from '../common/readers/types.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind } from './model.ts'
 

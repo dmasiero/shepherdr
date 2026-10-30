@@ -1,6 +1,6 @@
 import { findCoreSpace } from './space-names.ts'
 import { Heartbeats, firstChecklist } from '../heartbeat.ts'
-import { timeWords, nextWords, runWords, timeRule } from '../live/trigger.ts'
+import { timeWords, nextWords, runWords, timeRule } from '../common/trigger.ts'
 import { Refusal } from './client.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreAgent, CoreSpace } from './model.ts'

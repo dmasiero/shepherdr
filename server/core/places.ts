@@ -1,6 +1,6 @@
 import { asEmoji, NAME_MAX, nameProblem, type Action, type Machine, type Place } from '../../shared/types.ts'
 import { deleteSection, moveSpace, newSection, PINNED, renameSection, sectionProblem, setOrder, sortPlaces, type PlaceOrder, type SectionDefs } from '../../shared/order.ts'
-import { one, parseArgs } from '../live/args.ts'
+import { one, parseArgs } from '../common/args.ts'
 import { Refusal } from './client.ts'
 import { findCoreSpace } from './space-names.ts'
 import { CoreTaskProcesses } from './task-processes.ts'

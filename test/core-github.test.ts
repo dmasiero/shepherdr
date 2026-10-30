@@ -6,7 +6,7 @@ import { CoreStore } from '../server/core/store.ts'
 import { CoreGitHub, mainVerdict } from '../server/core/github.ts'
 import type { CoreSource } from '../server/core/source.ts'
 import type { CoreSpace } from '../server/core/model.ts'
-import type { Happened } from '../server/live/trigger.ts'
+import type { Happened } from '../server/common/trigger.ts'
 const sha = 'a'.repeat(40), later = 'b'.repeat(40)
 const row = (conclusion: string | null = 'failure', status = 'completed', headSha = sha) => ({ headSha, status, conclusion, url: 'https://github.test/o/r/actions/runs/1', workflowName: 'Check' })
 

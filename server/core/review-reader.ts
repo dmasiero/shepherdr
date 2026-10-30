@@ -1,4 +1,4 @@
-import type { LogEvent, Reader } from '../live/readers/types.ts'
+import type { LogEvent, Reader } from '../common/readers/types.ts'
 
 /** Documented codex exec --json events, with private capture timestamps. No terminal parsing. */
 export class CoreReviewReader implements Reader {

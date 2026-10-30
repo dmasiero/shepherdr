@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { timeWords, nextWords, eventWords, eventRules } from '../live/trigger.ts'
-import { one, parseArgs, type Parsed } from '../live/args.ts'
+import { timeWords, nextWords, eventWords, eventRules } from '../common/trigger.ts'
+import { one, parseArgs, type Parsed } from '../common/args.ts'
 import { askText, quickChoices, clip, TITLE_MAX, BODY_MAX } from '../../shared/alerts.ts'
 import { Refusal } from './client.ts'
 import { findCoreSpace } from './space-names.ts'
