@@ -37,7 +37,7 @@ test('phone send and direct launch cannot restart a stopped task during deletion
   source.store.set('agent', task.chat, { chat: task.chat, space: space.id, machine: space.machine, role: 'task', kind: 'claude', launch: 'old', grant: 'old', hook: '/unused', started: 1, state: 'idle' })
   source.core.current.connected = true
   const ended = { address: 't1', state: 'finished', pid: 10, created_ms: 1 } as import('../server/core/protocol.ts').CoreTerminal
-  source.core.current.terminals.set('t1', ended)
+  source.core.current.terminals = new Map([['t1', ended]])
   source.agents.terminal = (() => ended) as typeof source.agents.terminal
   source.machineConnected = () => true
 
