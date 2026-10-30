@@ -426,8 +426,7 @@ export class CoreTasks {
     switch (action.type) {
       case 'pin': task.pinned = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
       case 'archive':
-        if (action.on) this.source.cancelQueued?.(task.chat)
-        if (action.on && terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
+        if (action.on) await this.stopAgents(task)
         if (action.on) await this.source.browsers?.close(task.id, task.workflow === 'merged' || task.workflow === 'closed')
         task.archived = action.on ? Date.now() : undefined
         if (action.on) delete task.pinned; else task.unarchived = Date.now()
@@ -613,6 +612,11 @@ export class CoreTasks {
     if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in the space')
     return this.get(short[0]?.id || rawId || '')
   }
+  list(grant: Grant, archived = false, selected?: string) {
+    const caller = this.source.agents.get(grant.chat)
+    if (selected && selected !== caller?.space && selected !== (caller && this.source.space(caller.space))?.name) throw new Refusal('This session can list only its own space')
+    return this.all().filter(task => task.place === caller?.space && task.machine === caller?.machine && !!task.archived === archived)
+  }
   async cli(grant: Grant, args: string[]): Promise<{ out: string; code: number }> {
     const parsed = parseArgs(args), [verb, sub, ...rest] = parsed.words
     const text = (value: unknown) => ({ out: typeof value === 'string' ? value + '\n' : JSON.stringify(value, null, 2) + '\n', code: 0 })
@@ -624,16 +628,25 @@ export class CoreTasks {
         after: one(parsed, 'after')?.split(',').filter(Boolean), later: parsed.flags.has('later'), kind, model: one(parsed, 'model'), effort: one(parsed, 'effort'), reviewer, reviewerModel: one(parsed, 'reviewer-model'), reviewerEffort: one(parsed, 'reviewer-effort'), settings })
       return text(`${task.id}: ${task.name}\nBranch: ${task.branch}\nWorktree: ${task.folder}\nCore terminal: ${this.source.agents.get(task.chat)?.terminal || 'starting'}`)
     }
-    if (verb === 'task' && sub === 'list') return text(this.all().filter(task => this.source.agents.get(grant.chat)?.space === task.place).map(task => this.view(task)))
+    if (verb === 'task' && (sub === 'list' || !sub)) {
+      return text(this.list(grant, parsed.flags.has('archived'), one(parsed, 'space')).map(task => this.view(task)))
+    }
     const rawId = verb === 'task' ? rest[0] : sub
     const task = this.resolve(grant, rawId)
     const id = task?.id ?? rawId
     if (!task) throw new Refusal('No such task or unsupported task command')
     this.assert(grant, task)
+    if (verb === 'task' && ['close', 'delete', 'archive', 'unarchive', 'pause', 'pin', 'unpin'].includes(sub)) {
+      if (this.source.agents.get(grant.chat)?.role !== 'coordinator') throw new Refusal('Only a coordinator changes this task control, when the human asks')
+      if (sub === 'close') return text(await this.close(task, parsed.flags.has('force')))
+      if (sub === 'delete') return text(await this.remove(task, parsed.flags.has('force')))
+      const action = sub === 'archive' || sub === 'unarchive' ? { type: 'archive' as const, on: sub === 'archive' }
+        : sub === 'pin' || sub === 'unpin' ? { type: 'pin' as const, on: sub === 'pin' } : { type: 'pause' as const }
+      return text(await this.act({ ...action, chat: task.chat }))
+    }
     if (verb === 'task' && sub === 'show') return text(this.view(task))
     if (verb === 'task' && sub === 'start') return text(this.view(await this.start(grant, id, rest.slice(1).join(' ') || undefined)))
     if (verb === 'task' && sub === 'stop') return text(this.view(await this.stop(grant, id)))
-    if (verb === 'task' && sub === 'close') return text(await this.close(task, parsed.flags.has('force')))
     if (verb === 'status') {
       const left = one(parsed, 'left'), match = left?.match(/^(?:(\d+)h)?(?:(\d+)m)?$/)
       if (left && (!match || !match[1] && !match[2])) throw new Refusal('Use a time such as 5m or 1h20m')

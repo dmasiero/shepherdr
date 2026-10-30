@@ -187,3 +187,19 @@ test('an unsupported regular-to-contained restart is refused before stopping the
     expect(f.source.tasks.get(f.task.id)?.pilot).toBeUndefined()
   } finally { f.close() }
 })
+
+test('contained coordinator controls only owned tasks and archived lists remain scoped', async () => {
+  const f = fixture()
+  try {
+    f.source.store.set('task', 'EX-2', { ...f.task, id: 'EX-2', localId: 'EX-2', chat: 'EX-2/Agent', pilot: undefined })
+    await f.cli('task', 'pin', 'EX-1')
+    expect(f.source.tasks.get('EX-1')?.pinned).toBeNumber()
+    await expect(f.cli('task', 'pin', 'EX-2')).rejects.toThrow('does not own')
+    f.source.store.set('task', f.task.id, { ...f.source.tasks.get(f.task.id), archived: Date.now() })
+    expect((await f.cli('task', 'list')).out).not.toContain('EX-1')
+    expect((await f.cli('task', 'list', '--archived')).out).toContain('EX-1')
+    expect((await f.cli('task', 'list', '--archived')).out).not.toContain('EX-2')
+    await f.cli('task', 'unarchive', 'EX-1')
+    expect(f.source.tasks.get('EX-1')?.archived).toBeUndefined()
+  } finally { f.close() }
+})

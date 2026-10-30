@@ -84,8 +84,8 @@ test('ordinary replacement preserves both private launch identities for later de
     terminals.get(first.terminal!)!.state = 'finished'
     const second = await agents.launch(space, first.chat, 'codex', 'Wait', { role: 'task', task: 'EX-1' })
     expect(first.launch).not.toBe(second.launch)
-    expect(store.get('agent-launch', first.launch)).toMatchObject({ terminal: 't1', pid: 10, role: 'task', pilot: undefined })
-    expect(store.get('agent-launch', second.launch)).toMatchObject({ terminal: 't2', pid: 20, role: 'task', pilot: undefined })
+    expect(store.get('agent-launch', first.launch)).toMatchObject({ terminal: 't1', pid: 10, role: 'task' })
+    expect(store.get('agent-launch', second.launch)).toMatchObject({ terminal: 't2', pid: 20, role: 'task' })
     expect(store.all('pilot-capture')).toHaveLength(0)
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
 })

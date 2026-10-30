@@ -278,3 +278,24 @@ test('Done auto-archive respects native work, scoped off and unarchive delay wit
     await expect(tasks.cli(grant, ['task', 'show', task.id])).resolves.toHaveProperty('out')
   })
 })
+
+test('task controls require a coordinator and lists separate archived tasks in its own machine and space', async () => {
+  await withTask(async ({ tasks, task, grant }) => {
+    const source = (tasks as unknown as { source: CoreSource }).source
+    for (const command of ['pin', 'unpin', 'pause', 'archive', 'unarchive', 'delete', 'close']) {
+      await expect(tasks.cli(grant, ['task', command, task.id])).rejects.toThrow('Only a coordinator')
+    }
+    source.agents.get = (() => ({ chat: grant.chat, launch: grant.session, grant: grant.id, role: 'coordinator', machine: task.machine, space: task.place, kind: 'codex', hook: '/unused', started: 1, state: 'idle' })) as typeof source.agents.get
+    source.store.set('task', 'OTHER-1', { ...task, id: 'OTHER-1', machine: 'other' })
+    source.store.set('task', 'OTHER-2', { ...task, id: 'OTHER-2', place: 'other' })
+    expect(tasks.list(grant).map(t => t.id)).toEqual([task.id])
+    await tasks.cli(grant, ['task', 'pin', task.id]); expect(tasks.get(task.id)?.pinned).toBeNumber()
+    await tasks.cli(grant, ['task', 'archive', task.id])
+    expect(tasks.get(task.id)?.pinned).toBeUndefined()
+    expect(tasks.list(grant)).toEqual([])
+    expect(tasks.list(grant, true).map(t => t.id)).toEqual([task.id])
+    await tasks.cli(grant, ['task', 'unarchive', task.id]); expect(tasks.list(grant).map(t => t.id)).toEqual([task.id])
+    await tasks.cli(grant, ['task', 'pause', task.id]); expect(tasks.get(task.id)?.workflow).toBe('todo')
+    await tasks.cli(grant, ['task', 'unpin', task.id]); expect(tasks.get(task.id)?.pinned).toBeUndefined()
+  })
+})

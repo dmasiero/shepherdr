@@ -36,7 +36,11 @@ test('phone send and direct launch cannot restart a stopped task during deletion
   source.store.set('space', space.id, space); source.store.set('task', task.id, task)
   source.store.set('agent', task.chat, { chat: task.chat, space: space.id, machine: space.machine, role: 'task', kind: 'claude', launch: 'old', grant: 'old', hook: '/unused', started: 1, state: 'idle' })
   source.core.current.connected = true
-  source.agents.terminal = (() => ({ state: 'finished' })) as unknown as typeof source.agents.terminal
+  const ended = { address: 't1', state: 'finished', pid: 10, created_ms: 1 } as import('../server/core/protocol.ts').CoreTerminal
+  source.core.current.terminals.set('t1', ended)
+  source.agents.terminal = (() => ended) as typeof source.agents.terminal
+  source.machineConnected = () => true
+
   let launches = 0
   source.agents.launch = async () => { launches++; throw Error('Should not launch during deletion') }
   let release!: () => void, entered!: () => void
