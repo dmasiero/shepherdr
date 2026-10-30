@@ -36,10 +36,12 @@ export class CorePilotMail {
         const terminal = current && this.source.agents.terminal(current)
         if (this.source.quiescing || current?.launch !== agent.launch || current.grant !== grant.id || current.pilot?.run !== runId || terminal?.state !== 'live' || current.pid && current.pid !== terminal.pid) throw Error('This contained launch was replaced, stopped or the app is stopping')
         if (run?.actors.some(saved => saved.chat === actor.chat && saved.launch === actor.launch && saved.role === actor.role && saved.task === actor.task)) break
-        if (!run || !['starting', 'on', 'workers'].includes(run.state) || agent.state !== 'starting' || Date.now() >= deadline) throw Error('This contained launch has no confirmed private actor binding')
+        if (!run || !['starting', 'on', 'workers'].includes(run.state) || !current.pilot?.pending || Date.now() >= deadline) throw Error('This contained launch has no confirmed private actor binding')
         await Bun.sleep(50)
       }
       this.policy.actor(runId, actor)
+      const current = this.source.agents.get(agent.chat)!
+      if (current.pilot?.pending) { current.pilot.pending = false; this.source.store.set('agent', current.chat, current) }
       return {}
     }
     this.policy.actor(runId, actor)

@@ -14,7 +14,7 @@ function fixture() {
   source.store.set('space', 'space', { id: 'space', name: 'Example', machine: 'machine', folder: '/unused', prefix: 'EX', mode: 'regular', added: 1 })
   const grant = source.mailbox.issue('space', 'launch', 'machine', ['pilot'])
   const run = source.pilots.policy.begin('space', 'machine', { harness: { kind: 'claude' }, reviewer: { kind: 'codex' }, hosts: [], secrets: [], approvals: ['merge'], parallel: 1, traffic: 100 })
-  const agent: CoreAgent = { chat: 'space', space: 'space', machine: 'machine', role: 'coordinator', kind: 'claude', launch: 'launch', grant: grant.id, hook: '/unused', state: 'starting', started: Date.now(), pid: 10, pilot: { run: run.id, home: '/home/inside', captures: '/private/captures' } }
+  const agent: CoreAgent = { chat: 'space', space: 'space', machine: 'machine', role: 'coordinator', kind: 'claude', launch: 'launch', grant: grant.id, hook: '/unused', state: 'starting', started: Date.now(), pid: 10, pilot: { run: run.id, home: '/home/inside', captures: '/private/captures', pending: true } }
   source.store.set('agent', agent.chat, agent)
   const terminal: CoreTerminal = { address: 't1', state: 'live', pid: 10, labels: {}, argv: [], cwd: '/unused', created_ms: 1, cols: 80, rows: 24 }
   source.agents.terminal = () => terminal
@@ -48,6 +48,21 @@ test('contained traffic and hooks use the private actor and mapped capture tree'
     await expect(f.mail({ op: 'traffic', bytes: 61 })).rejects.toThrow('HTTPS allowance')
     expect(f.source.pilots.policy.get(f.run.id)).toMatchObject({ state: 'failed', traffic: 40 })
     await expect(f.mail({ op: 'hook', input: { hook_event_name: 'Stop' } })).rejects.toThrow('HTTPS allowance')
+  } finally { f.close() }
+})
+
+test('a headless reviewer marked working can still wait for its first private binding', async () => {
+  const f = fixture()
+  try {
+    f.activate()
+    const grant = f.source.mailbox.issue('EX-1/Reviewer-1', 'review-launch', 'machine', ['pilot'])
+    const agent: CoreAgent = { ...f.agent, chat: grant.chat, grant: grant.id, launch: grant.session, role: 'reviewer', state: 'working', transcriptFormat: 'codex-exec' }
+    f.source.store.set('task', 'EX-1', { id: 'EX-1', chat: 'EX-1/Agent', place: 'space', machine: 'machine' })
+    f.source.store.set('agent', agent.chat, agent)
+    f.source.pilots.policy.claim(f.run.id, 'EX-1', 0)
+    const lease = f.mail({ op: 'lease' }, randomUUID(), grant, agent)
+    f.source.pilots.policy.bind(f.run.id, { chat: agent.chat, launch: agent.launch, role: 'reviewer', task: 'EX-1' }); await lease
+    expect(f.source.agents.get(agent.chat)?.pilot?.pending).toBe(false)
   } finally { f.close() }
 })
 

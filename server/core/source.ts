@@ -453,7 +453,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (!agent || agent.launch !== grant.session || agent.grant !== grant.id || terminal?.state !== 'live' || agent.pid && terminal.pid !== agent.pid) throw new Error('This session is no longer active')
     if (request.action === 'pilot') return this.pilots.mail(agent, grant, request, requestId)
     // Contained product commands stay fail-closed until their ownership/Git brokers are connected.
-    // No current launch creates pilot metadata or grants this action; Autopilot controls remain unoffered.
+    // No product UI or scheduler invokes the internal contained launch path yet; controls remain unoffered.
     if (agent.pilot) throw new Error('Contained product commands are not connected yet')
     if (request.action === 'cli') {
       const input = request.args as { args?: unknown }

@@ -34,7 +34,7 @@ export interface CoreAgent {
   state: 'starting' | 'idle' | 'working' | 'blocked'
   permission?: string
   /** App-private contained launch metadata. Labels and request bodies never establish this ownership. */
-  pilot?: { run: string; home: string; captures: string }
+  pilot?: { run: string; home: string; captures: string; pending?: boolean }
 }
 export interface AgentHook {
   id: string

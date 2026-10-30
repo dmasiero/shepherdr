@@ -901,3 +901,29 @@ cross-grant cancellation, oversized input, finished processes and unknown connec
 Dispatch commit fc76120f passed layout but failed core CI (40993414386): new shutdown reconciliation reached an old
 unread fixture's permission rows that omitted their required question. All dispatch regressions passed. The fixture
 now includes actual permission-card data; no production permission validation was weakened. A passing rerun is pending.
+The fixture correction cf894c93 passed both branch jobs (40993631583).
+
+CoreAgents now has an internal contained launch path. Preparation and native execution run through documented core
+machine.exec/terminal.run, including immutable remote helpers; the core credential stays in an outside private
+launch file. Native settings/hooks/instructions point inside the read-only control tree. Codex never receives the
+outside shell environment policy inside its namespace. Native browser provisioning and session resume are disabled
+for these fresh contained starts. Readonly Claude uses `--print`/plan mode and keeps native JSONL/hooks as its source;
+Codex reviewers keep the existing native-JSON stdout capture outside the contained wrapper.
+
+Launch review round 1 found a major race: headless Codex becomes Working before its actor is bound. A separate
+private `pilot.pending` flag now permits the initial lease to wait without using native status as launch readiness;
+the confirmed lease clears it. A minor definite pre-submission cleanup gap is fixed too: revoke the new grant,
+restore the earlier record and discard only the new preparation before terminal.run has been submitted. After an
+ambiguous submitted start, retain its mounted state and private record for authoritative reconciliation. Coverage
+checks exact wrapper/native argv, excluded credentials, readonly Claude routing, failed filesystem setup cleanup,
+record restoration, headless binding and uncertain core starts. Rounds 2 and 3 found no must-fix findings.
+
+Two actual, harmless, one-shot readonly coordinator transport probes created separate temporary app homes and
+scratch projects against the existing isolated core. They used real CoreAgents preparation, core-owned wrappers,
+bubblewrap, authenticated encrypted mailbox leases/traffic, and native captured logs (no fake accounting callbacks).
+Codex terminal `t1g` returned `CORE_CONTAINED_CODEX_OK`, exit 0, 943,810 accounted encrypted bytes and pending=false.
+Claude terminal `t1h` returned `CORE_CONTAINED_CLAUDE_OK`, exit 0, 583,033 bytes and pending=false, exercising the real
+inside hooks and capture path mapping. Their private app/login copies and scratch projects were removed after
+confirmed exit. No live installation, other agent, service or Tailscale mapping was changed. This proves the internal
+contained launch/observation route, not user-facing Autopilot controls, managed tasks, hard-limit exhaustion, remote
+SSH or full parity. UI/scheduler callers and owned product/Git commands remain deliberately disconnected.
