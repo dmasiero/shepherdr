@@ -245,7 +245,8 @@ export class CoreBrowsers {
       await this.send(hub, { type: 'close', forget }, 45_000)
       this.source.store.delete('browser-relay', task)
       this.error(hub, 'The browser closed with the task.', true)
-      hub.stream.close(); hub.stream = undefined
+      // The acknowledged relay may close its attach before the command promise resumes.
+      hub.stream?.close(); hub.stream = undefined
       for (const client of hub.clients) client.close()
       this.hubs.delete(task)
     } finally { hub.stopping = false }

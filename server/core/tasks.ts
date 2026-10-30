@@ -7,6 +7,7 @@ import { CorePilotRepositories } from './pilot-repositories.ts'
 import { CoreGit } from './git.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
+import type { CorePilotRun } from './pilot-policy.ts'
 import type { Grant } from './mailbox.ts'
 import { one, parseArgs, summaryOpts } from '../live/args.ts'
 import type { LogEvent } from '../live/readers/types.ts'
@@ -149,22 +150,7 @@ export class CoreTasks {
       if (!this.source.machineConnected(task.machine)) throw new Refusal('Wait for the task’s machine to reconnect')
       const run = caller.pilot && this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
       if (run && (run.state !== 'on' || run.place !== task.place || run.machine !== task.machine)) throw new Refusal('This run cannot start that task')
-      const changingProfile = task.pilot !== (run ? run.id : undefined)
-      if (changingProfile) {
-        if (task.pilot && this.source.pilots.policy.get(task.pilot)?.state !== 'stopped') throw new Refusal('Stop and finish cleaning up the previous Autopilot run first')
-        // Include retired launches: replacing an agent record is never proof its process ended.
-        const records = [...this.source.agents.all(), ...this.source.store.all<import('./model.ts').CoreAgent>('pilot-capture')]
-          .filter(agent => agent.chat === task.chat || agent.chat === task.reviewChat || agent.chat.startsWith(`${task.id}/Reviewer`))
-        if (records.some(agent => this.source.agents.terminal(agent)?.state !== 'finished')) throw new Refusal('Previous task and reviewer exits must be confirmed before changing its access profile')
-        if (run && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
-        if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && other.workflow === 'working').length)
-        const harness = run ? run.config.harness : this.source.settings.launch('task', task.place)
-        const reviewer = run ? run.config.reviewer : this.source.settings.agent('reviewer', task.place)
-        task.pilot = run ? run.id : undefined
-        task.kind = harness.kind; task.model = harness.model; task.effort = harness.effort
-        task.review.kind = reviewer.kind; task.reviewerModel = reviewer.model; task.reviewerEffort = reviewer.effort
-        if (run?.config.approvals.includes('merge')) task.mergePolicy = 'ask'
-      }
+      this.profile(task, run || undefined)
       const prior = this.source.agents.get(task.chat)
       if (prior && !this.source.agents.terminal(prior)) throw new Refusal('Previous task start is unconfirmed; reconnect before starting it again')
       task.after = taskDependencies(this.all(), task, task.after ?? [], machine => this.source.machineName(machine))
@@ -180,6 +166,39 @@ export class CoreTasks {
       } else await this.launchNow(task, task.workflow === 'working' ? message : undefined)
       return this.get(id)!
     })
+  }
+  private profile(task: CoreTask, run?: CorePilotRun) {
+    if (task.pilot !== run?.id) {
+      if (task.pilot && this.source.pilots.policy.get(task.pilot)?.state !== 'stopped') throw new Refusal('Stop and finish cleaning up the previous Autopilot run first')
+      // Include retired launches: replacing an agent record is never proof its process ended.
+      const records = [...this.source.agents.all(), ...this.source.store.all<import('./model.ts').CoreAgent>('pilot-capture')]
+        .filter(agent => agent.chat === task.chat || agent.chat === task.reviewChat || agent.chat.startsWith(`${task.id}/Reviewer`))
+      if (records.some(agent => this.source.agents.terminal(agent)?.state !== 'finished')) throw new Refusal('Previous task and reviewer exits must be confirmed before changing its access profile')
+      if (run && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
+      if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && other.workflow === 'working').length)
+      const harness = run ? run.config.harness : this.source.settings.launch('task', task.place)
+      const reviewer = run ? run.config.reviewer : this.source.settings.agent('reviewer', task.place)
+      task.pilot = run ? run.id : undefined
+      task.kind = harness.kind; task.model = harness.model; task.effort = harness.effort
+      task.review.kind = reviewer.kind; task.reviewerModel = reviewer.model; task.reviewerEffort = reviewer.effort
+      if (run?.config.approvals.includes('merge')) task.mergePolicy = 'ask'
+      delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion
+    }
+  }
+  private async finishForRestart(agent: import('./model.ts').CoreAgent) {
+    const terminal = this.source.agents.terminal(agent)
+    if (!this.source.machineConnected(agent.machine) || !terminal) throw new Refusal('Reconnect before restarting; the old task process is unconfirmed')
+    if (terminal.state === 'finished') return
+    if (agent.pid !== undefined && agent.pid !== terminal.pid) throw new Refusal('Task process identity changed; restart was refused')
+    this.source.mailbox.revoke(agent.chat)
+    this.source.denyPermissions(agent, 'Task restarted; ask again in the new session')
+    await this.source.core.call('terminal.kill', { terminal: terminal.address })
+    const deadline = Date.now() + 15000
+    while (Date.now() < deadline && this.source.machineConnected(agent.machine)) {
+      if (this.source.agents.terminal(agent)?.state === 'finished') return
+      await Bun.sleep(100)
+    }
+    throw new Refusal('Old task cleanup is unconfirmed; retry after it finishes or reconnects')
   }
   async deliver(id: string, chat: string, message: string, internal = false) {
     return this.change(id, async () => {
@@ -220,7 +239,8 @@ export class CoreTasks {
       parent = await this.source.agents.launch(space, space.id, pick.kind, '', pick)
     }
     const wait = task.workflow === 'queued' ? `This task is queued after ${task.after?.join(', ')}. Read the brief, then wait for <go>. Do not start implementation yet.`
-      : task.workflow === 'todo' ? 'Read the brief, then wait for the human’s go. Do not start implementation yet.' : ''
+      : task.workflow === 'todo' ? 'Read the brief, then wait for the human’s go. Do not start implementation yet.'
+      : task.workflow === 'ready' ? 'This task is already Ready. Preserve the work and wait for the human. Do not begin implementation or merge.' : ''
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
     const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. ${pilot ? 'Your Git metadata is read-only: use shepherdr checkpoint MESSAGE to commit, and shepherdr review TASK for a fresh managed reviewer. Use the product broker for managed agents and messages; no core socket or outside helper is available.' : 'Use hc for child agents, messages and waits.'} Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
     const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${message ? `\n<go>${message}</go>` : ''}`
@@ -400,12 +420,17 @@ export class CoreTasks {
         clis: this.source.settings.clis(task.place) } }
       case 'restart':
         if (action.kind && action.kind !== 'claude' && action.kind !== 'codex') throw new Refusal('Choose Claude Code or Codex')
-        if (terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
+        const current = this.source.pilots.policy.current(task.place)
+        const owned = task.pilot && this.source.pilots.policy.get(task.pilot)
+        const profile = owned && ['on', 'workers'].includes(owned.state) ? this.source.pilots.policy.live(owned.id) : current?.state === 'on' ? this.source.pilots.policy.live(current.id) : undefined
+        if (profile && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
+        if (agent) await this.finishForRestart(agent)
+        this.profile(task, profile)
         await this.source.browsers?.close(task.id)
         task.kind = action.kind as AgentKind || task.kind; task.model = action.model || undefined; task.effort = action.effort || undefined
         if (action.save) this.source.settings.saveAgent('task', task.place, { kind: task.kind, model: task.model, effort: task.effort })
         delete task.startError; this.save(task)
-        await this.launchNow(task, 'Continue your agreed task. Preserve existing work.', task.model, task.effort)
+        await this.launchNow(task, task.workflow === 'working' ? 'Continue your agreed task. Preserve existing work.' : undefined, task.model, task.effort)
         return { ok: true }
       case 'close': return this.closeNow(task, !!action.force)
       case 'delete': return this.removeNow(task, !!action.force)

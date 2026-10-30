@@ -133,3 +133,57 @@ test('adoption refuses retained, disconnected and unconfirmed retired workers be
     expect(f.source.tasks.get(f.task.id)?.pilot).toBe(old.id)
   } finally { f.close() }
 })
+
+test('human task restart waits for its old PID and replaces a stopped contained profile with a fresh regular session', async () => {
+  const f = fixture()
+  try {
+    f.source.store.set('space', 'space', { id: 'space', name: 'project', machine: 'machine', folder: '/repo', base: 'main', prefix: 'EX', mode: 'regular', added: 1 })
+    f.source.pilots.policy.stop(f.run.id); f.source.pilots.policy.stopped(f.run.id)
+    f.source.store.set('task', f.task.id, { ...f.task, workflow: 'todo' })
+    const worker: CoreAgent = { ...f.agent, chat: f.task.chat, role: 'task', launch: 'old-worker', terminal: 't1', pid: 42 }
+    f.source.store.set('agent', worker.chat, worker); f.source.store.set('pilot-capture', worker.launch, worker)
+    f.source.store.set('agent', f.agent.chat, { ...f.agent, pilot: undefined, launch: 'regular-coordinator' })
+    let state = 'live', launches = 0
+    f.source.machineConnected = () => true; f.source.health.room = () => undefined
+    f.source.agents.terminal = agent => agent.chat === worker.chat ? { address: 't1', pid: 42, state } as ReturnType<typeof f.source.agents.terminal> : { address: 't0', state: 'live', pid: 1 } as ReturnType<typeof f.source.agents.terminal>
+    f.source.core.call = async () => { setTimeout(() => { state = 'finished' }, 30); return {} as never }
+    f.source.agents.launch = async (_space, chat, kind, _prompt, options) => {
+      expect(_prompt).toContain('wait for the human’s go'); expect(_prompt).not.toContain('<go>')
+      expect(state).toBe('finished'); expect(options?.pilot).toBeUndefined(); expect(options?.resume).toBe(false)
+      launches++; const fresh: CoreAgent = { ...worker, chat, kind, pilot: undefined, launch: 'new-regular' }; f.source.store.set('agent', chat, fresh); return fresh
+    }
+    await f.source.tasks.act({ type: 'restart', chat: f.task.chat, kind: 'claude' })
+    expect(launches).toBe(1)
+    expect(f.source.tasks.get(f.task.id)?.pilot).toBeUndefined()
+    expect(f.source.tasks.get(f.task.id)?.folder).toBe(f.task.folder)
+  } finally { f.close() }
+})
+
+test('task restart refuses a disconnected or changed process without launching a replacement', async () => {
+  const f = fixture()
+  try {
+    const worker: CoreAgent = { ...f.agent, chat: f.task.chat, role: 'task', pid: 42 }
+    f.source.store.set('agent', worker.chat, worker)
+    f.source.machineConnected = () => false
+    let launches = 0; f.source.agents.launch = async () => { launches++; throw Error('Unexpected launch') }
+    await expect(f.source.tasks.act({ type: 'restart', chat: worker.chat })).rejects.toThrow('unconfirmed')
+    f.source.machineConnected = () => true
+    f.source.agents.terminal = () => ({ address: 't1', state: 'live', pid: 43 }) as ReturnType<typeof f.source.agents.terminal>
+    await expect(f.source.tasks.act({ type: 'restart', chat: worker.chat })).rejects.toThrow('identity changed')
+    expect(launches).toBe(0)
+  } finally { f.close() }
+})
+
+test('an unsupported regular-to-contained restart is refused before stopping the healthy old worker', async () => {
+  const f = fixture()
+  try {
+    f.source.store.set('task', f.task.id, { ...f.task, pilot: undefined })
+    f.source.store.set('agent', f.task.chat, { ...f.agent, chat: f.task.chat, role: 'task', pilot: undefined, pid: 42 })
+    f.source.agents.terminal = () => ({ address: 't1', state: 'live', pid: 42 }) as ReturnType<typeof f.source.agents.terminal>
+    f.source.machineConnected = () => true
+    let kills = 0; f.source.core.call = async () => { kills++; return {} as never }
+    await expect(f.source.tasks.act({ type: 'restart', chat: f.task.chat })).rejects.toThrow('worktree moved')
+    expect(kills).toBe(0)
+    expect(f.source.tasks.get(f.task.id)?.pilot).toBeUndefined()
+  } finally { f.close() }
+})

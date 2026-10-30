@@ -38,7 +38,7 @@ test('browser controls use only the owning core child, await cleanup and never r
       const command = browserOpen(key(), 'up', Buffer.from(bytes).toString().trim()) as { id: string; input: typeof inputs[number] }
       inputs.push(command.input)
       const ack = () => emit({ type: 'ack', id: command.id, ok: true })
-      if (command.input.type === 'close') finishClose = ack
+      if (command.input.type === 'close') finishClose = () => { ack(); stream.close({ reason: 'exited' }) }
       else ack()
       if (command.input.type === 'watch') emit({ type: 'down', message: { type: 'state', driver: 'agent', url: 'about:blank', title: '', connected: true, viewport: { w: 1280, h: 720 } } })
     }, resize() {}, close() { stream.close({ reason: 'disconnected' }) } }
