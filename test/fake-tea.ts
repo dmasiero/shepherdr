@@ -33,6 +33,8 @@ export interface FakeGitea {
   refused?: boolean
   /** Gitea deletes a pull request's branch once it merges it */
   deleteBranches?: boolean
+  /** pull requests from a fork of the repo (repo_id 2), by number */
+  forked?: number[]
   prs: FakeGiteaPr[]
   /** the commit statuses on any pull request's head, as Gitea lists them */
   statuses?: { context: string; status: string; target_url?: string }[]
@@ -137,7 +139,7 @@ if (import.meta.main) {
       } catch {
         mergeable = false
       }
-    return { number: p.number, html_url: `${st.url}/${st.repo}/pulls/${p.number}`, state: p.state, merged: !!p.merged, draft: wip(p.title), title: p.title, body: p.body, mergeable, merge_commit_sha: p.mergeCommit ?? null, head: { ref, label: p.head, sha: at }, base: { ref: p.base } }
+    return { number: p.number, html_url: `${st.url}/${st.repo}/pulls/${p.number}`, state: p.state, merged: !!p.merged, draft: wip(p.title), title: p.title, body: p.body, mergeable, merge_commit_sha: p.mergeCommit ?? null, head: { ref, label: p.head, sha: at, repo_id: st.forked?.includes(p.number) ? 2 : 1 }, base: { ref: p.base, repo_id: 1 } }
   }
   const pr = (n: string) => st.prs.find((p) => p.number === Number(n))
   let m: RegExpMatchArray | null
@@ -151,7 +153,7 @@ if (import.meta.main) {
   }
   if (path === `${repo}/pulls` && method === 'POST') {
     if (!headOf(body!.head)) answer(422, { message: `branch ${body!.head} does not exist` })
-    if (st.prs.some((p) => p.state === 'open' && p.head === body!.head && p.base === body!.base)) answer(409, { message: 'pull request already exists for these targets' })
+    if (st.prs.some((p) => p.state === 'open' && p.head === body!.head && p.base === body!.base && !st.forked?.includes(p.number))) answer(409, { message: 'pull request already exists for these targets' })
     const p: FakeGiteaPr = { number: st.prs.length + 1, head: body!.head, base: body!.base, title: body!.title, body: body!.body ?? '', state: 'open' }
     st.prs.push(p)
     answer(201, json(p))

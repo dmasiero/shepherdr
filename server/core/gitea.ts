@@ -18,7 +18,7 @@ export type GiteaApi = (method: string, path: string, body?: unknown, timeout?: 
 export interface ForgeCheck { name?: string; context?: string; state?: string; conclusion?: string; status?: string; targetUrl?: string; detailsUrl?: string }
 export interface ForgePr { number: number; url: string; state: string; isDraft?: boolean; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: ForgeCheck[] }
 
-interface RawPr { number: number; html_url: string; state: string; merged?: boolean; draft?: boolean; title: string; mergeable?: boolean; merge_commit_sha?: string | null; updated_at?: string; head?: { ref?: string; label?: string; sha?: string }; base?: { ref?: string } }
+interface RawPr { number: number; html_url: string; state: string; merged?: boolean; draft?: boolean; title: string; mergeable?: boolean; merge_commit_sha?: string | null; updated_at?: string; head?: { ref?: string; label?: string; sha?: string; repo_id?: number }; base?: { ref?: string; repo_id?: number } }
 
 const PAGE = 50
 const SHA = /^[a-f0-9]{40,64}$/
@@ -53,6 +53,9 @@ export class CoreGitea {
       if (rows.length < PAGE) return out
     }
     if (newest) return out
+    // Exactly full pages: one more read says whether that was all.
+    const more = await this.get<T[]>(`${path}${path.includes('?') ? '&' : '?'}limit=${PAGE}&page=${pages + 1}`)
+    if (Array.isArray(more) && !more.length) return out
     throw Error('Too many Gitea results for one bounded read')
   }
   /** a link Gitea gave without its server (/owner/repo/actions/runs/1/jobs/0), whole */
@@ -66,8 +69,12 @@ export class CoreGitea {
     return { number: pr.number, url: pr.html_url, state: pr.merged ? 'MERGED' : pr.state === 'closed' ? 'CLOSED' : 'OPEN', isDraft: !!pr.draft || isWip(pr.title),
       headRefOid: pr.head?.sha ?? '', baseRefName: pr.base?.ref ?? '', mergeCommit: merge, statusCheckRollup: checks }
   }
-  /** its branch: Gitea calls a merged one's whose branch is gone refs/pull/<n>/head, and keeps the name as its label */
-  private branchOf(pr: RawPr) { return pr.head?.ref && !pr.head.ref.startsWith('refs/pull/') ? pr.head.ref : pr.head?.label ?? '' }
+  /** its branch in this repo: Gitea calls a merged one's whose branch is gone refs/pull/<n>/head, and keeps the name
+   *  as its label. A pull request from another repo (a fork's branch of the same name) is none of the task's. */
+  private branchOf(pr: RawPr) {
+    if (pr.head?.repo_id !== undefined && pr.base?.repo_id !== undefined && pr.head.repo_id !== pr.base.repo_id) return ''
+    return pr.head?.ref && !pr.head.ref.startsWith('refs/pull/') ? pr.head.ref : pr.head?.label ?? ''
+  }
   /** the branch's pull requests: its open ones, else its closed ones among the 200 updated last, the newest first */
   private async prsOf(branch: string): Promise<RawPr[]> {
     const open = (await this.list<RawPr>(`${this.root}/pulls?state=open`)).filter(pr => this.branchOf(pr) === branch)

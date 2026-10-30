@@ -17,7 +17,7 @@ export function teaArgv(args: string[]) {
 /** tea could not run at all: not installed is said plainly */
 export function teaFailure(error: unknown) {
   const text = String((error as Error)?.message ?? error)
-  return /tea: (?:command )?not found|exited with 127/i.test(text) ? TEA_MISSING : `tea failed: ${text.split('\n').find(line => line.trim())?.slice(0, 500) ?? 'no output'}`
+  return /tea: (?:command )?not found|exited with 127|Install tea for checked repository commands/i.test(text) ? TEA_MISSING : `tea failed: ${text.split('\n').find(line => line.trim())?.slice(0, 500) ?? 'no output'}`
 }
 
 /** the host of a login's address (https://gitea.example.org:3000/ → gitea.example.org) */

@@ -78,6 +78,7 @@ test('tea api -i answers parse into status and body; logins and hosts match', ()
   expect(serves({ name: 'x', url: 'https://code.example.org:3000/', sshHost: '' }, 'code.example.org')).toBe(true)
   expect(parseLogins('')).toEqual([])
   expect(teaFailure(Error('sh: line 1: tea: command not found'))).toBe(TEA_MISSING)
+  expect(teaFailure(Error('Install tea for checked repository commands'))).toBe(TEA_MISSING)
   expect(remoteOf('ssh://git@gitea.masiero.internal:2222/doug/renix.git')).toEqual({ host: 'gitea.masiero.internal', repo: 'doug/renix' })
   expect(remoteOf('/srv/git/repo.git')).toBeUndefined()
   expect(giteaWords('Merge: after GitHub checks. Run gh auth status. GitHub Copilot stays.')).toBe('Merge: after Gitea checks. Run tea login list. GitHub Copilot stays.')
@@ -266,6 +267,27 @@ test('a task’s closed pull request is found past 100 closed ones, newest first
   tea.write({ ...gitea, prs: [...others, { ...ours, number: 122 }] })
   const found = await tasks.git.pullRequest({ machine: task.machine, folder: worktree }, task.branch, false)
   expect(found).toMatchObject({ number: 122, state: 'MERGED' })
+}))
+
+test('a fork’s pull request from a branch of the same name is never the task’s', async () => withGitea(async (world) => {
+  const { tasks, task, grant, worktree, tea } = world
+  run(worktree, 'push', '-q', 'origin', `HEAD:refs/heads/${task.branch}`)
+  const gitea = (await tasks.git.gitea({ machine: task.machine, folder: worktree }))!
+  await gitea.create({ branch: task.branch, base: 'main', title: 'From a fork', body: '', draft: false })
+  tea.write({ ...tea.read(), forked: [1] })
+  expect(await gitea.find(task.branch, 'main')).toBeUndefined()
+  expect(await tasks.pr(grant, task.id)).toEqual({ number: 2, url: 'https://gitea.test/o/r/pulls/2' })
+}))
+
+test('exactly full pages of open pull requests are read whole', async () => withGitea(async (world) => {
+  const { tasks, task, grant, worktree, tea } = world
+  await tasks.pr(grant, task.id)
+  const ours = tea.read().prs[0]
+  const others = Array.from({ length: 249 }, (_, n) => ({ ...ours, number: n + 2, head: `other/${n}`, title: `Other ${n}` }))
+  tea.write({ ...tea.read(), prs: [ours, ...others] })
+  expect(await tasks.git.pullRequest({ machine: task.machine, folder: worktree }, task.branch, false)).toMatchObject({ number: 1, state: 'OPEN' })
+  tea.write({ ...tea.read(), prs: [ours, ...others, { ...ours, number: 251, head: 'other/x' }] })
+  await expect(tasks.git.pullRequest({ machine: task.machine, folder: worktree }, task.branch, false)).rejects.toThrow('Too many Gitea results')
 }))
 
 test('GitHub keeps upstream’s refusal for a pull request merged at an earlier commit', async () => withGitea(async (world) => {
