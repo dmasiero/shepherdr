@@ -89,8 +89,13 @@ export interface PluginEntry {
  *  the human's own, A to Z. */
 export function pluginCatalog(dir = root): PluginEntry[] {
   const base = readPluginList(dir)
-  const user = stagedPlugins(dir)
-  const { off, broken } = readStaged(dir)
+  const { off, broken: stagedBroken } = readStaged(dir)
+  const broken = { ...stagedBroken }
+  const user = stagedPlugins(dir).filter(name => {
+    try { if (JSON.parse(readFileSync(join(dir, 'user-plugins', name, 'shepherdr.json'), 'utf8')).api === 2) return true } catch { /* incompatible, never import either part */ }
+    broken[name] = { error: 'Needs a shepherdr.json manifest with { "api": 2 }. Migrate this 2.0 plugin using docs/plugins.md.' }
+    return false
+  })
   const names = [...base, ...[...user, ...Object.keys(broken)].filter((n) => !base.includes(n)).sort()].filter((n, i, all) => all.indexOf(n) === i)
   return names.map((name) => {
     const mine = user.includes(name)

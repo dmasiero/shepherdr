@@ -1,5 +1,46 @@
 # Plugins
 
+## 2.1 API and migration
+
+Shepherdr 2.1 is a standalone core client. **2.0 plugins are incompatible until their author migrates them.**
+Each user plugin now needs `shepherdr.json` containing `{ "api": 2 }`. Without that declaration neither its client
+nor its server part is imported; a built-in replacement falls back to the built-in plugin. Do not add the declaration
+until you have checked the plugin against 2.1. There is no access to terminal-herdr, workers or remote HTTP bridges.
+
+The client keeps `definePlugin`, every `Registry` slot listed below, and existing plugin names. Its view models and
+actions now describe core-backed agents; process liveness and task workflow state remain separate.
+
+A server extension declares `api: 2` and can use `setup(context)`, returning a cleanup function. For example:
+
+```ts
+import { definePlugin } from '../../server/plugin-api.ts'
+
+export default definePlugin({
+  api: 2, name: 'hello', about: 'Counts greetings',
+  setup(context) {
+    context.handle('greet', () => {
+      const count = (context.state.get<number>('count') || 0) + 1
+      context.state.set('count', count)
+      return { count }
+    })
+    return context.onChange(() => { /* inspect context.snapshot() if needed */ })
+  },
+})
+```
+
+`PluginContext` supplies `api`, `name`, `snapshot()`, `state.get/set/delete`, `onChange` and `handle`.
+State is private JSON, namespaced by plugin in the selected installation's database (1 MiB per value).
+A client calls `act({ type: 'plugin', plugin: 'hello', method: 'greet', cid: crypto.randomUUID() })`.
+Keep that command ID when retrying: completed results are reused, and interrupted work is reported as uncertain
+rather than repeated. Inputs are limited to 64 KiB and results to 1 MiB. Methods receive JSON input.
+Startup has a five-second deadline; failed setup or change listeners are isolated and their cleanup runs. Cleanup
+also runs on server shutdown. Plugins are trusted local code with the server's operating-system authority,
+**not sandboxed code**; do not install untrusted plugins or put secrets in snapshots or plugin responses.
+
+Build staging/loading and this runtime contract are implemented on the rewrite branch. Automatic rebuild, switches
+and full built-in server gating are still delivery checklist items; the historical instructions below describe the
+complete parity target until those items are checked off.
+
 Everything is a plugin: places, coordinators, tasks, chat, reactions, artifacts, terminal, worktree, browser, voice,
 health, alerts, keyboard, autopilot are the base ones, in `plugins/<name>/` and named in [plugins.json](../plugins.json).
 A task's side panel takes its items from plugins too (`taskPanel`: Terminal from terminal; Files, Diff and Pull request

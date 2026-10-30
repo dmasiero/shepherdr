@@ -30,6 +30,7 @@ import { CoreVoice } from './voice.ts'
 import { CoreHeartbeats } from './heartbeats.ts'
 import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
+import { CorePlugins } from './plugins.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
@@ -55,6 +56,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
+  readonly plugins: CorePlugins
   readonly secrets: CoreSecrets
   readonly artifacts: CoreArtifacts
   readonly chats: CoreChat
@@ -97,6 +99,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.health = new CoreHealth(this)
     this.heartbeats = new CoreHeartbeats(this)
     this.voices = new CoreVoice(this)
+    this.plugins = new CorePlugins(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -214,7 +217,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks,
-      settings: this.secrets.pages(this.settings.sections()),
+      settings: this.secrets.pages([...this.settings.sections(), this.plugins.section()]),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
       read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
     }
@@ -250,6 +253,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (handler) return handler(action)
     if ('chat' in action && this.tasks.forChat(action.chat) && ['pin', 'archive', 'pause', 'restart-info', 'restart', 'close', 'delete'].includes(action.type)) return this.tasks.act(action)
     switch (action.type) {
+      case 'plugin': return this.plugins.act(action)
       case 'send': {
         if (!action.text.trim() && !action.attachments?.length) return {}
         const run = async () => {
@@ -538,6 +542,6 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
+  async drain() { this.quiescing = true; this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.plugins.stop(); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }

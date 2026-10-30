@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, type Plugin } from 'vite'
+import { pluginCatalog } from './scripts/build-plugins.ts'
 
 const at = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 
@@ -15,7 +16,8 @@ const pluginParts = (): Plugin => ({
     if (!id.startsWith('@plugins/')) return null
     const rest = id.slice('@plugins/'.length)
     const mine = at(`./user-plugins/${rest}`)
-    return this.resolve(existsSync(mine) ? mine : at(`./plugins/${rest}`), importer, { skipSelf: true })
+    const compatible = pluginCatalog().some(plugin => plugin.name === rest.split('/')[0] && plugin.from === 'user' && plugin.on)
+    return this.resolve(compatible && existsSync(mine) ? mine : at(`./plugins/${rest}`), importer, { skipSelf: true })
   },
 })
 

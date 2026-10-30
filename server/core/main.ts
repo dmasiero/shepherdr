@@ -11,6 +11,8 @@ export async function runCoreServer(config: CoreConfig, boot: string = randomUUI
   process.env.SHEPHERDR_PORT = String(config.port)
   const source = new CoreSource(config)
   await source.start()
+  const { default: base, catalog, user } = await import('../../generated/server-plugins.ts')
+  await source.plugins.start(catalog, [...base.map(plugin => [plugin.name, async () => plugin] as [string, () => Promise<typeof plugin>]), ...user.map(([name, load]) => [name, async () => (await load()).default] as [string, () => Promise<import('../plugin-api.ts').ServerPlugin>])])
   const { startApp } = await import('../app.ts')
   const { Push } = await import('../push.ts')
   const server = startApp({ source, port: config.port, host: '127.0.0.1', dist: join(import.meta.dir, '../../dist'), push: new Push(),

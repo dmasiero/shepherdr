@@ -236,6 +236,7 @@ describe("the human's own plugins", () => {
   const plugin = (name: string, text: string) => {
     mkdirSync(join(home, 'plugins', name), { recursive: true })
     writeFileSync(join(home, 'plugins', name, 'client.tsx'), text)
+    writeFileSync(join(home, 'plugins', name, 'shepherdr.json'), '{"api":2}')
   }
   const at = (release: string | undefined, ...p: string[]) => join(releasesOf(repo), release!, ...p)
   const staged = (release?: string) => JSON.parse(readFileSync(at(release, 'user-plugins.json'), 'utf8'))

@@ -5,6 +5,9 @@ on:
     branches: [work/301-build-shepherdr-2-1-on-core]
     paths:
       - 'server/core/**'
+      - 'server/plugin-api.ts'
+      - 'scripts/build-plugins.ts'
+      - 'test/plugins.test.ts'
       - 'helper/core-*.ts'
       - 'bin/shepherdr'
       - 'server/app.ts'
@@ -80,7 +83,9 @@ jobs:
       - run: bun run typecheck
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-rewrite
-      - run: bun test test/core-*.test.ts test/artifacts.test.ts test/models.test.ts test/activity.test.ts test/order.test.ts test/health.test.ts
+      - run: bun test test/core-*.test.ts test/artifacts.test.ts test/models.test.ts test/activity.test.ts test/order.test.ts test/health.test.ts test/plugins.test.ts
+        env:
+          SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-plugins
       - run: bun test test/live.test.ts --test-name-pattern 'triggers|automations|heartbeat'
 
   task-layout:

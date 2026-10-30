@@ -866,6 +866,7 @@ export interface Snapshot {
 }
 
 export type Action =
+  | { type: 'plugin'; plugin: string; method: string; input?: unknown; cid: string }
   /** cid: the screen's own id for what it sent, which comes back on the message (Message.cid); reply: the id of the
       message it answers */
   /** space: sent from a needs-you card in that space's chat (CardAsk) */

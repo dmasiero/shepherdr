@@ -599,3 +599,21 @@ Three scoped reviews found one major microphone lifetime leak and one malformed
 provider-event issue; both were fixed, the third round was clear. Typecheck passed.
 Provider/core regressions and phone audio-failure layout cases were written for
 GitHub; no local suites were run.
+
+## Versioned plugin contract (2026-10-30, controls pending)
+
+User plugins require an explicit `shepherdr.json` API-2 manifest before either part is imported. Incompatible
+replacements fall back to the built-in plugin, including cross-plugin Vite aliases. Client `definePlugin`, names
+and Registry slots are retained; server `definePlugin` adds `api: 2` and scoped `setup(context)`. The context offers
+snapshot copies, private namespaced JSON state, change subscriptions, methods and cleanup. Startup is bounded;
+failed listeners/setup are quarantined. HTTP plugin actions require durable command IDs, with existing uncertain
+outcome behavior rather than replay. The API is documented as trusted local code, not containment.
+
+Manual isolated evidence: `/tmp/she-301-accept/plugins/core-proof` declared API 2 and registered an increment method.
+Two actual HTTP actions with CID `she301-plugin-proof-01` both returned count 1. App stop/start left native agents
+running; a new CID returned count 2 from the retained namespaced state. The phone Plugins page was inspected in the
+shared browser (`/tmp/she301-plugin-contract-phone.png`). This is runtime evidence, not full plugin parity:
+server-only fixture, client-extension visual proof, on/off switches, built-in server gating, automatic rebuild,
+last-good fallback and full device comparison remain unverified/unimplemented. No live plugin directory was read
+or changed. Fresh scoped review round 1 reported no findings. Typecheck passed; new tests await branch CI.
+Voice commit d1bb3eff branch CI 40984454359 passed both jobs.
