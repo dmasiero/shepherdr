@@ -11,14 +11,15 @@ import { CoreReviewReader } from './review-reader.ts'
 import { chatMessages } from './chat.ts'
 import { activityOf } from '../activity.ts'
 
-interface Cursor { gap?: boolean; caughtUp?: boolean; ended?: boolean; path: string; file: CoreNativeFile; reader?: Reader; reset?: () => void }
+interface Cursor { initialized?: boolean; loading?: boolean; gap?: boolean; caughtUp?: boolean; ended?: boolean; path: string; file: CoreNativeFile; reader?: Reader; reset?: () => void }
+interface WaitingSnapshot { launch: string; started: number; path?: string; activity: number; waiting: boolean }
 interface SavedMessage extends Message { source?: string }
 interface CleanupReceipt { launch: string; receipt: string; seen: boolean; complete: boolean; offset?: number }
 
 /** Native transcripts and explicit hooks only. No terminal reads or screen-status heuristics. */
 export class CoreLogs {
   private revisions = new Map<string, number>()
-  private waits = new Map<string, { launch: string; started: number; revision: number; waiting: boolean }>()
+  private waits = new Map<string, { launch: string; started: number; activity: number; revision: number; waiting: boolean }>()
   private hooks = new Map<string, Cursor>()
   private logs = new Map<string, Cursor>()
   private busy = new Set<string>()
@@ -58,13 +59,19 @@ export class CoreLogs {
   /** An ended native turn is Needs you only after current-log capture, with no recorded background work. */
   waiting(agent: CoreAgent) {
     const cursor = this.logs.get(agent.chat)
-    if (agent.role !== 'task' || cursor?.path !== agent.transcript || !cursor?.caughtUp || cursor.gap || !cursor.ended) return false
+    if (agent.role !== 'task') return false
+    if (!cursor || cursor.path !== agent.transcript || cursor.caughtUp === undefined || cursor.loading && !cursor.gap) {
+      const saved = this.store.get<WaitingSnapshot>('native-waiting', agent.chat)
+      return !!saved?.waiting && saved.launch === agent.launch && saved.started === agent.started && saved.path === agent.transcript && (agent.activityAt ?? agent.started) <= saved.activity
+    }
+    if (!cursor.caughtUp || cursor.gap || !cursor.ended) return false
     const revision = this.revisions.get(agent.chat) ?? 0, old = this.waits.get(agent.chat)
-    if (old?.launch === agent.launch && old.started === agent.started && old.revision === revision) return old.waiting
+    if (old?.launch === agent.launch && old.started === agent.started && old.activity === (agent.activityAt ?? agent.started) && old.revision === revision) return old.waiting
     const events = this.store.all<LogEvent>(`event:${agent.chat}`).filter(event => Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000)
     const activity = activityOf(events)
     const waiting = !!activity.turns.length && !activity.open && !activity.jobs.length
-    this.waits.set(agent.chat, { launch: agent.launch, started: agent.started, revision, waiting })
+    this.store.set('native-waiting', agent.chat, { launch: agent.launch, started: agent.started, path: agent.transcript, activity: agent.activityAt ?? agent.started, waiting } satisfies WaitingSnapshot)
+    this.waits.set(agent.chat, { launch: agent.launch, started: agent.started, activity: agent.activityAt ?? agent.started, revision, waiting })
     return waiting
   }
   outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); if (message.who !== 'you') this.incoming(chat, message); this.changed(chat) }
@@ -80,6 +87,7 @@ export class CoreLogs {
         this.error(chat, text)
         this.outgoing(chat, { id: 'native-log-record-limit', who: 'agent', text, at: Date.now() })
       }
+      cursor.initialized = true; cursor.loading = batch.more
       cursor.caughtUp = !batch.more && cursor.file.complete
       if (batch.lines.length) receive(batch.lines)
       if (!batch.more) break
@@ -109,7 +117,7 @@ export class CoreLogs {
       this.logs.set(agent.chat, cursor)
     }
     cursor.reset = () => {
-      cursor!.caughtUp = false; cursor!.ended = false; cursor!.gap = false; this.waits.delete(agent.chat)
+      cursor!.caughtUp = false; cursor!.ended = false; cursor!.gap = false; this.waits.delete(agent.chat); if (cursor!.initialized) this.store.delete('native-waiting', agent.chat)
       const receipt = this.store.get<CleanupReceipt>('task-cleanup-receipt', agent.chat)
       if (receipt?.launch === agent.launch && !receipt.complete) { receipt.seen = false; delete receipt.offset; this.store.set('task-cleanup-receipt', agent.chat, receipt) }
     }
@@ -141,6 +149,7 @@ export class CoreLogs {
     const current = this.agents.get(agent.chat)
     if (!current || current.launch !== agent.launch || current.grant !== agent.grant) return
     agent = current
+    const currentObservation = Number.isFinite(event.at) && event.at >= Math.max(agent.started, agent.activityAt ?? 0) && event.at <= Date.now() + 60000
     if (Number.isFinite(event.at) && event.at > 0 && event.at <= Date.now() + 60000 && event.at > (agent.activityAt ?? agent.started)) {
       agent.activityAt = event.at; this.store.set('agent', agent.chat, agent)
     }
@@ -148,7 +157,7 @@ export class CoreLogs {
     this.revisions.set(agent.chat, (this.revisions.get(agent.chat) ?? 0) + 1)
     if (event.kind === 'turn-end' && Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000) { const cursor = this.logs.get(agent.chat); if (cursor && cursor.path === agent.transcript) cursor.ended = true }
     if (event.kind === 'session') { agent.session = event.sessionId; this.store.set('agent', agent.chat, agent) }
-    if (event.kind === 'turn-start' || event.kind === 'turn-end') {
+    if (currentObservation && (event.kind === 'turn-start' || event.kind === 'turn-end')) {
       if (!agent.permission) { agent.state = event.kind === 'turn-start' ? 'working' : 'idle'; this.store.set('agent', agent.chat, agent) }
     }
     if (event.kind !== 'user' && event.kind !== 'agent') return

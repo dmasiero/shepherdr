@@ -20,6 +20,9 @@ test('late hooks cannot overwrite a replacement agent or erase its confirmed ter
     store.set('agent', 'chat', { ...first, terminal: 't1' })
     agents.hook(first, { id: 'event-one', event: 'SessionStart', at: 2, session: 'native-one' })
     expect(agents.get('chat')).toMatchObject({ terminal: 't1', session: 'native-one', state: 'idle' })
+    agents.hook(first, { id: 'new-stop', event: 'Stop', at: 20, session: 'latest', transcript: '/latest' })
+    agents.hook(first, { id: 'old-start', event: 'UserPromptSubmit', at: 10, session: 'older', transcript: '/older' })
+    expect(agents.get('chat')).toMatchObject({ state: 'idle', activityAt: 20, session: 'latest', transcript: '/latest' })
     const replacement: CoreAgent = { ...first, kind: 'codex', launch: 'launch-two', grant: 'grant-two', terminal: 't2', hook: '/two', state: 'working' }
     store.set('agent', 'chat', replacement)
     agents.hook(first, { id: 'event-late', event: 'SessionEnd', at: 3, session: 'old-native' })
