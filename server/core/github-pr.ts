@@ -70,19 +70,24 @@ export class CoreGitHubPr {
     const old = saved?.pr === task.pr!.number && saved.since === since ? saved : undefined
     const next: Watch = { ...old, id: task.id, pr: task.pr!.number, since, checked: now, seen: old?.seen ?? [] }
     try {
-      const pr = await this.source.tasks.git.pullRequest({ machine: task.machine, folder: task.folder }, task.branch)
+      const location = { machine: task.machine, folder: task.folder }
+      const pr = await this.source.tasks.git.pullRequest(location, task.branch, false)
       if (!this.current(task, agent.launch, since) || pr.number !== task.pr!.number || pr.state !== 'OPEN') return
-      const failed = pr.statusCheckRollup.filter(check => FAILED.has((check.conclusion || check.state || '').toUpperCase()))
+      let checksError: string | undefined
+      const checked = await this.source.tasks.git.pullRequest(location, task.branch).catch(error => { checksError = String(error.message).slice(0, 1000); return undefined })
+      if (!this.current(task, agent.launch, since)) return
+      if (checked && (checked.number !== pr.number || checked.headRefOid !== pr.headRefOid || checked.state !== pr.state)) throw Error('The pull request changed while checking GitHub')
+      const failed = (checked?.statusCheckRollup ?? []).filter(check => FAILED.has((check.conclusion || check.state || '').toUpperCase()))
       const failure = failed.length ? `${pr.headRefOid}:${failed.map(check => check.name || check.context || 'Check').sort().join(',')}` : undefined
-      const green = pr.statusCheckRollup.every(check => PASSED.has((check.conclusion || check.state || '').toUpperCase()))
+      const green = !!checked && checked.statusCheckRollup.every(check => PASSED.has((check.conclusion || check.state || '').toUpperCase()))
       const all = await this.comments(task)
       if (!this.current(task, agent.launch, since)) return
       const seen = new Set(old?.seen), fresh = all.filter(comment => !seen.has(comment.id) && comment.at >= Math.floor(since / 1000) * 1000 && (comment.body || comment.state === 'CHANGES_REQUESTED'))
       const checks = failure && failure !== old?.failed ? failed.map(check => ({ name: (check.name || check.context || 'Check').slice(0, 160), url: (check.detailsUrl || check.targetUrl || '').slice(0, 1000) })) : []
-      next.failed = failure ?? (green ? undefined : old?.failed); next.seen = all.map(comment => comment.id); delete next.error
+      next.failed = failure ?? (green ? undefined : old?.failed); next.seen = all.map(comment => comment.id); if (checksError) next.error = checksError; else delete next.error
       next.needsWork = old?.needsWork || checks.length > 0 || fresh.length > 0
       const nudge = !next.needsWork && green && task.mergePolicy !== 'ask' && task.readyHead === pr.headRefOid &&
-        (task.mergePolicy !== 'checks' || pr.statusCheckRollup.length > 0) && old?.nudged !== pr.headRefOid
+        (task.mergePolicy !== 'checks' || !!checked?.statusCheckRollup.length) && old?.nudged !== pr.headRefOid
       if (!checks.length && !fresh.length && !nudge) { this.source.store.set('github-pr', task.id, next); return }
       if (nudge) next.nudged = pr.headRefOid
       // Bound the native wake; the full published comments remain available through checks --comments.

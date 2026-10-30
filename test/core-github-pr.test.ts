@@ -79,3 +79,17 @@ test('large comments are explicitly excerpted in the wake and remain fully reada
   expect(f.sent[0].text.length).toBeLessThan(10000)
   expect((await f.monitor.comments(f.task))[0].body).toBe(body)
 }))
+
+test('check-read denial cannot hide published feedback or produce a green-check merge nudge', async () => fixture(async f => {
+  const query = f.source.tasks.git.pullRequest.bind(f.source.tasks.git)
+  f.source.tasks.git.pullRequest = async (repo, branch, checks = true) => { if (checks) throw Error('Checks HTTP 403'); return query(repo, branch, false) }
+  f.task.mergePolicy = 'checks'; f.setNotes([raw(1, 'Please apply this published correction')])
+  await f.monitor.scan(since + 1000)
+  expect(f.sent).toHaveLength(1)
+  expect(f.sent[0]).toMatchObject({ work: true })
+  expect(f.sent[0].text).toContain('Please apply this published correction')
+  expect(f.sent[0].text).not.toContain('checksReady')
+  expect(f.source.store.get<{ error: string }>('github-pr', f.task.id)?.error).toBe('Checks HTTP 403')
+  await new CoreGitHubPr(f.source).scan(since + 62000)
+  expect(f.sent).toHaveLength(1)
+}))
