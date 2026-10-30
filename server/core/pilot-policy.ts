@@ -90,6 +90,7 @@ export class CorePilotPolicy {
     if (run.state === 'workers' && actor.role === 'coordinator') throw new Refusal('This Autopilot coordinator is stopped')
     return run
   }
+  live(id: string, now = Date.now()) { const run = this.require(id); this.check(run, now); return run }
   private check(run: CorePilotRun, now: number) {
     if (!['on', 'workers'].includes(run.state)) throw new Refusal(run.error || 'Autopilot is stopped')
     const why = run.config.runtime && now - run.started >= run.config.runtime ? 'Autopilot reached its shared runtime limit'
@@ -141,7 +142,7 @@ export class CorePilotPolicy {
     const run = this.actor(id, actor, now)
     if (!Array.isArray(args) || args.length > 256 || args.some(word => typeof word !== 'string' || word.length > 65536)) throw new Refusal('Invalid command words')
     const [command, op] = args
-    if (['help', 'show', 'models'].includes(command)) return run
+    if (['help', 'show', 'models', 'progress'].includes(command)) return run
     if (command === 'heartbeat' && !op || command === 'complete' && actor.role === 'coordinator' || command === 'checkpoint' && actor.role === 'task') return run
     if (command === 'secret' && ['list', 'ask', 'run', 'env'].includes(op)) return run // Secret names are separately checked against the run snapshot.
     if (command === 'task' && ['list', 'show', 'chat'].includes(op)) return run

@@ -1,0 +1,88 @@
+import { expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CoreSource } from '../server/core/source.ts'
+import type { CoreTask } from '../server/core/tasks.ts'
+import type { CoreAgent } from '../server/core/model.ts'
+
+function fixture() {
+  const home = mkdtempSync(join(tmpdir(), 'shep-pilot-commands-'))
+  const source = new CoreSource({ home, socket: '/nonexistent/isolated-core', session: 'isolated', binary: 'hc', port: 0 })
+  const run = source.pilots.policy.begin('space', 'machine', { harness: { kind: 'claude' }, reviewer: { kind: 'codex' }, hosts: ['api.anthropic.com'], secrets: ['APPROVED_KEY'], approvals: ['merge'], parallel: 1 })
+  const grant = source.mailbox.issue('space', 'launch', 'machine', ['cli', 'secret', 'pilot'])
+  const agent: CoreAgent = { chat: 'space', space: 'space', machine: 'machine', role: 'coordinator', kind: 'claude', launch: 'launch', grant: grant.id, hook: '/unused', state: 'idle', started: 1, pilot: { run: run.id, home: '/inside', captures: '/outside/captures' } }
+  source.store.set('agent', agent.chat, agent); source.pilots.policy.activate(run.id, { chat: agent.chat, launch: agent.launch, role: agent.role })
+  const task = { id: 'EX-1', localId: 'EX-1', chat: 'EX-1/Agent', name: 'Own', place: 'space', machine: 'machine', pilot: run.id, workflow: 'working', folder: '/repo/work', repo: '/repo', branch: 'work/one', base: 'main', mergePolicy: 'ask', review: { on: true, kind: 'codex', rounds: 3, mustFix: 'major' } } as CoreTask
+  source.store.set('task', task.id, task); source.pilots.policy.claim(run.id, task.id, 0)
+  const cli = (...args: string[]) => source.pilots.commands.cli(agent, grant, args)
+  return { source, run, grant, agent, task, cli, close() { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) } }
+}
+
+test('contained task commands use durable ownership, never caller labels or another run’s task', async () => {
+  const f = fixture()
+  try {
+    f.source.store.set('task', 'EX-2', { ...f.task, id: 'EX-2', localId: 'EX-2', chat: 'EX-2/Agent', pilot: undefined })
+    expect((await f.cli('task', 'list')).out).toContain('EX-1')
+    expect((await f.cli('task', 'list')).out).not.toContain('EX-2')
+    expect((await f.cli('task', 'show', '1')).out).toContain('EX-1')
+    await expect(f.cli('task', 'close', 'EX-2', '--run', f.run.id)).rejects.toThrow('does not own')
+    await expect(f.cli('space', 'add', '/outside')).rejects.toThrow('needs the human')
+    await expect(f.cli('setting', 'coordinator.agent', 'Codex')).rejects.toThrow('needs the human')
+    f.source.pilots.policy.stop(f.run.id)
+    await expect(f.cli('task', 'show', 'EX-1')).rejects.toThrow('stopped')
+  } finally { f.close() }
+})
+
+test('secret access and listing obey this run’s saved names even when broader scope contains more', async () => {
+  const f = fixture()
+  try {
+    f.source.secrets.vault.set('all', 'APPROVED_KEY', 'synthetic-approved')
+    f.source.secrets.vault.set('all', 'UNAPPROVED_KEY', 'synthetic-unapproved')
+    expect((await f.cli('secret', 'list')).out.trim()).toBe('APPROVED_KEY')
+    await expect(f.cli('secret', 'ask', 'UNAPPROVED_KEY')).rejects.toThrow('outside this run')
+    expect(f.source.pilots.commands.secret(f.agent, { names: ['APPROVED_KEY'], run: 'forged', chat: 'other' })).toEqual({ secrets: { APPROVED_KEY: 'synthetic-approved' } })
+    expect(() => f.source.pilots.commands.secret(f.agent, { names: ['APPROVED_KEY', 'UNAPPROVED_KEY'] })).toThrow('outside this run')
+  } finally { f.close() }
+})
+
+test('progress is run-private and a worker cannot change another owned task', async () => {
+  const f = fixture()
+  try {
+    await f.cli('progress', 'Finished the first step; next is review')
+    expect((await f.cli('progress')).out).toContain('next is review')
+    const grant = f.source.mailbox.issue(f.task.chat, 'worker-launch', 'machine', ['cli', 'secret', 'pilot'])
+    const worker: CoreAgent = { ...f.agent, chat: grant.chat, grant: grant.id, launch: grant.session, role: 'task' }
+    f.source.store.set('agent', worker.chat, worker)
+    f.source.pilots.policy.bind(f.run.id, { chat: worker.chat, launch: worker.launch, role: 'task', task: f.task.id })
+    f.source.store.set('task', 'EX-3', { ...f.task, id: 'EX-3', localId: 'EX-3', chat: 'EX-3/Agent' })
+    f.source.pilots.policy.claim(f.run.id, 'EX-3', 0)
+    await expect(f.source.pilots.commands.cli(worker, grant, ['todo', 'EX-3'])).rejects.toThrow('only its own')
+    await expect(f.source.pilots.commands.cli(worker, grant, ['progress', 'overwrite'])).rejects.toThrow('Only this run')
+    const before = f.source.pilots.policy.get(f.run.id)
+    await expect(f.source.pilots.commands.cli(worker, grant, ['checkpoint', '--message', 'unused'])).rejects.toThrow('checkpoint message')
+    expect(f.source.pilots.policy.get(f.run.id)).toEqual(before)
+  } finally { f.close() }
+})
+
+test('a contained To-do native turn still consumes its run’s parallel slot, and expiry blocks another start', () => {
+  const f = fixture()
+  try {
+    f.source.core.current.connected = true
+    f.source.machineConnected = () => true
+    f.source.store.set('health-sample', 'machine', { at: Date.now(), cores: 8, load: 0, memTotal: 1000, memUsed: 100, disks: [], gpus: [] })
+    const first = { ...f.task, workflow: 'todo' as const }
+    f.source.store.set('task', first.id, first)
+    const worker: CoreAgent = { ...f.agent, chat: first.chat, role: 'task', state: 'working' }
+    f.source.store.set('agent', worker.chat, worker)
+    f.source.agents.terminal = () => ({ address: 't1', state: 'live', pid: 1 }) as ReturnType<typeof f.source.agents.terminal>
+    const next = { ...f.task, id: 'EX-2', chat: 'EX-2/Agent', workflow: 'queued' as const }
+    f.source.store.set('task', next.id, next)
+    expect(f.source.health.room('machine', next.id)).toContain('Autopilot tasks are working (limit 1)')
+    worker.state = 'idle'; f.source.store.set('agent', worker.chat, worker)
+    expect(f.source.health.room('machine', next.id)).toBeUndefined()
+    const run = f.source.pilots.policy.get(f.run.id)!; run.config.runtime = 1; run.started = 1; f.source.store.set('pilot-run', run.id, run)
+    expect(f.source.health.room('machine', next.id)).toContain('runtime limit')
+    expect(f.source.pilots.policy.get(run.id)?.state).toBe('failed')
+  } finally { f.close() }
+})

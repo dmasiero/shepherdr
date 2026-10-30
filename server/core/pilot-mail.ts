@@ -2,19 +2,21 @@ import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Grant, MailRequest } from './mailbox.ts'
 import { CorePilotPolicy, type PilotActor } from './pilot-policy.ts'
+import { CorePilotCommands } from './pilot-commands.ts'
 import { pilotHook } from './pilot-hook.ts'
 
 /** Private actor/lease accounting dispatch. Product launch and managed-task commands are not exposed yet. */
 export class CorePilotMail {
+  readonly commands: CorePilotCommands
   readonly policy: CorePilotPolicy
-  constructor(private source: CoreSource) { this.policy = new CorePilotPolicy(source.store) }
+  constructor(private source: CoreSource) { this.policy = new CorePilotPolicy(source.store); this.commands = new CorePilotCommands(source) }
   actor(agent: CoreAgent): PilotActor {
     if (!agent.pilot) throw Error('This is not a contained agent')
     const run = this.policy.get(agent.pilot.run)
     if (!run || run.place !== agent.space || run.machine !== agent.machine) throw Error('This contained session belongs to another space or machine')
     const task = this.source.tasks.forChat(agent.chat)
     if (agent.role !== 'coordinator' && !task || agent.role === 'coordinator' && agent.chat !== run.place) throw Error('This is not the run’s recorded agent')
-    if (task && (task.place !== run.place || task.machine !== run.machine)) throw Error('This task belongs to another space or machine')
+    if (task && (task.place !== run.place || task.machine !== run.machine || task.pilot !== run.id)) throw Error('This task belongs to another space or machine')
     return { chat: agent.chat, launch: agent.launch, role: agent.role, task: task?.id }
   }
   async mail(agent: CoreAgent, grant: Grant, request: MailRequest, id: string): Promise<unknown> {

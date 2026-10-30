@@ -41,6 +41,7 @@ export interface CoreTask extends Task {
   mergeCommit?: string
   localId?: string
   automation?: string
+  pilot?: string
   capacity?: string
   reservedAt?: number
   reservedChats?: string[]
@@ -94,27 +95,37 @@ export class CoreTasks {
     const space = input.space ? this.source.spaces().find(space => space.id === input.space || space.name === input.space && space.machine === caller.machine) : this.source.space(caller.space)
     if (!space || space.home) throw new Refusal('Choose a repository space for the task')
     if (space.machine !== caller.machine) throw new Refusal('Use the coordinator of the task’s machine')
-    return this.addInSpace(space, input)
+    let pilot: string | undefined
+    if (caller.pilot) {
+      const run = this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
+      if (run.place !== space.id || run.state !== 'on') throw new Refusal('This run may add tasks only in its own space while on')
+      if (input.kind && input.kind !== run.config.harness.kind || input.model && input.model !== run.config.harness.model || input.effort && input.effort !== run.config.harness.effort) throw new Refusal('Contained tasks use this run’s selected agent, model and effort')
+      pilot = run.id
+    }
+    return this.addInSpace(space, { ...input, pilot })
   }
   /** Trusted product scheduler entry; no caller labels or mailbox data grant this authority. */
-  async addInSpace(space: CoreSpace, input: { title: string; brief: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string; automation?: string }) {
+  async addInSpace(space: CoreSpace, input: { title: string; brief: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string; automation?: string; pilot?: string }) {
     if (!input.title.trim() || input.title.length > TITLE_MAX) throw new Refusal(`Write a title of at most ${TITLE_MAX} characters`)
     if (!input.brief.trim()) throw new Refusal('Give the task its full brief')
     if (!this.source.space(space.id) || space.home) throw new Refusal('Choose a repository space for the task')
     const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine))
     const branch = `work/${number}-${slugify(input.title).slice(0, 40)}`
-    const folder = join(await this.source.agents.worktreeRoot(space.machine), space.name, branch.replaceAll('/', '-'))
+    const folder = join(await (input.pilot ? this.source.agents.pilotWorktreeRoot(space.machine) : this.source.agents.worktreeRoot(space.machine)), space.name, branch.replaceAll('/', '-'))
     const after = taskDependencies(this.all(), { id, place: space.id, machine: space.machine }, input.after ?? [], machine => this.source.machineName(machine))
       .filter(id => !['merged', 'closed'].includes(this.get(id)!.workflow))
-    const defaults = this.source.settings.launch('task', space.id, input.kind)
-    const reviewer = this.source.settings.agent('reviewer', space.id)
+    const run = input.pilot ? this.source.pilots.policy.get(input.pilot) : undefined
+    if (input.pilot && (!run || run.place !== space.id || run.machine !== space.machine || run.state !== 'on')) throw new Refusal('The contained run no longer accepts tasks here')
+    const defaults = run?.config.harness ?? this.source.settings.launch('task', space.id, input.kind)
+    const reviewer = run?.config.reviewer ?? this.source.settings.agent('reviewer', space.id)
     const merge = this.source.settings.get('brief.merge', space.id)
     const task: CoreTask = {
-      id, localId, automation: input.automation, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
+      id, localId, pilot: input.pilot, automation: input.automation, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
       chat: `${id}/Agent`, kind: input.kind || defaults.kind, model: input.model || defaults.model, effort: input.effort || defaults.effort, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
-      reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', review: { on: this.source.settings.get('brief.review', space.id) === 'on', kind: reviewer.kind, rounds: parseInt(this.source.settings.get('review.rounds', space.id)), mustFix: this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
+      reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: run?.config.approvals.includes('merge') || merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', review: { on: this.source.settings.get('brief.review', space.id) === 'on', kind: reviewer.kind, rounds: parseInt(this.source.settings.get('review.rounds', space.id)), mustFix: this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }
     return this.change(task.id, async () => {
+      if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && (other.workflow === 'working' || other.workflow === 'merging')).length)
       this.save(task) // Number and record survive a failed worktree/agent start; never reuse their branch number.
       try {
         await this.source.files.exec(space.machine, ['mkdir', '-p', join(folder, '..')])
@@ -136,7 +147,7 @@ export class CoreTasks {
         const room = this.source.health?.room(task.machine, task.id)
         if (room) { task.capacity = room; if (['todo', 'queued'].includes(task.workflow)) task.workflow = 'queued'; this.save(task); throw new CoreError('busy', 'This message is saved until its machine has room') }
         task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), chat])]
-        if (!internal && chat === task.chat && task.workflow === 'ready') { task.workflow = 'working'; delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion }
+        if (!internal && chat === task.chat && (task.workflow === 'ready' || task.workflow === 'todo')) { task.workflow = 'working'; delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion }
         if (task.workflow === 'queued' && task.capacity && !(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'
         delete task.capacity; this.save(task)
       }
@@ -151,12 +162,15 @@ export class CoreTasks {
     if (!space) throw new Refusal('Task space is missing')
     const prior = this.source.agents.get(task.chat)
     if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
-    const capacity = task.workflow !== 'todo' && this.source.health?.room(task.machine, task.id)
-    if (capacity) { task.workflow = 'queued'; task.capacity = capacity; this.save(task); return }
+    const capacity = (task.workflow !== 'todo' || task.pilot) && this.source.health?.room(task.machine, task.id)
+    if (capacity) { if (task.workflow !== 'todo') task.workflow = 'queued'; task.capacity = capacity; this.save(task); return }
     if (task.capacity) { if (!(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'; delete task.capacity }
-    if (task.workflow !== 'todo') { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
+    if (task.workflow !== 'todo' || task.pilot) { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
     await this.source.browsers?.close(task.id)
+    const pilot = task.pilot ? this.source.pilots.policy.live(task.pilot) : undefined
+    if (task.pilot && (!pilot || !['on', 'workers'].includes(pilot.state) || !pilot.tasks.includes(task.id))) throw new Refusal('This task’s contained run has stopped')
     let parent = this.source.agents.get(space.id)
+    if (pilot && (!parent?.pilot || parent.pilot.run !== pilot.id || this.source.agents.terminal(parent)?.state !== 'live')) throw new Refusal('Restart this task from its contained coordinator; no unrestricted parent was started')
     if (!parent || this.source.agents.terminal(parent)?.state !== 'live') {
       const pick = this.source.settings.agent('coordinator', space.id)
       parent = await this.source.agents.launch(space, space.id, pick.kind, '', pick)
@@ -164,9 +178,10 @@ export class CoreTasks {
     const wait = task.workflow === 'queued' ? `This task is queued after ${task.after?.join(', ')}. Read the brief, then wait for <go>. Do not start implementation yet.`
       : task.workflow === 'todo' ? 'Read the brief, then wait for the human’s go. Do not start implementation yet.' : ''
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
-    const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. Use hc for child agents, messages and waits. Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
+    const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. ${pilot ? 'Your Git metadata is read-only: use shepherdr checkpoint MESSAGE to commit, and shepherdr review TASK for a fresh managed reviewer. Use the product broker for managed agents and messages; no core socket or outside helper is available.' : 'Use hc for child agents, messages and waits.'} Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
     const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${message ? `\n<go>${message}</go>` : ''}`
-    await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: true })
+    const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
+    if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
   }
   private async label(task: CoreTask) {
@@ -420,10 +435,16 @@ export class CoreTasks {
     if (round > task.review.rounds) throw new Refusal('The configured review rounds have been used; report the remaining findings')
     const parent = this.source.agents.get(task.chat), space = this.source.space(task.place)
     if (!parent || !space) throw new Refusal('The task agent must be running before its reviewer starts')
+    const pilot = task.pilot ? this.source.pilots.policy.live(task.pilot) : undefined
+    if (task.pilot && (!pilot || !['on', 'workers'].includes(pilot.state) || !pilot.tasks.includes(task.id))) throw new Refusal('This task’s contained run has stopped')
+    const room = this.source.health?.room(task.machine, task.id)
+    if (room) throw new Refusal(`The reviewer is waiting: ${room}`)
+    task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), `${task.id}/Reviewer-${round}`])]; this.save(task)
     const reviewHead = await this.git.head({ machine: task.machine, folder: task.folder })
     const reviewer = await this.source.agents.launch(space, `${task.id}/Reviewer-${round}`, task.review.kind,
       `Review commit ${reviewHead} against base ${task.base} and this brief:\n\n${task.desc}\n\nRead repository AGENTS.md, CLAUDE.md and REVIEW.md if present. Find what broke, was omitted or exceeded the brief. Report each finding with proof and critical/major/minor/trivial severity. Do not edit files or decide whether to merge. Finish with your findings as a final reply in your own chat; Shepherdr forwards that native reply to the parent. Do not use hc send or request permission to leave the read-only sandbox for reporting.`,
-      { role: 'reviewer', parent, folder: task.folder, task: task.id, readOnly: true, model: task.reviewerModel, effort: task.reviewerEffort, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Finish with a final reply in your own native chat; the server forwards it to the parent. Never leave the read-only sandbox just to report. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub.' })
+      { role: 'reviewer', parent, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined, folder: task.folder, task: task.id, readOnly: true, model: task.reviewerModel, effort: task.reviewerEffort, instructions: 'You are a fresh read-only reviewer. Follow repository checks rules. Never edit, commit, merge, or start other agents. Finish with a final reply in your own native chat; the server forwards it to the parent. Never leave the read-only sandbox just to report. Explicit human instructions and the brief win over private/team rules; explain conflicts. Never copy private instructions into git, briefs, reports or GitHub.' })
+    if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: reviewer.chat, launch: reviewer.launch, role: 'reviewer', task: task.id })
     task.reviewRound = round; task.reviewTerminal = reviewer.terminal; task.reviewChat = reviewer.chat
     task.reviewHead = reviewHead; delete task.reviewReport; delete task.reviewTurn; delete task.reviewFailure; this.save(task)
     return reviewer.terminal
@@ -491,6 +512,12 @@ export class CoreTasks {
     } finally { this.ticking = false }
   }
 
+  resolve(grant: Grant, rawId: string | undefined) {
+    const caller = this.source.agents.get(grant.chat)
+    const short = this.all().filter(task => task.place === caller?.space && (/^\d+$/.test(rawId || '') ? task.id.endsWith(`-${rawId}`) : task.localId === rawId))
+    if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in the space')
+    return this.get(short[0]?.id || rawId || '')
+  }
   async cli(grant: Grant, args: string[]): Promise<{ out: string; code: number }> {
     const parsed = parseArgs(args), [verb, sub, ...rest] = parsed.words
     const text = (value: unknown) => ({ out: typeof value === 'string' ? value + '\n' : JSON.stringify(value, null, 2) + '\n', code: 0 })
@@ -503,11 +530,8 @@ export class CoreTasks {
     }
     if (verb === 'task' && sub === 'list') return text(this.all().filter(task => this.source.agents.get(grant.chat)?.space === task.place).map(task => this.view(task)))
     const rawId = verb === 'task' ? rest[0] : sub
-    const caller = this.source.agents.get(grant.chat)
-    const short = this.all().filter(task => task.place === caller?.space && (/^\d+$/.test(rawId || '') ? task.id.endsWith(`-${rawId}`) : task.localId === rawId))
-    if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in the space')
-    const id = short[0]?.id || rawId
-    const task = id && this.get(id)
+    const task = this.resolve(grant, rawId)
+    const id = task?.id ?? rawId
     if (!task) throw new Refusal('No such task or unsupported task command')
     this.assert(grant, task)
     if (verb === 'task' && sub === 'show') return text(this.view(task))

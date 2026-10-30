@@ -965,3 +965,21 @@ Checked-Git wiring 33dcb38a passed the GitHub core job, including all actual-Git
 (40996417951). Its layout job hit a pre-existing browser fixture race: the follow-up ps sweep could still see a
 just-killed fake Chrome. That fixture now waits for its owned subprocess exits before asserting the next sweep.
 No production browser code or timing allowance was changed. A passing complete rerun remains pending.
+
+Contained command/task integration is implemented internally, with no UI mode control yet. Authenticated launches
+are checked against private run/actor/task records; names in a request cannot change ownership. Task actions stay
+inside the run (workers may change only themselves), secret use/list/ask obey the saved approved-name list, progress
+is private to the run, and checkpoint stages/commits only the recorded worker worktree through checked Git. Artifact
+listing is space-scoped; contained artifact export explicitly remains disconnected instead of returning inaccessible
+host paths. Completion/stop/wakes and all-log usage accounting remain pending, so this is not working full Autopilot.
+Managed task/reviewer launches inherit run, destination allowlist, shared deadline, selected task/reviewer defaults
+and required exact-head merge approval. Their worktree root is a private installation-named cache outside protected
+app/helper state; app state retains only records/captures. Native unattended flags are used only inside the validated
+OS namespace (as in 2.0's isolated profile); ordinary agents retain native permissions. Shared capacity covers queued
+release, delivery, initial contained To-do turns and reviewer starts; expiry is checked before new activity.
+Fresh review: round 1 no findings (an initial parallel-gate report was retracted after re-reading health.room);
+round 2 major To-do→go workflow bug fixed. Explicit human delivery now promotes To-do to Working; internal answers
+and review relay do not. Round 3 had no must-fix findings. Added real-Git Todo→go→checkpoint/reviewer routing coverage,
+private task ownership/secret-list regressions, and To-do capacity/runtime-expiry checks for GitHub only. Native
+contained managed-task acceptance remains pending. Local typecheck passed; no local suites were run.
+The browser-fixture correction f27faaa0 passed both GitHub jobs (40996593644).

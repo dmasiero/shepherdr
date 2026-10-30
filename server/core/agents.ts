@@ -1,3 +1,4 @@
+import { homedir } from 'node:os'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -35,6 +36,10 @@ export class CoreAgents {
   async worktreeRoot(machine: string) {
     if (!await this.route(machine)) return join(this.config.home, 'worktrees')
     return join(dirname((await this.remotes.prepare(machine)).root), 'worktrees')
+  }
+  async pilotWorktreeRoot(machine: string) {
+    const home = await this.route(machine) ? (await this.remotes.prepare(machine)).home : homedir()
+    return join(home, '.cache/shepherdr-worktrees', this.installation.id)
   }
   async browserRuntime(machine: string) {
     const remote = await this.route(machine) ? await this.remotes.prepare(machine) : undefined
@@ -122,13 +127,15 @@ This start replaces every earlier command path and routing instruction. Your aut
     const headless = kind === 'codex' && options.readOnly
     if (kind === 'claude') {
       argv.push('--settings', options.pilot ? '/run/shepherdr/settings.json' : settings, '--append-system-prompt-file', options.pilot ? '/run/shepherdr/instructions.md' : instructions)
-      if (options.readOnly) argv.push('--print', '--permission-mode', 'plan')
+      if (options.readOnly) argv.push('--print')
+      if (options.pilot) argv.push('--dangerously-skip-permissions')
+      else if (options.readOnly) argv.push('--permission-mode', 'plan')
       if (record.session) argv.push('--resume', record.session)
       if (options.model) argv.push('--model', options.model)
       if (options.effort) argv.push('--effort', options.effort)
     } else {
       if (headless) argv.push('exec', '--json', '--sandbox', 'read-only')
-      else argv.push('--no-daemon', '--no-alt-screen')
+      else { argv.push('--no-daemon', '--no-alt-screen'); if (options.pilot) argv.push('--dangerously-bypass-approvals-and-sandbox') }
 
       for (const event of (headless ? [] : EVENTS).filter(e => !['Notification', 'PostToolUseFailure'].includes(e))) {
         argv.push('-c', `hooks.${event}=[{hooks=[{type="command",command=${toml(command)},timeout=${event === 'PermissionRequest' ? 3600 : 5}}]}]`)

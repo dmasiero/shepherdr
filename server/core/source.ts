@@ -452,9 +452,12 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const terminal = agent && this.agents.terminal(agent)
     if (!agent || agent.launch !== grant.session || agent.grant !== grant.id || terminal?.state !== 'live' || agent.pid && terminal.pid !== agent.pid) throw new Error('This session is no longer active')
     if (request.action === 'pilot') return this.pilots.mail(agent, grant, request, requestId)
-    // Contained product commands stay fail-closed until their ownership/Git brokers are connected.
-    // No product UI or scheduler invokes the internal contained launch path yet; controls remain unoffered.
-    if (agent.pilot) throw new Error('Contained product commands are not connected yet')
+    // Contained calls use their private run/actor binding and checked product brokers. UI controls remain unoffered.
+    if (agent.pilot) {
+      if (request.action === 'cli') return this.pilots.commands.cli(agent, grant, (request.args as { args: string[] }).args)
+      if (request.action === 'secret') return this.pilots.commands.secret(agent, request.args)
+      throw new Error('This operation is outside the contained product command profile')
+    }
     if (request.action === 'cli') {
       const input = request.args as { args?: unknown }
       if (!Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')) throw new Error('Invalid command words')

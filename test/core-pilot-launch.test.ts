@@ -80,7 +80,8 @@ test('a readonly Claude reviewer runs headlessly with inside hooks/settings and 
     expect(launch.args).toContain('--print')
     expect(launch.args).toContain('/run/shepherdr/settings.json')
     expect(launch.args).toContain('/run/shepherdr/instructions.md')
-    expect(launch.args.slice(launch.args.indexOf('--permission-mode'), launch.args.indexOf('--permission-mode') + 2)).toEqual(['--permission-mode', 'plan'])
+    expect(launch.args).toContain('--dangerously-skip-permissions')
+    expect(launch.args).not.toContain('--permission-mode')
     expect(record.pilot?.captures).toBe(f.prepared.paths.captures)
     expect(record.transcriptFormat).toBeUndefined()
   } finally { f.close() }

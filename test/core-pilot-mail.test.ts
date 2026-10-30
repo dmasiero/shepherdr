@@ -57,7 +57,7 @@ test('a headless reviewer marked working can still wait for its first private bi
     f.activate()
     const grant = f.source.mailbox.issue('EX-1/Reviewer-1', 'review-launch', 'machine', ['pilot'])
     const agent: CoreAgent = { ...f.agent, chat: grant.chat, grant: grant.id, launch: grant.session, role: 'reviewer', state: 'working', transcriptFormat: 'codex-exec' }
-    f.source.store.set('task', 'EX-1', { id: 'EX-1', chat: 'EX-1/Agent', place: 'space', machine: 'machine' })
+    f.source.store.set('task', 'EX-1', { id: 'EX-1', chat: 'EX-1/Agent', place: 'space', machine: 'machine', pilot: f.run.id })
     f.source.store.set('agent', agent.chat, agent)
     f.source.pilots.policy.claim(f.run.id, 'EX-1', 0)
     const lease = f.mail({ op: 'lease' }, randomUUID(), grant, agent)

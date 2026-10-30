@@ -15,6 +15,7 @@ export class CoreHealth {
   private active(task: ReturnType<CoreSource['tasks']['all']>[number]) {
     if (task.archived) return false
     const main = this.source.agents.get(task.chat), terminal = main && this.source.agents.terminal(main)
+    if (task.pilot && main && terminal?.state !== 'finished' && ['starting', 'working', 'blocked'].includes(main.state)) return true
     if (task.workflow === 'working' && !task.startError && terminal?.state !== 'finished') return true
     if (task.reservedAt && Date.now() - task.reservedAt < 60_000) return true
     return (task.reservedChats ?? []).some(chat => {
@@ -24,6 +25,13 @@ export class CoreHealth {
   }
   working(machine: string) { return this.source.tasks.all().filter(task => task.machine === machine && this.active(task)).length }
   room(machine: string, exclude?: string): string | undefined {
+    const task = exclude ? this.source.tasks.get(exclude) : undefined
+    if (task?.pilot) {
+      let run
+      try { run = this.source.pilots.policy.live(task.pilot) } catch (error) { return (error as Error).message }
+      const active = this.source.tasks.all().filter(other => other.id !== exclude && other.pilot === run.id && this.active(other)).length
+      if (active >= run.config.parallel) return `${active} Autopilot tasks are working (limit ${run.config.parallel})`
+    }
     if (!this.source.machineConnected(machine)) return 'its machine is reconnecting'
     const sample = this.source.store.get<Sample>('health-sample', machine), limits = this.source.settings.machineLimits(machine)
     if (this.source.plugins?.has('health') !== false && (!sample || Date.now() - sample.at > 90_000)) return 'checking its machine’s health'
