@@ -41,12 +41,12 @@ export function privateUrls(port: number): string[] {
   } catch { return [] }
 }
 
-async function describe(config: CoreConfig) {
+export async function launcherStatus(config: CoreConfig, observed?: { record: RunRecord; current: Health }) {
   const kind = inspectHome(config.home)
   if (kind === 'legacy') return 'Legacy 2.0 state is present. The core application has not started here; use an isolated preview home until cutover.'
-  const record = runRecord(config.home)
-  const current = record && await health(record)
-  if (!current) return `Shepherdr is stopped.${record && alive(record.pid) ? ' Its recorded process is alive but cannot be verified; it has not been signaled.' : ''}`
+  const record = observed?.record ?? runRecord(config.home)
+  const current = observed?.current ?? (record && await health(record))
+  if (!current || !record) return record && alive(record.pid) ? `Shepherdr’s recorded process is alive (PID ${record.pid}), but its status is not confirmed yet. It has not been signaled; check status again shortly.` : 'Shepherdr is stopped.'
   const urls = privateUrls(record.port)
   return `Shepherdr is running (PID ${record.pid}). Core ${current.core ? 'connected' : 'reconnecting'}.\n${urls.length ? urls.map(url => `Private URL: ${url}`).join('\n') : 'No private Tailscale Serve mapping points to this port. Configure one before opening from another device.'}`
 }
@@ -82,7 +82,8 @@ async function start(config: CoreConfig, foreground: boolean) {
   prepareHome(config.home)
   await withLock(config.home, async () => {
     const record = runRecord(config.home)
-    if (record && await health(record)) { console.log(await describe(config)); return }
+    const confirmed = record && await health(record)
+    if (record && confirmed) { console.log(await launcherStatus(config, { record, current: confirmed })); return }
     if (record && alive(record.pid)) throw new Error('The recorded process is alive but its identity cannot be verified. No process was stopped; inspect it before restarting.')
     await ensureCore(config)
     const boot = randomUUID()
@@ -104,7 +105,8 @@ async function start(config: CoreConfig, foreground: boolean) {
     for (let attempt = 0; attempt < 100; attempt++) {
       if (failed || child.exitCode !== null) throw new Error(`Shepherdr did not start; see the private server log. ${failed?.message ?? ''}`)
       const current = runRecord(config.home)
-      if (current?.boot === boot && await health(current)) { console.log(await describe(config)); return }
+      const confirmed = current?.boot === boot && await health(current)
+      if (current && confirmed) { console.log(await launcherStatus(config, { record: current, current: confirmed })); return }
       await Bun.sleep(100)
     }
     throw new Error('Shepherdr has not answered yet. Check status and its private server log before starting again.')
@@ -113,7 +115,7 @@ async function start(config: CoreConfig, foreground: boolean) {
 
 async function stop(config: CoreConfig) {
   const kind = inspectHome(config.home)
-  if (typeof kind !== 'object') { console.log(await describe(config)); return }
+  if (typeof kind !== 'object') { console.log(await launcherStatus(config)); return }
   await withLock(config.home, async () => {
     const record = runRecord(config.home)
     if (!record || !await health(record)) {
@@ -135,7 +137,7 @@ if (import.meta.main) {
     const config = coreConfig(args)
     if (verb === 'start') await start(config, args.includes('--foreground'))
     else if (verb === 'stop') await stop(config)
-    else if (verb === 'status') console.log(await describe(config))
+    else if (verb === 'status') console.log(await launcherStatus(config))
     else throw new Error('Use shepherdr start, stop, or status')
   } catch (error) { console.error((error as Error).message); process.exitCode = 1 }
 }
