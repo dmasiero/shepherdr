@@ -1,10 +1,80 @@
 import { asEmoji, NAME_MAX, nameProblem, type Action, type Machine, type Place } from '../../shared/types.ts'
 import { deleteSection, moveSpace, newSection, PINNED, renameSection, sectionProblem, setOrder, sortPlaces, type PlaceOrder, type SectionDefs } from '../../shared/order.ts'
+import { one, parseArgs } from '../live/args.ts'
+import { Refusal } from './client.ts'
+import { findCoreSpace } from './space-names.ts'
+import { CoreTaskProcesses } from './task-processes.ts'
+import type { CoreAgent } from './model.ts'
 import type { CoreSource } from './source.ts'
 
 /** Sidebar organization is product metadata; it never renames a core machine or repository. */
 export class CorePlaces {
+  private removals = new Set<string>()
   constructor(private source: CoreSource) {}
+  removing(place: string) { return this.removals.has(place) }
+  names(machine: string, except?: string) {
+    return this.source.store.all<import('./model.ts').CoreSpace>('space').filter(space => space.machine === machine && space.id !== except)
+      .flatMap(space => [space.name, this.source.store.get<string>('name', space.id)]).filter((name): name is string => !!name)
+  }
+  private idle(place: string) {
+    const active = this.source.tasks.all().filter(task => task.place === place && (this.source.tasks.busy(task.id) || new CoreTaskProcesses(this.source).runningChildren(task) || task.workflow === 'working' || task.workflow === 'merging' ||
+      this.source.agents.all().some(agent => agent.chat.startsWith(task.id + '/') && this.source.agents.terminal(agent)?.state !== 'finished' && this.source.status(agent) !== 'idle')))
+    if (active.length) throw new Refusal(`${active.map(task => task.id).join(', ')} still has work running; pause or finish it first`)
+  }
+  async remove(place: string) {
+    if (this.source.quiescing) throw new Refusal('Shepherdr is stopping')
+    const space = this.source.space(place)
+    if (!space || space.home) throw new Refusal('A home space cannot be removed; choose a repository space')
+    if (this.removing(place)) throw new Refusal('This space is already being removed')
+    this.idle(place); this.removals.add(place)
+    try {
+      await this.source.pilots.lifecycle.forgetRegular(place, () => {
+        this.idle(place)
+        const current = this.source.space(place)
+        if (!current) throw new Refusal('This space changed during removal')
+        current.removed = Date.now(); this.source.store.set('space', place, current); this.source.emit('snapshot')
+      })
+      return { ok: true }
+    } finally { this.removals.delete(place) }
+  }
+  async cli(agent: CoreAgent, args: string[]) {
+    const parsed = parseArgs(args.slice(1)), [op = 'list', ...words] = parsed.words
+    const spaces = this.source.spaces().filter(space => space.machine === agent.machine)
+    const find = (name: string | undefined) => {
+      const found = name && findCoreSpace(this.source, agent.machine, name)
+      if (!found) throw new Refusal('Choose a space on your machine')
+      return found
+    }
+    if (op === 'list') return JSON.stringify(spaces.map(space => ({ ...space, name: this.source.store.get<string>('name', space.id) || space.name })), null, 2)
+    if (agent.role !== 'coordinator' || agent.pilot) throw new Refusal('Only a regular coordinator manages spaces, when the human asks')
+    if (op === 'add') {
+      if (words.length !== 1 || parsed.flags.size || Object.keys(parsed.opts).some(key => key !== 'name')) throw new Refusal('Use space add PATH [--name NAME]')
+      return (await this.source.addSpace({ machine: agent.machine, path: words[0]!, name: one(parsed, 'name') })).place
+    }
+    if (op === 'rename') {
+      if (words.length !== 2 || parsed.flags.size || Object.keys(parsed.opts).length) throw new Refusal('Use space rename NAME NEW_NAME')
+      const space = find(words[0])
+      if (this.removing(space.id)) throw new Refusal('This space is being removed')
+      const result = this.act({ type: 'rename', id: space.id, name: words[1]! })
+      if (!result.ok) throw new Refusal('error' in result ? result.error : 'Rename failed')
+      return `Renamed ${space.name} to ${words[1]}`
+    }
+    if (op === 'remove') {
+      if (words.length !== 1 || parsed.flags.size || Object.keys(parsed.opts).length) throw new Refusal('Use space remove NAME')
+      const space = find(words[0]); await this.remove(space.id); return `Removed ${space.name}; files and history kept`
+    }
+    if (op === 'set' && words[0] === 'base') {
+      if (words.length !== 2 || !one(parsed, 'space') || parsed.flags.size || Object.keys(parsed.opts).some(key => key !== 'space')) throw new Refusal('Use space set base BRANCH --space NAME')
+      const space = find(one(parsed, 'space')), base = words[1]!
+      if (space.home || !/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(base) || base.includes('..')) throw new Refusal('Choose a valid base branch for a repository space')
+      await this.source.tasks.git.head({ machine: space.machine, folder: space.folder }, base)
+      const current = this.source.space(space.id), caller = this.source.agents.get(agent.chat)
+      if (!current || this.removing(space.id) || caller?.launch !== agent.launch || caller.grant !== agent.grant) throw new Refusal('Space or coordinator changed; retry the command')
+      current.base = base; this.source.store.set('space', current.id, current); this.source.emit('snapshot')
+      return `New tasks in ${space.name} use ${base}; existing tasks keep their base`
+    }
+    throw new Refusal('Use space list|add|rename|remove, or space set base BRANCH --space NAME')
+  }
   present(places: Place[], machines: Machine[]) {
     const named = <T extends { id: string; name: string }>(item: T) => ({ ...item, name: this.source.store.get<string>('name', item.id) || item.name })
     return sortPlaces(places.map(named), machines.map(machine => ({ ...named(machine), ownName: machine.name, emoji: this.source.store.get<string>('emoji', machine.id) || undefined })),
@@ -30,7 +100,7 @@ export class CorePlaces {
         if (emoji !== undefined && !machine) return fail('Only a machine takes an emoji, one at a time.')
         if (name.length > NAME_MAX) return fail(`A name fits ${NAME_MAX} characters.`)
         if (machine && name && machines.some(item => item.id !== machine.id && item.name.toLowerCase() === name.toLowerCase())) return fail(`A machine is called ${name} already.`)
-        const bad = place && name ? nameProblem(name, places.filter(item => item.machine === place.machine && item.id !== place.id).map(item => item.name)) : undefined
+        const bad = place && name ? nameProblem(name, this.names(place.machine, place.id)) : undefined
         if (bad) return fail(bad)
         store.db.transaction(() => {
           if (name) store.set('name', action.id, name); else store.delete('name', action.id)

@@ -12,7 +12,7 @@ async function fixture(run: (context: { source: CoreSource; scheduler: CoreAutom
   const home = mkdtempSync(join(tmpdir(), 'shep-automation-')), store = new CoreStore(home)
   const spaces = [{ id: 'p:box:demo', name: 'demo', machine: 'box', folder: '/repo', prefix: 'DEMO', base: 'main' }, { id: 'p:other:demo', name: 'demo', machine: 'other', folder: '/other', prefix: 'DEMO', base: 'main' }] as CoreSpace[]
   const tasks: CoreTask[] = [], launches: string[] = []
-  const source = { store, connected: () => true, machineConnected: () => true, agents: { get: () => undefined, terminal: () => undefined }, emit() {}, on() {}, settings: { get: () => 'UTC' }, spaces: () => spaces, space: (id: string) => spaces.find(space => space.id === id), tasks: {
+  const source = { store, places: { removing: () => false }, connected: () => true, machineConnected: () => true, agents: { get: () => undefined, terminal: () => undefined }, emit() {}, on() {}, settings: { get: () => 'UTC' }, spaces: () => spaces, space: (id: string) => spaces.find(space => space.id === id), tasks: {
     all: () => tasks, busy: () => false, view: (task: CoreTask) => ({ status: task.status }),
     addInSpace: async (space: CoreSpace, input: { title: string; automation: string }) => { launches.push(space.id); const task = { id: `DEMO-${launches.length}`, place: space.id, name: input.title, workflow: 'working', status: 'work', automation: input.automation } as CoreTask; tasks.push(task); return task },
   } } as unknown as CoreSource
@@ -141,4 +141,20 @@ test('identical setup errors are new failures only for a new accepted launch att
     await restored.scan(); await restored.drain(); expect(launches).toHaveLength(2)
     await restored.scan(); await restored.drain(); expect(launches).toHaveLength(2)
   } finally { restored.stop() }
+}))
+
+test('removed spaces keep timed and queued rules dormant until re-add', async () => fixture(async ({ source, scheduler, launches, space }) => {
+  scheduler.model.add({ place: space.id, name: 'timed-hidden', trigger: { time: 'once 2020-01-01 00:00' }, task: { title: 'Timed' } }, 0)
+  scheduler.model.add({ place: space.id, name: 'event-hidden', trigger: { on: [{ event: 'ready' }] }, task: { title: 'Event' } })
+  scheduler.record({ event: 'ready', space: space.name }, space.id)
+  const lookup = source.space.bind(source)
+  let hidden = true
+  source.space = id => hidden && id === space.id ? undefined : lookup(id)
+  await scheduler.scan(); await scheduler.drain()
+  expect(launches).toEqual([])
+  expect(scheduler.model.find(space.id, 'timed-hidden')?.runs).toBeUndefined()
+  hidden = false
+  await scheduler.scan(); await scheduler.drain()
+  expect(launches).toEqual([space.id, space.id])
+  expect(scheduler.model.find(space.id, 'event-hidden')?.runs?.[0]?.task).toBeDefined()
 }))

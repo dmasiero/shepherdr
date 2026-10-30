@@ -1,3 +1,4 @@
+import { findCoreSpace } from './space-names.ts'
 import { CoreError, Refusal } from './client.ts'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -98,6 +99,7 @@ export class CoreTasks {
   private save(task: CoreTask) { this.source.store.set('task', task.id, task); this.source.emit('snapshot') }
   private assert(grant: Grant, task: CoreTask) {
     const agent = this.source.agents.get(grant.chat)
+    if (this.source.store.get<CoreSpace>('space', task.place)?.removed || this.source.places?.removing(task.place)) throw new Refusal('This space is removed or being removed; add it again before changing its tasks')
     if (!agent || agent.launch !== grant.session || agent.grant !== grant.id || agent.machine !== task.machine ||
       !(grant.chat === task.chat || (agent.role === 'coordinator' && agent.space === task.place))) throw new Refusal('This session does not own that task')
   }
@@ -112,7 +114,7 @@ export class CoreTasks {
   async add(grant: Grant, input: CoreTaskInput) {
     const caller = this.source.agents.get(grant.chat)
     if (caller?.role !== 'coordinator' || caller.grant !== grant.id || caller.launch !== grant.session) throw new Refusal('Only a coordinator can add a task')
-    const space = input.space ? this.source.spaces().find(space => space.id === input.space || space.name === input.space && space.machine === caller.machine) : this.source.space(caller.space)
+    const space = input.space ? findCoreSpace(this.source, caller.machine, input.space) : this.source.space(caller.space)
     if (!space || space.home) throw new Refusal('Choose a repository space for the task')
     if (space.machine !== caller.machine) throw new Refusal('Use the coordinator of the task’s machine')
     let pilot: string | undefined
@@ -127,10 +129,11 @@ export class CoreTasks {
   async addInSpace(space: CoreSpace, input: CoreTaskInput) {
     if (!input.title.trim() || input.title.length > TITLE_MAX) throw new Refusal(`Write a title of at most ${TITLE_MAX} characters`)
     if (!input.brief.trim()) throw new Refusal('Give the task its full brief')
-    if (!this.source.space(space.id) || space.home) throw new Refusal('Choose a repository space for the task')
+    if (!this.source.space(space.id) || this.source.places?.removing(space.id) || space.home) throw new Refusal('Choose a repository space for the task')
     const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine))
     const branch = `work/${number}-${slugify(input.title).slice(0, 40)}`
     const folder = join(await (input.pilot ? this.source.agents.pilotWorktreeRoot(space.machine) : this.source.agents.worktreeRoot(space.machine)), space.name, branch.replaceAll('/', '-'))
+    if (!this.source.space(space.id) || this.source.places?.removing(space.id)) throw new Refusal('This space changed before task creation; retry after it is added again')
     const after = taskDependencies(this.all(), { id, place: space.id, machine: space.machine }, input.after ?? [], machine => this.source.machineName(machine))
       .filter(id => !['merged', 'closed'].includes(this.get(id)!.workflow))
     const run = input.pilot ? this.source.pilots.policy.get(input.pilot) : undefined
@@ -150,6 +153,7 @@ export class CoreTasks {
       reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: run?.config.approvals.includes('merge') || merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', overrides, review: { on: (overrides['brief.review'] ?? this.source.settings.get('brief.review', space.id)) === 'on', kind: reviewer.kind, rounds: parseInt(overrides['review.rounds'] ?? this.source.settings.get('review.rounds', space.id)), mustFix: overrides['review.mustFix'] ?? this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }
     return this.change(task.id, async () => {
+      if (!this.source.space(space.id) || this.source.places?.removing(space.id)) throw new Refusal('This space is being removed')
       if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && (other.workflow === 'working' || other.workflow === 'merging')).length)
       this.save(task) // Number and record survive a failed worktree/agent start; never reuse their branch number.
       try {
@@ -176,6 +180,7 @@ export class CoreTasks {
       if (run && (run.state !== 'on' || run.place !== task.place || run.machine !== task.machine)) throw new Refusal('This run cannot start that task')
       await this.profile(task, run || undefined)
       if (caller.pilot) this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
+      if (!this.source.space(task.place) || this.source.places?.removing(task.place)) throw new Refusal('Task space is missing or being removed')
       const prior = this.source.agents.get(task.chat)
       if (prior && !this.source.agents.terminal(prior)) throw new Refusal('Previous task start is unconfirmed; reconnect before starting it again')
       task.after = taskDependencies(this.all(), task, task.after ?? [], machine => this.source.machineName(machine))
@@ -258,7 +263,7 @@ export class CoreTasks {
   private async launchNow(task: CoreTask, message?: string, model = task.model, effort = task.effort) {
     task = this.get(task.id) || (() => { throw new Refusal('No such task') })()
     const space = this.source.space(task.place)
-    if (!space) throw new Refusal('Task space is missing')
+    if (!space || this.source.places?.removing(space.id)) throw new Refusal('Task space is missing or being removed')
     if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
     const prior = this.source.agents.get(task.chat)
     if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
@@ -448,6 +453,7 @@ export class CoreTasks {
     if (!('chat' in action)) throw new Refusal('Task action has no chat')
     const task = this.forChat(action.chat)
     if (!task) throw new Refusal('No such task')
+    if (this.source.store.get<CoreSpace>('space', task.place)?.removed || this.source.places?.removing(task.place)) throw new Refusal('This space is removed or being removed')
     if (this.merging.has(task.id) && !['pin', 'restart-info'].includes(action.type)) throw new Refusal('The merge must finish before changing this task')
     const agent = this.source.agents.get(task.chat), terminal = agent && this.source.agents.terminal(agent)
     switch (action.type) {
@@ -663,7 +669,7 @@ export class CoreTasks {
             }
           }
         }
-        if (task.archived || task.workflow !== 'queued' || !(task.after ?? []).every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
+        if (!this.source.space(task.place) || this.source.places?.removing(task.place) || task.archived || task.workflow !== 'queued' || !(task.after ?? []).every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
         const room = this.source.health?.room(task.machine, task.id)
         if (room) { if (task.capacity !== room) { task.capacity = room; this.save(task) }; continue }
         const agent = this.source.agents.get(task.chat)
@@ -689,7 +695,7 @@ export class CoreTasks {
   }
   list(grant: Grant, archived = false, selected?: string) {
     const caller = this.source.agents.get(grant.chat)
-    if (selected && selected !== caller?.space && selected !== (caller && this.source.space(caller.space))?.name) throw new Refusal('This session can list only its own space')
+    if (selected && selected !== caller?.space && selected !== (caller && this.source.space(caller.space))?.name && selected !== (caller && this.source.store.get<string>('name', caller.space))) throw new Refusal('This session can list only its own space')
     return this.all().filter(task => task.place === caller?.space && task.machine === caller?.machine && !!task.archived === archived)
   }
   async cli(grant: Grant, args: string[]): Promise<{ out: string; code: number }> {

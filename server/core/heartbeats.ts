@@ -1,3 +1,4 @@
+import { findCoreSpace } from './space-names.ts'
 import { Heartbeats, firstChecklist } from '../heartbeat.ts'
 import { timeWords, nextWords, runWords, timeRule } from '../live/trigger.ts'
 import { Refusal } from './client.ts'
@@ -20,7 +21,7 @@ export class CoreHeartbeats {
   }
   cli(agent: CoreAgent, args: string[], stdin?: string) {
     const set = args[1] === 'set', name = args[set ? 2 : 1]
-    const space = name ? this.source.spaces().find(space => space.machine === agent.machine && (space.name === name || space.id === name)) : this.source.space(agent.space)
+    const space = name ? findCoreSpace(this.source, agent.machine, name) : this.source.space(agent.space)
     if (!space || space.machine !== agent.machine) throw new Refusal('Choose a space on this machine')
     if (set) {
       if (agent.role !== 'coordinator') throw new Refusal('Only a coordinator can change a heartbeat checklist')

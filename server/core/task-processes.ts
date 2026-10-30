@@ -7,9 +7,36 @@ import { Refusal } from './client.ts'
 /** Product-owned roots and their actual core descendants, never names or caller-supplied labels. */
 export class CoreTaskProcesses {
   constructor(private source: CoreSource) {}
-  async stop(task: CoreTask, cancel = true, forgetBrowser = false) {
-    const records = [...new Map([...this.source.agents.all(), ...this.source.store.all<CoreAgent>('agent-launch'), ...this.source.store.all<CoreAgent>('pilot-capture')]
+  private records(task: CoreTask) {
+    return [...new Map([...this.source.agents.all(), ...this.source.store.all<CoreAgent>('agent-launch'), ...this.source.store.all<CoreAgent>('pilot-capture')]
       .filter(agent => agent.chat.startsWith(`${task.id}/`)).map(agent => [agent.launch, agent])).values()]
+  }
+  runningChildren(task: CoreTask) {
+    const records = this.records(task), roots = new Set<string>()
+    const current = new Set(this.source.agents.all().filter(agent => agent.chat.startsWith(`${task.id}/`)).map(agent => agent.launch))
+    for (const agent of records) {
+      const terminal = this.source.agents.terminal(agent)
+      if (!this.source.machineConnected(agent.machine) || !terminal || agent.pid !== undefined && agent.pid !== terminal.pid) return true
+      if (!current.has(agent.launch) && terminal.state !== 'finished') return true
+      roots.add(terminal.address)
+    }
+    const descendants = new Set(roots)
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const terminal of this.source.core.current.terminals.values()) {
+        const prefix = terminal.address.includes('/') ? terminal.address.slice(0, terminal.address.indexOf('/') + 1) : ''
+        const parent = terminal.parent && (terminal.parent.includes('/') ? terminal.parent : prefix + terminal.parent)
+        if (parent && descendants.has(parent) && !descendants.has(terminal.address)) {
+          if (terminal.state !== 'finished' || descendants.size >= 1024) return true
+          descendants.add(terminal.address); changed = true
+        }
+      }
+    }
+    return false
+  }
+  async stop(task: CoreTask, cancel = true, forgetBrowser = false) {
+    const records = this.records(task)
     const owned = new Map<string, { pid: number | null | undefined; created: number }>()
     const queued = this.source.store.all<{ chat: string }>('pending-send').filter(item => item.chat.startsWith(`${task.id}/`)).map(item => item.chat)
     if (cancel) for (const chat of new Set([task.chat, ...(task.reviewChat ? [task.reviewChat] : []), ...queued])) this.source.cancelQueued?.(chat)

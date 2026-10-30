@@ -174,8 +174,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (remote.state !== 'connected') throw new Error(`${remote.name} is reconnecting`)
     return remote.name
   }
-  spaces() { return this.store.all<CoreSpace>('space') }
-  space(id: string) { return this.store.get<CoreSpace>('space', id) }
+  spaces() { return this.store.all<CoreSpace>('space').filter(space => !space.removed) }
+  space(id: string) { const space = this.store.get<CoreSpace>('space', id); return space?.removed ? undefined : space }
   async refresh() {
     if (this.refreshing) return this.refreshing
     this.refreshing = this.refreshNow().finally(() => { this.refreshing = undefined })
@@ -227,6 +227,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const asks: Record<string, string> = {}
     const attentionRequests: Record<string, string[]> = {}
     for (const agent of this.agents.all()) {
+      if (this.store.get<CoreSpace>('space', agent.space)?.removed) continue
       const requests = [...new Set([...this.openPermissions(agent).map(item => item.id), ...this.questions.open(agent.chat).map(item => item.id), ...this.secrets.open(agent.chat).map(item => item.id)])]
       if (requests.length) { attentionRequests[agent.chat] = requests; asks[agent.chat] = requests.at(-1)! }
       else if (this.status(agent) === 'need') attentionRequests[agent.chat] = ['attention']
@@ -237,7 +238,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
-      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks, attentionRequests,
+      tasks: this.tasks.all().filter(task => spaces.some(space => space.id === task.place)).map(task => this.tasks.view(task)), artifacts: this.artifacts.list().filter(artifact => spaces.some(space => space.id === artifact.place)), automations: this.automations.view(), asks, attentionRequests,
       settings: this.secrets.pages([...this.settings.sections().map(section => this.pilots.wakes.section(section)), this.plugins.section(this.pluginUpdates?.status())]),
       last: this.unread.last(), read: this.unread.read(),
     }
@@ -374,6 +375,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         stream.input(Buffer.from(action.text)); stream.close(); return {}
       }
       case 'read': if (this.unread.mark(action.chats)) this.emit('snapshot'); return {}
+      case 'space-remove': return this.places.remove(action.place)
       case 'rename': case 'order': case 'move': case 'section': return this.places.act(action)
       case 'react': {
         const text = this.chats.reaction(action.chat, action.message, action.emoji), id = randomUUID()
@@ -478,6 +480,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const agent = this.agents.get(grant.chat)
     const terminal = agent && this.agents.terminal(agent)
     if (!agent || agent.launch !== grant.session || agent.grant !== grant.id || terminal?.state !== 'live' || agent.pid && terminal.pid !== agent.pid) throw new Error('This session is no longer active')
+    if (agent && this.store.get<CoreSpace>('space', agent.space)?.removed) throw new Error('This space was removed; add it again before using its product commands')
     if (request.action === 'pilot') return this.pilots.mail(agent, grant, request, requestId)
     // Contained calls use their private run/actor binding and checked product brokers. UI controls remain unoffered.
     if (agent.pilot) {
@@ -491,7 +494,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       const args = input.args as string[]
       if (!args.length || args[0] === 'help' || args.includes('--help')) return { out: `Shepherdr standalone core commands (authenticated agent session):
   show
-  space list | space add PATH
+  space list | space add PATH [--name NAME] | space rename NAME NEW_NAME | space remove NAME
+  space set base BRANCH --space NAME
   task add TITLE --brief FULL_BRIEF [--desc FULL_BRIEF] [--agent claude|codex] [--model ID] [--effort LEVEL]
     [--reviewer claude|codex] [--reviewer-model ID] [--reviewer-effort LEVEL] [--set KEY=VALUE]
     [--space NAME] [--base BRANCH] [--later] [--after ID,ID]
@@ -530,12 +534,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
       if (args[0] === 'automation') return { out: await this.automations.cli(agent, args) + '\n', code: 0 }
       if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
-      if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
-      if (args[0] === 'space' && args[1] === 'add') {
-        if (agent.role !== 'coordinator') throw new Error('Only a coordinator can add a space')
-        const result = await this.addSpace({ machine: agent.machine, path: args[2] || '' })
-        return { out: result.place + '\n', code: 0 }
-      }
+      if (args[0] === 'space') return { out: await this.places.cli(agent, args) + '\n', code: 0 }
       return this.tasks.cli(grant, args)
     }
     if (request.action === 'secret') return this.secrets.use(agent, request.args)
@@ -596,13 +595,28 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     }
     const repo = await this.folders(request.machine, folder.path)
     if (!repo.repo) throw new Error('Choose a git repository')
-    const existing = this.spaces().find(space => space.machine === request.machine && space.folder === repo.repo)
-    if (existing) return { place: existing.id }
+    const saved = this.store.all<CoreSpace>('space')
+    const existing = saved.find(space => space.machine === request.machine && space.folder === repo.repo)
+    if (existing) {
+      if (this.places.removing(existing.id)) throw Error('This space is being removed; retry shortly')
+      if (existing.removed) {
+        const display = request.name || this.store.get<string>('name', existing.id) || existing.name
+        const problem = nameProblem(display, this.places.names(request.machine, existing.id))
+        if (problem) throw Error(problem)
+        if (request.name) this.store.set('name', existing.id, request.name)
+        delete existing.removed; this.store.set('space', existing.id, existing); this.emit('snapshot'); this.retry(existing.id)
+      }
+      return { place: existing.id }
+    }
     const name = request.name || slugify(basename(repo.repo))
-    const problem = nameProblem(name, this.spaces().filter(space => space.machine === request.machine).map(space => space.name))
+    const problem = nameProblem(name, this.places.names(request.machine))
     if (problem) throw new Error(problem)
     const id = `p:${request.machine}:${name}`
     const base = (await this.files.exec(request.machine, ['git', 'symbolic-ref', '--short', 'HEAD'], repo.repo)).toString().trim()
+    const concurrent = this.store.all<CoreSpace>('space').find(space => space.machine === request.machine && (space.folder === repo.repo || space.id === id))
+    if (concurrent) { if (concurrent.folder === repo.repo && !concurrent.removed) return { place: concurrent.id }; throw Error('This space name was reserved by another request; retry with another name') }
+    const changedName = nameProblem(name, this.places.names(request.machine))
+    if (changedName) throw Error(changedName)
     this.store.set('space', id, { id, machine: request.machine, name, folder: repo.repo, base, prefix: name.replace(/[^a-z]/gi, '').slice(0, 4).toUpperCase() || 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
     this.emit('snapshot'); return { place: id }
   }

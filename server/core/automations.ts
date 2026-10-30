@@ -1,3 +1,4 @@
+import { findCoreSpace } from './space-names.ts'
 import { randomUUID } from 'node:crypto'
 import { Automations, type Automation, type Template } from '../automations.ts'
 import { eventRules, timeRule, triggerWords, validZone, OWN_ZONE, matches, type Happened } from '../live/trigger.ts'
@@ -76,6 +77,7 @@ export class CoreAutomations {
     try { return await work } finally { this.active.delete(work) }
   }
   private enqueue(event: Happened, place: string) {
+    if (!this.source.space(place) || this.source.places.removing(place)) return
     this.source.pilots?.wakes.news(event, place)
     for (const automation of this.model.on(event, place)) {
       const own = this.source.space(automation.place), from = this.source.space(place)
@@ -101,7 +103,7 @@ export class CoreAutomations {
         if (this.busy.has(run.automation)) continue
         const automation = this.model.list.find(item => item.id === run.automation)
         if (!automation) { this.finish(run, { error: 'Automation removed before this queued event ran' }); continue }
-        if (!automation.on) continue
+        if (!automation.on || !this.source.space(automation.place) || this.source.places.removing(automation.place)) continue
         try { await this.fire(automation, false, run) } catch {}
       }
     })()
@@ -113,7 +115,7 @@ export class CoreAutomations {
     this.scanning = true
     try {
       for (const task of this.source.tasks.all()) {
-        if (task.archived || this.source.tasks.busy(task.id) || !this.source.machineConnected(task.machine)) continue
+        if (!this.source.space(task.place) || this.source.places.removing(task.place) || task.archived || this.source.tasks.busy(task.id) || !this.source.machineConnected(task.machine)) continue
         const previous = this.source.store.get<Seen>('automation-seen', task.id), status = this.source.tasks.view(task).status
         const agent = this.source.agents.get(task.chat), terminal = agent && this.source.agents.terminal(agent)
         const attempt = task.launchAttempt ?? agent?.launch
@@ -144,7 +146,7 @@ export class CoreAutomations {
         })()
       }
       void this.processQueue()
-      for (const automation of this.model.dueNow(this.zone())) if (!this.busy.has(automation.id)) void this.fire(automation, true).catch(() => {})
+      for (const automation of this.model.dueNow(this.zone())) if (this.source.space(automation.place) && !this.source.places.removing(automation.place) && !this.busy.has(automation.id)) void this.fire(automation, true).catch(() => {})
     } finally { this.scanning = false }
   }
   async act(action: Extract<Action, { type: 'automation' }>) {
@@ -164,7 +166,7 @@ export class CoreAutomations {
   async cli(agent: CoreAgent, args: string[]) {
     if (agent.role !== 'coordinator') throw new Refusal('Only a coordinator can manage automations')
     const parsed = parseArgs(args.slice(1)), [op = 'list', ...rest] = parsed.words, name = rest.join(' '), requested = one(parsed, 'space')
-    const space = requested ? this.source.spaces().find(space => space.machine === agent.machine && (space.name === requested || space.id === requested)) : this.source.space(agent.space)
+    const space = requested ? findCoreSpace(this.source, agent.machine, requested) : this.source.space(agent.space)
     if (op === 'list') return this.model.list.filter(item => { const s = this.source.space(item.place); return s?.machine === agent.machine && (!requested || s.id === space?.id) }).map(item => `${item.name} · ${triggerWords(item.trigger, this.zone())} · adds “${item.task.title}”${item.on ? '' : ' · paused'} · ${JSON.stringify(item.runs ?? [])}`).join('\n') || 'No automations.'
     if (!space || space.home) throw new Refusal('Choose a repository space with --space NAME')
     if (!name.trim() || name.length > 120) throw new Refusal('Give the automation a name of at most 120 characters')

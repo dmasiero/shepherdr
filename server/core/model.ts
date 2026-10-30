@@ -11,6 +11,7 @@ export interface CoreSpace {
   prefix: string
   mode: Mode
   added: number
+  removed?: number
 }
 export interface CoreAgent {
   chat: string

@@ -129,6 +129,21 @@ export class CorePilotLifecycle {
       if (save) this.source.settings.saveAgent('coordinator', place, pick)
     }).finally(() => this.source.retry(place))
   }
+  forgetRegular(place: string, forget: () => void) {
+    if (this.busy(place) || this.source.pilots.completion.busy(place)) throw Error('The coordinator is changing; try again shortly')
+    const space = this.source.space(place), old = this.source.agents.get(place)
+    if (!space || space.mode === 'autopilot' || old?.pilot || this.source.pilots.policy.all().some(run => run.place === place && run.state !== 'stopped')) throw Error('Turn Autopilot off and finish its cleanup before removing this space')
+    return this.transition(place, async () => {
+      if (old) {
+        this.source.mailbox.revoke(old.chat)
+        this.source.denyPermissions(old, 'Space removed; add it again before asking a fresh question')
+        await this.finish(old)
+      }
+      if (this.source.quiescing) throw Error('Shepherdr is stopping')
+      if (this.source.agents.get(place)?.launch !== old?.launch) throw Error('A newer coordinator replaced this removal')
+      forget()
+    })
+  }
   private recent(place: string) {
     return this.source.logs.messages(place).filter(message => message.text).slice(-20).map(message => `${message.who}: ${message.text!.slice(0, 4000)}`).join('\n').slice(-32000)
   }
