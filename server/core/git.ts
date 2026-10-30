@@ -67,6 +67,22 @@ export class CoreGit {
     if (await this.branchHead(repo, branch)) await this.run(repo, ['worktree', 'add', folder, branch], 60, undefined, [folder])
     else await this.addWorktree(repo, folder, branch, base)
   }
+  async pushTaskBranch(repo: RepoLocation, branch: string, expected?: string) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(branch) || branch.includes('..') || expected !== undefined && !/^[a-f0-9]{40,64}$/.test(expected)) throw Error('Invalid saved task branch identity')
+    const ref = `refs/heads/${branch}`
+    if (await this.run(repo, ['symbolic-ref', '--quiet', 'HEAD']) !== ref) throw Error('The task branch is not checked out; nothing was pushed')
+    const head = await this.head(repo, ref)
+    if (!/^[a-f0-9]{40,64}$/.test(head)) throw Error('Git did not return a task commit identity')
+    try {
+      await this.run(repo, ['push', `--force-with-lease=${ref}:${expected ?? ''}`, 'origin', `${head}:${ref}`], 90)
+    } catch (error) {
+      // A lost response is not a reason to blindly repeat a force push. Confirm the exact remote commit.
+      let remote: string
+      try { remote = await this.run(repo, ['ls-remote', '--heads', 'origin', ref], 60) } catch { throw error }
+      if (remote !== `${head}\t${ref}`) throw error
+    }
+    return head
+  }
   async syncBase(repo: RepoLocation, base: string, merged: string) {
     if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(base) || base.includes('..') || !/^[a-f0-9]{40,64}$/.test(merged)) throw Error('Invalid confirmed base identity')
     const ref = `refs/shepherdr/base-sync/${createHash('sha256').update(JSON.stringify([repo.machine, repo.folder, base])).digest('hex')}`

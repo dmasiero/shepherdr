@@ -624,3 +624,18 @@ test('confirmed GitHub base sync preserves dirty work and then fast-forwards onl
   expect(tasks.get(task.id)?.baseSyncError).toBeUndefined()
   expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('after\n')
 }))
+
+test('task pushes accept its own rebase with a lease but preserve someone else’s remote update', () => withTask(async ({ tasks, task, repo, worktree, git }) => {
+  const remote = join(repo, '..', 'remote.git'), location = { machine: task.machine, folder: worktree }
+  git(repo, 'init', '--bare', remote); git(repo, 'remote', 'add', 'origin', remote)
+  const first = await tasks.git.pushTaskBranch(location, task.branch)
+  writeFileSync(join(repo, 'base-added.txt'), 'BASE_ADDITION\n'); git(repo, 'add', '.'); git(repo, 'commit', '-m', 'advance base')
+  git(worktree, 'rebase', 'main')
+  const second = await tasks.git.pushTaskBranch(location, task.branch, first)
+  expect(second).not.toBe(first)
+  const foreign = await tasks.git.head({ machine: task.machine, folder: repo })
+  git(repo, '--git-dir=' + remote, 'update-ref', `refs/heads/${task.branch}`, foreign, second)
+  writeFileSync(join(worktree, 'example.txt'), 'next\n'); git(worktree, 'commit', '-am', 'next task change')
+  await expect(tasks.git.pushTaskBranch(location, task.branch, second)).rejects.toThrow()
+  expect(await tasks.git.run(location, ['ls-remote', '--heads', 'origin', `refs/heads/${task.branch}`])).toBe(`${foreign}\trefs/heads/${task.branch}`)
+}))

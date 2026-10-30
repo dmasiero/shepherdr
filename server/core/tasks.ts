@@ -37,6 +37,7 @@ export interface CoreTask extends Task {
   workflow: 'todo' | 'queued' | 'working' | 'ready' | 'merging' | 'merged' | 'closed'
   mergePolicy: 'ask' | 'checks' | 'auto'
   readyHead?: string
+  pushedHead?: string
   approvedHead?: string
   review: { on: boolean; kind: AgentKind; rounds: number; mustFix: string }
   reviewTerminal?: string
@@ -468,7 +469,7 @@ export class CoreTasks {
     const repo = { machine: task.machine, folder: task.folder }
     const remote = await this.git.remote(repo)
     if (!remote) throw new Refusal('This task has no GitHub origin')
-    await this.git.run(repo, ['push', '-u', 'origin', task.branch!], 90)
+    task.pushedHead = await this.git.pushTaskBranch(repo, task.branch, task.pushedHead); this.save(task)
     let pr = await this.git.findPullRequest(repo, task.branch, task.base)
     if (!pr) {
       await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'create', '--repo', remote, '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], 60, task.said || task.desc || task.name)

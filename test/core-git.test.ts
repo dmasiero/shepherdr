@@ -76,3 +76,25 @@ test('basic PR identity omits restricted checks and open lookup refuses ambiguou
   fail = true
   await expect(git.findPullRequest(repo, 'work/one', 'main')).rejects.toThrow('GitHub unavailable')
 })
+
+test('a lost push reply only settles when the remote confirms the exact captured task commit', async () => {
+  const sha = 'a'.repeat(40), ref = 'refs/heads/work/one', calls: string[][] = [], git = new CoreGit({} as CoreFiles)
+  let confirmed = true
+  git.run = async (_repo, args) => { calls.push(args); if (args[0] === 'symbolic-ref') return ref; if (args[0] === 'rev-parse') return sha; if (args[0] === 'push') throw Error('Reply lost'); if (args[0] === 'ls-remote') return `${confirmed ? sha : 'b'.repeat(40)}\t${ref}`; throw Error('Unexpected command') }
+  expect(await git.pushTaskBranch({ machine: 'machine', folder: '/work' }, 'work/one', 'c'.repeat(40))).toBe(sha)
+  expect(calls.find(args => args[0] === 'push')).toEqual(['push', '--force-with-lease=refs/heads/work/one:' + 'c'.repeat(40), 'origin', `${sha}:${ref}`])
+  confirmed = false
+  await expect(git.pushTaskBranch({ machine: 'machine', folder: '/work' }, 'work/one', 'c'.repeat(40))).rejects.toThrow('Reply lost')
+})
+
+test('a checkout switch cannot change the task ref whose captured commit is pushed', async () => {
+  const saved = 'a'.repeat(40), other = 'b'.repeat(40), ref = 'refs/heads/work/one', git = new CoreGit({} as CoreFiles), pushes: string[][] = []
+  git.run = async (_repo, args) => {
+    if (args[0] === 'symbolic-ref') return ref // Immediately afterward another caller switches HEAD.
+    if (args[0] === 'rev-parse') return args.at(-1) === ref + '^{commit}' ? saved : other
+    if (args[0] === 'push') { pushes.push(args); return '' }
+    throw Error('Unexpected command')
+  }
+  expect(await git.pushTaskBranch({ machine: 'machine', folder: '/work' }, 'work/one')).toBe(saved)
+  expect(pushes[0]).toEqual(['push', `--force-with-lease=${ref}:`, 'origin', `${saved}:${ref}`])
+})
