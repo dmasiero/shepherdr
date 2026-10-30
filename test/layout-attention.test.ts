@@ -50,6 +50,9 @@ describe.skipIf(!browser)('attention count circles', () => {
             expect(geometry.colour).toBe(theme === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)')
             const row = page.locator(`nav[aria-label="Places"] li[data-project="${place}"]`)
             if (!await row.isVisible()) await page.getByRole('button', { name: 'Places', exact: true }).click()
+            // The hovered desktop row gives the badge's room to its More button.
+            await page.mouse.move(width - 1, 1)
+            await page.locator('[aria-label^="Message"]').first().focus()
             await row.locator(badge).waitFor()
             expect(await row.locator(badge).getAttribute('aria-label')).toBe(`${need} needs you, ${ready} ready · here`)
             expect(await row.locator(badge).count()).toBe(1)
