@@ -5,9 +5,10 @@ Spaces have coordinator chats; tasks run Claude Code or Codex in their own workt
 Cards, reviews, merges, artifacts, secrets, browser, voice, Autopilot, automations and
 panels retain the familiar Shepherdr interface.
 
-This branch contains the 2.1 rewrite. It is not a release or an approved live deployment.
-See the [implementation and acceptance record](docs/core/implementation.md) for what is
-verified and what remains unverified.
+Version 2.1.0 is the standalone core release. The production Mac cutover was
+authorized and verified with a real coordinator reply and a harmless completed task.
+See the [implementation and acceptance record](docs/core/implementation.md) and
+[launch checklist](docs/core/launch-readiness.md) for accepted, unverified limits.
 
 ## Start
 
@@ -33,8 +34,9 @@ Terminal-herdr 2.0.x remains on `v2.0`, including its plugin and original instru
 mirrors, tunnels or remote HTTP bridge. It has a [new plugin API](docs/plugins.md).
 Existing installed legacy helpers continue to belong to their legacy session.
 
-[Cutover and rollback](docs/core/cutover.md) require separate approval. No version
-bump, release, service installation or production state move is part of this build.
+Future [cutover and rollback operations](docs/core/cutover.md), state moves, service
+changes and releases require the operator’s explicit approval. Preserve both stores
+and use the pinned legacy build when recovering.
 
 ## Development
 

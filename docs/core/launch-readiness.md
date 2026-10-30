@@ -1,5 +1,15 @@
 # Frozen launch-readiness checklist — SHE-301
 
+> Production update, 2026-10-30: Elias subsequently authorized the Mac cutover and
+> 2.1.0 release, accepting the named device/voice/external-machine/full-parity limits.
+> The historical NO-GO and approval wording below is superseded by that decision.
+> The Mac now runs the standalone login service with fresh state; private HTTPS/assets/
+> WebSocket/core, a real coordinator reply and a default harmless research task Done
+> passed. A reviewed macOS reclaimable-memory fix passed full Check 41051303371.
+> Login/reboot behavior, physical devices, voice, external-machine operation and
+> complete parity are not promoted to verified. Check-read permission refusals remain.
+> Final release CI is bound to its exact commit in the GitHub release.
+
 Frozen against the agreed 2.1 plan and Elias's finite-readiness instruction, 2026-10-30.
 No new product features, scope reduction, merge, deployment, state migration, release or version change.
 The implementation/parity baseline is implementation.md; historical proof remains artifact hf2s.

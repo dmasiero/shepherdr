@@ -1,8 +1,9 @@
 # Standalone Shepherdr on core
 
-Implementation documentation for the isolated rewrite branch. Full parity and
-release acceptance are still pending: see [the delivery record](implementation.md).
-Do not deploy this branch over a running legacy installation.
+Standalone 2.1 installation and service instructions. See the
+[delivery record](implementation.md) and [launch checklist](launch-readiness.md)
+for accepted, unverified limits. Stop and preserve legacy writers/state through the
+[cutover runbook](cutover.md) before creating the fresh installation.
 
 ## Requirements and installation
 
@@ -163,8 +164,9 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/dev.shepherdr.plist
 LaunchAgents start at user login, not before login. `shepherdr stop` exits normally
 and leaves agents running; the unsuccessful-exit policy does not immediately undo
 that manual stop. For manual service restart use bootout/bootstrap. The plist is a
-reviewable template; macOS service installation/crash recovery remains unverified.
-No plist is installed or loaded automatically.
+reviewable template. Installation and manual service startup were verified on the
+production Mac during the authorized 2.1 cutover; reboot/login and crash recovery
+remain unverified. No plist is installed or loaded automatically.
 
 The application reconnects with a fresh core snapshot after disconnect. Its
 recovery loop starts the configured core again if that core crashes; it never
