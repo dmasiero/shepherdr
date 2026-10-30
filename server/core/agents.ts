@@ -12,6 +12,7 @@ import { CoreFiles } from './files.ts'
 import { CoreRemotes } from './remote.ts'
 import { browserNamespace, browserSession as sessionForBrowser } from './browser-id.ts'
 import type { CoreSettings } from './settings.ts'
+import { CorePilotRepositories } from './pilot-repositories.ts'
 import type { PilotPrepared, PilotLaunch } from '../../helper/core-pilot-launch.ts'
 
 const EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd', 'PermissionRequest', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification', 'SubagentStart', 'SubagentStop']
@@ -106,9 +107,11 @@ Your shared browser command is ${join(root, 'bin/agent-browser')}; use that exac
 This start replaces every earlier command path and routing instruction. Your authoritative authenticated command is ${join(root, 'bin/shepherdr')}. It talks only to your own core mailbox. If the CLI sandbox cannot reach its core socket, request execution outside the sandbox; never use a web URL, SSH worker or legacy helper.\n`
     if (options.pilot) roleWords = `${privateWords}\n${options.instructions || 'Follow the human’s instructions and repository rules.'}\nYou run inside the Isolated workspace profile. Your only product command is /run/shepherdr/bin/shepherdr through your fixed authenticated gateway. No core socket or credential is available inside this namespace. Never request execution outside it or fall back to a host helper, SSH, web route or outside browser. Managed tasks use the product broker; native helpers remain in this same namespace. Git metadata is read-only. Product task commands are still being connected in this development build; do not attempt them in a provider-only acceptance run.\n`
     await privateFile(instructions, roleWords)
+    if (options.pilot) new CorePilotRepositories(this.store).remember(space.machine, options.pilot.repo, [options.folder ?? space.folder])
     if (options.pilot) prepared = JSON.parse((await this.files.exec(space.machine, [remote?.bun ?? process.execPath, join(root, 'helper/core-pilot-launch.ts'), 'prepare'], undefined,
       Buffer.from(JSON.stringify({ parent: directory, cwd: options.folder ?? space.folder, repo: options.pilot.repo, kind, writable: role === 'task' && !options.readOnly, instructions: roleWords, settings: JSON.stringify({ hooks }), privateRoots: [remote?.root ?? this.config.home] })), 45)).toString('utf8')) as PilotPrepared
     if (prepared) cleanup = async () => { await this.files.exec(space.machine, [remote?.bun ?? process.execPath, join(root, 'helper/core-pilot-launch.ts'), 'discard'], undefined, Buffer.from(JSON.stringify({ prepared, parent: directory }))) }
+    if (prepared && options.pilot) new CorePilotRepositories(this.store).remember(space.machine, options.pilot.repo, [options.folder ?? space.folder], [prepared.paths.state])
     const record: CoreAgent = {
       chat, space: space.id, machine: space.machine, role, kind, launch, grant: grant.id, hook, browser: options.pilot ? undefined : { namespace: shellEnv.AGENT_BROWSER_NAMESPACE, session: browserSession, profile: shellEnv.AGENT_BROWSER_PROFILE }, command: options.pilot ? '/run/shepherdr/bin/shepherdr' : join(root, 'bin/shepherdr'), started: Date.now(), state: 'starting',
       session: !options.pilot && options.resume && previous?.kind === kind ? previous.session : undefined, model: options.model, effort: options.effort,

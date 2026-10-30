@@ -53,3 +53,23 @@ test('unreadable GitHub checks are not reported as no checks', async () => {
     expect(JSON.parse(child.stdout.toString())).toMatchObject({ pr: { checks: [], checksError: 'Could not read GitHub checks.' } })
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+test('contained file and diff panels use checked Git without executing host callbacks', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'shep-tree-checked-'))
+  const git = (...args: string[]) => { const p = Bun.spawnSync(['git', ...args], { cwd: root }); if (p.exitCode) throw Error(p.stderr.toString()) }
+  try {
+    git('init', '-b', 'main'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.invalid')
+    writeFileSync(join(root, '[literal].txt'), 'before\n'); git('add', '.'); git('commit', '-m', 'Base')
+    writeFileSync(join(root, '[literal].txt'), 'after\n')
+    const marker = join(root, 'executed'), callback = join(root, 'callback')
+    writeFileSync(callback, `#!/bin/sh\nprintf executed > '${marker}'\n`, { mode: 0o700 })
+    git('config', 'core.fsmonitor', callback)
+    const checked = { repo: root, writableRoots: [root], bun: process.execPath, helper: join(import.meta.dir, '../helper/core-pilot-git.ts') }
+    const ask = { folder: root, base: 'main', branch: 'main', checked }
+    expect(await readWorktree({ ...ask, what: 'file', path: '[literal].txt' })).toMatchObject({ text: 'after\n' })
+    expect(await readWorktree({ ...ask, what: 'patch', path: '[literal].txt' })).toMatchObject({ text: expect.stringContaining('+after') })
+    expect(await Bun.file(marker).exists()).toBe(false)
+    git('config', 'include.path', '../not-created.cfg')
+    await expect(readWorktree({ ...ask, what: 'files' })).rejects.toThrow('no longer available')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})

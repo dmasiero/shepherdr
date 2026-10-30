@@ -1,11 +1,22 @@
 // Stateless native worktree reader. Executed through documented core machine.exec; no listener or worker.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { lstatSync, realpathSync, statSync, openSync, closeSync, readSync, fstatSync, constants } from 'node:fs'
 import type { Diff, DiffFile, FileText, Patch, PullRequest, PrCheck, TreeFiles, WorktreeAsk } from '../shared/types.ts'
 
+interface CheckedRepository { repo: string; writableRoots: string[]; bun: string; helper: string }
+const checkedRepository = new AsyncLocalStorage<CheckedRepository>()
+
 interface Result { ok: boolean; out: string; err: string; code: number; truncated: boolean }
 async function sh(argv: string[], cwd: string, options: { env?: Record<string, string>; timeoutMs?: number } = {}): Promise<Result> {
-  const child = Bun.spawn(argv, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat', ...options.env }, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' })
+  const guard = checkedRepository.getStore()
+  let stdin: 'ignore' | Buffer = 'ignore'
+  if (guard && ['git', 'gh'].includes(argv[0])) {
+    stdin = Buffer.from(JSON.stringify({ repo: guard.repo, writableRoots: guard.writableRoots, cwd, tool: argv[0], args: argv.slice(1),
+      literal: options.env?.GIT_LITERAL_PATHSPECS === '1', host: options.env?.GH_HOST, timeout: options.timeoutMs ?? 20000 }))
+    argv = [guard.bun, guard.helper]
+  }
+  const child = Bun.spawn(argv, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat', ...options.env }, stdin, stdout: 'pipe', stderr: 'pipe' })
   const timer = setTimeout(() => child.kill(), options.timeoutMs ?? 20000)
   let truncated = false
   const collect = async (stream: ReadableStream<Uint8Array>, max: number) => {
@@ -259,7 +270,7 @@ export async function pullRequest(wt: string, branch: string): Promise<{ pr: Pul
   return { pr: { number: j.number, title: j.title, state, url: j.url, ...(actions && jobs === null ? { checksError: 'Could not read GitHub checks.' } : {}), checks: jobs ? jobs.map((c) => ({ name: c.name, state: BUCKET[c.bucket] ?? 'fail', url: c.link })) : checksOf(j.statusCheckRollup) } }
 }
 
-export async function readWorktree(ask: { folder: string; base: string; branch: string } & Omit<WorktreeAsk, 'task'> & { path?: string }) {
+async function readWorktreeAt(ask: { folder: string; base: string; branch: string } & Omit<WorktreeAsk, 'task'> & { path?: string }) {
   let root: string
   try { root = realpathSync(ask.folder) } catch { throw Error('This task worktree is no longer available') }
   const top = await git(root, 'rev-parse', '--show-toplevel')
@@ -270,4 +281,8 @@ export async function readWorktree(ask: { folder: string; base: string; branch: 
   if (ask.what === 'patch') return diffPatch(root, ask.base, ask.path)
   if (ask.what === 'pr') return pullRequest(root, ask.branch)
   throw Error('Unknown worktree view')
+}
+
+export async function readWorktree(ask: Parameters<typeof readWorktreeAt>[0] & { checked?: CheckedRepository }) {
+  return checkedRepository.run(ask.checked!, () => readWorktreeAt(ask))
 }

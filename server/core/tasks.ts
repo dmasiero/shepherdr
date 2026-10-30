@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { SUMMARY_MAX, TITLE_MAX, STATUS_MAX, slugify, type Action, type Question, type Task } from '../../shared/types.ts'
+import { CorePilotRepositories } from './pilot-repositories.ts'
 import { CoreGit } from './git.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
@@ -55,7 +56,7 @@ export class CoreTasks {
   private merging = new Set<string>()
   private changing = new Set<string>()
   private drains = new Set<() => void>()
-  constructor(private readonly source: CoreSource) { this.git = new CoreGit(source.files) }
+  constructor(private readonly source: CoreSource) { this.git = new CoreGit(source.files, (repo, additional) => new CorePilotRepositories(source.store).context(repo, additional), machine => source.agents.browserRuntime(machine)) }
   /** Internal product transaction gate; callbacks never come from network input. */
   async change<T>(id: string, perform: () => Promise<T>): Promise<T> {
     if (this.source.quiescing) throw new Refusal('Shepherdr is stopping; retry after it restarts')
@@ -244,7 +245,7 @@ export class CoreTasks {
           if (task.mergePolicy === 'checks' && !pr.statusCheckRollup.length) throw new Refusal('No GitHub checks have reported for this commit')
           if (pr.statusCheckRollup.some(check => !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion || check.state || 'PENDING'))) throw new Refusal('GitHub checks are not green')
           task.workflow = 'merging'; this.save(task); await this.label(task)
-          await this.source.files.exec(task.machine, ['gh', 'pr', 'merge', String(pr.number), '--squash', '--match-head-commit', head, '--repo', remote], task.folder, undefined, 90)
+          await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'merge', String(pr.number), '--squash', '--match-head-commit', head, '--repo', remote], 90)
         }
         const done = await this.git.pullRequest(worktree, task.branch!)
         if (done.state !== 'MERGED') throw new Refusal('GitHub has not confirmed the merge')
@@ -263,7 +264,7 @@ export class CoreTasks {
           const oldTree = await this.git.run(repo, ['rev-parse', `${base}^{tree}`])
           if (tree === oldTree) throw new Refusal('There are no changes to merge; mark the task done without merging')
           const message = `${task.id}: ${task.name}\n\n${task.said || ''}${task.facts ? '\n\nFacts: ' + task.facts : ''}\n`
-          task.mergeCommit = (await this.source.files.exec(task.machine, ['git', 'commit-tree', tree, '-p', base, '-F', '-'], task.repo, Buffer.from(message))).toString('utf8').trim()
+          task.mergeCommit = await this.git.run({ machine: task.machine, folder: task.repo }, ['commit-tree', tree, '-p', base, '-F', '-'], 30, message)
           this.save(task) // Persist the prepared commit before the only base-ref/worktree change.
           task.workflow = 'merging'; this.save(task); await this.label(task)
           await this.git.run(repo, ['merge', '--ff-only', task.mergeCommit])
@@ -295,7 +296,7 @@ export class CoreTasks {
     let pr
     try { pr = await this.git.pullRequest(repo, task.branch!) }
     catch {
-      await this.source.files.exec(task.machine, ['gh', 'pr', 'create', '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], task.folder, Buffer.from(task.said || task.desc || task.name), 60)
+      await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'create', '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], 60, task.said || task.desc || task.name)
       pr = await this.git.pullRequest(repo, task.branch!)
     }
     task.pr = { number: pr.number, url: pr.url }; this.save(task)

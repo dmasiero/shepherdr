@@ -40,9 +40,6 @@ export function pilotGitOptions(keys: string[], gh?: string) {
     if (/^filter\..+\.(clean|smudge|process|required)$/i.test(key)) filters.add(key.replace(/\.[^.]+$/, ''))
     if (/^merge\..+\.driver$/i.test(key)) merges.add(key.replace(/\.driver$/i, ''))
     if (/^diff\..+\.(command|textconv)$/i.test(key)) set(key, 'false')
-    if (/^remote\..+\.vcs$/i.test(key)) set(key, '')
-    if (/^remote\..+\.uploadpack$/i.test(key)) set(key, 'git-upload-pack')
-    if (/^remote\..+\.receivepack$/i.test(key)) set(key, 'git-receive-pack')
   }
   for (const filter of filters) for (const field of ['clean', 'smudge', 'process', 'required']) set(`${filter}.${field}`, field === 'required' ? 'false' : '')
   for (const merge of merges) { set(`${merge}.driver`, 'false'); set(`${merge}.recursive`, 'binary') }
@@ -71,11 +68,12 @@ async function execute(argv: string[], cwd: string, env: Record<string, string |
   } finally { clearTimeout(timer); if (exceeded || timedOut) kill() }
 }
 export interface PilotGitCommand {
-  repo: string; cwd: string; args: string[]; writableRoots: string[]; tool?: 'git' | 'gh'; stdin?: string; timeout?: number
+  repo: string; cwd: string; args: string[]; writableRoots: string[]; tool?: 'git' | 'gh'; stdin?: string; timeout?: number; literal?: boolean; host?: string
 }
 
 export async function pilotGitCommand(input: PilotGitCommand) {
   if (!input || !['git', 'gh'].includes(input.tool ?? 'git') || !Array.isArray(input.args) || input.args.length > 512 || !input.args.length || input.args.some(word => typeof word !== 'string' || word.includes('\0')) || input.args[0].startsWith('-') || !Array.isArray(input.writableRoots) || input.writableRoots.length > 8192 || input.writableRoots.some(root => typeof root !== 'string' || !isAbsolute(root) || resolve(root) === '/') || input.stdin !== undefined && (typeof input.stdin !== 'string' || Buffer.byteLength(input.stdin) > 1024 * 1024)) throw Error('Invalid checked repository command')
+  if (input.literal !== undefined && typeof input.literal !== 'boolean' || input.host !== undefined && (typeof input.host !== 'string' || !/^[a-zA-Z0-9.-]{1,253}$/.test(input.host))) throw Error('Invalid repository command environment')
   if (input.timeout !== undefined && (!Number.isSafeInteger(input.timeout) || input.timeout < 1 || input.timeout > 600_000)) throw Error('Invalid checked repository timeout')
   const repo = realpathSync(input.repo), cwd = realpathSync(input.cwd)
   if (repo !== resolve(input.repo) || cwd !== resolve(input.cwd)) throw Error('Use real repository and worktree paths')
@@ -95,6 +93,8 @@ export async function pilotGitCommand(input: PilotGitCommand) {
   const gitDir = lstatSync(dot).isDirectory() ? realpathSync(dot) : realpathSync(resolve(cwd, readFileSync(dot, 'utf8').trim().slice('gitdir: '.length)))
   env.GIT_DIR = gitDir
   env.GIT_WORK_TREE = cwd
+  if (input.literal) env.GIT_LITERAL_PATHSPECS = '1'
+  if (input.host) env.GH_HOST = input.host
   const version = await execute([git, '--version'], cwd, env, 4096, 5000)
   const match = version.stdout.toString('utf8').match(/git version (\d+)\.(\d+)/)
   if (version.code !== 0 || !match || Number(match[1]) < 2 || Number(match[1]) === 2 && Number(match[2]) < 36) throw Error('Checked repository commands require Git 2.36 or newer')
@@ -130,6 +130,13 @@ export async function pilotGitCommand(input: PilotGitCommand) {
     const declarations = await query([...prefix, '--null', '--show-origin', '--name-only', '--list'])
     if (keys.length + declarations.length > 32768) throw Error('Too many Git configuration keys')
     keys.push(...declarations.map(([, key]) => key))
+    // Remote program settings are first-wins in Git. A later -c is not a security override.
+    for (const key of new Set(declarations.map(([, key]) => key).filter(key => /^remote\..+\.(?:vcs|uploadpack|receivepack)$/i.test(key)))) {
+      for (const [, value] of await query([...prefix, '--null', '--show-origin', '--get-all', key], true)) {
+        const expected = /\.uploadpack$/i.test(key) ? 'git-upload-pack' : /\.receivepack$/i.test(key) ? 'git-receive-pack' : ''
+        if (value !== expected) throw Error('Custom Git remote programs are not permitted for a contained repository; use the standard Git transport')
+      }
+    }
     for (const key of new Set(declarations.map(([, key]) => key).filter(key => /^include\.path$|^includeif\..+\.path$/i.test(key)))) {
       for (const [origin, target] of await query([...prefix, '--null', '--show-origin', '--get-all', key], true)) {
         if (!origin.startsWith('file:') || /%\(|^~[^/]/.test(target)) throw Error('Unsupported Git include path in the isolated permission profile')

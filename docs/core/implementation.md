@@ -946,3 +946,18 @@ all writable-root tracking and every task/panel Git call still need integration 
 Review round 1 found a major core.worktree redirection and a minor descendant timeout leak; both were fixed, plus
 inactive-include traversal coverage. Round 2 found no remaining findings. New actual-Git regression coverage runs
 only on GitHub; local verification is typecheck only. No live state, service or Tailscale mapping was changed.
+
+The first checked-Git CI run (40996184841) passed layouts but exposed a real unsafe assumption: Git's configured
+remote upload/receive program is first-wins, so later command-scope values do not replace it. The guard now refuses
+nonstandard remote programs before effect, including inactive declarations. The regression verifies refusal with
+no callback side effect, then removes that setting and exercises an ordinary native file-remote push. This profile
+restriction is explicit; no configured custom remote command is silently run outside containment.
+
+CoreTasks now routes Git and GH (including commit-tree stdin, PR creation and exact-head PR merge) through this
+helper for contained repositories. CoreAgents records durable repository/worktree/private-home boundaries before
+launch; prospective worktrees are recorded before creation. These boundaries remain after exit and restart because
+leftover files remain untrusted. The files/diff/PR panel's stateless reader receives the same checked context, with
+per-call async isolation and literal path handling. Remote helper provisioning includes the checked broker. Ordinary
+uncontained repositories keep their existing route. No contained product command or UI was enabled by this wiring.
+Fresh wiring review round 1 found no findings; after the CI correction round 2 also found none. Local typecheck
+passed; integration and real-Git regressions await GitHub. Full Autopilot/SSH/feature parity remains incomplete.

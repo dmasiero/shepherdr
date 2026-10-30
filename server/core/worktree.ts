@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WorktreeAsk } from '../../shared/types.ts'
+import { CorePilotRepositories } from './pilot-repositories.ts'
 import type { CoreSource } from './source.ts'
 
 /** The task record chooses machine and folder; callers may choose only a view and a relative path. */
@@ -13,8 +14,11 @@ export class CoreWorktree {
     if (!task) throw new Error('No such task')
     const read = async () => {
       const bun = await this.source.agents.bun(task.machine)
+      const context = new CorePilotRepositories(this.source.store).context({ machine: task.machine, folder: task.folder })
+      const runtime = context ? await this.source.agents.browserRuntime(task.machine) : undefined
+      const checked = context && runtime ? { ...context, bun: runtime.bun, helper: join(runtime.root, 'helper/core-pilot-git.ts') } : undefined
       const result = await this.source.files.exec(task.machine, [bun, '-e', this.script], undefined,
-        Buffer.from(JSON.stringify({ folder: task.folder, base: task.base, branch: task.branch, what: ask.what, ...('path' in ask ? { path: ask.path } : {}) })), 90)
+        Buffer.from(JSON.stringify({ checked, folder: task.folder, base: task.base, branch: task.branch, what: ask.what, ...('path' in ask ? { path: ask.path } : {}) })), 90)
       const reply = JSON.parse(result.toString('utf8')) as { ok: boolean; value?: unknown; error?: string }
       if (!reply.ok) throw new Error(reply.error || 'Could not read this worktree')
       return reply.value

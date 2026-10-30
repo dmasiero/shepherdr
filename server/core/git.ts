@@ -1,9 +1,22 @@
+import { join } from 'node:path'
+import type { PilotRepositoryContext } from './pilot-repositories.ts'
 import type { CoreFiles } from './files.ts'
 
 export interface RepoLocation { machine: string; folder: string }
 export class CoreGit {
-  constructor(private readonly files: CoreFiles) {}
-  async run(repo: RepoLocation, args: string[], timeout = 30) { return (await this.files.exec(repo.machine, ['git', ...args], repo.folder, undefined, timeout)).toString('utf8').trim() }
+  constructor(private readonly files: CoreFiles,
+    private readonly guard?: (repo: RepoLocation, additional?: string[]) => PilotRepositoryContext | undefined,
+    private readonly runtime?: (machine: string) => Promise<{ bun: string; root: string }>) {}
+  private async execute(repo: RepoLocation, tool: 'git' | 'gh', args: string[], timeout: number, stdin?: string, additional?: string[]) {
+    const context = this.guard?.(repo, additional)
+    if (!context) return this.files.exec(repo.machine, [tool, ...args], repo.folder, stdin === undefined ? undefined : Buffer.from(stdin), timeout)
+    if (!this.runtime) throw Error('Checked repository runtime is unavailable')
+    const runtime = await this.runtime(repo.machine)
+    return this.files.exec(repo.machine, [runtime.bun, join(runtime.root, 'helper/core-pilot-git.ts')], undefined,
+      Buffer.from(JSON.stringify({ ...context, cwd: repo.folder, tool, args, stdin, timeout: timeout * 1000 })), timeout + 10)
+  }
+  async run(repo: RepoLocation, args: string[], timeout = 30, stdin?: string, additional?: string[]) { return (await this.execute(repo, 'git', args, timeout, stdin, additional)).toString('utf8').trim() }
+  async ghRun(repo: RepoLocation, args: string[], timeout = 60, stdin?: string) { return (await this.execute(repo, 'gh', args, timeout, stdin)).toString('utf8').trim() }
   async head(repo: RepoLocation, ref = 'HEAD') { return this.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]) }
   async clean(repo: RepoLocation) { return !(await this.run(repo, ['status', '--porcelain'])).length }
   async remote(repo: RepoLocation) {
@@ -13,8 +26,7 @@ export class CoreGit {
     } catch { return undefined }
   }
   async gh<T>(repo: RepoLocation, args: string[], timeout = 60): Promise<T> {
-    const bytes = await this.files.exec(repo.machine, ['gh', ...args], repo.folder, undefined, timeout)
-    const text = bytes.toString('utf8').trim()
+    const text = await this.ghRun(repo, args, timeout)
     return (text ? JSON.parse(text) : undefined) as T
   }
   async contains(repo: RepoLocation, base: string, head: string) {
@@ -24,7 +36,7 @@ export class CoreGit {
   async addWorktree(repo: RepoLocation, folder: string, branch: string, base: string) {
     if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(base) || base.includes('..')) throw new Error('Invalid base branch')
     await this.head(repo, base)
-    await this.run(repo, ['worktree', 'add', '-b', branch, folder, base], 60)
+    await this.run(repo, ['worktree', 'add', '-b', branch, folder, base], 60, undefined, [folder])
   }
   async pullRequest(repo: RepoLocation, branch: string) {
     return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; detailsUrl?: string }[] }>(repo,

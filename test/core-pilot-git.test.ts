@@ -70,13 +70,16 @@ test('a custom merge driver cannot run workspace code during the checked merge-t
   } finally { f.close() }
 })
 
-test('file-repository push uses the native receive-pack rather than a configured workspace command', async () => {
+test('custom remote programs are refused before effect and ordinary file-repository push still works', async () => {
   const f = fixture()
   try {
     const remote = join(f.root, 'remote.git')
     f.git('init', '--bare', remote)
     writeFileSync(join(f.repo, 'kept.txt'), 'kept'); f.git('add', '--all'); f.git('commit', '-m', 'Base')
     f.git('remote', 'add', 'origin', remote); f.git('config', 'remote.origin.receivepack', `sh ${quote(f.attack)}`)
+    await expect(f.run(['push', 'origin', 'main'])).rejects.toThrow('Custom Git remote programs')
+    expect(existsSync(f.marker)).toBe(false)
+    f.git('config', '--unset', 'remote.origin.receivepack')
     await f.run(['push', 'origin', 'main'])
     expect(existsSync(f.marker)).toBe(false)
     expect(f.git('--git-dir', remote, 'rev-parse', 'refs/heads/main')).toBe(f.git('rev-parse', 'HEAD'))
@@ -85,7 +88,7 @@ test('file-repository push uses the native receive-pack rather than a configured
 
 test('driver options disable every configured callback and unresolved include paths retain their actual target', () => {
   const options = pilotGitOptions(['filter.lfs.process', 'filter.lfs.required', 'merge.custom.driver', 'diff.custom.textconv', 'remote.origin.uploadpack'])
-  for (const value of ['filter.lfs.process=', 'filter.lfs.clean=', 'filter.lfs.smudge=', 'filter.lfs.required=false', 'merge.custom.driver=false', 'diff.custom.textconv=false', 'remote.origin.uploadpack=git-upload-pack', 'protocol.ext.allow=never', 'protocol.ssh.allow=never']) expect(options).toContain(value)
+  for (const value of ['filter.lfs.process=', 'filter.lfs.clean=', 'filter.lfs.smudge=', 'filter.lfs.required=false', 'merge.custom.driver=false', 'diff.custom.textconv=false', 'protocol.ext.allow=never', 'protocol.ssh.allow=never']) expect(options).toContain(value)
   const root = mkdtempSync(join(tmpdir(), 'shep-pilot-git-path-'))
   try { symlinkSync(join(root, 'missing/target'), join(root, 'link')); expect(pilotConfigPath(join(root, 'link'))).toBe(join(root, 'missing/target')) }
   finally { rmSync(root, { recursive: true, force: true }) }
