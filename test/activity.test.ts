@@ -167,6 +167,20 @@ const turnEnd = (uuid: string) => ({ parentUuid: null, ...base, type: 'system', 
 
 describe('claude reader: steps and background work', () => {
   const parse = (objs: object[], reader = readerFor('claude')!) => reader.parse(objs.map((o, i) => ({ text: JSON.stringify(o), offset: i * 100 })), '/logs/p/S.jsonl')
+  test('successful native TaskStop ends only its matching job; failed or mismatched results do not', () => {
+    const ev = parse([
+      use('a1', 'start', 'Bash', { command: 'sleep 120', run_in_background: true }),
+      result('u1', 'start', 'Command running in background', { backgroundTaskId: 'wait1' }),
+      use('a2', 'stop-failed', 'TaskStop', { task_id: 'wait1' }),
+      result('u2', 'stop-failed', 'Could not stop task', { task_id: 'wait1', message: 'Could not stop task' }),
+      use('a3', 'stop-wrong', 'TaskStop', { task_id: 'other' }),
+      result('u3', 'stop-wrong', 'Wrong task', { task_id: 'wait1', message: 'Successfully stopped task: wait1 (sleep 120)' }),
+      use('a4', 'stop-ok', 'TaskStop', { task_id: 'wait1' }),
+      result('u4', 'stop-ok', 'Stopped', { task_id: 'wait1', task_type: 'local_bash', command: 'sleep 120', message: 'Successfully stopped task: wait1 (sleep 120)' }),
+    ])
+    expect(ev.filter(e => e.kind === 'job-end')).toEqual([{ kind: 'job-end', id: 'wait1', at: expect.any(Number) }])
+    expect(activityOf(ev).jobs).toEqual([])
+  })
   test('a tool call is a step, its result ends it and says where its output is; the question tool and a subagent’s calls are none', () => {
     const ev = parse([
       user('u1', 'Fix it', typed),

@@ -29,7 +29,7 @@ interface FileState {
   /** the last command run in Claude Code itself: /compact is written twice, before and after its summary */
   command?: { text: string; at: number }
   /** steps shown and not over yet, by tool call id: their tool and words (a background job takes them as its title) */
-  steps: Map<string, { tool: string; title: string; test?: boolean }>
+  steps: Map<string, { tool: string; title: string; test?: boolean; stopJob?: string }>
   seen: Set<string>
   /** the folder its background shells write their output to, learned from one */
   tasks?: string
@@ -298,7 +298,8 @@ export class ClaudeReader implements Reader {
         const st = claudeStep(String(b.name ?? ''), b.input)
         if (!st) continue
         s.seen.add(b.id)
-        s.steps.set(b.id, { tool: String(b.name), title: st.doing, test: st.test })
+        s.steps.set(b.id, { tool: String(b.name), title: st.doing, test: st.test,
+          ...(b.name === 'TaskStop' && typeof b.input?.task_id === 'string' ? { stopJob: b.input.task_id } : {}) })
         if (s.steps.size > KEEP_STEPS) s.steps.delete(s.steps.keys().next().value!)
         if (s.seen.size > KEEP_STEPS * 5) s.seen.delete(s.seen.values().next().value!)
         const { step, ...said } = st
@@ -312,6 +313,10 @@ export class ClaudeReader implements Reader {
         if (this.sub) continue
         const r = l.toolUseResult
         if (!r || typeof r !== 'object') continue
+        if (st.stopJob && !b.is_error && r.task_id === st.stopJob && typeof r.message === 'string') {
+          const success = `Successfully stopped task: ${st.stopJob}`
+          if (r.message === success || r.message.startsWith(success + ' ')) out.push({ kind: 'job-end', id: st.stopJob, at: t })
+        }
         if (typeof r.backgroundTaskId === 'string') {
           const output = /Output is being written to: (\S+\.output)/.exec(said)?.[1]
           if (output) s.tasks = dirname(output)
