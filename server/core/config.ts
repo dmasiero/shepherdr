@@ -30,6 +30,6 @@ export function coreConfig(args: string[]): CoreConfig {
 /** Never propagate the launching agent's credentials or routing into a new server/core. */
 export function coreEnvironment(config: CoreConfig): NodeJS.ProcessEnv {
   const env = { ...process.env }
-  for (const key of Object.keys(env)) if (key.startsWith('SHEPHERDR_') || key.startsWith('AGENT_BROWSER_') || ['HC_TERMINAL_ID', 'HC_PARENT', 'HC_CORE_ID'].includes(key)) delete env[key]
+  for (const key of Object.keys(env)) if (key.startsWith('SHEPHERDR_') || key.startsWith('AGENT_BROWSER_') || ['HC_TERMINAL_ID', 'HC_PARENT', 'HC_CORE_ID', 'ELEVENLABS_API_KEY'].includes(key)) delete env[key]
   return { ...env, SHEPHERDR_HOME: config.home, SHEPHERDR_PORT: String(config.port), HC_SESSION: config.session, HC_SOCKET: config.socket }
 }

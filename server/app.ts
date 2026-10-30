@@ -243,7 +243,7 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
           ws.close()
         } else if (ws.data.kind === 'voice' && source.voice) {
           calls.add(ws)
-          ws.data.bridge = source.voice(ws.data.chat, { send: (d) => ws.send(d), close: () => ws.close() })
+          ws.data.bridge = source.voice(ws.data.chat, { send: (d) => ws.send(d), close: () => ws.close(), buffered: () => ws.getBufferedAmount() })
         } else if (ws.data.kind === 'browser' && source.browser) {
           ws.data.bridge = source.browser(ws.data.task, { send: (d) => ws.send(d), close: () => ws.close(), buffered: () => ws.getBufferedAmount() })
         }

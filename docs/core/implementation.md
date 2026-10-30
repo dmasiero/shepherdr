@@ -565,3 +565,37 @@ eliass-mac-mini.tailda0205.ts.net. A documented core machine.add via strict,
 noninteractive SSH to port 22 timed out (2026-10-30). No machine was added or binary
 installed there; machine.ls still shows only probe. Actual remote acceptance remains
 blocked on a reachable SSH endpoint, not replaced with another transport.
+
+## Voice bridge (2026-10-30, provider acceptance pending)
+
+Voice retains the existing composer/call UI and ElevenLabs agent. Its tools now
+resolve core-backed spaces/tasks/reviewers, read familiar workflow states and send
+through the same durable queue as typing. Exact names or machine-qualified names
+are required when names collide; unavailable machines are reported rather than
+silently reading stale history. Provider tool IDs get per-call receipts and stable
+send IDs. Repeated requests cannot duplicate a native message.
+
+The scoped vault selects ELEVENLABS_API_KEY without putting it in snapshots or
+remote grants. Existing server environment configuration is supported, but the
+launcher removes that server-only key from core daemon startup/recovery; only the
+app subprocess explicitly receives it. Account-bound voice agent IDs are cached by
+key hash. Fresh provider agents require signed URLs and request no audio recording
+and retention zero. Calls keep no local recording or transcript. Provider protocol
+and authentication were checked against the primary documentation:
+[WebSocket API](https://elevenlabs.io/docs/eleven-agents/api-reference/eleven-agents/websocket),
+[signed URL authentication](https://elevenlabs.io/docs/eleven-agents/customization/authentication)
+and [privacy](https://elevenlabs.io/docs/eleven-agents/customization/privacy).
+
+HTTP JSON, provider frames, PCM chunks, tool queues and both audio directions have
+bounds. Slow/disconnected calls stop instead of buffering indefinitely or replaying
+audio. Microphone tracks belong to cleanup immediately after permission, including
+when AudioContext setup fails. No provider key is present in the isolated preview:
+the real phone-width UI showed the expected Settings → Secrets hint. This proves
+that failure path only, not a working audio call. Real provider audio, actual phone
+microphone/lock screen and cross-agent voice delivery remain unverified. Talk-to-type
+still uses the existing device speech-recognition path and needs acceptance.
+
+Three scoped reviews found one major microphone lifetime leak and one malformed
+provider-event issue; both were fixed, the third round was clear. Typecheck passed.
+Provider/core regressions and phone audio-failure layout cases were written for
+GitHub; no local suites were run.

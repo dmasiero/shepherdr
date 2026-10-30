@@ -14,6 +14,11 @@ on:
       - 'server/automations.ts'
       - 'server/health.ts'
       - 'server/heartbeat.ts'
+      - 'server/voice.ts'
+      - 'server/live/voice.ts'
+      - 'plugins/voice/**'
+      - 'test/voice.test.ts'
+      - 'test/layout-voice.test.ts'
       - 'server/live/heartbeat.ts'
       - 'server/live/health.ts'
       - 'plugins/health/**'
@@ -93,6 +98,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: core-rewrite-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun x playwright-core install --only-shell chromium
-      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts test/layout-automations.test.ts test/browser.test.ts
+      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts test/layout-automations.test.ts test/layout-voice.test.ts test/browser.test.ts test/voice.test.ts
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-layout

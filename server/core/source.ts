@@ -26,6 +26,7 @@ import { CoreActivity } from './activity.ts'
 import { CoreWorktree } from './worktree.ts'
 import { CorePlaces } from './places.ts'
 import { CoreBrowsers } from './browsers.ts'
+import { CoreVoice } from './voice.ts'
 import { CoreHeartbeats } from './heartbeats.ts'
 import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
@@ -45,6 +46,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly mailbox: Mailbox
   readonly agents: CoreAgents
   readonly logs: CoreLogs
+  readonly voices: CoreVoice
   readonly heartbeats: CoreHeartbeats
   readonly health: CoreHealth
   readonly automations: CoreAutomations
@@ -94,6 +96,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.automations = new CoreAutomations(this)
     this.health = new CoreHealth(this)
     this.heartbeats = new CoreHeartbeats(this)
+    this.voices = new CoreVoice(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -288,6 +291,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         return { answered: true }
       }
       case 'automation': return this.automations.act(action)
+      case 'call': if (!this.chat(action.chat)) throw new Error('No such chat'); return {}
       case 'browser-notes': return this.browsers.notes(action)
       case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
@@ -522,6 +526,10 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     })()
     queueMicrotask(() => { void this.flush(chat) })
   }
+  voice(chat: string, out: Parameters<CoreVoice['open']>[1]) {
+    try { return this.voices.open(chat, out) }
+    catch (error) { out.send(JSON.stringify({ type: 'error', message: (error as Error).message })); out.close(); return { audio(_data: ArrayBuffer) {}, end() {} } }
+  }
   browser(task: string, client: Parameters<CoreBrowsers['attach']>[1]) { return this.browsers.attach(task, client) }
   terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
   async worktree(ask: WorktreeAsk) { return this.worktrees.ask(ask) }
@@ -530,6 +538,6 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
+  async drain() { this.quiescing = true; this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }

@@ -96,7 +96,7 @@ async function start(config: CoreConfig, foreground: boolean) {
     }
     const log = openSync(join(config.home, 'server.log'), 'a', 0o600)
     const child = spawn(process.execPath, [join(import.meta.dir, 'main.ts'), ...args], {
-      detached: true, stdio: ['ignore', log, log], env: { ...coreEnvironment(config), SHEPHERDR_BOOT_ID: boot },
+      detached: true, stdio: ['ignore', log, log], env: { ...coreEnvironment(config), ...(process.env.ELEVENLABS_API_KEY ? { ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY } : {}), SHEPHERDR_BOOT_ID: boot },
     })
     closeSync(log)
     let failed: Error | undefined
