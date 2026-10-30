@@ -9,12 +9,13 @@ export function pilotGatewayRequest<T>(action: PilotGatewayAction, args: unknown
   return new Promise((resolve, reject) => {
     let finished = false
     const done = (error?: Error, value?: T) => { if (finished) return; finished = true; clearTimeout(timer); options.signal?.removeEventListener('abort', abort); if (error) reject(error); else resolve(value!) }
-    const abort = () => { const error = Error('Isolated command was cancelled'); req.destroy(error); done(error) }
+    const abort = () => { const error = Error('Isolated command was cancelled'); done(error); req.destroy(error) }
     const req = request({ socketPath: options.socket ?? '/run/shepherdr/gateway.sock', path: '/mail', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': String(body.length) } }, response => {
       const parts: Buffer[] = []; let size = 0
       response.on('data', chunk => {
+        if (finished) return
         const bytes = Buffer.from(chunk); size += bytes.length
-        if (size > 1_048_576) { req.destroy(); response.destroy(); done(Error('Isolated command response is too large')); return }
+        if (size > 1_048_576) { done(Error('Isolated command response is too large')); req.destroy(); response.destroy(); return }
         parts.push(bytes)
       })
       response.on('error', error => done(error))
@@ -28,7 +29,7 @@ export function pilotGatewayRequest<T>(action: PilotGatewayAction, args: unknown
         } catch (error) { done(error as Error) }
       })
     })
-    const timer = setTimeout(() => { const error = Error(`Isolated request ${id} was not confirmed; check its outcome before retrying`); req.destroy(error); done(error) }, options.timeout ?? 110_000)
+    const timer = setTimeout(() => { const error = Error(`Isolated request ${id} was not confirmed; check its outcome before retrying`); done(error); req.destroy(error) }, options.timeout ?? 110_000)
     req.on('error', error => done(error))
     options.signal?.addEventListener('abort', abort, { once: true })
     if (options.signal?.aborted) { abort(); return }

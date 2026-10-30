@@ -812,3 +812,15 @@ Round 3 reported no remaining findings. Added actual filesystem/Unix-client regr
 append offsets, same-size rewrites, empty resets/lost acknowledgements, batch fairness, removed unread files,
 response/request bounds, refusals, uncertainty and cancellation. Typecheck passed. Actual outer/runtime integration
 and namespace/provider acceptance are still pending, so this slice does not complete the Autopilot parity row.
+Contained helper CI 40990334236 passed layout and all native capture cases, but failed one Unix-client assertion:
+Bun emitted response-aborted synchronously during oversize socket cleanup before its intended too-large refusal
+settled. The client now settles its specific refusal/cancellation/timeout before destroying transport; late chunks
+are ignored. This is a corrected race, not a claimed full passing run.
+
+The outside capture writer (`helper/core-pilot-records.ts`) now accepts only validated provider-relative JSONL names
+and bytes, writes private no-follow regular files, and persists SQLite reset intents/byte offsets. File fsync comes
+before cursor commit. Identical overlaps/lost replies are verified rather than appended twice; partial data written
+before cursor commit is verified and completed on retry. New identities require a reset; empty resets truncate old
+captured bytes. It never opens a host source path from an agent. Coverage includes reconstruction, partial-write
+recovery, conflicting/gapped retries, empty resets and path/symlink escapes. Fresh scoped review round 1 found no
+findings; typecheck passed. Outer HTTP gateway, native launch and product-policy integration remain pending.
