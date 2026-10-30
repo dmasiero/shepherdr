@@ -16,6 +16,7 @@ import { coreEnvironment } from './config.ts'
 import type { AgentKind, CoreAgent, CoreSpace } from './model.ts'
 import { CoreTasks } from './tasks.ts'
 import { CoreCommands } from './commands.ts'
+import { CoreTaskNews } from './news.ts'
 import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
@@ -61,6 +62,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly github: CoreGitHub
   readonly browsers: CoreBrowsers
   readonly places: CorePlaces
+  readonly news: CoreTaskNews
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
@@ -102,6 +104,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.agents.settings = this.settings
     this.places = new CorePlaces(this)
     this.tasks = new CoreTasks(this)
+    this.news = new CoreTaskNews(this)
     this.pilots = new CorePilotMail(this)
     this.questions = new CoreQuestions(this)
     this.cards = new CoreCards(this)
@@ -143,7 +146,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start(); this.github.start()
     this.recovery = setInterval(() => {
       if (!this.quiescing) void this.pilots.lifecycle.tick().then(() => this.pilots.completion.tick()).catch(error => this.faults.set('pilot-lifecycle', error.message))
-      if (!this.quiescing) this.pilots.wakes.tick()
+      if (!this.quiescing) { this.pilots.wakes.tick(); this.news.deliver() }
       if (!this.quiescing) void this.pilots.usage.poll().catch(error => this.faults.set('pilot-usage', error.message))
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return

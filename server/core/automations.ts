@@ -8,6 +8,7 @@ import { Refusal } from './client.ts'
 import { kindOf } from './settings.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
+import type { TaskNewsEvent, StallCause } from './news.ts'
 
 const checked = <T>(run: () => T): T => { try { return run() } catch (error) { throw new Refusal((error as Error).message) } }
 
@@ -122,12 +123,13 @@ export class CoreAutomations {
         const failure = task.startError && !['merged', 'closed', 'merging'].includes(task.workflow) ? `start:${attempt ? attempt + ':' : ''}${task.startError}` : task.workflow === 'working' && terminal?.state === 'finished' &&
           (terminal.exit_code != null && terminal.exit_code !== 0 || terminal.signal != null) ? `${agent!.launch}:${terminal.reason}:${terminal.exit_code}:${terminal.signal}` : undefined
         const next: Seen = { id: task.id, place: task.place, workflow: task.workflow, status, failure, quietLife: previous?.quietLife, overReport: previous?.overReport }
-        const events: Happened['event'][] = []
+        const events: Exclude<TaskNewsEvent, 'closed'>[] = []
         if (!previous && !task.automation) events.push('added')
         if (previous?.workflow !== task.workflow && task.workflow === 'ready') events.push('ready')
         else if (previous?.workflow !== task.workflow && task.workflow === 'merged') events.push('merged')
         else if (failure && failure !== previous?.failure) events.push('failed')
         else if (previous && previous.status !== status && status === 'need' && !failure) events.push('needs-you')
+        let stall: StallCause | undefined
         if (status === 'work' && terminal?.state === 'live' && agent) {
           const life = Math.max(agent.started, agent.activityAt ?? 0, terminal.status_ms ?? 0, task.reportedAt ?? 0)
           if (next.quietLife !== undefined && life > next.quietLife) delete next.quietLife
@@ -135,6 +137,7 @@ export class CoreAutomations {
           const eta = task.report?.eta, report = task.reportedAt
           const over = eta !== undefined && report !== undefined && report !== next.overReport && now - report > (eta + Math.max(eta, 20)) * 60000
           if (quiet || over) {
+            stall = { quietLife: quiet ? life : undefined, overReport: over ? report : undefined }
             if (quiet) next.quietLife = life
             if (over) next.overReport = report
             events.push('stalled')
@@ -142,9 +145,14 @@ export class CoreAutomations {
         }
         this.source.store.db.transaction(() => {
           this.source.store.set('automation-seen', task.id, next)
-          for (const event of events) this.enqueue({ event, title: task.name, branch: task.branch, space: this.source.space(task.place)?.name }, task.place)
+          for (const event of events) {
+            this.enqueue({ event, title: task.name, branch: task.branch, space: this.source.space(task.place)?.name }, task.place)
+            if (event !== 'added' || events.length === 1) this.source.news?.record(task, event, now, stall)
+          }
+          if (previous?.workflow !== task.workflow && task.workflow === 'closed') this.source.news?.record(task, 'closed', now)
         })()
       }
+      this.source.news?.deliver(now)
       void this.processQueue()
       for (const automation of this.model.dueNow(this.zone())) if (this.source.space(automation.place) && !this.source.places.removing(automation.place) && !this.busy.has(automation.id)) void this.fire(automation, true).catch(() => {})
     } finally { this.scanning = false }
