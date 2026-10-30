@@ -4,6 +4,15 @@ This is an implementation checklist, not a release or a claim of parity. Work is
 `work/301-build-shepherdr-2-1-on-core`; do not merge it into live-followed main until
 the complete acceptance run and approved cutover.
 
+## Finite readiness follow-up
+
+See [the frozen launch checklist](launch-readiness.md) for the current go/no-go and bounded outcomes.
+Fresh post-clean-review audit covers all code through 9c3e2d78, including the actual native provider-blocked
+recovery correction. Full Check 41045612532 and rewrite 41045613515 passed that code. Later report-only commit
+gets its own full Check; exact final binding is in PR #507 and hf2s. No older SHA is evidence for later code.
+Elias explicitly declined broader GitHub access and the private preview route: the merge test is UNTESTED,
+physical device/voice acceptance remains UNVERIFIED, and the launch recommendation remains NO-GO.
+
 ## Current result (2026-10-30)
 
 The standalone rewrite is implemented on the dedicated branch, with real native
