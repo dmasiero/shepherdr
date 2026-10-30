@@ -30,9 +30,11 @@ export interface AppOptions {
   updates?: string
   /** Standalone core launcher identity; absent in the legacy application. */
   health?: () => unknown
+  /** A validated plugin build can replace presentation without restarting agents or the server. */
+  assets?: { dist: string }
 }
 
-export function startApp({ source, dist, push, port, host = '127.0.0.1', updates, health }: AppOptions) {
+export function startApp({ source, dist, push, port, host = '127.0.0.1', updates, health, assets }: AppOptions) {
   const live = new Set<ServerWebSocket<Sock>>()
   const send = (ws: ServerWebSocket<Sock>, e: ServerEvent) => {
     if (ws.getBufferedAmount() > 1024 * 1024) { ws.close(1013, 'Reconnect for a fresh snapshot'); return }
@@ -43,8 +45,8 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
   /** about to restart for an update: no new voice call starts, so none is cut short */
   let draining = false
   // the build this server serves; a screen on another one reloads (it keeps what you were typing)
-  const index = join(dist, 'index.html')
-  const build = existsSync(index) ? buildId(readFileSync(index, 'utf8')) : ''
+  const currentBuild = () => { const index = join(assets?.dist || dist, 'index.html'); return existsSync(index) ? buildId(readFileSync(index, 'utf8')) : '' }
+  let build = currentBuild()
   let update = updates ? readUpdate(updates) : null
   if (updates) {
     mkdirSync(dirname(updates), { recursive: true })
@@ -76,6 +78,8 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
     snapTimer = setTimeout(() => {
       snapTimer = null
       const snapshot = source.snapshot()
+      const next = currentBuild()
+      if (next !== build) { build = next; for (const ws of live) send(ws, { type: 'build', id: build }) }
       for (const ws of live) send(ws, { type: 'snapshot', snapshot })
     }, 30)
   })
@@ -227,7 +231,7 @@ export function startApp({ source, dist, push, port, host = '127.0.0.1', updates
       } catch (e) {
         return json({ error: (e as Error).message }, 500)
       }
-      return serveStatic(dist, path)
+      return serveStatic(assets?.dist || dist, path)
     },
     websocket: {
       open(ws) {

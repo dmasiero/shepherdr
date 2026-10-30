@@ -81,3 +81,20 @@ describe('core plugin contract', () => {
     } finally { f.close() }
   })
 })
+
+test('prepared setup writes are invisible until activation and reject concurrent state changes', async () => {
+  const f = fixture(), paused = new CorePlugins({ store: f.store, snapshot: () => ({ name: 'test' }) as Snapshot, on: (_, fn) => f.events.on('snapshot', fn) }, true)
+  let changes = 0
+  try {
+    f.store.set('plugin:hello', 'n', 4)
+    await paused.start(catalog(['hello']), [['hello', async () => ({ api: 2, name: 'hello', about: '', setup(c) {
+      expect(c.state.get('n')).toBe(4); c.state.set('n', 5); expect(c.state.get('n')).toBe(5)
+      c.onChange(() => { changes++ })
+    } })]])
+    expect(f.store.get('plugin:hello', 'n')).toBe(4)
+    f.events.emit('snapshot'); expect(changes).toBe(0)
+    f.store.set('plugin:hello', 'n', 6)
+    expect(() => paused.activate()).toThrow('state changed during startup')
+    expect(f.store.get('plugin:hello', 'n')).toBe(6)
+  } finally { paused.stop(); f.close() }
+})

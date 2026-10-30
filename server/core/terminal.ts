@@ -7,7 +7,7 @@ export function terminalBridge(source: CoreSource, chat: string, ws: { send(data
   let chain = Promise.resolve()
   const agent = source.agents.get(chat), terminal = agent && source.agents.terminal(agent)
   const fail = () => { if (!ended) { ended = true; stream?.close(); ws.close() } }
-  const valid = () => !ended && agent && source.agents.get(chat)?.launch === agent.launch && source.agents.terminal(agent)?.pid === terminal?.pid
+  const valid = () => !ended && source.plugins?.has('terminal') !== false && agent && source.agents.get(chat)?.launch === agent.launch && source.agents.terminal(agent)?.pid === terminal?.pid
   return {
     message(raw: string) {
       if (ended) return

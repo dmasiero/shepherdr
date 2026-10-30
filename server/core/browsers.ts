@@ -31,7 +31,7 @@ export class CoreBrowsers {
     return hub
   }
   attach(id: string, client: Viewer) {
-    if (!this.source.tasks.get(id) || this.stopped || this.source.quiescing) {
+    if (!this.source.tasks.get(id) || this.stopped || this.source.quiescing || this.source.plugins?.has('browser') === false) {
       client.send(JSON.stringify({ type: 'error', message: 'This task’s browser is unavailable', gone: true }))
       client.close()
       return { message(_raw: string) {}, end() {} }
@@ -44,7 +44,7 @@ export class CoreBrowsers {
     void this.connect(hub).catch(error => this.error(hub, error.message))
     return {
       message: (raw: string) => {
-        if (this.source.quiescing || this.stopped || hub.stopping) return this.error(hub, 'Shepherdr is stopping; reopen the browser after it reconnects')
+        if (this.source.quiescing || this.stopped || hub.stopping || this.source.plugins?.has('browser') === false) return this.error(hub, 'Browser controls are unavailable; reopen the browser after it reconnects')
         if (Buffer.byteLength(raw) > 128 * 1024) return this.error(hub, 'Browser control exceeds the size limit')
         let message: BrowserUp
         try { message = JSON.parse(raw) } catch { return }
@@ -119,7 +119,7 @@ export class CoreBrowsers {
   }
   private async connect(hub: Hub, idle = false) {
     if (hub.connecting) return hub.connecting
-    if (this.stopped || this.source.quiescing || hub.stopping || !hub.clients.size && !idle || !this.source.connected()) return
+    if (this.stopped || this.source.quiescing || hub.stopping || this.source.plugins?.has('browser') === false || !hub.clients.size && !idle || !this.source.connected()) return
     if (hub.stream) { if (!hub.lastWatch || Date.now() - hub.lastWatch >= 5000) this.watch(hub, !!hub.clients.size); return }
     hub.connecting = this.start(hub)
     try { await hub.connecting } finally { hub.connecting = undefined }
@@ -203,10 +203,10 @@ export class CoreBrowsers {
     for (const record of this.source.store.all<Record>('browser-relay')) {
       const task = this.source.tasks.get(record.task)
       if (!task || !this.source.machineConnected(record.machine)) continue
-      if (['merged', 'closed'].includes(task.workflow) || task.archived) void this.close(record.task, task.workflow === 'merged' || task.workflow === 'closed').catch(() => {})
+      if (['merged', 'closed'].includes(task.workflow) || task.archived || this.source.plugins?.has('browser') === false) void this.close(record.task, task.workflow === 'merged' || task.workflow === 'closed').catch(() => {})
       else void this.connect(this.hub(task.id), true).catch(() => {})
     }
-    if (Date.now() - this.lastScan >= 30_000 && !this.scanning) void this.detectAgentBrowsers()
+    if (this.source.plugins?.has('browser') !== false && Date.now() - this.lastScan >= 30_000 && !this.scanning) void this.detectAgentBrowsers()
     for (const hub of this.hubs.values()) if (hub.clients.size) void this.connect(hub).catch(error => this.error(hub, error.message))
   }
   /** Recover agent-only browser use from the wrapper's own usage mark, through core only. */

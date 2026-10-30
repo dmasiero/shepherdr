@@ -2,6 +2,7 @@ import { existsSync, renameSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { CoreSource } from './source.ts'
+import { CorePluginUpdates } from './plugin-updates.ts'
 import { coreConfig, type CoreConfig } from './config.ts'
 import type { RunRecord } from './launcher.ts'
 
@@ -15,12 +16,15 @@ export async function runCoreServer(config: CoreConfig, boot: string = randomUUI
   await source.plugins.start(catalog, [...base.map(plugin => [plugin.name, async () => plugin] as [string, () => Promise<typeof plugin>]), ...user.map(([name, load]) => [name, async () => (await load()).default] as [string, () => Promise<import('../plugin-api.ts').ServerPlugin>])])
   const { startApp } = await import('../app.ts')
   const { Push } = await import('../push.ts')
+  if (config.plugins !== false) source.pluginUpdates = new CorePluginUpdates(source, join(import.meta.dir, '../..'))
   const server = startApp({ source, port: config.port, host: '127.0.0.1', dist: join(import.meta.dir, '../../dist'), push: new Push(),
+    assets: source.pluginUpdates?.assets,
     health: () => ({ product: 'shepherdr-core', boot, pid: process.pid, core: source.connected() }) })
   const record: RunRecord = { pid: process.pid, boot, home: config.home, port: server.port!, root: join(import.meta.dir, '../..') }
   const temporary = join(config.home, `run.${boot}.tmp`)
   writeFileSync(temporary, JSON.stringify(record), { mode: 0o600, flag: 'wx' })
   renameSync(temporary, join(config.home, 'run.json'))
+  source.pluginUpdates?.start()
   let stopping = false
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, async () => {
     if (stopping) return

@@ -31,6 +31,7 @@ import { CoreHeartbeats } from './heartbeats.ts'
 import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
 import { CorePlugins } from './plugins.ts'
+import type { CorePluginUpdates } from './plugin-updates.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
@@ -56,7 +57,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
-  readonly plugins: CorePlugins
+  plugins: CorePlugins
+  pluginUpdates?: CorePluginUpdates
   readonly secrets: CoreSecrets
   readonly artifacts: CoreArtifacts
   readonly chats: CoreChat
@@ -146,6 +148,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   localMachineId() { return this.local.id }
   machineName(machine: string) { return machine === this.local.id ? undefined : this.machines.find(item => item.id === machine)?.name }
   registerAction(type: Action['type'], handler: (action: Action) => Promise<unknown>) { this.hooks.set(type, handler) }
+  requirePlugin(name: string) { if (!this.plugins.has(name)) throw Error(`The ${name} plugin is off.`) }
+  override emit<K extends keyof SourceEvents>(event: K, ...args: SourceEvents[K]) {
+    if (event === 'alert' && this.plugins && !this.plugins.has('alerts')) return
+    super.emit(event, ...args)
+  }
 
   async route(machine: string): Promise<string | undefined> {
     if (machine === this.local.id) return undefined
@@ -217,7 +224,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks,
-      settings: this.secrets.pages([...this.settings.sections(), this.plugins.section()]),
+      settings: this.secrets.pages([...this.settings.sections(), this.plugins.section(this.pluginUpdates?.status())]),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
       read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
     }
@@ -249,6 +256,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
 
   async act(action: Action): Promise<unknown> {
     if (this.quiescing) throw new Error('Shepherdr is stopping; retry after it reconnects')
+    const plugin = action.type.startsWith('artifact-') ? 'artifacts' : action.type === 'react' ? 'reactions' : action.type === 'browser-notes' ? 'browser' : ['keys', 'text'].includes(action.type) ? 'terminal' : action.type === 'call' ? 'voice' : action.type === 'autopilot-run' ? 'autopilot' : undefined
+    if (plugin) this.requirePlugin(plugin)
     const handler = this.hooks.get(action.type)
     if (handler) return handler(action)
     if ('chat' in action && this.tasks.forChat(action.chat) && ['pin', 'archive', 'pause', 'restart-info', 'restart', 'close', 'delete'].includes(action.type)) return this.tasks.act(action)
@@ -300,6 +309,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
       case 'setting':
+        if (action.key.startsWith('plugin.')) {
+          if (!this.pluginUpdates) throw Error('Plugin controls are disabled for this development preview')
+          if (action.place && action.place !== 'all' || !['on', 'off'].includes(action.value || '')) throw Error('Plugins apply Everywhere; choose on or off')
+          this.pluginUpdates.set(action.key.slice(7), action.value === 'on'); this.emit('snapshot'); return {}
+        }
         this.settings.set(action.key, action.value, action.place || 'all'); return {}
       case 'keys': case 'text': {
         const agent = this.agents.get(action.chat)
@@ -434,6 +448,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
         return { out: await this.secrets.cli(agent, args) + '\n', code: 0 }
       }
       if (args[0] === 'artifact') {
+        this.requirePlugin('artifacts')
         if (!grant.actions.includes('artifact')) throw new Error('This session has no artifact permission')
         return { out: await this.artifacts.cli(agent, args, typeof (input as { cwd?: unknown }).cwd === 'string' ? (input as { cwd: string }).cwd : this.space(agent.space)!.folder), code: 0 }
       }
@@ -531,17 +546,20 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     queueMicrotask(() => { void this.flush(chat) })
   }
   voice(chat: string, out: Parameters<CoreVoice['open']>[1]) {
-    try { return this.voices.open(chat, out) }
+    try { this.requirePlugin('voice'); return this.voices.open(chat, out) }
     catch (error) { out.send(JSON.stringify({ type: 'error', message: (error as Error).message })); out.close(); return { audio(_data: ArrayBuffer) {}, end() {} } }
   }
   browser(task: string, client: Parameters<CoreBrowsers['attach']>[1]) { return this.browsers.attach(task, client) }
-  terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
-  async worktree(ask: WorktreeAsk) { return this.worktrees.ask(ask) }
+  terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) {
+    if (!this.plugins.has('terminal')) { ws.close(); return { message(_raw: string) {}, end() {} } }
+    return terminalBridge(this, chat, ws)
+  }
+  async worktree(ask: WorktreeAsk) { this.requirePlugin('worktree'); return this.worktrees.ask(ask) }
   async activity(ask: ActivityAsk) { return this.activities.ask(ask) }
-  async artifact(id: string, version?: number) { try { return this.artifacts.page(id, version) } catch { return undefined } }
-  async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
+  async artifact(id: string, version?: number) { if (!this.plugins.has('artifacts')) return; try { return this.artifacts.page(id, version) } catch { return undefined } }
+  async artifactThumb(id: string, dark: boolean) { if (!this.plugins.has('artifacts')) return null; try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.plugins.stop(); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
+  async drain() { this.quiescing = true; this.pluginUpdates?.stop(); await this.pluginUpdates?.drain(); this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.pluginUpdates?.stop(); this.plugins.stop(); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }

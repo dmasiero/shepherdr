@@ -26,13 +26,14 @@ export class CoreHealth {
   room(machine: string, exclude?: string): string | undefined {
     if (!this.source.machineConnected(machine)) return 'its machine is reconnecting'
     const sample = this.source.store.get<Sample>('health-sample', machine), limits = this.source.settings.machineLimits(machine)
-    if (!sample || Date.now() - sample.at > 90_000) return 'checking its machine’s health'
-    const pressure = busy(sample, limits)
+    if (this.source.plugins?.has('health') !== false && (!sample || Date.now() - sample.at > 90_000)) return 'checking its machine’s health'
+    const pressure = sample && this.source.plugins?.has('health') !== false && busy(sample, limits)
     if (pressure) return pressure === 'cpu' ? 'CPU load is over its start limit' : 'memory is over its start limit'
     const working = this.source.tasks.all().filter(task => task.id !== exclude && task.machine === machine && this.active(task)).length
     if (limits.max !== null && working >= limits.max) return `${working} tasks are working (limit ${limits.max})`
   }
   view(machine: string): MachineHealth | undefined {
+    if (this.source.plugins?.has('health') === false) return
     const sample = this.source.store.get<Sample>('health-sample', machine)
     if (!sample) return
     const limits = this.source.settings.machineLimits(machine), watch = this.source.store.get<Partial<Record<Kind, Watch>>>('health-watch', machine) ?? {}
@@ -40,7 +41,7 @@ export class CoreHealth {
     return { engine: 'core', meters: meters(sample, limits, watch), herdr: this.source.machineConnected(machine), working: this.working(machine), max: limits.max ?? undefined, held: held.length, heldWhy: held.length ? this.room(machine) : undefined, at: new Date(sample.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: this.source.automations.zone() }) }
   }
   async refresh() {
-    if (this.stopped || this.source.quiescing) return
+    if (this.stopped || this.source.quiescing || this.source.plugins?.has('health') === false) return
     for (const machine of this.source.machineIds()) if (!this.taking.has(machine)) {
       const work = this.take(machine).catch(() => {}).finally(() => this.taking.delete(machine))
       this.taking.set(machine, work)
@@ -56,7 +57,7 @@ export class CoreHealth {
       sample = { ...fresh, at: Date.now() }
       this.source.store.set('health-sample', machine, sample)
     }
-    if (!sample || this.stopped || this.source.quiescing) return
+    if (!sample || this.stopped || this.source.quiescing || this.source.plugins?.has('health') === false) return
     const watch = this.source.store.get<Partial<Record<Kind, Watch>>>('health-watch', machine) ?? {}
     const { next, events } = judge(watch, levels(sample, this.source.machineConnected(machine), this.source.settings.machineLimits(machine)), Date.now())
     this.source.store.set('health-watch', machine, next)

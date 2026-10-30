@@ -42,13 +42,18 @@ previews must explicitly choose separate state, port and core session:
 
 ```sh
 shepherdr start --home /tmp/shepherdr-preview --port 17887 \
-  --core-session shepherdr-preview --core-bin /path/to/pinned/hc
+  --core-session shepherdr-preview --core-bin /path/to/pinned/hc --no-plugin-updates
 shepherdr status --home /tmp/shepherdr-preview
 shepherdr stop --home /tmp/shepherdr-preview
 ```
 
 `--core-socket` can select an endpoint inside a private directory. Keep custom
 socket paths short. Never share the core socket over the network.
+
+`--no-plugin-updates` is for Vite previews on a machine where build checks are prohibited. It disables the plugin
+watcher and switches. Ordinary startup watches the selected home's plugins and off list, builds from a fixed copy
+of the started application, and swaps plugin runtime/assets without restarting agents. It never follows main or
+another checkout ref. Keep the installed source/dependencies available while it runs. See [Plugins](../plugins.md).
 
 ## Private URL
 

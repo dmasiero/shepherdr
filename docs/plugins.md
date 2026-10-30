@@ -37,9 +37,12 @@ Startup has a five-second deadline; failed setup or change listeners are isolate
 also runs on server shutdown. Plugins are trusted local code with the server's operating-system authority,
 **not sandboxed code**; do not install untrusted plugins or put secrets in snapshots or plugin responses.
 
-Build staging/loading and this runtime contract are implemented on the rewrite branch. Automatic rebuild, switches
-and full built-in server gating are still delivery checklist items; the historical instructions below describe the
-complete parity target until those items are checked off.
+The standalone app polls its own home's plugins/off list, builds client and server parts against a fixed copy of
+the started application, and swaps the runtime/assets. It does not watch main or use the legacy supervisor. Failed
+compilation, imports or setup retain last-good code where possible, otherwise the extension is skipped and a built-in
+replacement returns. Failed setup state writes are discarded; successful ones commit at activation with a concurrent
+change check. Browser/terminal, voice, artifacts/worktree, health and alert entry points honor their switches; voice
+off ends existing calls. Full parity and production acceptance remain tracked in [the delivery record](core/implementation.md).
 
 Everything is a plugin: places, coordinators, tasks, chat, reactions, artifacts, terminal, worktree, browser, voice,
 health, alerts, keyboard, autopilot are the base ones, in `plugins/<name>/` and named in [plugins.json](../plugins.json).
@@ -50,7 +53,8 @@ from worktree; Browser from browser). A plugin has a `client.tsx` (screen parts 
 
 Your own plugins live outside the repo, on the main machine, in `~/.shepherdr/plugins/<name>/` (under
 `SHEPHERDR_HOME`), the same shape as a base plugin. Updates never touch that folder, and every release takes them in:
-save a file there and Shepherdr rebuilds and restarts within seconds; open screens reload themselves.
+save a file there and Shepherdr rebuilds its plugins within seconds; open screens reload themselves safely while
+core agents and the application stay running. The current and previous built copies live in the private home.
 
 - **Add one**: a new folder with a `client.tsx` (and a `server.ts` if you like). Its name: lowercase letters, digits
   and dashes, the same as `name` in its `definePlugin`.
@@ -59,8 +63,8 @@ save a file there and Shepherdr rebuilds and restarts within seconds; open scree
 - **Turn any off**: Settings → Plugins has a switch for each, built in or yours. They go in `~/.shepherdr/plugins.json`
   (`{ "off": ["voice"] }`), never in the repo's list, so a merge never undoes them.
 - **When yours fails**: one that doesn't build is set aside and the rest updates as usual: its last good version runs
-  if it had one, else it is left out (a built-in one it replaced comes back). One that throws as the server loads it is
-  skipped there; one that throws on the screen stops only its own parts. A line at the top of the screen says so, and
+  if it had one, else it is left out (a built-in one it replaced comes back). Server import/setup failures get the same
+  fallback. One that throws on the screen stops only its own parts. A line at the top of the screen says so, and
   Settings → Plugins shows the error. Fix the file and it comes back with the next rebuild.
 
 A hello world, `~/.shepherdr/plugins/hello/client.tsx`:
@@ -86,12 +90,13 @@ and, if it has a server part, `~/.shepherdr/plugins/hello/server.ts`:
 ```ts
 import { definePlugin } from '../../server/plugin-api.ts'
 
-export default definePlugin({ name: 'hello', about: 'Says hello at the top of the screen' })
+export default definePlugin({ api: 2, name: 'hello', about: 'Says hello at the top of the screen' })
 ```
 
 Imports: `@client/…` (the screen's kernel and pieces, `src/`), `@shared/…` (types), `@plugins/<name>/…` (another
 plugin's parts: yours where you replaced it, so every plugin gets the same one), and the packages Shepherdr has
-(React, clsx, Heroicons). A plugin folder sits where a base one does, so a base plugin's relative imports
+(React, clsx, Heroicons). Local `node_modules` and `.git` folders are excluded from staging; use the application's
+installed packages. A plugin folder sits where a base one does, so a base plugin's relative imports
 (`../../server/plugin-api.ts`) work in a copy too.
 
 **A theme.** There is no theme slot: Shepherdr's colours are CSS variables on `:root` (light) and
@@ -136,7 +141,7 @@ slots below are public: plugins outside the repo rely on them, so they change on
 - Hooks and actions from `@client/kernel.ts`: `useSnap()` (the server's data: places, tasks, artifacts, settings),
   `useUI()` and `setUI()` (what is on screen), `useStore()`, `getState()`, `act()` (send an action to the server),
   `has(name)` (is a plugin on), and helpers such as `openTask`, `goPlace`, `placeOf`, `taskOf`.
-- The server part: `definePlugin({ name, about })`; it runs when the server starts.
+- The server part: `definePlugin({ api: 2, name, about, setup? })`; see the context contract above.
 
 Autopilot adds the `autopilot-run` action and optional `keepWorkers` on the existing `mode` action.
 `SettingRow.instructions` optionally supplies complete generated launch settings as plain text after Heartbeat.

@@ -3,13 +3,13 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { defaultHome } from './home.ts'
 
-export interface CoreConfig { home: string; port: number; binary: string; session: string; socket: string }
+export interface CoreConfig { home: string; port: number; binary: string; session: string; socket: string; plugins?: boolean }
 
 export function coreConfig(args: string[]): CoreConfig {
   const options = new Map<string, string>()
   for (let index = 0; index < args.length; index++) {
     const option = args[index]
-    if (option === '--foreground') continue
+    if (option === '--foreground' || option === '--no-plugin-updates') continue
     if (!['--home', '--port', '--core-bin', '--core-session', '--core-socket'].includes(option) || !args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`Unknown or incomplete option: ${option}`)
     options.set(option, args[++index])
   }
@@ -24,7 +24,7 @@ export function coreConfig(args: string[]): CoreConfig {
   const fallback = !process.env.XDG_RUNTIME_DIR && !(process.getuid && existsSync(`/run/user/${process.getuid()}`))
   const endpoint = !options.has('--core-socket') && !process.env.HC_SOCKET && fallback ? join(runtime, `${session}.sock`) : socket
   if (Buffer.byteLength(endpoint) > 100) throw new Error('Core socket path is too long; use --core-socket in a private directory')
-  return { home, port, binary: options.get('--core-bin') || process.env.SHEPHERDR_CORE_BIN || 'hc', session, socket: endpoint }
+  return { home, port, binary: options.get('--core-bin') || process.env.SHEPHERDR_CORE_BIN || 'hc', session, socket: endpoint, plugins: !args.includes('--no-plugin-updates') }
 }
 
 /** Never propagate the launching agent's credentials or routing into a new server/core. */

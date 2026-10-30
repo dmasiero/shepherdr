@@ -91,7 +91,7 @@ not evidence of a working feature.
 | Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; phone Files and added-file Diff inspected through second core; resizing/reconnect and actual PR acceptance pending |
 | Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change inspected; other sections and full acceptance pending |
 | Health, alerts, unread/search, keyboard and mobile layouts | plugins/health; plugins/keyboard; src/layout* | Pending |
-| User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Pending; 2.0 API compatibility not required |
+| User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Partial: API-2 client/server action and retained state inspected; isolated hot rebuild/switch/fallback code and CI coverage added, production/manual acceptance and full gating parity pending; 2.0 plugins require migration |
 | Standalone start/stop/status, installation and optional service | New requirement | Partial: isolated idempotent start/status/stop + crash/core restart exercised; final install/service/cutover pending, no live service enabled |
 | Browser WebSocket resync, bounded output, duplicate-safe commands | server/app.ts; src | Pending |
 
@@ -623,3 +623,29 @@ Plugin contract CI 40984980305 passed core/protocol/plugin tests. Layout builds 
 The resolver now passes the config's actual project root explicitly. Existing branch layout builds cover that
 integration; no local build or suite was run. The scrolled phone page also showed `core-proof` under Yours
 (`/tmp/she301-plugin-contract-yours-phone.png`).
+
+## Plugin rebuilds and controls (2026-10-30, production acceptance pending)
+
+The standalone app now has its own plugin updater, with no main/ref watcher or legacy supervisor. It freezes the
+started source tree, stages only its configured home's trusted plugins, compiles the client and server registry,
+and publishes assets plus the extension runtime without restarting core agents. Two-second source polling and
+Everywhere switches request rebuilds. Build process groups have bounded output, a shared two-minute deadline,
+and shutdown cancellation. Last-good plugin folders survive same-code app restart; current/previous builds are
+retained. Changed application code invalidates the cache. New runtime listeners stay paused until publication.
+Server import/setup failure restores the old plugin folder (or skips a failing new extension), with a Settings
+warning. Setup state is staged, bounded and checked against concurrent writes before transactional activation.
+Failed setup cannot delete the working plugin's private state. Browser/terminal, voice, health, alerts, artifacts
+and worktree entry points now honor their switches; voice off also closes active provider/audio bridges.
+
+Review: three scoped rounds. Fixed major server-only compilation gap, runtime-startup fallback gap, active voice
+shutdown gap, and setup-state mutation gap. The last fix needs confirmation in the final whole-rewrite review.
+No local suites or builds ran. New branch tests cover actual API-2 client/server compilation and syntax fallback,
+private same-code cache, on/off runtime swapping, asset HTTP/WS reload notification, runtime failure/state fallback,
+concurrent-state refusal, active-call cleanup and build cancellation. CI is pending for this slice.
+
+Manual proof is narrower: the isolated API-2 fixture's client button returned real server count 3; tapping again with
+its retained CID returned 3 again (`/tmp/she301-plugin-client-phone.png`). The phone Plugins page showed the fixture
+under Yours. This used Vite, not a full build. Automatic compilation, fallback, switches and full device parity are
+not manually verified here. The Vite preview explicitly uses `--no-plugin-updates`, so inspection cannot silently
+invoke the prohibited local build checks. Actual SSH, physical-phone/audio and remaining feature acceptance are
+still delivery gates. Prior branch checks at d9fb40d3 passed both jobs (40985361547).

@@ -6,8 +6,10 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const root = join(import.meta.dir, '..')
+// Also imported by Vite's Node config loader, where Bun's import.meta.dir is absent.
+const root = fileURLToPath(new URL('../', import.meta.url))
 const NAME = /^[a-z][a-z0-9-]*$/
 
 export function readPluginList(dir = root): string[] {
@@ -61,7 +63,7 @@ export function stageUserPlugins(dir: string, home = userHome()) {
   const from = join(home, 'plugins')
   for (const n of existsSync(from) ? readdirSync(from) : []) {
     const d = join(from, n)
-    if (NAME.test(n) && statSync(d).isDirectory() && isPlugin(d)) cpSync(d, join(into, n), { recursive: true, filter: (f) => !f.endsWith('/.git') })
+    if (NAME.test(n) && statSync(d).isDirectory() && isPlugin(d)) cpSync(d, join(into, n), { recursive: true, filter: (f) => !f.endsWith('/.git') && !f.endsWith('/node_modules') })
   }
   writeStaged(dir, { off: readOff(home), broken: {} })
 }
