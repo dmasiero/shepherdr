@@ -33,6 +33,7 @@ import { CoreAutomations } from './automations.ts'
 import { CorePlugins } from './plugins.ts'
 import { CoreUnread } from './unread.ts'
 import { CoreCards } from './cards.ts'
+import { CorePilotMail } from './pilot-mail.ts'
 import { clip, TITLE_MAX, BODY_MAX } from '../../shared/alerts.ts'
 import type { CorePluginUpdates } from './plugin-updates.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
@@ -62,6 +63,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly settings: CoreSettings
   readonly unread: CoreUnread
   readonly cards: CoreCards
+  readonly pilots: CorePilotMail
   plugins: CorePlugins
   pluginUpdates?: CorePluginUpdates
   readonly secrets: CoreSecrets
@@ -97,6 +99,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.agents.settings = this.settings
     this.places = new CorePlaces(this)
     this.tasks = new CoreTasks(this)
+    this.pilots = new CorePilotMail(this)
     this.questions = new CoreQuestions(this)
     this.cards = new CoreCards(this)
     this.secrets = new CoreSecrets(this)
@@ -110,7 +113,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.heartbeats = new CoreHeartbeats(this)
     this.voices = new CoreVoice(this)
     this.plugins = new CorePlugins(this)
-    this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
+    this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) { this.reconcilePermissions(agent.chat); void this.flush(agent.chat) } })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
   }
@@ -275,7 +278,9 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   }
   private reconcilePermissions(chat: string) {
     for (const permission of this.store.all<Permission>('permission')) if (permission.chat === chat && !permission.settled) {
-      const reason = permission.expires <= Date.now() ? 'Permission request expired' : this.agents.get(chat)?.grant !== permission.grant ? 'Session replaced; ask the agent for a fresh card' : undefined
+      const agent = this.agents.get(chat)
+      const reason = permission.expires <= Date.now() ? 'Permission request expired' : agent?.grant !== permission.grant ? 'Session replaced; ask the agent for a fresh card'
+        : this.agents.terminal(agent)?.state === 'finished' ? 'Agent stopped; ask again after restarting it' : undefined
       if (reason) this.expirePermission(permission, reason)
     }
   }
@@ -446,6 +451,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const agent = this.agents.get(grant.chat)
     const terminal = agent && this.agents.terminal(agent)
     if (!agent || agent.launch !== grant.session || agent.grant !== grant.id || terminal?.state !== 'live' || agent.pid && terminal.pid !== agent.pid) throw new Error('This session is no longer active')
+    if (request.action === 'pilot') return this.pilots.mail(agent, grant, request, requestId)
+    // Contained product commands stay fail-closed until their ownership/Git brokers are connected.
+    // No current launch creates pilot metadata or grants this action; Autopilot controls remain unoffered.
+    if (agent.pilot) throw new Error('Contained product commands are not connected yet')
     if (request.action === 'cli') {
       const input = request.args as { args?: unknown }
       if (!Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')) throw new Error('Invalid command words')
@@ -496,8 +505,23 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     }
     if (request.action === 'secret') return this.secrets.use(agent, request.args)
     if (request.action !== 'permission') throw new Error('This command is not connected in this rewrite slice')
+    return this.requestPermission(agent, grant, request, requestId)
+  }
+
+  cancelPermission(grant: Grant, id: string) {
+    const now = Date.now(), kind = `permission-cancel:${grant.id}`
+    for (const item of this.store.all<{ id: string; at: number }>(kind)) if (now - item.at > 24 * 60 * 60_000) this.store.delete(kind, item.id)
+    if (!this.store.get(kind, id) && this.store.all(kind).length >= 10_000) throw Error('Too many cancelled permission requests in this session')
+    this.store.set(kind, id, { id, at: now })
+    const permission = this.store.get<Permission>('permission', id)
+    if (permission?.grant === grant.id && permission.chat === grant.chat) this.expirePermission(permission, 'The agent cancelled this request')
+  }
+
+  /** Internal dispatch after authenticating the current launch; cancellation always wins a later answer. */
+  requestPermission(agent: CoreAgent, grant: Grant, request: MailRequest, requestId: string): Promise<unknown> | { allow: boolean } {
     const input = request.args as { id?: string; tool?: string; input?: unknown }
     if (typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/.test(input.id) || input.id !== requestId) throw new Error('Invalid permission request identity')
+    if (this.store.get(`permission-cancel:${grant.id}`, input.id)) return { allow: false }
     const previous = this.store.get<Permission>('permission', input.id)
     if (previous && (previous.grant !== grant.id || previous.chat !== grant.chat)) throw new Error('Permission id belongs to another session')
     if (previous?.settled) return { allow: previous.allow === true }

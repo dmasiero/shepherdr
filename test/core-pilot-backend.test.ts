@@ -19,6 +19,7 @@ test('contained backend fixes its endpoint credential and cwd outside caller inp
   expect(calls[1]![3]).toEqual({ args: ['heartbeat', 'set'], cwd: '/own/worktree', stdin: 'list' })
   expect(calls[2]![3]).toEqual({ names: ['KEY'] })
   expect(calls[3]![2]).toBe('pilot')
+  expect(calls[3]![3]).toEqual({ op: 'hook', input: { hook_event_name: 'Stop' } })
   expect(calls[4]![3]).toEqual({ op: 'lease' })
   expect(calls[5]![3]).toEqual({ op: 'traffic', bytes: 42 })
   expect((calls[5]![4] as { id: string }).id).not.toBe((calls[6]![4] as { id: string }).id)
@@ -31,4 +32,30 @@ test('contained hook mapping accepts only the chosen provider tree and strips ca
   expect(pilotHook({ hook_event_name: 'Stop' }, id, 'codex', '/home/agent', '/private/captures', 101).transcript).toBeUndefined()
   for (const path of ['/etc/secret.jsonl', '/home/agent-other/.claude/projects/x.jsonl', '/home/agent/.claude/projects/../../secret.jsonl', '/home/agent/.claude/projects//x.jsonl', '/home/agent/.codex/sessions/x.jsonl', '/home/agent/.claude/projects/x.jsonl\n']) expect(() => pilotHook({ ...input, transcript_path: path }, id, 'claude', '/home/agent', '/private/captures')).toThrow()
   expect(() => pilotHook({ hook_event_name: 'Unknown' }, id, 'claude', '/home/agent', '/private/captures')).toThrow()
+})
+
+test('cancelling a published hook sends a separate authenticated deny tombstone', async () => {
+  const cancel = new AbortController(), id = randomUUID(), calls: unknown[][] = []
+  const credential = { version: 1, server: 'server', grant: 'grant', machine: 'machine', key: 'private' } satisfies MailCredential
+  const backend = pilotCoreBackend('/private/core.sock', credential, '/own', async (...args) => {
+    calls.push(args)
+    if ((args[3] as { op?: string }).op === 'hook') { cancel.abort(); throw Error('Published request interrupted') }
+    return {}
+  })
+  await expect(backend.hook({ hook_event_name: 'PermissionRequest' }, id, cancel.signal)).rejects.toThrow('interrupted')
+  expect(calls).toHaveLength(2)
+  expect(calls[1]!.slice(1, 4)).toEqual([credential, 'pilot', { op: 'cancel', id }])
+  expect((calls[1]![4] as { id: string; signal: AbortSignal }).id).not.toBe(id)
+  expect((calls[1]![4] as { signal: AbortSignal }).signal.aborted).toBe(false)
+})
+
+test('ordinary hook results never enter core docs; oversized permission input is refused whole', async () => {
+  const calls: unknown[][] = [], credential = { version: 1, server: 's', grant: 'g', machine: 'm', key: 'private' } satisfies MailCredential
+  const backend = pilotCoreBackend('/core', credential, '/own', async (...args) => { calls.push(args); return {} })
+  const signal = new AbortController().signal
+  await backend.hook({ hook_event_name: 'PostToolUse', tool_name: 'Read', tool_response: 'x'.repeat(500_000), tool_input: { file: 'large' } }, randomUUID(), signal)
+  expect(calls[0]![3]).toEqual({ op: 'hook', input: { hook_event_name: 'PostToolUse', tool_name: 'Read' } })
+  await expect(backend.hook({ hook_event_name: 'PermissionRequest', tool_input: 'x'.repeat(70_000) }, randomUUID(), signal)).rejects.toThrow('mailbox limit')
+  await expect(backend.hook({ hook_event_name: 'PermissionRequest', tool_input: 'x'.repeat(17_000) }, randomUUID(), signal)).rejects.toThrow('show in full')
+  expect(calls).toHaveLength(1)
 })

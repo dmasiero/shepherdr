@@ -881,3 +881,20 @@ The first Codex attempt exposed a missing `codex-code-mode-host` companion and e
 1 MiB manual network allowance, failing closed with routing errors. The sandbox now mounts the installed sibling
 companion beside Codex, and control preparation provides its mount target. A 2 MiB bounded repeat succeeded with
 no missing-companion/routing error. Only public exact hosts were permitted; no host-network fallback was used.
+
+Companion/native-proof commit 1785e0b8 passed both GitHub jobs (40992845258). Source dispatch now has an internal
+`pilot` mailbox action backed by app-private run/agent records, exact launch/grant/machine/space/task membership,
+confirmed terminal PID, and private policy actors. A lease waits briefly for terminal.run's response to bind its
+actor before granting authority; replacement/stopping checks repeat after awaits. No product launch yet creates
+that metadata or grants the new action. Contained ordinary commands explicitly fail closed until their owned-task,
+secret and Git brokers are connected; Autopilot remains unavailable in the preview.
+
+The dispatch handles leases, cumulative pre-forward traffic, normalized captured-history hooks and deny-only
+permission cancellation. Cancel waits use a separate authenticated core doc; durable per-grant tombstones also
+deny a hook arriving after cancellation. An unrelated grant cannot cancel another card. Ordinary tool results are
+dropped before the bounded core mailbox. Permission input too large to display in full is refused before changing
+agent state or publishing a partial approval. Regular permission reconciliation now also closes a confirmed
+finished process, while absence during core reconnect stays distinct from confirmed exit. Regression coverage is
+written for private identity, binding/renewal PID checks, quota failure, path mapping, both cancel orderings,
+cross-grant cancellation, oversized input, finished processes and unknown connectivity. Fresh scoped review rounds
+1 and 2 found no findings. This is dispatch assembly, not launch/task/Autopilot acceptance; no new UI proof is claimed.
