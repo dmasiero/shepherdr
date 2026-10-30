@@ -289,10 +289,12 @@ describe('a task’s browser', () => {
 
   test('each agent command marks when its browser was used; Shepherdr’s own commands and other sessions don’t', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'shep-mark-'))
-    // the helper's wrapper on another machine, with a stand-in for the binary next to it
+    // The same pinned package wrapper is provisioned through core on every machine.
     mkdirSync(join(tmp, 'bin'))
-    cpSync(join(import.meta.dir, '..', 'helper', 'agent-browser'), join(tmp, 'bin', 'agent-browser'))
-    writeFileSync(join(tmp, 'bin', 'agent-browser-bin'), '#!/bin/sh\necho "ran $* with $AGENT_BROWSER_ARGS"\n', { mode: 0o755 })
+    cpSync(join(import.meta.dir, '..', 'bin', 'agent-browser'), join(tmp, 'bin', 'agent-browser'))
+    const packageBin = join(tmp, 'node_modules', 'agent-browser', 'bin')
+    mkdirSync(packageBin, { recursive: true })
+    for (const suffix of ['', '-musl']) writeFileSync(join(packageBin, `agent-browser-${process.platform}${suffix}-${process.arch}`), '#!/bin/sh\necho "ran $* with $AGENT_BROWSER_ARGS"\n', { mode: 0o755 })
     for (const bin of [join(tmp, 'bin', 'agent-browser'), join(import.meta.dir, '..', 'bin', 'agent-browser')]) {
       const profile = join(tmp, String(Math.random()), 'browser', 'SHE-5')
       const run = (env: Record<string, string>) => Bun.spawnSync(['sh', bin, '--version'], { env: { ...process.env, ...env }, stdout: 'pipe' })
