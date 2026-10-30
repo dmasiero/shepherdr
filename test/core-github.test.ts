@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { CoreStore } from '../server/core/store.ts'
-import { CoreGitHub, mainVerdict } from '../server/core/github.ts'
+import { CoreGitHub, mainCandidates, mainVerdict } from '../server/core/github.ts'
 import type { CoreSource } from '../server/core/source.ts'
 import type { CoreSpace } from '../server/core/model.ts'
 import type { Happened } from '../server/common/trigger.ts'
@@ -25,7 +25,7 @@ async function fixture(run: (f: { source: CoreSource; monitor: CoreGitHub; space
   const source = { store, connected: () => true, machineConnected: () => true, space: (id: string) => id === space.id ? space : undefined, spaces: () => [space], status: () => 'idle',
     agents: { get: () => ({ chat: space.id, launch: 'launch' }), terminal: () => ({ state: 'live' }) },
     tasks: { all: () => [{ place: space.id, base: 'main', workflow: 'merged', pr: { number: 1 }, doneAt: now }], git: {
-      remote: async () => 'github.test/o/r', ghRun: async (_repo: unknown, args: string[]) => { calls.push(args); return head }, gh: async (_repo: unknown, args: string[]) => { calls.push(args); return rows },
+      remote: async () => 'github.test/o/r', ghRun: async (_repo: unknown, args: string[]) => { calls.push(args); return args[0] === 'run' ? 'A harmless compiler error tail' : head }, gh: async (_repo: unknown, args: string[]) => { calls.push(args); if (args[0] === 'api') return args.some(arg => arg.includes('?sha=')) ? [...new Set([head, sha])] : [{ sha, message: 'DEMO-1: Example merge' }]; return rows },
     } }, automations: { record: (event: Happened) => { events.push(event); store.set('rule-proof', String(events.length), event) } },
     post: (chat: string, message: { id: string }) => store.set(`message:${chat}`, message.id, message),
     saveAndDeliver: (_chat: string, id: string, _text: string, save: () => void) => store.db.transaction(() => { save(); sent.push(id) })(),
@@ -118,4 +118,30 @@ test('main-red title filters use a known task title, never a workflow name as a 
   f.source.tasks.all = (() => [{ id: 'DEMO-1', name: 'Actual merged task', machine: f.space.machine, repo: f.space.folder, place: f.space.id, base: 'main', workflow: 'merged', pr: { number: 1 }, doneAt: Date.now(), mergeCommit: sha }]) as unknown as typeof f.source.tasks.all
   f.setRows([row()]); await f.monitor.watchMain(f.space)
   expect(f.events[1].title).toBe('Actual merged task')
+}))
+
+test('newer pending branch commits do not hide an older failed commit, and only a confirmed green re-arms it', async () => fixture(async f => {
+  f.setHead(later); f.setRows([row(null, 'in_progress', later), row()])
+  await f.monitor.tick()
+  expect(f.events).toHaveLength(1)
+  expect(f.source.store.all<{ red?: string }>('github-main')[0].red).toBe(sha)
+  const notice = f.source.store.all<{ text: string }>('github-notice')[0]
+  expect(JSON.parse(notice.text)).toMatchObject({ head: sha, context: { merged: [{ sha, title: 'DEMO-1: Example merge' }], logTail: 'A harmless compiler error tail' } })
+  f.setRows([row('success', 'completed', later), row()])
+  await f.monitor.watchMain(f.space)
+  expect(f.source.store.all<{ red?: string; green?: string }>('github-main')[0]).toMatchObject({ green: later })
+  expect(f.source.store.all<{ red?: string }>('github-main')[0].red).toBeUndefined()
+  expect(f.events).toHaveLength(1)
+}))
+test('candidate order comes from verified base history; unrelated runs and pending results are not verdicts', () => {
+  const other = 'c'.repeat(40)
+  expect(mainCandidates([row('failure', 'completed', other), row(null, 'in_progress', later), row()], [later, sha]).map(candidate => candidate.head)).toEqual([sha])
+  expect(() => mainCandidates([row()], ['not-a-sha'])).toThrow('history')
+})
+test('a candidate becoming pending during confirmation never clears a saved red incident', async () => fixture(async f => {
+  await f.monitor.watchMain(f.space)
+  f.setHead(later)
+  f.source.tasks.git.gh = async <T>(_repo: unknown, args: string[]) => (args[0] === 'api' ? [later, sha] : args.includes('--commit') ? [row(null, 'in_progress', later)] : [row('success', 'completed', later)]) as T
+  await f.monitor.watchMain(f.space)
+  expect(f.source.store.all<{ red?: string }>('github-main')[0].red).toBe(sha)
 }))

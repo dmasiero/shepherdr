@@ -1717,3 +1717,18 @@ settings is pending; no allocation pass is claimed yet. Screenshots captured and
 inspected. Full review round 2 confirmed both Settings findings fixed and found a
 separate main-check observer issue being repaired. Local typecheck passed; no local
 suite/browser test/full build was run.
+
+### Final review: pending main heads and diagnostic context
+
+Round 2 found that polling only the base's newest commit hid an earlier failed
+commit while newer work was pending. The observer now orders candidates by verified
+GitHub base history, skips pending heads and confirms the selected commit's bounded
+run set before changing the durable incident. A second authoritative base read
+rejects races. A confirmed green re-arms notifications; missing/unknown/truncated
+results never clear red. New incidents include bounded merged-commit titles since
+known green (or the failed commit) and a bounded failed-log tail when available;
+diagnostic permission failures are marked unavailable. Regression coverage includes
+pending-newer/failed-older, unrelated history, reruns and context. Real GitHub
+observation remains unverified: this environment's configured token denies check
+reads (403); no credentials or access settings were changed. Settings rewrite CI
+41030400506 passed. Only typecheck ran locally.
