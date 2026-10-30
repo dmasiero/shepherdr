@@ -2015,3 +2015,8 @@ remained untracked. Its native Claude coordinator started real Codex research ta
 has that exact HEAD and an empty committed tree: FRESH_REPO_REAL_CODEX_WORKTREE_EMPTY_HEAD_SOURCE_BYTES_OK.
 No live state/service/agent/sharing configuration changed. CI coverage exercises both folder cases, unchanged
 existing repository, preserved untracked bytes and refusal of home itself. Only typecheck ran locally.
+
+Repository creation CI 41041167625 passed its new real-filesystem regression, build/types, layout and production
+plugin jobs. Three older space-control fixtures failed because their fake git.head rejected an omitted ref;
+the real CoreGit.head defaults it to HEAD. Updated that fixture to accept the same default, retaining all branch
+validation and removal-race assertions. No local suite was run.

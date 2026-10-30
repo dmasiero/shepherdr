@@ -30,7 +30,7 @@ function setup(home: string) {
   source.denyPermissions = () => {}
   source.folders = async (_machine, path) => ({ path, exists: true, dir: true, repo: path, entries: [] })
   source.files.exec = async (_machine, args) => { if (args.join(' ') === 'git symbolic-ref --short HEAD') return Buffer.from('main'); throw Error('Unexpected filesystem command') }
-  source.tasks.git.head = async (_repo, ref) => { if (ref !== 'main' && ref !== 'next') throw Error('Unknown branch'); return 'a'.repeat(40) }
+  source.tasks.git.head = async (_repo, ref) => { if (ref !== undefined && ref !== 'main' && ref !== 'next') throw Error('Unknown branch'); return 'a'.repeat(40) }
   return { source, space, caller, coordinator, terminal, killed, revoked, home }
 }
 
