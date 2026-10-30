@@ -389,3 +389,7 @@ created Core proof, moved remote-demo into it and retained the section/move afte
 isolated server restart; rename to Core evidence succeeded. Screenshot
 she301-sidebar-section-phone.png. Drag gesture and full legacy device comparison
 remain unverified. Native main-log CI 40978065938 passed.
+Sidebar CI 40978265737 passed layouts but exposed a new fixture expecting an
+uppercase spaced space name to succeed, contrary to the existing slug rule.
+The regression now sends the lowercase hyphenated name the UI actually sends;
+production behavior already correctly refused the invalid name.

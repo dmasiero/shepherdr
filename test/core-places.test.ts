@@ -34,10 +34,10 @@ test('sidebar sections, moves, orders and delete restore the original machine or
 
 test('sidebar renames and emoji stay product-only and enforce familiar duplicate rules', async () => {
   await withPlaces(async (source, [zulu, alpha], machine) => {
-    expect(await source.act({ type: 'rename', id: zulu!, name: '  New   name ' })).toMatchObject({ ok: true })
-    expect(source.snapshot().places.find(place => place.id === zulu)?.name).toBe('New name')
+    expect(await source.act({ type: 'rename', id: zulu!, name: '  new-name  ' })).toMatchObject({ ok: true })
+    expect(source.snapshot().places.find(place => place.id === zulu)?.name).toBe('new-name')
     expect(source.space(zulu!)?.name).toBe('Zulu')
-    expect(await source.act({ type: 'rename', id: alpha!, name: 'new name' })).toMatchObject({ ok: false })
+    expect(await source.act({ type: 'rename', id: alpha!, name: 'new-name' })).toMatchObject({ ok: false })
     expect(await source.act({ type: 'rename', id: alpha!, name: 'Alpha', emoji: '🙂' })).toMatchObject({ ok: false })
     const native = source.snapshot().machines![0]!.name
     await source.act({ type: 'rename', id: `m:${machine}`, name: 'My machine', emoji: '💻' })
