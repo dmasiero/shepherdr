@@ -1,6 +1,19 @@
 // A stateless sample invoked through machine.exec. No service or listener.
 import { readFileSync, statfsSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { cpus, freemem, totalmem, loadavg, homedir, tmpdir } from 'node:os'
+
+/** macOS keeps reusable pages outside freemem(); do not count that cache as pressure. */
+export function darwinAvailableMemory(text: string, total: number): number {
+  const pageSize = Number(text.match(/page size of (\d+) bytes/)?.[1])
+  const pages = ['free', 'inactive', 'speculative'].map(name => {
+    const value = text.match(new RegExp(`^Pages ${name}:\\s+(\\d+)\\.`, 'm'))?.[1]
+    if (value === undefined) throw new Error('macOS memory sample is incomplete')
+    return Number(value)
+  })
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1024 || !Number.isFinite(total) || total <= 0 || pages.some(value => !Number.isSafeInteger(value))) throw new Error('macOS memory sample is invalid')
+  return Math.min(total, pages.reduce((sum, value) => sum + value, 0) * pageSize)
+}
 
 export async function sample() {
   let available = freemem(), total = totalmem()
@@ -9,6 +22,7 @@ export async function sample() {
     const kb = (name: string) => Number(text.match(new RegExp(`^${name}:\\s+(\\d+)`, 'm'))?.[1] ?? 0) * 1024
     total = kb('MemTotal'); available = kb('MemAvailable') || kb('MemFree')
   }
+  if (process.platform === 'darwin') available = darwinAvailableMemory(execFileSync('/usr/bin/vm_stat', { encoding: 'utf8', timeout: 2000, maxBuffer: 64 * 1024 }), total)
   const disks: { path: string; pct: number; freeGb: number; dev: number }[] = []
   for (const path of [homedir(), tmpdir()]) {
     try {

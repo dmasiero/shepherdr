@@ -1,3 +1,4 @@
+import { darwinAvailableMemory } from '../helper/core-health.ts'
 import type { Message } from '../shared/types.ts'
 import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -99,3 +100,20 @@ test('a native task needing a human frees its slot without changing workflow or 
   activity.main = 'need'; tasks[0].reservedAt = Date.now()
   expect(health.room('box')).toContain('limit 1')
 }))
+
+
+test('macOS reclaimable inactive and speculative pages do not hold healthy starts', () => {
+  // Free pages alone imply 98% used, but cached pages can be reclaimed.
+  const sample = 'Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 20000.\nPages inactive: 260000.\nPages speculative: 10000.\nPages purgeable: 10000.\n'
+  const total = 16 * 2 ** 30
+  expect(darwinAvailableMemory(sample, total)).toBe(290000 * 16384)
+  expect(100 * (total - darwinAvailableMemory(sample, total)) / total).toBeLessThan(80)
+  expect(darwinAvailableMemory(sample.replace('16384', '4096'), total)).toBe(290000 * 4096)
+  expect(darwinAvailableMemory(sample, 1024)).toBe(1024)
+})
+
+test('macOS malformed or missing memory statistics refuse a fresh sample', () => {
+  expect(() => darwinAvailableMemory('Pages free: 1.', 1024)).toThrow()
+  expect(() => darwinAvailableMemory('page size of 16384 bytes\nPages free: 1.\nPages inactive: 2.', 1024)).toThrow('incomplete')
+  expect(() => darwinAvailableMemory('page size of 0 bytes\nPages free: 1.\nPages inactive: 2.\nPages speculative: 3.', 1024)).toThrow('invalid')
+})
