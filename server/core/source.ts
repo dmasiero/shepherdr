@@ -492,8 +492,13 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       if (!args.length || args[0] === 'help' || args.includes('--help')) return { out: `Shepherdr standalone core commands (authenticated agent session):
   show
   space list | space add PATH
-  task add TITLE --brief FULL_BRIEF [--agent claude|codex] [--space NAME] [--later] [--after ID,ID]
-  task list | task show ID | task tell ID TEXT | task queue ID --after ID,ID|none
+  task add TITLE --brief FULL_BRIEF [--desc FULL_BRIEF] [--agent claude|codex] [--model ID] [--effort LEVEL]
+    [--reviewer claude|codex] [--reviewer-model ID] [--reviewer-effort LEVEL] [--set KEY=VALUE]
+    [--space NAME] [--base BRANCH] [--later] [--after ID,ID]
+  task list [--archived] [--space NAME] | task show ID | task start ID [MESSAGE] | task tell ID TEXT
+  task queue ID --after ID,ID|none | task stop ID
+  task pause|pin|unpin|archive|unarchive ID (coordinator only, when the human asks)
+  task close|delete ID [--force] (coordinator only; force may discard held work on delete)
   status ID TEXT --done 0..100 --left 5m|1h20m
   ask TITLE --choice LABEL --choice LABEL | plan TITLE --choice LABEL --choice LABEL
   review ID | pr ID | checks ID
