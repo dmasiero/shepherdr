@@ -52,6 +52,20 @@ export class CoreGit {
     await this.head(repo, base)
     await this.run(repo, ['worktree', 'add', '-b', branch, folder, base], 60, undefined, [folder])
   }
+  /** Reopen only the saved branch at its saved location; Git refuses occupied paths without overwriting. */
+  async ensureWorktree(repo: RepoLocation, folder: string, branch: string, base: string) {
+    const blocks = (await this.run(repo, ['worktree', 'list', '--porcelain'])).split('\n\n').map(block => block.split('\n'))
+    const ref = `branch refs/heads/${branch}`
+    const here = blocks.find(lines => lines.includes(`worktree ${folder}`))
+    if (here) {
+      if (!here.includes(ref)) throw Error('The saved task folder now belongs to another branch; it was left untouched')
+      if (await this.run({ machine: repo.machine, folder }, ['symbolic-ref', '--quiet', 'HEAD']) !== `refs/heads/${branch}`) throw Error('The saved task checkout changed; it was left untouched')
+      return
+    }
+    if (blocks.some(lines => lines.includes(ref))) throw Error('The saved task branch is checked out elsewhere; it was left untouched')
+    if (await this.branchHead(repo, branch)) await this.run(repo, ['worktree', 'add', folder, branch], 60, undefined, [folder])
+    else await this.addWorktree(repo, folder, branch, base)
+  }
   async pullRequest(repo: RepoLocation, branch: string) {
     const remote = await this.remote(repo)
     if (!remote) throw Error('This repository has no GitHub origin')

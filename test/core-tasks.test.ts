@@ -530,3 +530,26 @@ test('failed creation returns its saved task ID and never hides the surviving re
     expect(source.agents.get('APP-1/Agent')).toBeUndefined()
   } finally { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('Stop removes a clean landed checkout and branch; reopening recreates them without deleting chat', () => withTask(async ({ tasks, task, grant, repo, worktree, git }) => {
+  git(worktree, 'reset', '--hard', 'main')
+  const source = (tasks as unknown as { source: CoreSource }).source
+  source.store.set(`message:${task.chat}`, 'retained', { id: 'retained', who: 'agent', text: 'Retained proof' })
+  await tasks.stop(grant, task.id)
+  expect(tasks.get(task.id)).toMatchObject({ workflow: 'todo', kept: [] })
+  expect(existsSync(worktree)).toBe(false)
+  expect(await tasks.git.branchHead({ machine: task.machine, folder: repo }, task.branch)).toBeUndefined()
+  expect(source.store.get(`message:${task.chat}`, 'retained')).toBeDefined()
+  await tasks.git.ensureWorktree({ machine: task.machine, folder: repo }, worktree, task.branch, task.base)
+  expect(readFileSync(join(worktree, 'example.txt'), 'utf8')).toBe('before\n')
+}))
+
+test('Stop preserves uncommitted bytes and unmerged commits for a later restart', () => withTask(async ({ tasks, task, grant, repo, worktree }) => {
+  writeFileSync(join(worktree, 'unfinished.txt'), 'UNFINISHED_BYTES\n')
+  const old = await tasks.git.head({ machine: task.machine, folder: worktree })
+  await tasks.stop(grant, task.id)
+  expect(tasks.get(task.id)).toMatchObject({ workflow: 'todo', kept: ['uncommitted changes', 'unmerged commits'] })
+  expect(readFileSync(join(worktree, 'unfinished.txt'), 'utf8')).toBe('UNFINISHED_BYTES\n')
+  await tasks.git.ensureWorktree({ machine: task.machine, folder: repo }, worktree, task.branch, task.base)
+  expect(await tasks.git.head({ machine: task.machine, folder: worktree })).toBe(old)
+}))

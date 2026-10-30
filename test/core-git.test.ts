@@ -33,3 +33,30 @@ test('GitHub routing checks effective and written origin and refuses uncertain r
   fail = false; origin = false
   expect(await git.remote(repo)).toBeUndefined()
 })
+
+test('reopening a task checkout checks the saved branch/location and preserves occupied paths', async () => {
+  let listing = 'worktree /tasks/one\nbranch refs/heads/work/one', branch = true
+  const calls: string[][] = []
+  const git = new CoreGit({ exec: async (_machine: string, argv: string[]) => {
+    calls.push(argv)
+    if (argv[1] === 'worktree' && argv[2] === 'list') return Buffer.from(listing)
+    if (argv[1] === 'symbolic-ref') return Buffer.from('refs/heads/work/one')
+    if (argv[1] === 'for-each-ref') return Buffer.from(branch ? 'refs/heads/work/one ' + 'a'.repeat(40) : '')
+    if (argv[1] === 'rev-parse') return Buffer.from('a'.repeat(40))
+    if (argv[1] === 'worktree' && argv[2] === 'add') return Buffer.alloc(0)
+    throw Error('Unexpected command')
+  } } as unknown as CoreFiles)
+  const repo = { machine: 'remote', folder: '/repo' }
+  await git.ensureWorktree(repo, '/tasks/one', 'work/one', 'main')
+  expect(calls.some(args => args.includes('add'))).toBe(false)
+  listing = 'worktree /tasks/one\nbranch refs/heads/other'
+  await expect(git.ensureWorktree(repo, '/tasks/one', 'work/one', 'main')).rejects.toThrow('another branch')
+  listing = 'worktree /tasks/elsewhere\nbranch refs/heads/work/one'
+  await expect(git.ensureWorktree(repo, '/tasks/one', 'work/one', 'main')).rejects.toThrow('elsewhere')
+  listing = ''
+  await git.ensureWorktree(repo, '/tasks/one', 'work/one', 'main')
+  expect(calls.at(-1)).toEqual(['git', 'worktree', 'add', '/tasks/one', 'work/one'])
+  branch = false
+  await git.ensureWorktree(repo, '/tasks/one', 'work/one', 'main')
+  expect(calls.at(-1)).toEqual(['git', 'worktree', 'add', '-b', 'work/one', '/tasks/one', 'main'])
+})

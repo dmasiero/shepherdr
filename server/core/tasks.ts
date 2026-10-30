@@ -267,6 +267,7 @@ export class CoreTasks {
     if (!space || this.source.places?.removing(space.id)) throw new Refusal('Task space is missing or being removed')
     if (['merged', 'closed'].includes(task.workflow)) throw new Refusal('This task is Done; ask its coordinator for follow-up work')
     const prior = this.source.agents.get(task.chat)
+    if (prior && !this.source.agents.terminal(prior)) throw new Refusal('Previous task start is unconfirmed; reconnect before reopening its checkout')
     if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
     const capacity = (task.workflow !== 'todo' || task.pilot) && this.source.health?.room(task.machine, task.id)
     if (capacity) { if (task.workflow !== 'todo') task.workflow = 'queued'; task.capacity = capacity; this.save(task); return }
@@ -274,6 +275,7 @@ export class CoreTasks {
     if (task.workflow !== 'todo' || task.pilot) { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
     task.launchAttempt = randomUUID(); delete task.startError; this.save(task)
     try {
+    await this.git.ensureWorktree({ machine: task.machine, folder: task.repo }, task.folder, task.branch, task.base)
     await this.source.browsers?.close(task.id)
     const pilot = task.pilot ? this.source.pilots.policy.live(task.pilot) : undefined
     if (task.pilot && (!pilot || !['on', 'workers'].includes(pilot.state) || !pilot.tasks.includes(task.id))) throw new Refusal('This task’s contained run has stopped')
@@ -515,7 +517,15 @@ export class CoreTasks {
       if (!task) throw new Refusal('No such task')
       this.assert(grant, task)
       if (!['merged', 'closed'].includes(task.workflow)) { task.workflow = 'todo'; delete task.reservedAt; delete task.capacity; this.save(task) }
-      try { await this.stopAgents(task); delete task.startError; this.save(task); await this.label(task) }
+      try {
+        await this.stopAgents(task)
+        if (!['merged', 'closed'].includes(task.workflow) && task.repo && task.folder && task.branch && task.base) {
+          const state = await this.held(task)
+          task.kept = state.held
+          if (!state.held.length) await this.putAway(task, state)
+        }
+        delete task.startError; this.save(task); await this.label(task)
+      }
       catch (error) { task.startError = (error as Error).message; this.save(task); throw error }
       return task
     })
