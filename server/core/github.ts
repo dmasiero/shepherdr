@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { CoreSource } from './source.ts'
 import type { CoreSpace } from './model.ts'
+import { CoreGitHubPr } from './github-pr.ts'
 
 interface WorkflowRun { headSha: string; status: string; conclusion: string | null; url: string; workflowName: string }
 interface MainWatch { id: string; checked: number; red?: string; notice?: string; error?: string }
@@ -21,16 +22,18 @@ export function mainVerdict(value: unknown, head: string) {
 
 /** Read-only GitHub observation through the task machine's core exec; never a worker transport. */
 export class CoreGitHub {
+  readonly prs: CoreGitHubPr
   private timer?: ReturnType<typeof setInterval>
   private polling?: Promise<void>
   private stopped = false
-  constructor(private source: CoreSource) {}
+  constructor(private source: CoreSource) { this.prs = new CoreGitHubPr(source) }
   start() {
     this.stopped = false
+    this.prs.start()
     const poll = () => { void this.tick().catch(error => this.source.store.set('meta', 'github-error', { at: Date.now(), error: String(error.message).slice(0, 1000) })) }
     this.timer = setInterval(poll, 30000); poll()
   }
-  stop() { this.stopped = true; clearInterval(this.timer) }
+  stop() { this.stopped = true; this.prs.stop(); clearInterval(this.timer) }
   async drain() { await this.polling }
   private key(space: CoreSpace) { return createHash('sha256').update(JSON.stringify([space.machine, space.folder, space.base])).digest('hex') }
   private wanted(space: CoreSpace, now: number) {
@@ -40,6 +43,7 @@ export class CoreGitHub {
     if (this.polling) return this.polling
     if (this.stopped || this.source.quiescing || !this.source.connected()) return Promise.resolve()
     const work = (async () => {
+      await this.prs.scan(now)
       this.deliver()
       const spaces = this.source.spaces().filter(space => !space.home && this.source.machineConnected(space.machine) && this.wanted(space, now))
         .sort((a, b) => (this.source.store.get<MainWatch>('github-main', this.key(a))?.checked ?? 0) - (this.source.store.get<MainWatch>('github-main', this.key(b))?.checked ?? 0))

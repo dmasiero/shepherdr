@@ -46,7 +46,7 @@ export class CoreGit {
   async pullRequest(repo: RepoLocation, branch: string) {
     const remote = await this.remote(repo)
     if (!remote) throw Error('This repository has no GitHub origin')
-    return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; detailsUrl?: string }[] }>(repo,
+    return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; context?: string; targetUrl?: string; detailsUrl?: string }[] }>(repo,
       ['pr', 'view', branch, '--repo', remote, '--json', 'number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeCommit'])
   }
 }

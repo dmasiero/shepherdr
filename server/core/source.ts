@@ -41,7 +41,7 @@ import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
-interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' | 'cancelled'; quiet?: boolean }
+interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' | 'cancelled'; quiet?: boolean; work?: boolean }
 
 /** Product state is Shepherdr's; terminals, machine commands, files and agent children are core's. */
 export class CoreSource extends Emitter<SourceEvents> implements Source {
@@ -448,7 +448,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
-          if (task) await this.tasks.deliver(task.id, chat, item.text, !!item.launch)
+          if (task) await this.tasks.deliver(task.id, chat, item.text, !!item.launch && !item.work)
           else if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
           else {
             if (space.mode === 'autopilot' || agent?.pilot) throw new Error('This contained coordinator has stopped; change mode or explicitly restart its contained run before sending')
@@ -504,7 +504,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   task close|delete ID [--force] (coordinator only; force may discard held work on delete)
   status ID TEXT --done 0..100 --left 5m|1h20m
   ask TITLE --choice LABEL --choice LABEL | plan TITLE --choice LABEL --choice LABEL
-  review ID | pr ID | checks ID
+  review ID | pr ID | checks ID [--comments [--offset N] [--from nextFrom]]
   ready ID --summary TEXT [--facts TEXT]
   merge ID (requires the human's exact-commit card approval)
   heartbeat [SPACE] | heartbeat set [SPACE] < FILE
@@ -617,12 +617,12 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
       : 'Shepherdr saved your answer and is waiting for the agent to receive it.', at: Date.now() })
   }
   /** The card's change and its delivery queue entry commit together before any transport effect. */
-  saveAndDeliver(chat: string, id: string, text: string, save: () => void, quiet = false) {
+  saveAndDeliver(chat: string, id: string, text: string, save: () => void, quiet = false, work = false) {
     const agent = this.agents.get(chat)
     if (!agent) throw new Error('The card’s agent session is missing')
     this.store.db.transaction(() => {
       save()
-      this.store.set('pending-send', id, { id, chat, text, launch: agent.launch, state: 'queued', quiet } satisfies PendingSend)
+      this.store.set('pending-send', id, { id, chat, text, launch: agent.launch, state: 'queued', quiet, ...(work ? { work } : {}) } satisfies PendingSend)
       this.deliveryNotice({ id, chat, text, launch: agent.launch, state: 'queued', quiet })
     })()
     queueMicrotask(() => { void this.flush(chat) })

@@ -62,6 +62,7 @@ export interface CoreTask extends Task {
   overrides?: Record<string, string>
   reportedAt?: number
   launchAttempt?: string
+  readyAt?: number
 }
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
@@ -236,7 +237,7 @@ export class CoreTasks {
         task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), chat])]
         if (!internal && chat === task.chat && (task.workflow === 'ready' || task.workflow === 'todo')) { task.workflow = 'working'; delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion }
         if (task.workflow === 'queued' && task.capacity && !(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'
-        delete task.capacity; this.save(task)
+        delete task.capacity; this.save(task); await this.label(task)
       }
       if (agent && this.source.agents.terminal(agent)?.state === 'live') await this.source.agents.send(chat, message)
       else if (chat === task.chat) { await this.launchNow(task, message); if (this.get(task.id)?.capacity) throw new CoreError('busy', 'This task is queued until its machine has room') }
@@ -293,7 +294,7 @@ export class CoreTasks {
     task.readyHead = await this.git.head({ machine: task.machine, folder: task.folder })
     if (task.review.on && (!task.reviewReport || !task.reviewTurn || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
     delete task.approvedHead
-    task.said = summary; task.facts = facts; task.workflow = 'ready'; delete task.reservedAt
+    task.said = summary; task.facts = facts; task.workflow = 'ready'; task.readyAt = Date.now(); delete task.reservedAt
     this.save(task); await this.label(task); this.card(task, summary)
     if (task.mergePolicy === 'ask') {
       const question: Question = { id: randomUUID(), title: `Merge ${task.id}?`, kind: 'Question', choices: [{ label: 'Merge' }, { label: 'Not yet' }], to: task.chat }
@@ -673,7 +674,27 @@ export class CoreTasks {
       return text(`${id} is ready`)
     }
     if (verb === 'pr' || verb === 'task' && sub === 'pr') return text(await this.pr(grant, id))
-    if (verb === 'checks') return text((await this.git.pullRequest({ machine: task.machine, folder: task.folder }, task.branch!)).statusCheckRollup)
+    if (verb === 'checks') {
+      if (parsed.flags.has('comments')) {
+        const offset = Number(one(parsed, 'offset') ?? 0)
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > 10000) throw new Refusal('Choose a comment offset from 0 to 10000')
+        const from = Number(one(parsed, 'from') ?? 0)
+        if (!Number.isSafeInteger(from) || from < 0 || from > 8 * 1024 * 1024) throw new Refusal('Choose a valid comment byte offset with --from')
+        const comments = await this.source.github.prs.comments(task)
+        this.assert(grant, task)
+        const caller = this.source.agents.get(grant.chat)!
+        if (caller.pilot) this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
+        const comment = comments[offset]
+        if (!comment) { if (from) throw new Refusal('No comment at this offset'); return text({ comments: [], total: comments.length }) }
+        const bytes = Buffer.from(comment.body)
+        if (from > bytes.length || from < bytes.length && (bytes[from] & 0xc0) === 0x80) throw new Refusal('Use the returned nextFrom byte offset')
+        let end = Math.min(bytes.length, from + 8192)
+        while (end < bytes.length && end > from && (bytes[end] & 0xc0) === 0x80) end--
+        return text({ comments: [{ ...comment, body: bytes.subarray(from, end).toString('utf8') }], offset, from, bodyBytes: bytes.length,
+          nextFrom: end < bytes.length ? end : undefined, total: comments.length, next: end === bytes.length && offset + 1 < comments.length ? offset + 1 : undefined })
+      }
+      return text((await this.git.pullRequest({ machine: task.machine, folder: task.folder }, task.branch!)).statusCheckRollup)
+    }
     if (verb === 'review') return text(`Fresh reviewer started: ${await this.review(grant, id)}\nIts native final reply will be forwarded to your chat. Wait for that report before ready; do not read terminal screens as the review result.`)
     if (verb === 'merge' || verb === 'task' && sub === 'merge') return text(`${(await this.merge(grant, id)).id} is merged`)
     if (verb === 'todo') return this.change(id, async () => { task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return text(`${id} is To do`) })

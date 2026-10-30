@@ -174,3 +174,23 @@ test('oversized native records produce a persistent visible chat notice and late
     expect(texts).toContain('AFTER_OVERSIZED_RECORD')
   } finally { await f.close() }
 })
+
+test('durable GitHub work intents activate follow-up delivery while check reminders remain internal', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-source-github-work-')), source = new CoreSource({ home, port: 0, socket: '/unused', session: 'test', binary: 'hc' })
+  const machine = source.localMachineId(), chat = 'DEMO-1/Agent'
+  source.store.set('space', 'space', { id: 'space', name: 'Demo', machine, folder: '/repo', base: 'main', prefix: 'DEMO', mode: 'regular', added: 1 })
+  source.store.set('task', 'DEMO-1', { id: 'DEMO-1', chat, place: 'space', machine, workflow: 'ready' })
+  source.store.set('agent', chat, { chat, launch: 'launch', grant: 'grant', machine, space: 'space', kind: 'claude', role: 'task', state: 'idle', started: 1, hook: '/unused' })
+  source.core.current.connected = true
+  source.agents.terminal = (() => ({ state: 'live', pid: 1 })) as unknown as typeof source.agents.terminal
+  const internal: boolean[] = []
+  source.tasks.deliver = async (_id, _chat, _text, quiet) => { internal.push(!!quiet) }
+  try {
+    source.saveAndDeliver(chat, 'github-work', '<github>Comment</github>', () => {}, true, true)
+    await Bun.sleep(0)
+    source.saveAndDeliver(chat, 'github-checks', '<github>Checks passed</github>', () => {}, true)
+    await Bun.sleep(0)
+    expect(internal).toEqual([false, true])
+    expect(source.store.get('pending-send', 'github-work')).toMatchObject({ work: true, launch: 'launch' })
+  } finally { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
+})

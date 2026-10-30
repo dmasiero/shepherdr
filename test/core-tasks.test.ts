@@ -7,6 +7,7 @@ import { CoreStore } from '../server/core/store.ts'
 import type { CoreSource } from '../server/core/source.ts'
 import type { Grant } from '../server/core/mailbox.ts'
 import type { Message } from '../shared/types.ts'
+import { seal, unseal, type MailCredential } from '../server/core/envelope.ts'
 
 /** Real local git on CI, fake core boundary; no provider credentials or network needed. */
 async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant: Grant; repo: string; worktree: string; git: (cwd: string, ...args: string[]) => void; state: { terminal: string } }) => Promise<void>) {
@@ -38,7 +39,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
     } },
     agents: { all: () => [], get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
       terminal: () => ({ address: 't1', state: state.terminal }), send: async () => {} },
-    browsers: { close: async () => {} },
+    browsers: { close: async () => {} }, github: { prs: { comments: async () => [] } },
     core: { current: { terminals: new Map() }, call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
     post: (chat: string, message: Message) => store.set(`message:${chat}`, message.id, message),
   } as unknown as CoreSource
@@ -338,5 +339,40 @@ test('close rechecks work written during shutdown and performs browser cleanup o
     expect(calls).toBe(1)
     expect(tasks.get(task.id)?.workflow).toBe('working')
     expect(readFileSync(join(worktree, 'late.txt'), 'utf8')).toBe('KEEP_LATE_WRITE')
+  })
+})
+
+test('GitHub follow-up work clears stale ready approval while an internal checks-ready nudge preserves it', async () => {
+  for (const internal of [false, true]) await withTask(async ({ tasks, task, grant }) => {
+    await tasks.ready(grant, task.id, 'Changed example')
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat)
+    await tasks.deliver(task.id, task.chat, '<github>Observed follow-up</github>', internal)
+    expect(tasks.get(task.id)?.workflow).toBe(internal ? 'ready' : 'working')
+    expect(!!tasks.get(task.id)?.approvedHead).toBe(internal)
+  })
+})
+
+test('authenticated comment drill-down preserves full bodies and returns one bounded comment at a time', async () => {
+  await withTask(async ({ tasks, task, grant }) => {
+    const source = (tasks as unknown as { source: CoreSource }).source, body = '😀☃\\\"\n'.repeat(12000)
+    source.github.prs.comments = async () => [{ id: 'i1', at: 1, who: 'reviewer', body, url: 'https://github.test/1' }, { id: 'i2', at: 2, who: 'reviewer', body: 'Second', url: 'https://github.test/2' }]
+    const credential: MailCredential = { version: 1, grant: 'grant', server: 'server', machine: task.machine, key: Buffer.alloc(32, 7).toString('base64') }
+    let from = 0, complete = '', last: { next?: number } = {}, pages = 0
+    do {
+      const response = await tasks.cli(grant, ['checks', task.id, '--comments', '--from', String(from)])
+      const envelope = seal(credential, `comment-${pages}`, 'response', response)
+      const decoded = unseal(credential, `comment-${pages}`, 'response', envelope) as { out: string }
+      const page = JSON.parse(decoded.out)
+      expect(page.comments).toHaveLength(1)
+      expect(page.comments[0].body).not.toContain('�')
+      complete += page.comments[0].body; last = page; pages++
+      if (page.nextFrom === undefined) break
+      expect(page.nextFrom).toBeGreaterThan(from); from = page.nextFrom
+    } while (pages < 100)
+    expect(pages).toBeGreaterThan(1); expect(complete).toBe(body); expect(last.next).toBe(1)
+    const second = JSON.parse((await tasks.cli(grant, ['checks', task.id, '--comments', '--offset', '1'])).out)
+    expect(second.comments[0].id).toBe('i2'); expect(second.next).toBeUndefined()
+    await expect(tasks.cli(grant, ['checks', task.id, '--comments', '--offset', '-1'])).rejects.toThrow('offset')
+    await expect(tasks.cli({ ...grant, chat: 'another' }, ['checks', task.id, '--comments'])).rejects.toThrow('does not own')
   })
 })
