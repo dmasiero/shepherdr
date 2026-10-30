@@ -1,6 +1,9 @@
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
-import type { CorePilotRun } from './pilot-policy.ts'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { modeCard } from '../../shared/types.ts'
+import type { CorePilotConfig, CorePilotRun } from './pilot-policy.ts'
 
 /** Stop authority first; process cleanup is retried from private launch records after reconnect/restart. */
 export class CorePilotLifecycle {
@@ -12,6 +15,83 @@ export class CorePilotLifecycle {
     if (old) return old
     const next = work().finally(() => this.transitions.delete(place))
     this.transitions.set(place, next); return next
+  }
+  start(place: string, config: CorePilotConfig) {
+    const space = this.source.space(place)
+    if (!space || space.home) throw Error('Autopilot needs a repository space; home spaces are not isolated projects')
+    if (this.busy(place)) throw Error('The coordinator is changing; try again shortly')
+    if (!this.source.machineConnected(space.machine)) throw Error('Wait for this machine to reconnect')
+    const old = this.source.agents.get(place)
+    if (old && !this.source.agents.terminal(old)) throw Error('The previous coordinator start is unconfirmed; reconnect before replacing it')
+    const run = this.source.pilots.policy.begin(place, space.machine, config)
+    config = run.config
+    space.mode = 'autopilot'; this.source.store.set('space', place, space); this.source.emit('snapshot')
+    return this.transition(place, async () => {
+      try {
+        if (old) await this.finish(old)
+        if (this.source.quiescing || this.source.pilots.policy.get(run.id)?.state !== 'starting') throw Error('Autopilot start was stopped')
+        const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-coordinator/SKILL.md'), 'utf8')
+        const recent = this.recent(place)
+        const previous = this.source.pilots.policy.all().findLast(item => item.place === place && item.id !== run.id)
+        const progress = previous && this.source.store.get<{ text: string }>('pilot-progress', previous.id)?.text
+        const agent = await this.source.agents.launch(space, place, config.harness.kind,
+          `<mode>Fresh Autopilot coordinator. Same chat. Read the heartbeat checklist, inspect this space and act within your approved profile. Save progress and next step with shepherdr progress.\nSaved progress: ${progress || '(none)'}\nRecent chat:\n${recent}\nHeartbeat checklist:\n${this.source.heartbeats.read(space)}</mode>`,
+          { ...config.harness, instructions: `${role}\nYou are isolated. Use the launch-provisioned shepherdr command for managed tasks, messages and reviews. No core socket or unrestricted fallback exists here. Git metadata is read-only; workers checkpoint through shepherdr checkpoint. Settings are a snapshot for this run.`,
+            pilot: { run: run.id, hosts: config.hosts, deadline: config.runtime ? run.started + config.runtime : undefined, repo: space.folder } })
+        this.source.pilots.policy.activate(run.id, { chat: agent.chat, launch: agent.launch, role: 'coordinator' })
+        this.source.heartbeats.model.switched(place, true)
+        const id = `mode:${run.id}:on`; this.source.post(place, { id, who: 'agent', card: modeCard(id, 'autopilot'), at: Date.now() })
+      } catch (error) {
+        this.source.pilots.policy.fail(run.id, (error as Error).message)
+        throw error
+      } finally { this.source.emit('snapshot') }
+    })
+  }
+  async regular(place: string, keepWorkers = false) {
+    const space = this.source.space(place)
+    if (!space) throw Error('No such coordinator space')
+    const before = this.source.agents.get(place)
+    const run = this.source.pilots.policy.current(place) ?? (before?.pilot ? this.source.pilots.policy.get(before.pilot.run) : undefined)
+    if (run) {
+      await this.stop(run.id, keepWorkers)
+      const deadline = Date.now() + 15_000
+      while (this.source.space(place)?.mode === 'autopilot' && Date.now() < deadline && !this.source.quiescing) { await this.tick(); await Bun.sleep(100) }
+      if (this.source.space(place)?.mode === 'autopilot') throw Error('Autopilot cleanup is pending; retry after core reconnects')
+    }
+    if (this.busy(place)) throw Error('The coordinator is changing; try again shortly')
+    return this.transition(place, async () => {
+      if (this.source.quiescing) throw Error('Shepherdr is stopping')
+      const current = this.source.agents.get(place), terminal = current && this.source.agents.terminal(current)
+      if (terminal?.state === 'live') {
+        if (current!.pilot) throw Error('Contained coordinator cleanup is not confirmed')
+        return
+      }
+      if (current && !terminal) throw Error('Coordinator cleanup is not confirmed; reconnect core')
+      const pick = this.source.settings.agent('coordinator', place)
+      const progress = run && this.source.store.get<{ text: string }>('pilot-progress', run.id)?.text
+      await this.source.agents.launch(space, place, pick.kind,
+        `<mode>Autopilot is off. Fresh regular coordinator, same chat. Do only what the human asks. Do not act on old wakes or checklist items. Saved progress: ${progress || '(none)'}\nRecent chat:\n${this.recent(place)}\nReply only <no-reply>regular coordinator ready</no-reply>.</mode>`, pick)
+      this.source.heartbeats.model.switched(place, false)
+      const id = `mode:${run?.id || Date.now()}:off`; this.source.post(place, { id, who: 'agent', card: modeCard(id, 'regular'), at: Date.now() })
+      this.source.retry(place)
+    })
+  }
+  private recent(place: string) {
+    return this.source.logs.messages(place).filter(message => message.text).slice(-20).map(message => `${message.who}: ${message.text!.slice(0, 4000)}`).join('\n').slice(-32000)
+  }
+  private async finish(agent: CoreAgent) {
+    const terminal = this.source.agents.terminal(agent)
+    if (!terminal) throw Error('Process cleanup is not confirmed; reconnect core')
+    if (terminal.state === 'finished') return
+    if (agent.pid !== undefined && terminal.pid !== agent.pid) throw Error('Coordinator process identity changed')
+    await this.source.core.call('terminal.kill', { terminal: terminal.address })
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      if (this.source.agents.terminal(agent)?.state === 'finished') return
+      if (!this.source.machineConnected(agent.machine)) break
+      await Bun.sleep(100)
+    }
+    throw Error('Coordinator cleanup is pending; retry after core reconnects')
   }
   stop(id: string, keepWorkers = false) {
     const run = this.source.pilots.policy.get(id)
@@ -57,6 +137,7 @@ export class CorePilotLifecycle {
   }
   async tick() {
     for (const run of this.source.pilots.policy.all()) {
+      if (run.state === 'starting' && !this.busy(run.place)) this.source.pilots.policy.fail(run.id, 'Autopilot start was interrupted; cleanup is pending before a fresh start')
       if (['on', 'workers'].includes(run.state)) {
         try { this.source.pilots.policy.live(run.id) } catch { /* Private policy persists the limit failure. */ }
       }

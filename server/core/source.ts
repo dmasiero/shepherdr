@@ -139,6 +139,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start()
     this.recovery = setInterval(() => {
       if (!this.quiescing) void this.pilots.lifecycle.tick().catch(error => this.faults.set('pilot-lifecycle', error.message))
+      if (!this.quiescing) this.pilots.wakes.tick()
       if (!this.quiescing) void this.pilots.usage.poll().catch(error => this.faults.set('pilot-usage', error.message))
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return
@@ -234,7 +235,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks, attentionRequests,
-      settings: this.secrets.pages([...this.settings.sections(), this.plugins.section(this.pluginUpdates?.status())]),
+      settings: this.secrets.pages([...this.settings.sections().map(section => this.pilots.wakes.section(section)), this.plugins.section(this.pluginUpdates?.status())]),
       last: this.unread.last(), read: this.unread.read(),
     }
   }
@@ -339,12 +340,22 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
         return { answered: true }
       }
+      case 'mode':
+        if (action.mode === 'autopilot') { this.requirePlugin('autopilot'); return this.pilots.lifecycle.start(action.place, this.settings.pilot(action.place)) }
+        if (action.mode !== 'regular') throw Error('Choose regular or Autopilot')
+        return this.pilots.lifecycle.regular(action.place, action.keepWorkers)
+      case 'autopilot-run': return this.pilots.wakes.request(action.place)
       case 'automation': return this.automations.act(action)
       case 'call': if (!this.chat(action.chat)) throw new Error('No such chat'); return {}
       case 'browser-notes': return this.browsers.notes(action)
       case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
       case 'setting':
+        if (action.key === 'heartbeat.md') {
+          const space = this.space(action.place || '')
+          if (!space || typeof action.value !== 'string') throw Error('Choose this space and provide its heartbeat checklist')
+          this.heartbeats.write(space, action.value); return {}
+        }
         if (action.key.startsWith('plugin.')) {
           if (!this.pluginUpdates) throw Error('Plugin controls are disabled for this development preview')
           if (action.place && action.place !== 'all' || !['on', 'off'].includes(action.value || '')) throw Error('Plugins apply Everywhere; choose on or off')

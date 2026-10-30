@@ -3,7 +3,9 @@ import { TABLE, nearest, parseCodex, type CliModels } from '../../shared/models.
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
 import type { MachineLimits } from '../health.ts'
-import { validZone, OWN_ZONE } from '../live/trigger.ts'
+import { timeRule, timeWords, nextWords, eventRules, eventWords, validZone, OWN_ZONE } from '../live/trigger.ts'
+import { PILOT_SETTINGS, corePilotConfig } from './pilot-settings.ts'
+import { pilotHosts } from './pilot-policy.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import { NOTIFY, NOTIFY_DEFAULT, NOTIFY_KEY } from '../../shared/alerts.ts'
 
@@ -17,6 +19,7 @@ const roleRows = (role: Role, group: string): SettingRow[] => [
 ]
 // Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
 const CATALOG: SettingSection[] = [
+  PILOT_SETTINGS,
   { name: 'Tasks', about: "Done tasks move to their place's Archived list after this long.", rows: [{ label: 'Archive Done after', key: 'tasks.archiveAfter', value: '7 days', num: { min: 1, max: 3650, unit: 'days', one: 'day', off: true } }] },
   { name: 'Notify', about: "Which alerts a place's coordinator chat sends you. All: every new message too. Needs me: its questions and alerts. Off: none, and its row stays quiet. Tasks alert you either way. A place can set its own from its menu in the sidebar.", rows: [{ label: 'Notify', key: NOTIFY_KEY, value: NOTIFY_DEFAULT, options: [...NOTIFY] }] },
   { name: 'Machine', about: "When a machine starts more tasks, and when its coordinator hears that it struggles. Set one machine's own to fit its cores and memory.", rows: [
@@ -73,17 +76,21 @@ export class CoreSettings {
     if (key.startsWith('machine.') && level !== 'all' && !level.startsWith('m:')) throw new Error('Machine limits apply Everywhere or to a machine')
     if (key === 'time.zone' && level !== 'all') throw new Error('Time zone applies Everywhere')
     if (value !== null) {
-      if (typeof value !== 'string' || value.length > (row.multiline ? 32_000 : 512)) throw new Error('Setting is too long')
+      if (typeof value !== 'string' || value.length > (row.multiline ? 32_000 : key === 'autopilot.hosts' ? 32768 : key === 'autopilot.secrets' ? 16384 : 512)) throw new Error('Setting is too long')
       if (key === 'time.zone') value = value.trim()
       if (key === 'time.zone' && !validZone(value)) throw new Error('Choose a valid time zone, such as Europe/Stockholm')
-      if (key.endsWith('.model') && value !== 'default' && value) {
-        const role = key.split('.')[0] as Role, kind = kindOf(this.get(`${role}.agent`, level)) ?? 'claude'
+      if (key === 'heartbeat.when') value = timeRule(value)
+      if (key === 'heartbeat.on') { eventRules(value) }
+      if (key === 'autopilot.hosts') value = pilotHosts(value.split(/[\s,]+/).filter(Boolean)).join(', ')
+      if (key === 'autopilot.secrets' && value.split(/[\s,]+/).filter(Boolean).some(name => !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name))) throw Error('Use secret names separated by commas')
+      if (key.endsWith('.model') && !(key === 'autopilot.model' && value === 'inherit') && value !== 'default' && value) {
+        const role = key.split('.')[0] as Role | 'autopilot', kind = this.agent(role, level).kind
         if (this.catalog(kind, level).models.length && !this.findModel(kind, value, level)) throw new Error('Choose a model offered by this agent')
       }
       if (key.endsWith('.agent')) {
         const kind = kindOf(value)
-        if (!kind) throw new Error('Choose Claude Code or Codex')
-        value = names[kind]
+        if (!kind && !(key === 'autopilot.agent' && value === 'inherit')) throw new Error('Choose Claude Code or Codex')
+        if (kind) value = names[kind]
       } else if (row.num) {
         if ((row.num.off || row.num.zero) && value === 'off') value = 'off'
         else {
@@ -94,7 +101,7 @@ export class CoreSettings {
           value = row.num.zero && number === 0 ? 'off' : suffix ? `${number}${suffix.startsWith('×') || suffix === '%' ? '' : ' '}${suffix}` : String(number)
         }
       } else if (row.options && !key.endsWith('.effort') && !row.options.includes(value)) throw new Error('Choose one of the offered values')
-      else if (key.endsWith('.effort') && value !== 'default') {
+      else if (key.endsWith('.effort') && value !== 'default' && !(key === 'autopilot.effort' && value === 'inherit')) {
         const role = key.split('.')[0] as Role, config = this.agent(role, level)
         if (!this.catalog(config.kind, level).efforts.includes(value)) throw new Error('This agent does not offer that effort')
       }
@@ -102,7 +109,14 @@ export class CoreSettings {
     } else this.store.delete('settings', `${level}\0${key}`)
     if (!this.saving) this.changed()
   }
-  agent(role: Role, level: string) {
+  pilot(level: string) { return corePilotConfig(this, level) }
+  agent(role: Role | 'autopilot', level: string): { kind: AgentKind; model?: string; effort?: string } {
+    if (role === 'autopilot') {
+      const base = this.agent('coordinator', level), kind = kindOf(this.get('autopilot.agent', level)) ?? base.kind
+      const raw = this.get('autopilot.model', level), model = raw === 'inherit' ? base.model : raw === 'default' ? undefined : this.findModel(kind, raw, level)?.id ?? raw
+      const effort = this.get('autopilot.effort', level)
+      return { kind, model, effort: effort === 'inherit' ? base.effort : effort === 'default' ? undefined : effort }
+    }
     const kind = kindOf(this.get(`${role}.agent`, level)) ?? (role === 'reviewer' ? 'codex' : 'claude')
     const raw = this.get(`${role}.model`, level), catalog = this.catalog(kind, level)
     const model = raw === 'default' || !raw ? undefined : this.findModel(kind, raw, level)?.id ?? (!catalog.models.length ? raw : undefined)
@@ -151,14 +165,16 @@ export class CoreSettings {
       let dynamic = { ...row }
       let value = picked.value
       if (/\.(model|effort)$/.test(row.key)) {
-        const role = row.key.split('.')[0] as Role, config = this.agent(role, level), catalog = this.catalog(config.kind, level)
+        const role = row.key.split('.')[0] as Role | 'autopilot', config = this.agent(role, level), catalog = this.catalog(config.kind, level)
         if (row.key.endsWith('.model')) {
-          dynamic = { ...dynamic, text: !catalog.models.length, options: ['default', ...catalog.models.map(model => model.label)] }
+          dynamic = { ...dynamic, text: !catalog.models.length, options: [...(role === 'autopilot' ? ['inherit'] : []), 'default', ...catalog.models.map(model => model.label)] }
           value = this.findModel(config.kind, picked.value, level)?.label ?? picked.value
-          if (picked.value !== 'default' && picked.value && !config.model) dynamic.warn = 'This model is unavailable for the selected agent. New starts use its default; choose a model or reset this value.'
+          if (picked.value !== 'inherit' && picked.value !== 'default' && picked.value && !config.model) dynamic.warn = 'This model is unavailable for the selected agent. New starts use its default; choose a model or reset this value.'
         }
-        else dynamic = { ...dynamic, options: ['default', ...(catalog.models.find(model => model.id === config.model)?.efforts ?? catalog.efforts)] }
+        else dynamic = { ...dynamic, options: [...(role === 'autopilot' ? ['inherit'] : []), 'default', ...(catalog.models.find(model => model.id === config.model)?.efforts ?? catalog.efforts)] }
       }
+      if (row.key === 'heartbeat.when') dynamic.trigger = { words: timeWords(value, this.get('time.zone')), next: nextWords(value, this.get('time.zone')), presets: [{ label: '15 min', value: timeRule('FREQ=MINUTELY;INTERVAL=15') }, { label: '30 min', value: timeRule('FREQ=MINUTELY;INTERVAL=30') }, { label: '1 hour', value: timeRule('FREQ=HOURLY') }, { label: 'Workdays', value: timeRule('FREQ=MINUTELY;INTERVAL=30;BYHOUR=8,9,10,11,12,13,14,15,16,17;BYDAY=MO,TU,WE,TH,FR') }] }
+      if (row.key === 'heartbeat.on') dynamic.trigger = { words: eventWords(eventRules(value)), next: [], presets: [{ label: 'All news', value: 'all news' }, { label: 'None: it waits', value: 'none' }] }
       const words = (at: string) => at === 'default' ? 'Shepherdr’s default' : at === 'all' ? 'Everywhere' : at.startsWith('m:') ? this.machineName(at.slice(2)) : this.spaces().find(space => space.id === at)?.name || at
       return { ...dynamic, value, ...(picked.level === level ? { inherits: { value: inherited.value, from: words(inherited.level) } } : { from: words(picked.level) }) }
     }) })))

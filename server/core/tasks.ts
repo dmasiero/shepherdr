@@ -170,8 +170,8 @@ export class CoreTasks {
     const pilot = task.pilot ? this.source.pilots.policy.live(task.pilot) : undefined
     if (task.pilot && (!pilot || !['on', 'workers'].includes(pilot.state) || !pilot.tasks.includes(task.id))) throw new Refusal('This task’s contained run has stopped')
     let parent = this.source.agents.get(space.id)
-    if (pilot && (!parent?.pilot || parent.pilot.run !== pilot.id || this.source.agents.terminal(parent)?.state !== 'live')) throw new Refusal('Restart this task from its contained coordinator; no unrestricted parent was started')
-    if (!parent || this.source.agents.terminal(parent)?.state !== 'live') {
+    if (pilot && (parent?.pilot?.run !== pilot.id || this.source.agents.terminal(parent)?.state !== 'live')) parent = undefined
+    if (!pilot && (!parent || this.source.agents.terminal(parent)?.state !== 'live')) {
       const pick = this.source.settings.agent('coordinator', space.id)
       parent = await this.source.agents.launch(space, space.id, pick.kind, '', pick)
     }

@@ -57,7 +57,17 @@ test('cleanup refuses a changed process identity and leaves a newer run mode int
   for (const terminal of f.terminals.values()) terminal.state = 'finished'
   await f.lifecycle.tick()
   const next = f.policy.begin('space', 'machine', f.run.config)
+  f.policy.activate(next.id, { chat: 'space', launch: 'new-coordinator', role: 'coordinator' })
   f.space.mode = 'autopilot'
   await f.lifecycle.tick()
   expect(f.policy.current('space')?.id).toBe(next.id); expect(f.space.mode).toBe('autopilot')
+}))
+
+test('an interrupted start is failed and cleaned up after app reconstruction, never activated from labels', () => fixture(async f => {
+  f.policy.stop(f.run.id); f.policy.stopped(f.run.id)
+  const next = f.policy.begin('space', 'machine', f.run.config)
+  f.space.mode = 'autopilot'
+  await new CorePilotLifecycle(f.source).tick()
+  expect(f.policy.get(next.id)).toMatchObject({ state: 'stopped', error: expect.stringContaining('start was interrupted') })
+  expect(f.space.mode).toBe('regular')
 }))

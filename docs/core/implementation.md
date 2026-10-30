@@ -1048,3 +1048,25 @@ regular coordinator replacement, wake scheduling or SSH. Scoped fresh review: tw
 revocation race fixed by synchronous denial and a post-answer private-actor recheck; final round no findings.
 New offline/retired-process/identity/keep-workers regressions are for GitHub only; local typecheck passed.
 Usage commit 5d19cfb8 passed both GitHub jobs (40999359491).
+
+Autopilot now connects the existing mode switch, checklist editor, scoped agent/access/limit settings and Run now
+to core. Starting snapshots the validated profile, replaces only the explicit coordinator and retains chat/progress.
+Turning off waits for owned containment cleanup before explicitly starting a regular coordinator. Retained workers
+can restart in their old contained profile without creating an unrestricted parent. Wake requests persist per run
+and exact coordinator launch, wait for idle, coalesce, retain news arriving in flight, and complete only after their
+own native user receipt followed by turn-end. Interrupted deliveries are not repeated. Empty checklists skip provider
+calls. A crash during startup is recorded as interrupted and cleaned up, never activated from labels.
+
+Real phone-width manual proof on a new isolated repository space: the unchanged menu switch launched contained
+Claude terminal t21, PID 968946, run d1bc517c-7ac8-4c95-b72a-a0f9a22bc846 and returned AUTOPILOT_UI_WAKE_OK.
+Settings Run now produced a second reply and Last run Finished. An isolated server stop/start preserved the same
+terminal/PID/private launch; another phone Run now produced a third reply and Finished, with 114,096 cumulative
+reported tokens. Files remained unchanged. The checklist and normal Autopilot badge/card were inspected at 390×844;
+screenshots are in the task proof source, not git. This is local-core browser emulation, not physical phone or SSH.
+The final switch-off check and branch CI are pending. Completion CLI, contained coordinator restart, full event
+producers, SSH Git and full parity remain unfinished.
+
+Scoped review: three rounds, startup-crash major and empty-checklist/inherited-model minors fixed; last round no
+must-fix findings. Regression coverage includes durable wakes, no duplicate uncertain delivery, own-turn completion,
+empty checklist, follow-up news, inherited Codex models and interrupted startup. Only typecheck ran locally and passed.
+Lifecycle stop commit 16f57a92 passed both GitHub jobs (40999607762).

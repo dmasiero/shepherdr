@@ -76,6 +76,7 @@ export class CoreAutomations {
     try { return await work } finally { this.active.delete(work) }
   }
   private enqueue(event: Happened, place: string) {
+    this.source.pilots?.wakes.news(event, place)
     for (const automation of this.model.on(event, place)) {
       const own = this.source.space(automation.place), from = this.source.space(place)
       const allowed = automation.trigger.on?.some(rule =>
