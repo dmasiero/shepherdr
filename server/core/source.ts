@@ -23,7 +23,7 @@ import { CoreTaskNews } from './news.ts'
 import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
-import { CoreSettings } from './settings.ts'
+import { CLI_NAME, CoreSettings } from './settings.ts'
 import { CoreSecrets } from './secrets.ts'
 import { CoreProviderRetries } from './provider-retries.ts'
 import { CoreArtifacts } from './artifacts.ts'
@@ -270,7 +270,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const status = this.status(agent)
     const messages = this.cards.messages(key, this.logs.messages(key))
     if (agent?.kind === 'codex' && agent.state === 'starting' && !agent.transcript) messages.push({ id: `setup-${agent.launch}`, who: 'agent', text: 'Codex may ask you to trust its folder or Shepherdr’s hooks. Open Terminal to review its own prompts. Chat connects after those hooks are trusted.', at: agent.started })
-    return { key, ...this.activities.chat(key, messages, terminal?.state === 'live' && status === 'work'), cli: agent?.kind ?? this.agentKind(), working: status === 'work',
+    return { key, ...this.activities.chat(key, messages, terminal?.state === 'live' && status === 'work'), cli: CLI_NAME[agent?.kind ?? this.agentKind()], working: status === 'work',
       failed: this.store.all<PendingSend>('pending-send').filter(item => item.chat === key && item.state === 'uncertain').map(item => ({ cid: item.id, error: 'Delivery was interrupted; check the chat before sending again' })),
       finished: !!agent && terminal?.state === 'finished', agent: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort, runtime: agent?.runtime } }
   }

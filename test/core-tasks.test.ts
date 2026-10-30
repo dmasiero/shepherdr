@@ -655,3 +655,9 @@ test('task ages use saved creation, status, completion and archive times without
   expect(tasks.view({ ...task, workflow: 'closed', doneAt: now - 30 * 60000, archived: now - 3 * 86400000 }).age).toBe('3d')
   expect(JSON.stringify(task)).toBe(original)
 }))
+
+
+test('public task CLI names retain familiar labels while internal launch kinds stay unchanged', () => withTask(async ({ tasks, task }) => {
+  expect(tasks.view(task)).toMatchObject({ on: 'Codex', agent: { cli: 'Codex' } })
+  expect(task.kind).toBe('codex')
+}))

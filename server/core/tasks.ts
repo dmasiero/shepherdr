@@ -9,7 +9,7 @@ import { CorePilotRepositories } from './pilot-repositories.ts'
 import { CoreTaskRelocation } from './task-relocation.ts'
 import { CoreTaskProcesses } from './task-processes.ts'
 import { taskOptions, validateTaskSettings } from './task-options.ts'
-import { kindOf } from './settings.ts'
+import { CLI_NAME, kindOf } from './settings.ts'
 import { CoreGit } from './git.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
@@ -126,7 +126,7 @@ export class CoreTasks {
     const when = task.archived ?? (status === 'done' ? task.doneAt ?? changed : status === 'todo' ? created : changed)
     const taskAge = Number.isFinite(when) && when > 0 ? age(when) : task.age
     const agentAge = agent?.started && Number.isFinite(agent.started) ? age(agent.started) : taskAge
-    return { ...task, age: taskAge, status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: nativeStatus === 'off' ? 'off' : status, age: agentAge, note: retryLine || task.report?.msg || '' } : undefined,
+    return { ...task, age: taskAge, on: CLI_NAME[agent?.kind ?? task.kind], status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: CLI_NAME[agent.kind], status: nativeStatus === 'off' ? 'off' : status, age: agentAge, note: retryLine || task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: CoreTaskInput) {

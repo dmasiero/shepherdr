@@ -1867,3 +1867,14 @@ active tasks, completed tasks and unchanged canonical note delivery. Manual befo
 and after on the same live artifact/desktop show the raw ID replaced by ~; no
 artifact version/data or native agent was changed for that comparison. Typecheck
 passed. Task-age CI 41034443552 passed at 69dc6c4e; its phone before/after was inspected.
+
+The artifact keeper correction also passed a real comment roundtrip: the existing
+remote-home artifact's UI confirmed Sent to ~ and its canonical native Claude
+keeper replied FRIENDLY_KEEPER_ROUTE_OK exactly once. Its HTML/data/version were
+unchanged. Another retained-label mismatch appeared in real task headers and agent
+controls: public cli fields contained internal claude/codex kinds. Public task/chat
+views now show Claude Code/Codex, while agent.kind and launch arguments remain
+unchanged. The legacy Task.on presentation field also names the CLI rather than
+incorrectly naming the main host. Regressions verify public names and internal kind
+separation. Only typecheck ran locally, followed by an isolated app restart for
+manual before/after screenshots; all native processes and work are preserved.

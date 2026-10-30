@@ -10,7 +10,8 @@ import type { AgentKind, CoreSpace } from './model.ts'
 import { NOTIFY, NOTIFY_DEFAULT, NOTIFY_KEY } from '../../shared/alerts.ts'
 
 export type Role = 'coordinator' | 'task' | 'reviewer' | 'backup'
-const names = { claude: 'Claude Code', codex: 'Codex' }
+export const CLI_NAME = { claude: 'Claude Code', codex: 'Codex' }
+const names = CLI_NAME
 export const kindOf = (word: string): AgentKind | undefined => Object.entries(names).find(([kind, name]) => [kind, name.toLowerCase()].includes(word.trim().toLowerCase()))?.[0] as AgentKind | undefined
 const roleRows = (role: Role, group: string): SettingRow[] => [
   { group, key: `${role}.agent`, label: 'Agent', value: role === 'reviewer' ? 'Codex' : 'Claude Code', options: Object.values(names) },
