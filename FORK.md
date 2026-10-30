@@ -55,6 +55,9 @@ sync's check list:
   are on Gitea.
 - **Task commands for scripts**: `shepherdr task add/list/tell` from scripts outside an agent session, for the
   dispatchers that make tasks.
+- **Git over SSH on NixOS**: 2.1's checked Git (`helper/core-pilot-ssh.ts`) refuses an SSH configuration file with
+  more than one hard link, and NixOS's `/etc/ssh/ssh_config` is a store file that the store hard-links. Until that is
+  fixed, `test/core-pilot-git.test.ts` fails here and stays out of the sync's check list.
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment.
 
