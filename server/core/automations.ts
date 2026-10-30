@@ -11,7 +11,7 @@ import type { CoreAgent } from './model.ts'
 const checked = <T>(run: () => T): T => { try { return run() } catch (error) { throw new Refusal((error as Error).message) } }
 
 interface Run { id: string; automation: string; place: string; at: number; timed: boolean; state: 'queued' | 'starting' | 'done'; task?: string; error?: string }
-interface Seen { id: string; place: string; workflow: string; status: string }
+interface Seen { id: string; place: string; workflow: string; status: string; failure?: string; quietLife?: number; overReport?: number }
 
 /** Product schedules persist beside task records; all task launches still go through core. */
 export class CoreAutomations {
@@ -106,17 +106,39 @@ export class CoreAutomations {
     this.processing = work.finally(() => { this.processing = undefined })
     return this.processing
   }
-  async scan() {
+  async scan(now = Date.now()) {
     if (this.stopped || this.scanning || this.source.quiescing || !this.source.connected()) return
     this.scanning = true
     try {
       for (const task of this.source.tasks.all()) {
+        if (task.archived || this.source.tasks.busy(task.id) || !this.source.machineConnected(task.machine)) continue
         const previous = this.source.store.get<Seen>('automation-seen', task.id), status = this.source.tasks.view(task).status
-        const next: Seen = { id: task.id, place: task.place, workflow: task.workflow, status }
-        const event = !previous ? task.automation ? undefined : 'added' : previous.workflow !== task.workflow && task.workflow === 'ready' ? 'ready' : previous.workflow !== task.workflow && task.workflow === 'merged' ? 'merged' : previous.status !== status && status === 'need' ? 'needs-you' : undefined
+        const agent = this.source.agents.get(task.chat), terminal = agent && this.source.agents.terminal(agent)
+        const attempt = task.launchAttempt ?? agent?.launch
+        const failure = task.startError && !['merged', 'closed', 'merging'].includes(task.workflow) ? `start:${attempt ? attempt + ':' : ''}${task.startError}` : task.workflow === 'working' && terminal?.state === 'finished' &&
+          (terminal.exit_code != null && terminal.exit_code !== 0 || terminal.signal != null) ? `${agent!.launch}:${terminal.reason}:${terminal.exit_code}:${terminal.signal}` : undefined
+        const next: Seen = { id: task.id, place: task.place, workflow: task.workflow, status, failure, quietLife: previous?.quietLife, overReport: previous?.overReport }
+        const events: Happened['event'][] = []
+        if (!previous && !task.automation) events.push('added')
+        if (previous?.workflow !== task.workflow && task.workflow === 'ready') events.push('ready')
+        else if (previous?.workflow !== task.workflow && task.workflow === 'merged') events.push('merged')
+        else if (failure && failure !== previous?.failure) events.push('failed')
+        else if (previous && previous.status !== status && status === 'need' && !failure) events.push('needs-you')
+        if (status === 'work' && terminal?.state === 'live' && agent) {
+          const life = Math.max(agent.started, agent.activityAt ?? 0, terminal.status_ms ?? 0, task.reportedAt ?? 0)
+          if (next.quietLife !== undefined && life > next.quietLife) delete next.quietLife
+          const quiet = now - life >= 20 * 60000 && next.quietLife === undefined
+          const eta = task.report?.eta, report = task.reportedAt
+          const over = eta !== undefined && report !== undefined && report !== next.overReport && now - report > (eta + Math.max(eta, 20)) * 60000
+          if (quiet || over) {
+            if (quiet) next.quietLife = life
+            if (over) next.overReport = report
+            events.push('stalled')
+          }
+        }
         this.source.store.db.transaction(() => {
           this.source.store.set('automation-seen', task.id, next)
-          if (event) this.enqueue({ event, title: task.name, branch: task.branch, space: this.source.space(task.place)?.name }, task.place)
+          for (const event of events) this.enqueue({ event, title: task.name, branch: task.branch, space: this.source.space(task.place)?.name }, task.place)
         })()
       }
       void this.processQueue()

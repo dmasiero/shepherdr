@@ -96,6 +96,9 @@ export class CoreLogs {
     const current = this.agents.get(agent.chat)
     if (!current || current.launch !== agent.launch || current.grant !== agent.grant) return
     agent = current
+    if (Number.isFinite(event.at) && event.at > 0 && event.at <= Date.now() + 60000 && event.at > (agent.activityAt ?? agent.started)) {
+      agent.activityAt = event.at; this.store.set('agent', agent.chat, agent)
+    }
     this.store.set(`event:${agent.chat}`, event.id + ':' + event.kind, event)
     if (event.kind === 'session') { agent.session = event.sessionId; this.store.set('agent', agent.chat, agent) }
     if (event.kind === 'turn-start' || event.kind === 'turn-end') {

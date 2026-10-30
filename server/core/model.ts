@@ -31,6 +31,7 @@ export interface CoreAgent {
   transcriptFormat?: 'codex-exec'
   session?: string
   started: number
+  activityAt?: number
   state: 'starting' | 'idle' | 'working' | 'blocked'
   permission?: string
   /** App-private contained launch metadata. Labels and request bodies never establish this ownership. */

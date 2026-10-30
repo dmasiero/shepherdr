@@ -225,6 +225,7 @@ This start replaces every earlier command path and routing instruction. Your aut
     // File reads are asynchronous: preserve newer terminal/session fields written while a hook read was pending.
     record = current
     if (event.agent) return // A helper's lifecycle must not replace its parent's status/session.
+    if (Number.isFinite(event.at) && event.at > 0 && event.at <= Date.now() + 60000) record.activityAt = Math.max(record.activityAt ?? record.started, event.at)
     if (event.session) record.session = event.session
     if (event.transcript) record.transcript = event.transcript
     if (event.model) record.model = event.model

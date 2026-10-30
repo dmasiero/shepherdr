@@ -12,8 +12,8 @@ async function fixture(run: (context: { source: CoreSource; scheduler: CoreAutom
   const home = mkdtempSync(join(tmpdir(), 'shep-automation-')), store = new CoreStore(home)
   const spaces = [{ id: 'p:box:demo', name: 'demo', machine: 'box', folder: '/repo', prefix: 'DEMO', base: 'main' }, { id: 'p:other:demo', name: 'demo', machine: 'other', folder: '/other', prefix: 'DEMO', base: 'main' }] as CoreSpace[]
   const tasks: CoreTask[] = [], launches: string[] = []
-  const source = { store, connected: () => true, emit() {}, on() {}, settings: { get: () => 'UTC' }, spaces: () => spaces, space: (id: string) => spaces.find(space => space.id === id), tasks: {
-    all: () => tasks, view: (task: CoreTask) => ({ status: task.status }),
+  const source = { store, connected: () => true, machineConnected: () => true, agents: { get: () => undefined, terminal: () => undefined }, emit() {}, on() {}, settings: { get: () => 'UTC' }, spaces: () => spaces, space: (id: string) => spaces.find(space => space.id === id), tasks: {
+    all: () => tasks, busy: () => false, view: (task: CoreTask) => ({ status: task.status }),
     addInSpace: async (space: CoreSpace, input: { title: string; automation: string }) => { launches.push(space.id); const task = { id: `DEMO-${launches.length}`, place: space.id, name: input.title, workflow: 'working', status: 'work', automation: input.automation } as CoreTask; tasks.push(task); return task },
   } } as unknown as CoreSource
   const scheduler = new CoreAutomations(source)
@@ -93,4 +93,52 @@ test('invalid schedule returns a useful refusal before creating an automation', 
   await expect(scheduler.cli(agent, ['automation', 'add', 'Check', '--task', 'Check', '--when', 'every 5 minutes'])).rejects.toThrow('RRULE')
   expect(scheduler.model.list).toHaveLength(0)
   await expect(scheduler.cli({ ...agent, role: 'task' }, ['automation', 'list'])).rejects.toThrow('Only a coordinator')
+}))
+
+test('confirmed failures emit once across restart; intentional To-do stops and offline machines do not fail', async () => fixture(async ({ source, scheduler, tasks, launches, space }) => {
+  scheduler.model.add({ place: space.id, name: 'failure', trigger: { on: [{ event: 'failed' }] }, task: { title: 'Investigate' } })
+  const task = { id: 'FAILED-1', chat: 'FAILED-1/Agent', place: space.id, machine: space.machine, name: 'Failed', workflow: 'working', status: 'need' } as CoreTask
+  tasks.push(task)
+  const terminal = { state: 'finished', exit_code: 1, reason: 'exited' }
+  source.agents.get = ((chat: string) => chat === task.chat ? { launch: 'launch', started: 1 } : undefined) as unknown as typeof source.agents.get
+  source.agents.terminal = (() => terminal) as unknown as typeof source.agents.terminal
+  await scheduler.scan(); await scheduler.drain()
+  expect(launches).toHaveLength(1)
+  const restored = new CoreAutomations(source)
+  try { await restored.scan(); await restored.drain(); expect(launches).toHaveLength(1) } finally { restored.stop() }
+  task.workflow = 'todo'; await scheduler.scan(); await scheduler.drain(); expect(launches).toHaveLength(1)
+  task.workflow = 'working'; source.machineConnected = () => false
+  await scheduler.scan(); await scheduler.drain(); expect(launches).toHaveLength(1)
+}))
+
+test('quiet and over-estimate stalls persist and re-arm only with new activity or a new report', async () => fixture(async ({ source, scheduler, tasks, launches, space }) => {
+  scheduler.model.add({ place: space.id, name: 'stall', trigger: { on: [{ event: 'stalled' }] }, task: { title: 'Inspect stall' } })
+  const start = 1000000, agent = { launch: 'live', started: start, activityAt: start }, terminal = { state: 'live' }
+  const task = { id: 'SLOW-1', chat: 'SLOW-1/Agent', place: space.id, machine: space.machine, name: 'Slow', workflow: 'working', status: 'work', reportedAt: start, report: { eta: 1, msg: 'Working', progress: 1 } } as CoreTask
+  tasks.push(task)
+  source.agents.get = ((chat: string) => chat === task.chat ? agent : undefined) as unknown as typeof source.agents.get
+  source.agents.terminal = (() => terminal) as unknown as typeof source.agents.terminal
+  await scheduler.scan(start + 19 * 60000); await scheduler.drain(); expect(launches).toHaveLength(0)
+  await scheduler.scan(start + 22 * 60000); await scheduler.drain(); expect(launches).toHaveLength(1)
+  const restored = new CoreAutomations(source)
+  try { await restored.scan(start + 23 * 60000); await restored.drain(); expect(launches).toHaveLength(1) } finally { restored.stop() }
+  agent.activityAt = start + 24 * 60000
+  await scheduler.scan(start + 25 * 60000); await scheduler.drain(); expect(launches).toHaveLength(1)
+  await scheduler.scan(start + 45 * 60000); await scheduler.drain(); expect(launches).toHaveLength(2)
+  task.reportedAt = start + 46 * 60000; agent.activityAt = task.reportedAt
+  await scheduler.scan(start + 68 * 60000); await scheduler.drain(); expect(launches).toHaveLength(3)
+}))
+
+test('identical setup errors are new failures only for a new accepted launch attempt', async () => fixture(async ({ source, scheduler, tasks, launches, space }) => {
+  scheduler.model.add({ place: space.id, name: 'setup', trigger: { on: [{ event: 'failed' }] }, task: { title: 'Investigate setup' } })
+  const task = { id: 'SETUP-1', place: space.id, machine: space.machine, name: 'Setup', workflow: 'todo', status: 'need', startError: 'Same failure', launchAttempt: 'first' } as CoreTask
+  tasks.push(task)
+  await scheduler.scan(); await scheduler.drain(); expect(launches).toHaveLength(1)
+  const restored = new CoreAutomations(source)
+  try {
+    await restored.scan(); await restored.drain(); expect(launches).toHaveLength(1)
+    task.launchAttempt = 'second'
+    await restored.scan(); await restored.drain(); expect(launches).toHaveLength(2)
+    await restored.scan(); await restored.drain(); expect(launches).toHaveLength(2)
+  } finally { restored.stop() }
 }))

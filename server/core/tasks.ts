@@ -60,6 +60,8 @@ export interface CoreTask extends Task {
   reviewerModel?: string
   reviewerEffort?: string
   overrides?: Record<string, string>
+  reportedAt?: number
+  launchAttempt?: string
 }
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
@@ -137,7 +139,7 @@ export class CoreTasks {
       ...(input.reviewer ? { 'reviewer.agent': reviewer.kind } : {}), ...(input.reviewerModel !== undefined ? { 'reviewer.model': reviewer.model || 'default' } : {}), ...(input.reviewerEffort !== undefined ? { 'reviewer.effort': reviewer.effort || 'default' } : {}) }
     const merge = overrides['brief.merge'] ?? this.source.settings.get('brief.merge', space.id)
     const task: CoreTask = {
-      id, localId, pilot: input.pilot, automation: input.automation, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
+      id, localId, launchAttempt: randomUUID(), pilot: input.pilot, automation: input.automation, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
       chat: `${id}/Agent`, kind: defaults.kind, model: defaults.model, effort: defaults.effort, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
       reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: run?.config.approvals.includes('merge') || merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', overrides, review: { on: (overrides['brief.review'] ?? this.source.settings.get('brief.review', space.id)) === 'on', kind: reviewer.kind, rounds: parseInt(overrides['review.rounds'] ?? this.source.settings.get('review.rounds', space.id)), mustFix: overrides['review.mustFix'] ?? this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }
@@ -251,6 +253,8 @@ export class CoreTasks {
     if (capacity) { if (task.workflow !== 'todo') task.workflow = 'queued'; task.capacity = capacity; this.save(task); return }
     if (task.capacity) { if (!(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'; delete task.capacity }
     if (task.workflow !== 'todo' || task.pilot) { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
+    task.launchAttempt = randomUUID(); delete task.startError; this.save(task)
+    try {
     await this.source.browsers?.close(task.id)
     const pilot = task.pilot ? this.source.pilots.policy.live(task.pilot) : undefined
     if (task.pilot && (!pilot || !['on', 'workers'].includes(pilot.state) || !pilot.tasks.includes(task.id))) throw new Refusal('This task’s contained run has stopped')
@@ -269,6 +273,7 @@ export class CoreTasks {
     const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
     if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
+    } catch (error) { task.startError = (error as Error).message; this.save(task); throw error }
   }
   private async label(task: CoreTask) {
     const agent = this.source.agents.get(task.chat), terminal = agent && this.source.agents.terminal(agent)
@@ -409,7 +414,7 @@ export class CoreTasks {
     if (!task) throw new Refusal('No such task')
     this.assert(grant, task)
     if (message.length > STATUS_MAX || !Number.isFinite(progress) || progress < 0 || progress > 100) throw new Refusal('Invalid progress report')
-    task.report = { msg: message, progress, eta }; this.save(task)
+    task.report = { msg: message, progress, eta }; task.reportedAt = Date.now(); this.save(task)
   }
   async act(action: Action): Promise<unknown> {
     if (!('chat' in action)) throw new Refusal('Task action has no chat')

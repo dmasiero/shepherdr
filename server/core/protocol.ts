@@ -20,6 +20,7 @@ export interface CoreTerminal {
   exit_code?: number | null
   signal?: number | null
   created_ms: number
+  status_ms?: number | null
   cols: number
   rows: number
   [key: string]: unknown

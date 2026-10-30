@@ -161,5 +161,7 @@ refuse contained startup/adoption; there is no unrestricted fallback. The native
 Claude Code/Codex CLI and its account must already be installed on that machine.
 The build checks used Claude Code 2.1.314 and Codex 0.163.0; Codex's installed
 `codex-code-mode-host` companion is mounted with its CLI. Other native versions
-and a macOS contained adapter still need acceptance before full parity is claimed.
+still need acceptance. Legacy 2.0's `server/live/autopilot-sandbox.ts` also refuses
+non-Linux contained startup; this preserves that platform limit. Ordinary macOS
+remote sessions still require their separate acceptance checks.
 No dependency installation or live service enablement is part of these checks.
