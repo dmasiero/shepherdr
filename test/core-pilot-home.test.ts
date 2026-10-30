@@ -11,10 +11,12 @@ test('fresh contained home selects one provider and imports no host hooks plugin
   writeFileSync(join(home, '.claude/settings.json'), '{"hooks":{"Stop":"host command"},"env":{"ANTHROPIC_BASE_URL":"https://provider.invalid","NODE_OPTIONS":"host command"}}')
   writeFileSync(join(home, '.codex/auth.json'), '{"token":"other-provider"}', { mode: 0o600 })
   writeFileSync(join(home, 'unrelated'), 'private')
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({ hasCompletedOnboarding: true, lastOnboardingVersion: '2.1.314', theme: 'dark', projects: { '/outside': { hasTrustDialogAccepted: true } }, oauthAccount: { private: 'not-copied' }, mcpServers: { host: { command: 'outside' } } }))
   let prepared: ReturnType<typeof preparePilotHome> | undefined
   try {
     prepared = preparePilotHome(parent, home, source, 'claude', 'Role instructions')
     expect(readdirSync(prepared.state)).toEqual(['.claude'])
+    expect(JSON.parse(readFileSync(join(prepared.state, '.claude/.claude.json'), 'utf8'))).toEqual({ hasCompletedOnboarding: true, lastOnboardingVersion: '2.1.314', theme: 'dark' })
     expect(JSON.parse(readFileSync(join(prepared.state, '.claude/settings.json'), 'utf8'))).toEqual({ env: { ANTHROPIC_BASE_URL: 'https://provider.invalid' } })
     expect(readFileSync(join(prepared.state, '.claude/.credentials.json'), 'utf8')).toBe('{"oauth":"fixture"}')
     expect(statSync(join(prepared.state, '.claude/.credentials.json')).mode & 0o777).toBe(0o600)

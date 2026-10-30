@@ -45,6 +45,17 @@ export function preparePilotHome(parent: string, providerHome: string, source: s
       const target = join(state, name)
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 }); writeFileSync(target, body, { mode: 0o600, flag: 'wx' })
     }
+    if (kind === 'claude') {
+      // Preserve only native display/onboarding preferences, never account details, MCP or project trust.
+      const text = providerFile(join(providerHome, '.claude.json'), false)
+      if (text !== undefined) {
+        const input = JSON.parse(text), prefs: Record<string, unknown> = {}
+        if (typeof input.hasCompletedOnboarding === 'boolean') prefs.hasCompletedOnboarding = input.hasCompletedOnboarding
+        for (const key of ['lastOnboardingVersion', 'theme']) if (typeof input[key] === 'string' && input[key].length <= 128) prefs[key] = input[key]
+        mkdirSync(join(state, '.claude'), { recursive: true, mode: 0o700 })
+        writeFileSync(join(state, '.claude/.claude.json'), JSON.stringify(prefs), { mode: 0o600, flag: 'wx' })
+      }
+    }
     for (const name of HELPERS) writeFileSync(join(control, name === 'core-pilot-bootstrap.ts' ? 'bootstrap.ts' : name), readFileSync(join(source, 'helper', name)), { mode: 0o600, flag: 'wx' })
     for (const name of ['bun', kind, 'gateway.sock']) writeFileSync(join(control, name), '', { mode: 0o600, flag: 'wx' })
     if (kind === 'codex') writeFileSync(join(control, 'codex-code-mode-host'), '', { mode: 0o600, flag: 'wx' })

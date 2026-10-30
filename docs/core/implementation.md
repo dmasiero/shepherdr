@@ -986,3 +986,12 @@ The browser-fixture correction f27faaa0 passed both GitHub jobs (40996593644).
 Command/task commit c74315e6 passed all new GitHub regression cases and layouts (40997216011), but the existing
 health unit fixture lacked CoreTasks.get, now needed to identify a run's capacity profile. The fixture was updated
 to reflect the real interface; no production gate was relaxed. Complete rerun pending.
+
+A real contained interactive Claude launch reached its native welcome screen rather than chat; a prior attempt
+correctly refused a provider bootstrap host absent from the run's allowlist (`platform.claude.com`). The private
+provider home now copies only the existing human's three bounded display/onboarding preferences, never account
+metadata, MCP or project trust. That removed the theme welcome; native workspace trust and bypass-mode consent
+still require resolution before unattended readiness. These were diagnostic reads of this task's own isolated
+terminal, never screen-derived chat or status. Failed probes stopped and removed only their own temporary state.
+Preference-copy review round 1 had no findings. New whitelist regression is for GitHub only; typecheck passed.
+Health-fixture correction 30edd436 passed both GitHub jobs (40997411145), including contained command/task checks.
