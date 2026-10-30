@@ -29,15 +29,17 @@ test('read-only project sockets are masked and writable hardlinks are refused', 
 test('sandbox arguments keep core credentials out and reject overlapping private mounts', () => {
   const root = mkdtempSync(join(tmpdir(), 'shep-pilot-args-'))
   try {
-    for (const name of ['repo', 'task', 'state', 'control', 'secret']) mkdirSync(join(root, name), { mode: 0o700 })
+    for (const name of ['repo', 'task', 'state', 'control', 'secret', 'native']) mkdirSync(join(root, name), { mode: 0o700 })
+    for (const name of ['codex', 'codex-code-mode-host']) writeFileSync(join(root, 'native', name), 'native fixture')
     for (const name of ['worktrees/task', 'objects', 'refs']) mkdirSync(join(root, 'repo/.git', name), { recursive: true })
     writeFileSync(join(root, 'task/.git'), 'gitdir: ../repo/.git/worktrees/task\n')
     writeFileSync(join(root, 'repo/.git/worktrees/task/commondir'), '../..\n')
     writeFileSync(join(root, 'repo/.git/worktrees/task/gitdir'), join(root, 'task/.git') + '\n')
-    const input = { repo: join(root, 'repo'), cwd: join(root, 'task'), home: '/home/isolated', state: join(root, 'state'), control: join(root, 'control'), binary: process.execPath, bun: process.execPath, kind: 'codex' as const, writable: true, privateRoots: [join(root, 'secret')] }
+    const input = { repo: join(root, 'repo'), cwd: join(root, 'task'), home: '/home/isolated', state: join(root, 'state'), control: join(root, 'control'), binary: join(root, 'native/codex'), bun: process.execPath, kind: 'codex' as const, writable: true, privateRoots: [join(root, 'secret')] }
     const args = pilotSandboxArgs(input)
     expect(args).toContain('--unshare-all'); expect(args).toContain('--clearenv'); expect(args).toContain('--new-session')
     expect(args).not.toContain(join(root, 'secret')); expect(args).not.toContain('HC_SOCKET'); expect(args).not.toContain('SHEPHERDR_CORE_CREDENTIAL')
+    expect(args).toContain(join(root, 'native/codex-code-mode-host')); expect(args).toContain('/run/shepherdr/codex-code-mode-host')
     expect(() => pilotSandboxArgs({ ...input, privateRoots: [input.repo] })).toThrow('protected')
     expect(() => pilotSandboxArgs({ ...input, cwd: input.repo })).toThrow('own worktree')
     expect(() => pilotSandboxArgs({ ...input, privateRoots: [join(root, 'repo/.git')] })).toThrow('protected')

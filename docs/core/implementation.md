@@ -868,3 +868,16 @@ isolated core socket were absent, the core credential env was empty, project mod
 the original bytes unchanged, private HOME writes worked, and connecting to the real preview's host loopback port
 17887 was refused. Temporary files were removed. Its lease/accounting callbacks were isolated fakes, so this only
 proves this Linux mount/network boundary, not provider startup, product policy or working Autopilot.
+
+Runtime/home commit 3a9d8776 passed both branch GitHub jobs (40992500506). Follow-on harmless native provider runs
+used that actual runtime/gateway with the installed selected login copied to a private disposable home. Claude
+returned `CONTAINED_CLAUDE_OK` (exit 0, 711,863 observed encrypted bytes); Codex returned `CONTAINED_CODEX_OK`
+(exit 0, 1,490,719 observed bytes). Both left the read-only project unchanged; private runtime/login copies were
+removed afterward and host files were not overwritten. No live tasks or services were touched. These probes used
+fake private-lease/shared-accounting callbacks, so they establish provider feasibility inside the actual namespace,
+not authenticated product controls or full Autopilot parity.
+
+The first Codex attempt exposed a missing `codex-code-mode-host` companion and exhausted its intentionally small
+1 MiB manual network allowance, failing closed with routing errors. The sandbox now mounts the installed sibling
+companion beside Codex, and control preparation provides its mount target. A 2 MiB bounded repeat succeeded with
+no missing-companion/routing error. Only public exact hosts were permitted; no host-network fallback was used.

@@ -47,6 +47,7 @@ export function preparePilotHome(parent: string, providerHome: string, source: s
     }
     for (const name of HELPERS) writeFileSync(join(control, name === 'core-pilot-bootstrap.ts' ? 'bootstrap.ts' : name), readFileSync(join(source, 'helper', name)), { mode: 0o600, flag: 'wx' })
     for (const name of ['bun', kind, 'gateway.sock']) writeFileSync(join(control, name), '', { mode: 0o600, flag: 'wx' })
+    if (kind === 'codex') writeFileSync(join(control, 'codex-code-mode-host'), '', { mode: 0o600, flag: 'wx' })
     writeFileSync(join(control, 'instructions.md'), instructions, { mode: 0o600, flag: 'wx' })
     writeFileSync(join(control, 'bin/shepherdr'), '#!/bin/sh\nexec /run/shepherdr/bun /run/shepherdr/core-pilot-cli.ts "$@"\n', { mode: 0o700, flag: 'wx' })
     writeFileSync(join(control, 'bin', kind), `#!/bin/sh\nexec /run/shepherdr/${kind} "$@"\n`, { mode: 0o700, flag: 'wx' })

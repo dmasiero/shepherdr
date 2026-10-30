@@ -1,7 +1,7 @@
 // Pure containment preparation helpers. Importing this file never reads app/live state or starts a process.
 import { existsSync, lstatSync, readdirSync, realpathSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
-import { basename, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 
 /** Conservative public unicast destinations only. The gateway must check every DNS answer and connect by that IP. */
 export function pilotPublicAddress(ip: string) {
@@ -87,6 +87,12 @@ export function pilotSandboxArgs(input: PilotSandbox) {
     args.push('--ro-bind', '/dev/null', path)
   }
   args.push('--ro-bind', realpathSync(input.bun), '/run/shepherdr/bun', '--ro-bind', realpathSync(input.binary), `/run/shepherdr/${input.kind}`)
+  // Codex 0.163 ships its code-mode host beside the native CLI and resolves it beside its own executable.
+  const companion = join(dirname(realpathSync(input.binary)), 'codex-code-mode-host')
+  if (input.kind === 'codex' && existsSync(companion)) {
+    if (!lstatSync(realpathSync(companion)).isFile()) throw Error('Codex code-mode companion is not a regular executable')
+    args.push('--ro-bind', realpathSync(companion), '/run/shepherdr/codex-code-mode-host')
+  }
   for (const [key, value] of Object.entries({ HOME: home, USER: 'agent', TERM: 'xterm-256color', PATH: '/run/shepherdr/bin:/usr/bin:/bin', NODE_USE_ENV_PROXY: '1',
     SHEPHERDR_COMMAND: '/run/shepherdr/bin/shepherdr', CODEX_HOME: join(home, '.codex'), CLAUDE_CONFIG_DIR: join(home, '.claude') })) args.push('--setenv', key, value)
   args.push('--chdir', cwd, '/run/shepherdr/bun', '/run/shepherdr/bootstrap.ts', `/run/shepherdr/${input.kind}`)
