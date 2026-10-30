@@ -553,3 +553,15 @@ test('Stop preserves uncommitted bytes and unmerged commits for a later restart'
   await tasks.git.ensureWorktree({ machine: task.machine, folder: repo }, worktree, task.branch, task.base)
   expect(await tasks.git.head({ machine: task.machine, folder: worktree })).toBe(old)
 }))
+
+for (const verb of ['close', 'delete']) test(`CLI ${verb} returns failure when held work prevents completion`, () => withTask(async ({ tasks, task, grant, worktree }) => {
+  const source = (tasks as unknown as { source: CoreSource }).source
+  const get = source.agents.get, coordinator = { ...grant, chat: task.place, id: 'coord-grant', session: 'coord-launch' }
+  source.agents.get = chat => chat === coordinator.chat ? { chat, launch: coordinator.session, grant: coordinator.id, role: 'coordinator', machine: task.machine, space: task.place, kind: 'codex', hook: '/unused', started: 1, state: 'idle' } : get(chat)
+  writeFileSync(join(worktree, 'held.txt'), 'HELD_BYTES\n')
+  const result = await tasks.cli(coordinator, ['task', verb, task.id])
+  expect(result.code).toBe(1)
+  expect(JSON.parse(result.out)).toMatchObject({ ok: false, held: ['uncommitted changes', 'unmerged commits'] })
+  expect(tasks.get(task.id)).toBeDefined()
+  expect(readFileSync(join(worktree, 'held.txt'), 'utf8')).toBe('HELD_BYTES\n')
+}))

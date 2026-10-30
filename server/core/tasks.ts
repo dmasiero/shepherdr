@@ -796,8 +796,8 @@ export class CoreTasks {
     this.assert(grant, task)
     if (verb === 'task' && ['close', 'delete', 'archive', 'unarchive', 'pause', 'pin', 'unpin'].includes(sub)) {
       if (this.source.agents.get(grant.chat)?.role !== 'coordinator') throw new Refusal('Only a coordinator changes this task control, when the human asks')
-      if (sub === 'close') { const summary = summaryOpts(parsed); return text(await this.close(task, parsed.flags.has('force'), summary.said, summary.facts)) }
-      if (sub === 'delete') return text(await this.remove(task, parsed.flags.has('force')))
+      if (sub === 'close') { const summary = summaryOpts(parsed), result = await this.close(task, parsed.flags.has('force'), summary.said, summary.facts); return { ...text(result), code: result.ok ? 0 : 1 } }
+      if (sub === 'delete') { const result = await this.remove(task, parsed.flags.has('force')); return { ...text(result), code: result.ok ? 0 : 1 } }
       const action = sub === 'archive' || sub === 'unarchive' ? { type: 'archive' as const, on: sub === 'archive' }
         : sub === 'pin' || sub === 'unpin' ? { type: 'pin' as const, on: sub === 'pin' } : { type: 'pause' as const }
       return text(await this.act({ ...action, chat: task.chat }))

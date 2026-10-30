@@ -9,6 +9,7 @@ import type { CoreAgent } from '../server/core/model.ts'
 function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'shep-pilot-commands-'))
   const source = new CoreSource({ home, socket: '/nonexistent/isolated-core', session: 'isolated', binary: 'hc', port: 0 })
+  source.tasks.git.ensureWorktree = async () => {} // This fixture fakes checkout/core I/O; real Git recreation is covered in core-tasks.
   const run = source.pilots.policy.begin('space', 'machine', { harness: { kind: 'claude' }, reviewer: { kind: 'codex' }, hosts: ['api.anthropic.com'], secrets: ['APPROVED_KEY'], approvals: ['merge'], parallel: 1 })
   const grant = source.mailbox.issue('space', 'launch', 'machine', ['cli', 'secret', 'pilot'])
   const agent: CoreAgent = { chat: 'space', space: 'space', machine: 'machine', role: 'coordinator', kind: 'claude', launch: 'launch', grant: grant.id, hook: '/unused', state: 'idle', started: 1, pilot: { run: run.id, home: '/inside', captures: '/outside/captures' } }

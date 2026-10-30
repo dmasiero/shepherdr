@@ -13,6 +13,7 @@ async function fixture(work: (f: ReturnType<typeof setup>) => Promise<void>) {
 }
 function setup(home: string) {
   const source = new CoreSource({ home, port: 17887, socket: '/unused', session: 'test', binary: 'hc' })
+  source.tasks.git.ensureWorktree = async () => {} // This fixture fakes checkout/core I/O; real Git recreation is covered in core-tasks.
   const space = { id: 'p:machine:demo', name: 'demo', machine: 'machine', folder: '/repo', base: 'main', prefix: 'DEMO', mode: 'regular' as const, added: 1 }
   const agent = { chat: space.id, space: space.id, machine: space.machine, role: 'coordinator', kind: 'claude', launch: 'old', pid: 100, grant: 'old-grant', hook: '/unused', started: 1, state: 'idle' } as CoreAgent
   const terminal = { address: 't1', state: 'live', pid: 100, created_ms: 1 } as CoreTerminal
