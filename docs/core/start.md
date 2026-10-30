@@ -165,3 +165,17 @@ still need acceptance. Legacy 2.0's `server/live/autopilot-sandbox.ts` also refu
 non-Linux contained startup; this preserves that platform limit. Ordinary macOS
 remote sessions still require their separate acceptance checks.
 No dependency installation or live service enablement is part of these checks.
+
+### Ordinary Codex command access
+
+Ordinary Codex agents launch with workspace-write, on-request approvals and command networking enabled so their
+CLI can reach its own local core Unix socket. This also enables ordinary command network access; it is not a
+network-limited profile. Core socket access already grants shell/file authority as that account. Native workspace
+write restrictions are not a security boundary against an ordinary agent that can use core. Use the Isolated
+workspace profile when an enforced host/network boundary is required; its outer gateway/allowlist remains separate.
+Read-only reviewers keep their read-only native mode and do not receive this networking override.
+
+The setting is per launch, not written to the human’s Codex configuration. Managed Codex requirements still apply;
+an incompatible managed policy must be resolved by the operator, never bypassed. See the official
+[approval/security configuration](https://learn.chatgpt.com/docs/agent-approvals-security) and pinned
+[0.163.0 schema](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/config.schema.json).

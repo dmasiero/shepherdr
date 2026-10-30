@@ -63,6 +63,7 @@ test('read-only Codex reviewers capture native JSON events without bypassing hoo
     const launch = JSON.parse(readFileSync(argv[2], 'utf8'))
     expect(launch.argv.slice(0, 5)).toEqual(['codex', 'exec', '--json', '--sandbox', 'read-only'])
     expect(launch.argv).not.toContain('--dangerously-bypass-hook-trust')
+    expect(launch.argv).not.toContain('sandbox_workspace_write.network_access=true')
     expect(launch.argv.some((word: string) => word.startsWith('hooks.'))).toBe(false)
     expect(result).toMatchObject({ transcript: launch.log, transcriptFormat: 'codex-exec', state: 'working' })
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
@@ -110,6 +111,12 @@ for (const kind of ['claude', 'codex'] as const) test(`${kind} coordinator launc
     expect(words).toContain('Never borrow another launch’s credential')
     expect(words).not.toContain('which uses `helper/main.sock`')
     expect(env.SHEPHERDR_CORE_CREDENTIAL).toBe(join(home, 'sessions/guide-grant.credential.json'))
-    if (kind === 'codex') expect(argv.some(word => word.startsWith('shell_environment_policy.set=') && word.includes(env.SHEPHERDR_CORE_CREDENTIAL))).toBe(true)
+    if (kind === 'codex') {
+      expect(argv.some(word => word.startsWith('shell_environment_policy.set=') && word.includes(env.SHEPHERDR_CORE_CREDENTIAL))).toBe(true)
+      expect(argv[argv.indexOf('--sandbox') + 1]).toBe('workspace-write')
+      expect(argv[argv.indexOf('--ask-for-approval') + 1]).toBe('on-request')
+      expect(argv).toContain('sandbox_workspace_write.network_access=true')
+      expect(argv).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+    }
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
 })
