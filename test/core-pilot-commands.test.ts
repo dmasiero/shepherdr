@@ -13,7 +13,7 @@ function fixture() {
   const grant = source.mailbox.issue('space', 'launch', 'machine', ['cli', 'secret', 'pilot'])
   const agent: CoreAgent = { chat: 'space', space: 'space', machine: 'machine', role: 'coordinator', kind: 'claude', launch: 'launch', grant: grant.id, hook: '/unused', state: 'idle', started: 1, pilot: { run: run.id, home: '/inside', captures: '/outside/captures' } }
   source.store.set('agent', agent.chat, agent); source.pilots.policy.activate(run.id, { chat: agent.chat, launch: agent.launch, role: agent.role })
-  const task = { id: 'EX-1', localId: 'EX-1', chat: 'EX-1/Agent', name: 'Own', place: 'space', machine: 'machine', pilot: run.id, workflow: 'working', folder: '/repo/work', repo: '/repo', branch: 'work/one', base: 'main', mergePolicy: 'ask', review: { on: true, kind: 'codex', rounds: 3, mustFix: 'major' } } as CoreTask
+  const task = { id: 'EX-1', localId: 'EX-1', chat: 'EX-1/Agent', name: 'Own', kind: 'claude', place: 'space', machine: 'machine', pilot: run.id, workflow: 'working', folder: '/repo/work', repo: '/repo', branch: 'work/one', base: 'main', mergePolicy: 'ask', review: { on: true, kind: 'codex', rounds: 3, mustFix: 'major' } } as CoreTask
   source.store.set('task', task.id, task); source.pilots.policy.claim(run.id, task.id, 0)
   const cli = (...args: string[]) => source.pilots.commands.cli(agent, grant, args)
   return { source, run, grant, agent, task, cli, close() { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) } }
