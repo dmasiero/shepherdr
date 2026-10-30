@@ -146,3 +146,27 @@ test('shutdown prevents queued tasks from receiving go even after their dependen
     expect(f.sent).toEqual([])
   } finally { await f.close() }
 })
+
+test('oversized native records produce a persistent visible chat notice and later replies still load', async () => {
+  const f = deliveryFixture()
+  const { MAX_NATIVE_RECORD } = await import('../server/core/native-file.ts')
+  const record = f.source.agents.get(f.task.chat)!
+  record.transcript = '/native'; record.hook = '/hooks'; record.kind = 'codex'
+  f.source.store.set('agent', f.task.chat, record)
+  f.source.store.delete('agent', 'DEMO-1/Reviewer-1')
+  f.source.agents.bun = async () => process.execPath
+  const huge = Buffer.alloc(1048576, 'x').toString('base64')
+  const reply = JSON.stringify({ timestamp: '2026-10-29T12:00:00Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'AFTER_OVERSIZED_RECORD' }] } }) + '\n'
+  let chunks = 0
+  f.source.files.exec = async (_machine, _argv, _cwd, input) => {
+    const request = JSON.parse(Buffer.from(input!).toString())
+    const data = request.path === '/hooks' ? '' : chunks++ <= MAX_NATIVE_RECORD / 1048576 ? huge : chunks === MAX_NATIVE_RECORD / 1048576 + 2 ? Buffer.from('\n' + reply).toString('base64') : ''
+    return Buffer.from(JSON.stringify({ data, from: request.from, size: request.path === '/hooks' ? 0 : MAX_NATIVE_RECORD + 1048576 + Buffer.byteLength('\n' + reply), identity: request.path, anchor: 'anchor', modified: 'same' }))
+  }
+  try {
+    for (let i = 0; i < 18; i++) await f.source.logs.poll()
+    const texts = f.source.chat(f.task.chat)!.messages.map(message => message.text)
+    expect(texts.some(text => text?.includes('64 MiB display limit') && text.includes('skipped'))).toBe(true)
+    expect(texts).toContain('AFTER_OVERSIZED_RECORD')
+  } finally { await f.close() }
+})

@@ -358,3 +358,21 @@ queued-go finding was fixed after its report, without a fourth review round.
 Typecheck passed. Manual second-core REMO-2 send after isolated app restart
 returned native LIFECYCLE_SEND_OK and remained To do, with its uncommitted panel
 marker preserved. Worktree CI 40976525268 passed; lifecycle branch CI pending.
+
+Native main-log reader slice: core machine.exec reads at most 1 MiB of the owning
+native file per request, retaining exact byte offsets and incomplete UTF-8 lines.
+Whole histories no longer pass through core file.read's 64 MiB whole-file limit.
+Inode/shrink, consumed-tail and no-growth modification checks reset replaced
+files. Polling tracks each chat independently, with four slots per machine and
+rotating fairness; a stalled remote does not block later local polls. Individual
+records above 64 MiB have an explicit display limit: a persistent chat notice
+names the skipped record and later complete records continue. That is a record
+limit, not a whole-history limit. Child activity logs still use their earlier
+4 MiB limit, pending the next slice.
+Three scoped review rounds fixed unbounded unfinished records, unchanged-suffix
+overwrite detection, remote polling blockage and a warning that initially only
+entered an internal map; final round found none remaining. Authored CI regressions
+cover those cases, UTF-8 boundaries, regular EOF, large sparse files and slot
+fairness. Manual second-core native reply NATIVE_READER_OK appeared after an
+isolated preview restart (she301-native-reader-phone.png); real >64 MiB native
+agent history acceptance remains unverified. Lifecycle CI 40977676240 passed.

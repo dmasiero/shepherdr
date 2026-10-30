@@ -6,71 +6,68 @@ import type { CoreAgents } from './agents.ts'
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
 import type { AgentHook, CoreAgent } from './model.ts'
-import { CoreError } from './client.ts'
+import { CoreNativeFile } from './native-file.ts'
 import { CoreReviewReader } from './review-reader.ts'
 import { chatMessages } from './chat.ts'
 
-interface Cursor { path: string; line: number; byte: number; reader?: Reader }
+interface Cursor { path: string; file: CoreNativeFile; reader?: Reader }
 interface SavedMessage extends Message { source?: string }
 
 /** Native transcripts and explicit hooks only. No terminal reads or screen-status heuristics. */
 export class CoreLogs {
   private hooks = new Map<string, Cursor>()
   private logs = new Map<string, Cursor>()
-  private busy = false
+  private busy = new Set<string>()
+  private machines = new Map<string, number>()
+  private next = 0
   private timer?: ReturnType<typeof setInterval>
   constructor(private readonly agents: CoreAgents, private readonly files: CoreFiles, private readonly store: CoreStore,
     private readonly changed: (chat: string) => void, private readonly error: (chat: string, message: string) => void) {}
   start() { if (!this.timer) this.timer = setInterval(() => void this.poll(), 500); void this.poll() }
   stop() { clearInterval(this.timer); this.timer = undefined }
   async poll() {
-    if (this.busy) return
-    this.busy = true
-    try {
-      for (const agent of this.agents.all()) {
+    const jobs: Promise<void>[] = []
+    const agents = this.agents.all()
+    const first = this.next++ % Math.max(1, agents.length)
+    for (const agent of [...agents.slice(first), ...agents.slice(0, first)]) {
+      if (this.busy.has(agent.chat) || (this.machines.get(agent.machine) ?? 0) >= 4) continue
+      this.busy.add(agent.chat); this.machines.set(agent.machine, (this.machines.get(agent.machine) ?? 0) + 1)
+      jobs.push((async () => {
         try {
           try { await this.hook(agent) } catch (error) { this.error(agent.chat, (error as Error).message) }
           const current = this.agents.get(agent.chat) ?? agent
           if (current.transcript) await this.transcript(current)
         } catch (error) { this.error(agent.chat, (error as Error).message) }
-      }
-    } finally { this.busy = false }
+        finally { this.busy.delete(agent.chat); this.machines.set(agent.machine, (this.machines.get(agent.machine) ?? 1) - 1) }
+      })())
+    }
+    await Promise.all(jobs)
   }
+
   messages(chat: string): Message[] {
     return chatMessages(this.store.all<SavedMessage>(`message:${chat}`).sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
   }
   outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); this.changed(chat) }
 
-  private async lines(machine: string, cursor: Cursor, receive: (lines: { text: string; offset: number }[]) => void) {
-    // Core rejects an offset beyond EOF. Re-read one known complete line as an anchor.
-    const first = Math.max(1, cursor.line - 1)
-    let result
-    try { result = await this.files.text(machine, cursor.path, first, 256) }
-    catch (error) {
-      if (!(error instanceof CoreError) || error.kind !== 'invalid_params' || !/^offset \d+:/.test(error.message)) throw error
-      cursor.line = 1; cursor.byte = 0; cursor.reader?.reset?.(cursor.path)
-      result = await this.files.text(machine, cursor.path, 1, 256)
+  private async lines(chat: string, machine: string, cursor: Cursor, receive: (lines: { text: string; offset: number }[]) => void) {
+    const bun = await this.agents.bun(machine)
+    // Bound each poll so a long history does not starve hooks or other chats.
+    for (let count = 0; count < 4; count++) {
+      const batch = await cursor.file.read(this.files, machine, bun, () => cursor.reader?.reset?.(cursor.path))
+      if (batch.oversized) {
+        const text = 'A native log record exceeds the 64 MiB display limit and was skipped. Later records will still load.'
+        this.error(chat, text)
+        this.outgoing(chat, { id: 'native-log-record-limit', who: 'agent', text, at: Date.now() })
+      }
+      if (batch.lines.length) receive(batch.lines)
+      if (!batch.more) break
     }
-    if (result.lines < cursor.line - 1) {
-      cursor.line = 1; cursor.byte = 0; cursor.reader?.reset?.(cursor.path)
-      result = await this.files.text(machine, cursor.path, 1, 256)
-    }
-    const skip = cursor.line > result.first
-    const text = skip ? result.text.slice(result.text.indexOf('\n') + 1) : result.text
-    if (skip && !result.text.includes('\n')) return
-    const complete = text.endsWith('\n') ? text.slice(0, -1).split('\n') : text.slice(0, text.lastIndexOf('\n') + 1).replace(/\n$/, '').split('\n')
-    if (!text.includes('\n')) return
-    const lines = complete.map(text => {
-      const offset = cursor.byte
-      cursor.byte += Buffer.byteLength(text) + 1; cursor.line++
-      return { text, offset }
-    })
-    receive(lines)
   }
+
   private async hook(agent: CoreAgent) {
     let cursor = this.hooks.get(agent.chat)
-    if (!cursor || cursor.path !== agent.hook) { cursor = { path: agent.hook, line: 1, byte: 0 }; this.hooks.set(agent.chat, cursor) }
-    await this.lines(agent.machine, cursor, lines => {
+    if (!cursor || cursor.path !== agent.hook) { cursor = { path: agent.hook, file: new CoreNativeFile(agent.hook) }; this.hooks.set(agent.chat, cursor) }
+    await this.lines(agent.chat, agent.machine, cursor, lines => {
       for (const line of lines) {
         let event: AgentHook
         try { event = JSON.parse(line.text) } catch { continue }
@@ -82,10 +79,10 @@ export class CoreLogs {
   private async transcript(agent: CoreAgent) {
     let cursor = this.logs.get(agent.chat)
     if (!cursor || cursor.path !== agent.transcript) {
-      cursor = { path: agent.transcript!, line: 1, byte: 0, reader: agent.transcriptFormat === 'codex-exec' ? new CoreReviewReader() : agent.kind === 'claude' ? new ClaudeReader() : new CodexReader() }
+      cursor = { path: agent.transcript!, file: new CoreNativeFile(agent.transcript!), reader: agent.transcriptFormat === 'codex-exec' ? new CoreReviewReader() : agent.kind === 'claude' ? new ClaudeReader() : new CodexReader() }
       this.logs.set(agent.chat, cursor)
     }
-    await this.lines(agent.machine, cursor, lines => {
+    await this.lines(agent.chat, agent.machine, cursor, lines => {
       const events = cursor!.reader!.parse(lines, cursor!.path)
       this.store.db.transaction(() => { for (const event of events) this.apply(agent, event) })()
       if (events.length) this.changed(agent.chat)
