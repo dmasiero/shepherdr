@@ -321,6 +321,14 @@ export class CoreTasks {
       return task
     }
     if (task.review.on && (!task.reviewReport || !task.reviewTurn || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
+    if (task.pr) {
+      const location = { machine: task.machine, folder: task.folder }, remote = await this.git.remote(location)
+      if (!remote) throw new Refusal('The saved pull request no longer has its GitHub origin')
+      const pr = await this.git.pullRequest(location, task.branch, false)
+      if (pr.number !== task.pr.number || pr.headRefOid !== task.readyHead || pr.baseRefName !== task.base || pr.state !== 'OPEN') throw new Refusal('Push this exact commit to its open pull request before reporting ready')
+      await this.git.ghRun(location, ['pr', 'edit', String(pr.number), '--repo', remote, '--body-file', '-'], 60, `${summary.trim()}${facts ? '\n\nFacts: ' + facts : ''}`)
+      if (pr.isDraft) await this.git.ghRun(location, ['pr', 'ready', String(pr.number), '--repo', remote])
+    }
     delete task.approvedHead
     task.said = summary; task.facts = facts; task.workflow = 'ready'; task.readyAt = Date.now(); delete task.reservedAt
     this.save(task); await this.label(task); this.card(task, summary)
@@ -429,11 +437,10 @@ export class CoreTasks {
     const remote = await this.git.remote(repo)
     if (!remote) throw new Refusal('This task has no GitHub origin')
     await this.git.run(repo, ['push', '-u', 'origin', task.branch!], 90)
-    let pr
-    try { pr = await this.git.pullRequest(repo, task.branch!) }
-    catch {
+    let pr = await this.git.findPullRequest(repo, task.branch, task.base)
+    if (!pr) {
       await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'create', '--repo', remote, '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], 60, task.said || task.desc || task.name)
-      pr = await this.git.pullRequest(repo, task.branch!)
+      pr = await this.git.pullRequest(repo, task.branch!, false)
     }
     task.pr = { number: pr.number, url: pr.url }; this.save(task)
     return task.pr

@@ -565,3 +565,29 @@ for (const verb of ['close', 'delete']) test(`CLI ${verb} returns failure when h
   expect(tasks.get(task.id)).toBeDefined()
   expect(readFileSync(join(worktree, 'held.txt'), 'utf8')).toBe('HELD_BYTES\n')
 }))
+
+test('Ready promotes only its confirmed exact-head draft PR and records the final body before the ready card', () => withTask(async ({ tasks, task, grant }) => {
+  const head = await tasks.git.head({ machine: task.machine, folder: task.folder }), calls: { args: string[]; input?: string }[] = []
+  task.pr = { number: 7, url: 'https://github.test/o/r/pull/7' }
+  const source = (tasks as unknown as { source: CoreSource }).source
+  source.store.set('task', task.id, task)
+  tasks.git.remote = async () => 'github.test/o/r'
+  tasks.git.pullRequest = async (_repo, _branch, checks) => { expect(checks).toBe(false); return { number: 7, url: task.pr!.url, state: 'OPEN', isDraft: true, headRefOid: head, baseRefName: task.base, statusCheckRollup: [] } }
+  tasks.git.ghRun = async (_repo, args, _timeout, input) => { calls.push({ args, input }); expect(tasks.get(task.id)?.workflow).toBe('working'); return '' }
+  await tasks.ready(grant, task.id, 'Changed the sample', 'Only example.txt')
+  expect(calls.map(c => c.args.slice(0, 3))).toEqual([['pr', 'edit', '7'], ['pr', 'ready', '7']])
+  expect(calls[0].input).toBe('Changed the sample\n\nFacts: Only example.txt')
+  expect(tasks.get(task.id)?.workflow).toBe('ready')
+}))
+
+test('a PR lookup failure never creates another PR or reports Ready', () => withTask(async ({ tasks, task, grant }) => {
+  const calls: string[][] = [], run = tasks.git.run.bind(tasks.git)
+  tasks.git.remote = async () => 'github.test/o/r'
+  tasks.git.run = async (repo, args, ...rest) => { if (args[0] === 'push') return ''; return run(repo, args, ...rest) }
+  tasks.git.findPullRequest = async () => { throw Error('GitHub identity unavailable') }
+  tasks.git.ghRun = async (_repo, args) => { calls.push(args); return '' }
+  await expect(tasks.pr(grant, task.id)).rejects.toThrow('GitHub identity unavailable')
+  expect(calls).toEqual([])
+  expect(tasks.get(task.id)?.pr).toBeUndefined()
+  expect(tasks.get(task.id)?.workflow).toBe('working')
+}))

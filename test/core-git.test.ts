@@ -60,3 +60,19 @@ test('reopening a task checkout checks the saved branch/location and preserves o
   await git.ensureWorktree(repo, '/tasks/one', 'work/one', 'main')
   expect(calls.at(-1)).toEqual(['git', 'worktree', 'add', '-b', 'work/one', '/tasks/one', 'main'])
 })
+
+test('basic PR identity omits restricted checks and open lookup refuses ambiguous or failed snapshots', async () => {
+  let rows: unknown = [], fail = false
+  const calls: string[][] = [], git = new CoreGit({} as CoreFiles), repo = { machine: 'remote', folder: '/repo' }
+  git.remote = async () => 'github.test/o/r'
+  git.gh = async (_repo, args) => { calls.push(args); if (fail) throw Error('GitHub unavailable'); return (args[1] === 'list' ? rows : { number: 1 }) as never }
+  await git.pullRequest(repo, 'work/one', false)
+  expect(calls.at(-1)?.at(-1)).not.toContain('statusCheckRollup')
+  await git.pullRequest(repo, 'work/one')
+  expect(calls.at(-1)?.at(-1)).toContain('statusCheckRollup')
+  expect(await git.findPullRequest(repo, 'work/one', 'main')).toBeUndefined()
+  rows = [{ number: 1, headRefName: 'work/one', baseRefName: 'main' }, { number: 2, headRefName: 'work/one', baseRefName: 'main' }]
+  await expect(git.findPullRequest(repo, 'work/one', 'main')).rejects.toThrow('unambiguous')
+  fail = true
+  await expect(git.findPullRequest(repo, 'work/one', 'main')).rejects.toThrow('GitHub unavailable')
+})

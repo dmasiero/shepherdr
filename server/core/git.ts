@@ -66,10 +66,17 @@ export class CoreGit {
     if (await this.branchHead(repo, branch)) await this.run(repo, ['worktree', 'add', folder, branch], 60, undefined, [folder])
     else await this.addWorktree(repo, folder, branch, base)
   }
-  async pullRequest(repo: RepoLocation, branch: string) {
+  async findPullRequest(repo: RepoLocation, branch: string, base: string) {
     const remote = await this.remote(repo)
     if (!remote) throw Error('This repository has no GitHub origin')
-    return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; context?: string; targetUrl?: string; detailsUrl?: string }[] }>(repo,
-      ['pr', 'view', branch, '--repo', remote, '--json', 'number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeCommit'])
+    const found = await this.gh<{ number: number; headRefName: string; baseRefName: string }[]>(repo, ['pr', 'list', '--repo', remote, '--state', 'open', '--head', branch, '--base', base, '--limit', '100', '--json', 'number,headRefName,baseRefName'])
+    if (!Array.isArray(found) || found.length > 1 || found.some(pr => !Number.isSafeInteger(pr.number) || pr.number < 1 || pr.headRefName !== branch || pr.baseRefName !== base)) throw Error('GitHub did not return an unambiguous task pull request')
+    return found[0] ? this.pullRequest(repo, String(found[0].number), false) : undefined
+  }
+  async pullRequest(repo: RepoLocation, branch: string, checks = true) {
+    const remote = await this.remote(repo)
+    if (!remote) throw Error('This repository has no GitHub origin')
+    return this.gh<{ number: number; url: string; state: string; isDraft?: boolean; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; context?: string; targetUrl?: string; detailsUrl?: string }[] }>(repo,
+      ['pr', 'view', branch, '--repo', remote, '--json', `number,url,state,isDraft,headRefOid,baseRefName,mergeCommit${checks ? ',statusCheckRollup' : ''}`])
   }
 }
