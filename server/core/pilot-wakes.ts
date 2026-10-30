@@ -45,7 +45,7 @@ export class CorePilotWakes {
   news(event: Happened, place: string) {
     const run = this.source.pilots.policy.current(place)
     if (run?.state !== 'on') return
-    const line = `${event.event}${event.title ? `: ${event.title}` : ''}${event.branch ? ` (${event.branch})` : ''}`.slice(0, 4000)
+    const line = `${event.event}${event.title ? `: ${event.title}` : ''}${event.branch ? ` (${event.branch})` : ''}${event.detail ? '\n' + event.detail : ''}`.slice(0, 4000)
     if (matches(eventRules(this.source.settings.get('heartbeat.on', place)), event)) {
       // News coalesces while a previous wake is pending; it is included in the next checklist wake.
       this.source.heartbeats.model.hold(place, line)

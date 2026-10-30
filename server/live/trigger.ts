@@ -26,6 +26,7 @@ export interface Trigger {
 /** what happened, to match against event rules */
 export interface Happened {
   event: TriggerEvent
+  detail?: string
   space?: string
   branch?: string
   title?: string

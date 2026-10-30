@@ -87,9 +87,11 @@ export class CoreAutomations {
     }
   }
   async event(event: Happened, place: string) {
-    this.source.store.db.transaction(() => this.enqueue(event, place))()
+    this.record(event, place)
     return this.processQueue()
   }
+  /** Internal producers can atomically save their observation and its durable rule runs. */
+  record(event: Happened, place: string) { this.source.store.db.transaction(() => this.enqueue(event, place))() }
   private processQueue(): Promise<void> {
     if (this.processing) return this.processing
     if (this.stopped || this.source.quiescing || !this.source.connected()) return Promise.resolve()

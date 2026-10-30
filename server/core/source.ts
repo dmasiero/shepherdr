@@ -30,6 +30,7 @@ import { CoreVoice } from './voice.ts'
 import { CoreHeartbeats } from './heartbeats.ts'
 import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
+import { CoreGitHub } from './github.ts'
 import { CorePlugins } from './plugins.ts'
 import { CoreUnread } from './unread.ts'
 import { CoreCards } from './cards.ts'
@@ -56,6 +57,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly heartbeats: CoreHeartbeats
   readonly health: CoreHealth
   readonly automations: CoreAutomations
+  readonly github: CoreGitHub
   readonly browsers: CoreBrowsers
   readonly places: CorePlaces
   readonly tasks: CoreTasks
@@ -109,6 +111,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.worktrees = new CoreWorktree(this)
     this.browsers = new CoreBrowsers(this, installation.id)
     this.automations = new CoreAutomations(this)
+    this.github = new CoreGitHub(this)
     this.health = new CoreHealth(this)
     this.heartbeats = new CoreHeartbeats(this)
     this.voices = new CoreVoice(this)
@@ -136,7 +139,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       agent.permission = this.openPermissions(agent)[0]?.id
       this.store.set('agent', agent.chat, agent)
     }
-    await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start()
+    await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start(); this.github.start()
     this.recovery = setInterval(() => {
       if (!this.quiescing) void this.pilots.lifecycle.tick().then(() => this.pilots.completion.tick()).catch(error => this.faults.set('pilot-lifecycle', error.message))
       if (!this.quiescing) this.pilots.wakes.tick()
@@ -639,6 +642,6 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async artifactThumb(id: string, dark: boolean) { if (!this.plugins.has('artifacts')) return null; try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; this.pluginUpdates?.stop(); await this.pluginUpdates?.drain(); this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); await this.pilots.usage.drain(); await this.pilots.lifecycle.drain(); await this.pilots.completion.drain(); return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.pluginUpdates?.stop(); this.plugins.stop(); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
+  async drain() { this.quiescing = true; this.pluginUpdates?.stop(); await this.pluginUpdates?.drain(); this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.github.stop(); this.health.stop(); await this.github.drain(); await this.health.drain(); await this.automations.drain(); await this.pilots.usage.drain(); await this.pilots.lifecycle.drain(); await this.pilots.completion.drain(); return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.pluginUpdates?.stop(); this.plugins.stop(); this.voices.stop(); this.health.stop(); this.automations.stop(); this.github.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }
