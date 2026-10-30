@@ -127,3 +127,20 @@ test('contained tasks never switch provider automatically and interrupted takeov
   expect(f.source.tasks.get(f.task.id)?.providerTakeover?.state).toBe('failed')
   expect(await f.source.tasks.providerFallback(f.task.id, f.agent.launch, 'Signed out')).toBe(false)
 }))
+
+
+test('native blocked provider failure can hand over, but blocked or incomplete work without an ended error cannot', () => fixture(async f => {
+  f.source.agents.terminal = () => ({ address: 't1', state: 'live', status: { app: 'claude-code', state: 'blocked' } } as CoreTerminal)
+  f.turn({ complete: false })
+  await f.source.providerRetries.tick(1)
+  expect(f.backups()).toBe(0)
+  f.turn({ complete: true })
+  await f.source.providerRetries.tick(2)
+  expect(f.backups()).toBe(0)
+  f.turn({ complete: true, cut: { kind: 'error', id: 'native-auth-failed', at: 3, text: 'Invalid API key', code: 'authentication_failed', status: 401 } })
+  await f.source.providerRetries.tick(3)
+  expect(f.backups()).toBe(1)
+  expect(f.source.providerRetries.get(f.agent)).toMatchObject({ over: true, reason: 'Signed out' })
+  await f.source.providerRetries.tick(4)
+  expect(f.backups()).toBe(1)
+}))

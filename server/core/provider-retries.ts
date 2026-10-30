@@ -26,7 +26,7 @@ export class CoreProviderRetries {
     const terminal = this.source.agents.terminal(agent)
     return agent.role !== 'reviewer' && (!task || task.chat === agent.chat && task.workflow === 'working' && !task.archived && !this.source.tasks.busy(task.id)) &&
       !!this.source.space(agent.space) && !this.source.places.removing(agent.space) && this.source.machineConnected(agent.machine) &&
-      terminal?.state === 'live' && terminal.status?.state !== 'blocked' && (agent.pid === undefined || terminal.pid === agent.pid) && !this.source.openPermissions(agent).length &&
+      terminal?.state === 'live' && (agent.pid === undefined || terminal.pid === agent.pid) && !this.source.openPermissions(agent).length &&
       !this.source.questions.open(agent.chat).length && !this.source.secrets.open(agent.chat).length &&
       !this.source.pilots.lifecycle.busy(agent.space) && !this.source.pilots.completion.busy(agent.space)
   }
@@ -39,6 +39,9 @@ export class CoreProviderRetries {
         // Snapshot must be caught up and ended, without outstanding native background work.
         const turn = this.source.logs.providerTurn(agent)
         if (!turn.complete) continue
+        // Native Claude also reports provider auth failures as blocked. A caught-up, ended
+        // provider error can recover; blocked without that evidence still waits for the human.
+        if (this.source.agents.terminal(agent)?.status?.state === 'blocked' && !turn.cut) continue
         let row = this.get(agent)
         if (!turn.cut) { if (row) this.clear(agent.chat); continue }
         const ignored = this.source.store.get<{ launch: string; cut: string }>('provider-ignored', agent.chat)

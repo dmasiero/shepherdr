@@ -44,3 +44,24 @@ operator's explicit action/authorization; development must not replace existing 
 4. For voice only, Elias supplies a separately authorized key through the preview's masked Secrets UI (not chat/files).
    Start a short call, speak/listen/interrupt, ask a harmless status question, end. Remove only the isolated test key.
 Record device/browser, timestamps, outcomes and exact missing steps; do not call desktop emulation a phone pass.
+
+## Finite phase evidence log
+
+- Fresh independent Codex review round 1 covered ed75b57e..88937344: no critical/major; one minor audit wording
+  corrected to name the unchanged keyboard entrypoint, excluding its changed search submodule. Round 2 reviewed
+  new matrix/tests through a7852072: no critical/major. No local checks were run by the reviewer.
+- GitHub existing configured identity: owned repository check-runs REST call returns HTTP 403 “Resource not
+  accessible by personal access token”. No credential inspected/copied or alternate identity injected. Elias was
+  asked only to enable Checks/Commit statuses read for the existing login, or retain no-go for that gate.
+- Native owned provider attempt: only the new transient application's Claude environment uses an empty private
+  config and deliberately invalid synthetic API credential. Claude emitted native authentication_failed/401 and
+  OSC blocked; the UI showed the real error. Before correction no provider retry/takeover was recorded because
+  the generic blocked guard excluded even an ended provider failure. Correction permits recovery only with a
+  caught-up ended native error, retaining permission/question/secret/background/identity gates. After restart,
+  the product performed exactly one Claude→Codex takeover for Signed out; native Codex replied
+  OWNED_PROVIDER_FALLBACK_OK and task LAUN-1 finished Done. This is an actual native failure with an intentionally
+  invalid isolated credential, not a real account outage or failure manufactured in a live agent. Backoff timing
+  and exclusion cases remain deterministic CI fixtures.
+- Transient Linux service she301-launch-accept: never installed/enabled. Own main process killed once with
+  SIGKILL; systemd restarted it (NRestarts=1), private core ID and coordinator PID/launch unchanged. Idempotent
+  manual start returned the service PID. Only this owned service/core/home/port were involved.
