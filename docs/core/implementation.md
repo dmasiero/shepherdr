@@ -411,3 +411,11 @@ we do not infer completion from elapsed time or the agent's commentary.
 Actual >4 MiB child history remains unverified manually. Sidebar follow-up CI
 40978356162 passed. Branch CI now also includes existing order, places and
 section regressions. Proof hf2s updated to v4; light/dark checker images inspected.
+Child CI 40978845483 passed core regressions and the new loading/warning layout.
+Broadening existing sidebar layouts exposed nine stale expectations: old combined
+need badges, the older search menu and an ambiguous drawer navigation selector.
+Verified baseline ebb17d58 already has split need/ready badges and the added
+Search this chat and beyond row. Tests now assert that current baseline (including
+both counts and keyboard order) and select the actual drawer during transitions.
+Scoped read-only test review found no issues. No product appearance was changed
+for these failures. Full sidebar CI rerun pending.
