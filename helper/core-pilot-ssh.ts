@@ -101,6 +101,7 @@ export async function preparePilotSsh(input: { cwd: string; ssh: string; validat
         }
         if (key === 'hostname' && (words.length !== 1 || !hostName(words[0].replace(/%h/g, 'host')))) throw Error('Invalid SSH HostName')
         if (key === 'user' && (words.length !== 1 || !userName(words[0]))) throw Error('Invalid SSH user')
+        if (key === 'proxyjump' && words.length !== 1) throw Error('Use one comma-separated SSH ProxyJump list')
         if (key === 'proxyjump') for (const jump of words.join('').split(',')) {
           if (jump === 'none') continue
           if (!/^(?:[a-zA-Z0-9_.+-]+@)?(?:[a-zA-Z0-9][a-zA-Z0-9._-]*|\[[a-fA-F0-9:]+\])(?::[0-9]{1,5})?$/.test(jump)) throw Error('Use literal SSH ProxyJump host names for checked Git')
@@ -114,7 +115,8 @@ export async function preparePilotSsh(input: { cwd: string; ssh: string; validat
             if (key === 'identityfile') resource(words[n] + '-cert.pub')
           }
         }
-        output.push(`${key} ${words.map(configQuote).join(' ')}`)
+        // OpenSSH parses ProxyJump as a raw remainder, unlike ordinary token-valued options.
+        output.push(`${key} ${key === 'proxyjump' ? words[0] : words.map(configQuote).join(' ')}`)
       }
       writeFileSync(target, output.join('\n') + '\n', { mode: 0o600, flag: 'wx' }); return target
     }

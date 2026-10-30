@@ -1123,3 +1123,7 @@ resolution, service/path injection, inactive callbacks, writable account/config 
 unrelated environment removal and cleanup. Only local typecheck ran and passed. Completion d629d4ee passed both
 GitHub jobs (41000938111). Remaining lifecycle audit includes waiting for already accepted task mutations during
 stop; complete parity, dynamic SSH account profiles, real external SSH, physical-device and voice acceptance remain.
+SSH commit 34a6ccf6 passed layouts and 298 core checks but failed the native ProxyJump assertion (41002042608).
+The generated profile quoted this raw-remainder option; OpenSSH retained those quotes as part of its value. Rendering
+only the already validated literal comma-separated jump list without added quotes corrects the actual adapter, rather
+than weakening the test. Direct authenticated loopback SSH remains proven; jump-network acceptance is not claimed.
