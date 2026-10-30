@@ -3,6 +3,11 @@ import type { PilotRepositoryContext } from './pilot-repositories.ts'
 import type { CoreFiles } from './files.ts'
 
 export interface RepoLocation { machine: string; folder: string }
+/** Same GitHub host forms as legacy, without importing its worker/SSH transport. */
+export function githubRemote(url: string) {
+  const match = url.trim().match(/^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/]+([^/]+\/[^/]+?)(?:\.git)?\/?$/i)
+  return match && /github/i.test(match[1]) ? `${match[1].toLowerCase()}/${match[2]}` : undefined
+}
 export class CoreGit {
   constructor(private readonly files: CoreFiles,
     private readonly guard?: (repo: RepoLocation, additional?: string[]) => PilotRepositoryContext | undefined,
@@ -20,10 +25,10 @@ export class CoreGit {
   async head(repo: RepoLocation, ref = 'HEAD') { return this.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]) }
   async clean(repo: RepoLocation) { return !(await this.run(repo, ['status', '--porcelain'])).length }
   async remote(repo: RepoLocation) {
-    try {
-      const url = await this.run(repo, ['remote', 'get-url', 'origin'])
-      return url.match(/(?:github\.com[:/]|github\.localhost\/)([^/]+\/[^/]+?)(?:\.git)?$/)?.[1]
-    } catch { return undefined }
+    if (!(await this.run(repo, ['remote'])).split('\n').includes('origin')) return undefined
+    // Both URLs matter when insteadOf rewrites a public GitHub URL to a local host/SSH alias.
+    const [used, written] = await Promise.all([this.run(repo, ['remote', 'get-url', 'origin']), this.run(repo, ['config', '--get', 'remote.origin.url'])])
+    return githubRemote(used) ?? githubRemote(written)
   }
   async gh<T>(repo: RepoLocation, args: string[], timeout = 60): Promise<T> {
     const text = await this.ghRun(repo, args, timeout)
@@ -39,7 +44,9 @@ export class CoreGit {
     await this.run(repo, ['worktree', 'add', '-b', branch, folder, base], 60, undefined, [folder])
   }
   async pullRequest(repo: RepoLocation, branch: string) {
+    const remote = await this.remote(repo)
+    if (!remote) throw Error('This repository has no GitHub origin')
     return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; detailsUrl?: string }[] }>(repo,
-      ['pr', 'view', branch, '--json', 'number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeCommit'])
+      ['pr', 'view', branch, '--repo', remote, '--json', 'number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeCommit'])
   }
 }

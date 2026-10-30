@@ -402,7 +402,7 @@ export class CoreTasks {
     let pr
     try { pr = await this.git.pullRequest(repo, task.branch!) }
     catch {
-      await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'create', '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], 60, task.said || task.desc || task.name)
+      await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'create', '--repo', remote, '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], 60, task.said || task.desc || task.name)
       pr = await this.git.pullRequest(repo, task.branch!)
     }
     task.pr = { number: pr.number, url: pr.url }; this.save(task)
