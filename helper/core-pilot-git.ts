@@ -1,25 +1,16 @@
 // Stateless checked repository broker, invoked only through core machine.exec. Never mounted into a runtime.
-import { lstatSync, realpathSync, readlinkSync, readFileSync, existsSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { lstatSync, realpathSync, readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { pilotConfigPath } from './core-pilot-path.ts'
 import { pilotGitPaths } from './core-pilot-sandbox.ts'
 
 const within = (path: string, root: string) => path === root || path.startsWith(root + '/')
 const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`
 
-/** Resolve missing include targets too: a currently absent file must not become executable configuration later. */
-export function pilotConfigPath(path: string, depth = 0): string {
-  if (depth > 128) throw Error('Git configuration path is too deep or contains a symlink loop')
-  path = resolve(path)
-  try { return realpathSync(path) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    try { if (lstatSync(path).isSymbolicLink()) return pilotConfigPath(resolve(dirname(path), readlinkSync(path)), depth + 1) }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-    if (dirname(path) === path) throw Error('Git configuration path cannot be resolved')
-    return join(pilotConfigPath(dirname(path), depth + 1), basename(path))
-  }
-}
+export { pilotConfigPath } from './core-pilot-path.ts'
 
-export function pilotGitOptions(keys: string[], gh?: string) {
+export function pilotGitOptions(keys: string[], gh?: string, ssh?: string) {
   const options: string[] = [], set = (key: string, value: string) => options.push('-c', `${key}=${value}`)
   for (const [key, value] of Object.entries({
     'core.hooksPath': '/dev/null', 'core.fsmonitor': 'false', 'core.editor': 'false', 'sequence.editor': 'false',
@@ -29,12 +20,13 @@ export function pilotGitOptions(keys: string[], gh?: string) {
     'gc.auto': '0', 'maintenance.auto': 'false', 'fetch.writeCommitGraph': 'false',
     'submodule.recurse': 'false', 'fetch.recurseSubmodules': 'false', 'push.recurseSubmodules': 'no',
     'protocol.allow': 'never', 'protocol.http.allow': 'always', 'protocol.https.allow': 'always', 'protocol.file.allow': 'always',
-    'protocol.ssh.allow': 'never', 'protocol.ext.allow': 'never', 'diff.external': 'false', 'uploadpack.packObjectsHook': '',
+    'protocol.ssh.allow': ssh ? 'always' : 'never', 'protocol.ext.allow': 'never', 'diff.external': 'false', 'uploadpack.packObjectsHook': '',
   })) set(key, value)
   set('credential.helper', '')
   if (gh) set('credential.helper', `!${quote(gh)} auth git-credential`)
-  // Checked SSH configuration/account handling is a separate pending adapter, never an implicit host-shell route.
-  set('core.sshCommand', 'false')
+  // Only the fixed private wrapper can reach SSH; workspace configuration cannot choose a host command.
+  set('core.sshCommand', ssh || 'false')
+  if (ssh) set('ssh.variant', 'ssh')
   const filters = new Set<string>(), merges = new Set<string>()
   for (const key of keys) {
     if (/^filter\..+\.(clean|smudge|process|required)$/i.test(key)) filters.add(key.replace(/\.[^.]+$/, ''))
@@ -145,14 +137,22 @@ export async function pilotGitCommand(input: PilotGitCommand) {
       }
     }
   }
-  const options = pilotGitOptions(keys, gh)
-  // gh may invoke Git internally. Runtime configuration also applies to those subprocesses.
-  const pairs = options.filter((_, n) => n % 2).map(value => { const split = value.indexOf('='); return [value.slice(0, split), value.slice(split + 1)] })
-  const guarded = { ...env, GIT_CONFIG_COUNT: String(pairs.length) } as Record<string, string | undefined>
-  for (let n = 0; n < pairs.length; n++) { guarded[`GIT_CONFIG_KEY_${n}`] = pairs[n][0]; guarded[`GIT_CONFIG_VALUE_${n}`] = pairs[n][1] }
-  const result = await execute(input.tool === 'gh' ? [gh!, ...input.args] : [git, '--no-pager', ...options, ...input.args], cwd, guarded, 8 * 1024 * 1024, input.timeout ?? 30_000, input.stdin)
-  if (result.code !== 0) throw Error(result.stderr.toString('utf8').slice(0, 4000) || `Repository command exited ${result.code}`)
-  return result.stdout
+  const sshRoot = mkdtempSync(join(tmpdir(), 'shep-git-ssh-request-'))
+  try {
+    validatePath(sshRoot)
+    const request = join(sshRoot, 'request.json'), helper = join(import.meta.dir, 'core-pilot-ssh.ts')
+    validatePath(helper); validatePath(realpathSync(process.execPath))
+    writeFileSync(request, JSON.stringify({ cwd, writableRoots: writable }), { mode: 0o600, flag: 'wx' })
+    const ssh = `${quote(realpathSync(process.execPath))} ${quote(helper)} ${quote(request)}`
+    const options = pilotGitOptions(keys, gh, ssh)
+    // gh may invoke Git internally. Runtime configuration also applies to those subprocesses.
+    const pairs = options.filter((_, n) => n % 2).map(value => { const split = value.indexOf('='); return [value.slice(0, split), value.slice(split + 1)] })
+    const guarded = { ...env, GIT_SSH_COMMAND: ssh, GIT_CONFIG_COUNT: String(pairs.length) } as Record<string, string | undefined>
+    for (let n = 0; n < pairs.length; n++) { guarded[`GIT_CONFIG_KEY_${n}`] = pairs[n][0]; guarded[`GIT_CONFIG_VALUE_${n}`] = pairs[n][1] }
+    const result = await execute(input.tool === 'gh' ? [gh!, ...input.args] : [git, '--no-pager', ...options, ...input.args], cwd, guarded, 8 * 1024 * 1024, input.timeout ?? 30_000, input.stdin)
+    if (result.code !== 0) throw Error(result.stderr.toString('utf8').slice(0, 4000) || `Repository command exited ${result.code}`)
+    return result.stdout
+  } finally { rmSync(sshRoot, { recursive: true, force: true }) }
 }
 
 if (import.meta.main) {

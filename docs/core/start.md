@@ -134,3 +134,20 @@ Task dependencies accept full task IDs, a bare ID on the task’s machine, or a 
 Use `machine-name:TASK-1` (or the stable machine ID before the colon) to select a main-machine task when its
 bare ID also exists locally on a remote machine. Names are resolved when queued; saved edges use permanent IDs.
 Unknown, ambiguous, self and circular dependencies are refused without replacing the previous queue.
+
+### Repository SSH in contained runs
+
+Repository operations stay in the trusted checked Git broker; SSH here is only Git transport, never an agent,
+mailbox or core transport fallback. Keys and agent sockets remain outside contained agents. Ordinary host aliases,
+users/ports, static IdentityFile/IdentityAgent/certificate/known-host paths and literal ProxyJump hosts are copied
+into a private checked profile only when Git actually chooses SSH. Nested Include conditions keep native OpenSSH
+scoping; every included branch is inspected. Already trusted host keys and noninteractive account authentication
+are required. No new host key is silently accepted. HTTP and local Git never parse this SSH profile.
+
+Match exec, ProxyCommand, LocalCommand, KnownHostsCommand, external key-provider programs and unknown SSH
+extensions refuse with an explicit adapter message. Forwarding, shared control sockets, environment forwarding,
+interactive prompts and host commands are disabled. Only standard git-upload-pack/git-receive-pack services are
+accepted. Dynamic host/environment substitutions in account paths, ProxyJump URIs, and nonstandard custom Git
+remote programs still need explicit adapters; do not claim those configurations work. Ordinary Include wildcards
+are supported, not recursive globstar or brace extensions. This checked profile does not change normal agents or
+any user's SSH configuration. Private request/config copies are removed with the repository operation.

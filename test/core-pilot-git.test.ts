@@ -133,3 +133,24 @@ test('callbacks in inactive includes are disabled before a child worktree switch
     expect(readFileSync(join(worktree, 'value.txt'), 'utf8')).toBe('KEPT\n')
   } finally { f.close() }
 })
+
+test('actual Git SSH invocation uses the fixed wrapper, drops unrelated environment and cleans private profile copies', async () => {
+  const f = fixture()
+  try {
+    const home = join(f.root, 'home'), bin = join(f.root, 'bin'), args = join(f.root, 'ssh-args')
+    mkdirSync(join(home, '.ssh'), { recursive: true, mode: 0o700 }); mkdirSync(bin)
+    writeFileSync(join(home, '.ssh/config'), 'Host proof\n HostName repo.example.com\n User git\n', { mode: 0o600 })
+    writeFileSync(join(bin, 'ssh'), `#!/bin/sh\n[ -z "\${SYNTHETIC_PARENT_FLAG:-}" ] || exit 89\nprintf '%s\\n' "$@" > ${quote(args)}\nexit 17\n`, { mode: 0o700 })
+    f.git('remote', 'add', 'origin', 'proof:repo.git')
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, '../helper/core-pilot-git.ts')], {
+      env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, SSH_AUTH_SOCK: '', SYNTHETIC_PARENT_FLAG: 'MUST_NOT_REACH_SSH' },
+      stdin: Buffer.from(JSON.stringify({ repo: f.repo, cwd: f.repo, args: ['ls-remote', 'origin'], writableRoots: [f.repo] })), stdout: 'pipe', stderr: 'pipe',
+    })
+    const [_, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
+    expect(code).not.toBe(0)
+    expect(existsSync(args), err).toBe(true)
+    const lines = readFileSync(args, 'utf8').trim().split('\n')
+    expect(lines[0]).toBe('-F'); expect(existsSync(lines[1])).toBe(false)
+    expect(lines).toContain('proof'); expect(lines.at(-1)).toBe("git-upload-pack 'repo.git'")
+  } finally { f.close() }
+})

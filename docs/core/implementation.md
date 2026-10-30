@@ -1102,3 +1102,24 @@ internal local-core acceptance, not physical-device or SSH proof. Scoped review:
 newer-retained-worker recovery bug fixed, final round no findings. Added GitHub-only coverage for intent-first
 revocation, actor identity, durable single replacement, unconfirmed starts and retained-worker lineage. Local
 typecheck passed. Restart commit 2447b860 passed both GitHub jobs (41000687252).
+
+Checked Git now has a lazy SSH account adapter, separate from the core-only agent/mailbox transport. A fixed private
+wrapper accepts only standard Git services and validated destinations. It preserves ordinary aliases/static account
+paths/literal jump hosts and native Include scoping, rejects host-command callbacks across all include branches,
+keeps keys/sockets outside runtimes, strips unrelated environment, and disables forwarding/control sockets/prompts.
+Local and HTTPS Git never parse SSH configuration. Static/dynamic/custom-program support limits are explicit in
+start.md and generated access instructions; they are not silently treated as full configuration parity.
+
+A harmless actual native OpenSSH check used a disposable server bound to 127.0.0.1:17955, temporary host/account keys,
+a forced Git-only account command and isolated repository/home. Through pilotGitCommand, SSH alias authentication,
+push and ls-remote matched head 8d85590b1f2df343392c499508351af24743d1ca (CHECKED_SSH_GIT_PUSH_OK). The server ended,
+port was confirmed closed, and all disposable keys/files were removed. Two setup attempts first refused auth because
+the remote URL selected git instead of the temporary exedev account; using the configured account resolved it.
+No existing SSH config, live service, agents, live state or Tailscale mapping changed. This proves loopback repository
+SSH transport, not real Mac/core remote acceptance. The separate Mac SSH connection remains unverified.
+
+Scoped SSH review: three rounds, no concrete findings. Added GitHub-only checks cover native ssh -G alias/include
+resolution, service/path injection, inactive callbacks, writable account/config paths, fixed-wrapper selection,
+unrelated environment removal and cleanup. Only local typecheck ran and passed. Completion d629d4ee passed both
+GitHub jobs (41000938111). Remaining lifecycle audit includes waiting for already accepted task mutations during
+stop; complete parity, dynamic SSH account profiles, real external SSH, physical-device and voice acceptance remain.
