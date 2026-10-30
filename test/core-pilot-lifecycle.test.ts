@@ -19,7 +19,7 @@ function setup(store: CoreStore) {
   for (const record of records) store.set('pilot-capture', record.launch, record)
   const terminals = new Map(records.map(record => [record.launch, { address: record.launch, state: 'live', pid: record.pid }]))
   const denied: string[] = [], killed: string[] = [], space = { id: 'space', mode: 'autopilot' }, on = { connected: true }
-  const source = { store, pilots: { policy }, agents: { get: (chat: string) => records.find(agent => agent.chat === chat), all: () => [records[0], records[1]], terminal: (agent: CoreAgent) => terminals.get(agent.launch) }, machineConnected: () => on.connected,
+  const source = { store, tasks: { busy: () => false }, pilots: { policy }, agents: { get: (chat: string) => records.find(agent => agent.chat === chat), all: () => [records[0], records[1]], terminal: (agent: CoreAgent) => terminals.get(agent.launch) }, machineConnected: () => on.connected,
     denyPermissions: (agent: CoreAgent) => { denied.push(agent.launch) }, core: { call: async (_: string, input: { terminal: string }) => { killed.push(input.terminal) } }, space: () => space, emit() {} } as unknown as CoreSource
   return { source, policy, run, records, terminals, killed, denied, space, on, lifecycle: new CorePilotLifecycle(source) }
 }
@@ -86,4 +86,16 @@ test('a failed coordinator replacement keeps workers and cumulative limits inste
   expect(() => f.policy.actor(f.run.id, { chat: 'space', launch: 'coord', role: 'coordinator' })).toThrow('belong')
   expect(f.terminals.get('worker')?.state).toBe('live')
   expect(f.killed).toEqual([])
+}))
+
+test('default stop waits for accepted task mutations after holders finish; retained workers may continue', () => fixture(async f => {
+  f.policy.claim(f.run.id, 'TASK-1', 0)
+  for (const terminal of f.terminals.values()) terminal.state = 'finished'
+  let changing = true
+  f.source.tasks.busy = () => changing
+  await f.lifecycle.stop(f.run.id)
+  expect(f.policy.get(f.run.id)?.state).toBe('stopping')
+  changing = false
+  await f.lifecycle.tick()
+  expect(f.policy.get(f.run.id)?.state).toBe('stopped')
 }))

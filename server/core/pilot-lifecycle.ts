@@ -19,7 +19,7 @@ export class CorePilotLifecycle {
   start(place: string, config: CorePilotConfig) {
     const space = this.source.space(place)
     if (!space || space.home) throw Error('Autopilot needs a repository space; home spaces are not isolated projects')
-    if (this.busy(place)) throw Error('The coordinator is changing; try again shortly')
+    if (this.busy(place) || this.source.pilots.completion?.busy(place)) throw Error('The coordinator is changing; try again shortly')
     if (!this.source.machineConnected(space.machine)) throw Error('Wait for this machine to reconnect')
     const old = this.source.agents.get(place)
     if (old && !this.source.agents.terminal(old)) throw Error('The previous coordinator start is unconfirmed; reconnect before replacing it')
@@ -78,7 +78,13 @@ export class CorePilotLifecycle {
     const space = this.source.space(place)
     if (!space) throw Error('No such coordinator space')
     const before = this.source.agents.get(place)
-    const run = this.source.pilots.policy.current(place) ?? (before?.pilot ? this.source.pilots.policy.get(before.pilot.run) : undefined)
+    const run = this.source.pilots.policy.current(place) ?? (before?.pilot ? this.source.pilots.policy.get(before.pilot.run) : expectedRun ? this.source.pilots.policy.get(expectedRun) : undefined)
+    if (run && !expectedRun) {
+      this.source.pilots.completion.queueReturn(run.id, keepWorkers)
+      await this.source.pilots.completion.tick()
+      if (this.source.pilots.completion.busy(place)) await this.source.pilots.completion.tick()
+      return
+    }
     if (expectedRun && (run?.id !== expectedRun || before?.pilot && before.pilot.run !== expectedRun)) throw Error('A newer coordinator replaced this completion; it was not stopped')
     if (run) {
       await this.stop(run.id, keepWorkers)
@@ -144,7 +150,8 @@ export class CorePilotLifecycle {
     this.denyPermissions(run)
     if (!this.source.machineConnected(run.machine)) return // Absence in a disconnected snapshot is never proof of exit.
     let pending = false
-    for (const agent of this.records(run)) {
+    const records = this.records(run)
+    for (const agent of records) {
       const latest = this.source.pilots.policy.get(id)!
       if (latest.state === 'workers' && agent.role !== 'coordinator') continue
       const terminal = this.source.agents.terminal(agent)
@@ -155,7 +162,9 @@ export class CorePilotLifecycle {
       await this.source.core.call('terminal.kill', { terminal: terminal.address })
     }
     const latest = this.source.pilots.policy.get(id)!
-    if (pending || latest.state !== run.state) return
+    const mutating = latest.state !== 'workers' && latest.tasks.some(task => this.source.tasks.busy(task))
+    const appeared = this.records(latest).some(agent => !records.some(old => old.launch === agent.launch))
+    if (pending || latest.state !== run.state || mutating || appeared) return
     if (latest.state !== 'workers') this.source.pilots.policy.stopped(id)
     const space = this.source.space(run.place)
     // Do not replace a newer run or start an unrestricted agent as an automatic recovery side effect.
@@ -171,6 +180,7 @@ export class CorePilotLifecycle {
       if (['on', 'workers'].includes(run.state)) {
         try { this.source.pilots.policy.live(run.id) } catch { /* Private policy persists the limit failure. */ }
       }
+      if (this.source.pilots.policy.get(run.id)!.state === 'failed') this.source.pilots.completion?.queueReturn(run.id, false, run.error || 'Autopilot stopped')
       if (['workers', 'stopping', 'failed'].includes(this.source.pilots.policy.get(run.id)!.state)) await this.transition(run.place, () => this.cleanup(run.id))
     }
   }

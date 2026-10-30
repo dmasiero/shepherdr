@@ -1,11 +1,25 @@
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 
-interface Completion { run: string; place: string; launch: string; at: number; evidence: string; state: 'pending' | 'changing' | 'done' | 'uncertain'; error?: string }
+interface Completion { run: string; place: string; launch: string; at: number; evidence?: string; keepWorkers?: boolean; reason?: string; cause?: string; state: 'pending' | 'changing' | 'done' | 'uncertain'; error?: string }
 /** Durable intent precedes revocation. A lost response cannot repeat a regular coordinator launch. */
 export class CorePilotCompletion {
   private active?: Promise<void>
   constructor(private source: CoreSource) {}
+  busy(place: string) { return this.source.store.all<Completion>('pilot-completion').some(intent => intent.place === place && ['pending', 'changing'].includes(intent.state)) }
+  queueReturn(id: string, keepWorkers = false, reason = 'Autopilot off') {
+    const run = this.source.pilots.policy.get(id)
+    if (!run) throw Error('No such Autopilot run')
+    const previous = this.source.store.get<Completion>('pilot-completion', id)
+    const intent: Completion = previous && ['pending', 'changing'].includes(previous.state) ? { ...previous, keepWorkers: !!previous.keepWorkers && keepWorkers }
+      : { run: id, place: run.place, launch: this.source.agents.get(run.place)?.launch || '', at: Date.now(), reason, cause: run.error, keepWorkers, state: 'pending' }
+    this.source.store.db.transaction(() => {
+      this.source.store.set('pilot-completion', id, intent)
+      this.source.pilots.lifecycle.revoke(id, !!intent.keepWorkers)
+    })()
+    this.source.emit('snapshot')
+    return intent
+  }
   request(agent: CoreAgent, evidence: string) {
     if (agent.role !== 'coordinator' || !agent.pilot) throw Error('Only this run’s coordinator can finish it')
     const run = this.source.pilots.policy.actor(agent.pilot.run, this.source.pilots.actor(agent))
@@ -13,9 +27,9 @@ export class CorePilotCompletion {
     this.source.store.db.transaction(() => {
       const at = Date.now(), intent: Completion = { run: run.id, place: run.place, launch: agent.launch, at, evidence: evidence.trim(), state: 'pending' }
       this.source.store.set('pilot-completion', run.id, intent)
-      this.source.store.set('pilot-progress', run.id, { text: intent.evidence, at })
+      this.source.store.set('pilot-progress', run.id, { text: intent.evidence!, at })
       const stopped = this.source.pilots.lifecycle.revoke(run.id)
-      stopped.last = { at, reason: 'Goal complete', outcome: `Finished: ${intent.evidence.slice(0, 160)}`, ended: at }
+      stopped.last = { at, reason: 'Goal complete', outcome: `Finished: ${intent.evidence!.slice(0, 160)}`, ended: at }
       this.source.store.set('pilot-run', run.id, stopped)
     })()
     this.source.emit('snapshot')
@@ -33,7 +47,8 @@ export class CorePilotCompletion {
       if (current && current.id !== intent.run || agent?.pilot && agent.pilot.run !== intent.run) {
         intent.state = 'uncertain'; intent.error = 'A newer run replaced this completion; it was not stopped'; this.save(intent); continue
       }
-      if (agent && !agent.pilot && agent.started >= intent.at) {
+      const owner = this.source.pilots.policy.get(intent.run)
+      if (agent && !agent.pilot && agent.started >= intent.at && (owner?.state === 'stopped' || intent.keepWorkers && owner?.state === 'workers')) {
         const terminal = this.source.agents.terminal(agent)
         intent.state = terminal ? 'done' : 'uncertain'
         if (!terminal) intent.error = 'Regular coordinator start is unconfirmed; check Terminal before retrying'
@@ -42,20 +57,31 @@ export class CorePilotCompletion {
       if (!this.source.machineConnected(this.source.pilots.policy.get(intent.run)?.machine || '') || this.source.pilots.lifecycle.busy(intent.place)) continue
       intent.state = 'changing'; this.save(intent)
       try {
-        await this.source.pilots.lifecycle.regular(intent.place, false, intent.run)
+        await this.source.pilots.lifecycle.regular(intent.place, !!intent.keepWorkers, intent.run)
         intent.state = 'done'; this.save(intent)
       } catch (error) {
-        intent.state = 'uncertain'; intent.error = `Goal evidence is saved; coordinator change needs attention: ${(error as Error).message}`; this.save(intent)
+        const owner = this.source.pilots.policy.get(intent.run), latest = this.source.agents.get(intent.place)
+        const cleanupPending = latest?.pilot?.run === intent.run && (['stopping', 'failed', 'workers'].includes(owner?.state || '') || this.source.quiescing || !this.source.machineConnected(owner?.machine || ''))
+        intent.state = cleanupPending ? 'pending' : 'uncertain'; intent.error = `${intent.evidence ? 'Goal evidence is saved; c' : 'C'}oordinator change needs attention: ${(error as Error).message}`; this.save(intent)
       }
     }
   }
   private save(intent: Completion) {
+    if (intent.state === 'done' && intent.error) {
+      const run = this.source.pilots.policy.get(intent.run)
+      if (run?.error === intent.error) {
+        if (intent.cause) run.error = intent.cause; else delete run.error
+        this.source.store.set('pilot-run', run.id, run)
+      }
+      delete intent.error
+    }
     this.source.store.set('pilot-completion', intent.run, intent)
     if (intent.error) {
       const run = this.source.pilots.policy.get(intent.run)
       if (run) { run.error = intent.error; this.source.store.set('pilot-run', run.id, run) }
     }
     this.source.emit('snapshot')
+    if (intent.state === 'done') this.source.retry(intent.place)
   }
   async drain() { await this.active }
 }

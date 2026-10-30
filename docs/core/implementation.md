@@ -1127,3 +1127,21 @@ SSH commit 34a6ccf6 passed layouts and 298 core checks but failed the native Pro
 The generated profile quoted this raw-remainder option; OpenSSH retained those quotes as part of its value. Rendering
 only the already validated literal comma-separated jump list without added quotes corrects the actual adapter, rather
 than weakening the test. Direct authenticated loopback SSH remains proven; jump-network acceptance is not claimed.
+
+Human mode-off and automatic limit/start failure now persist the same scoped return intent used for goal completion.
+A crash between cleanup and regular launch no longer leaves an off chat with an unusable contained record. Recovery
+preserves keep-workers, permits a later explicit default stop only to tighten it, waits while offline/cleanup remains
+known pending, and never repeats an unconfirmed normal launch. Cleanup runs before the return processor so retained
+workers cannot starve recovery. Human messages wait through the change and retry after confirmed return.
+Default stop also waits accepted task mutation locks and rechecks newly recorded launches before claiming stopped.
+A successful retry clears only its temporary warning, preserving a distinct original limit reason.
+
+Real isolated reconstruction check: Claude coordinator t28 created child t29/PID 1406103. A keep-workers return was
+saved, then only that disposable app instance was drained/closed and reconstructed with the same private state/core.
+Recovery launched fresh regular t2b and confirmed the retained child live with unchanged PID, run and private actor.
+A final default stop ended the child; regular t2b was explicitly killed and separately confirmed finished before state
+cleanup. All disposable native login copies/worktrees were removed (DURABLE_KEEP_WORKERS_RETURN_OK). No human/live
+installation, agent or service changed. This is local-core acceptance, not an external SSH/physical-device claim.
+Scoped review: two rounds, no must-fix; stale recovery-warning minor fixed and covered. New regressions cover mutation
+drain, saved keep-workers recovery, offline waits, tightening and warning cleanup. Only typecheck ran locally and
+passed. SSH syntax correction e9a512ca passed both GitHub jobs (41002281238).

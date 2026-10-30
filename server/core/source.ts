@@ -138,8 +138,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
     await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start()
     this.recovery = setInterval(() => {
-      if (!this.quiescing) void this.pilots.lifecycle.tick().catch(error => this.faults.set('pilot-lifecycle', error.message))
-      if (!this.quiescing) void this.pilots.completion.tick().catch(error => this.faults.set('pilot-completion', error.message))
+      if (!this.quiescing) void this.pilots.lifecycle.tick().then(() => this.pilots.completion.tick()).catch(error => this.faults.set('pilot-lifecycle', error.message))
       if (!this.quiescing) this.pilots.wakes.tick()
       if (!this.quiescing) void this.pilots.usage.poll().catch(error => this.faults.set('pilot-usage', error.message))
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
@@ -439,7 +438,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const task = this.tasks.forChat(chat)
         const space = this.space(chat) || task && this.space(task.place)
         if (!space) return
-        if (this.pilots.lifecycle.busy(space.id)) return
+        if (this.pilots.lifecycle.busy(space.id) || this.pilots.completion.busy(space.id)) return
         if (task && this.tasks.busy(task.id)) return
         const agent = this.agents.get(chat)
         if (item.launch && (agent?.launch !== item.launch || this.agents.terminal(agent)?.state !== 'live')) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); this.deliveryNotice(item, true); continue }

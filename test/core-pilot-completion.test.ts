@@ -21,6 +21,7 @@ function setup(source: CoreSource) {
   let starts = 0
   source.pilots.lifecycle.regular = async () => {
     starts++
+    if (source.pilots.policy.get(run.id)?.state !== 'workers') source.pilots.policy.stopped(run.id)
     source.store.set('agent', agent.chat, { ...agent, launch: 'regular', started: Date.now(), pilot: undefined })
     space.mode = 'regular'; source.store.set('space', space.id, space)
   }
@@ -53,6 +54,7 @@ test('an unconfirmed regular start after a crash is surfaced rather than launche
   f.source.pilots.completion.request(f.agent, 'Saved evidence')
   const intent = f.source.store.get<Record<string, unknown>>('pilot-completion', f.run.id)!
   f.source.store.set('pilot-completion', f.run.id, { ...intent, state: 'changing' })
+  f.source.pilots.policy.stopped(f.run.id)
   f.source.store.set('agent', f.agent.chat, { ...f.agent, launch: 'unconfirmed', started: Number(intent.at), pilot: undefined })
   f.source.agents.terminal = () => undefined
   await new CorePilotCompletion(f.source).tick()
@@ -73,4 +75,39 @@ test('old completion cannot stop a newer retained-worker run after interrupted m
   expect(f.starts()).toBe(0)
   expect(f.source.pilots.policy.get(next.id)?.state).toBe('workers')
   expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ state: 'uncertain', error: expect.stringContaining('newer run') })
+}))
+
+test('a persisted human keep-workers return resumes after reconstruction without tightening its worker policy', () => fixture(async f => {
+  f.source.pilots.completion.queueReturn(f.run.id, true)
+  expect(f.source.pilots.policy.get(f.run.id)?.state).toBe('workers')
+  expect(f.starts()).toBe(0)
+  await new CorePilotCompletion(f.source).tick()
+  expect(f.starts()).toBe(1)
+  expect(f.source.pilots.policy.get(f.run.id)?.state).toBe('workers')
+  expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ keepWorkers: true, state: 'done' })
+}))
+test('offline return waits durably and a later default stop only tightens keep-workers', () => fixture(async f => {
+  f.source.pilots.completion.queueReturn(f.run.id, true)
+  f.source.pilots.completion.queueReturn(f.run.id, false)
+  f.source.machineConnected = () => false
+  await new CorePilotCompletion(f.source).tick()
+  expect(f.starts()).toBe(0)
+  expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ keepWorkers: false, state: 'pending' })
+  f.source.machineConnected = () => true
+  await new CorePilotCompletion(f.source).tick()
+  expect(f.starts()).toBe(1)
+  expect(f.source.pilots.policy.get(f.run.id)?.state).toBe('stopped')
+}))
+
+test('confirmed retry clears its temporary return error while preserving a distinct original limit reason', () => fixture(async f => {
+  f.source.pilots.policy.fail(f.run.id, 'Original shared limit')
+  f.source.pilots.completion.queueReturn(f.run.id)
+  const regular = f.source.pilots.lifecycle.regular; let first = true
+  f.source.pilots.lifecycle.regular = async (...args) => { if (first) { first = false; throw Error('Cleanup still pending') }; return regular(...args) }
+  await f.source.pilots.completion.tick()
+  expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ state: 'pending', error: expect.stringContaining('pending') })
+  await f.source.pilots.completion.tick()
+  expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ state: 'done' })
+  expect(f.source.store.get<{ error?: string }>('pilot-completion', f.run.id)?.error).toBeUndefined()
+  expect(f.source.pilots.policy.get(f.run.id)?.error).toBe('Original shared limit')
 }))
