@@ -111,23 +111,45 @@ export class CorePilotLifecycle {
       this.source.retry(place)
     })
   }
+  regularRestart(place: string, harness: PilotHarness, save = false) {
+    if (this.busy(place) || this.source.pilots.completion.busy(place)) throw Error('The coordinator is changing; try again shortly')
+    const space = this.source.space(place), old = this.source.agents.get(place)
+    if (!space || space.mode === 'autopilot' || old?.pilot) throw Error('Finish changing Autopilot mode before replacing this coordinator')
+    if (!this.source.machineConnected(space.machine)) throw Error('Wait for this machine to reconnect')
+    const pick = this.source.settings.checkedAgent(place, harness)
+    return this.transition(place, async () => {
+      if (old) {
+        this.source.mailbox.revoke(old.chat)
+        this.source.denyPermissions(old, 'Coordinator restarted; ask again in the new session')
+        await this.finish(old)
+      }
+      if (this.source.quiescing) throw Error('Shepherdr is stopping')
+      if (this.source.agents.get(place)?.launch !== old?.launch || this.source.space(place)?.mode === 'autopilot') throw Error('A newer coordinator replaced this restart')
+      await this.source.agents.launch(space, place, pick.kind, '', { ...pick, resume: true })
+      if (save) this.source.settings.saveAgent('coordinator', place, pick)
+    }).finally(() => this.source.retry(place))
+  }
   private recent(place: string) {
     return this.source.logs.messages(place).filter(message => message.text).slice(-20).map(message => `${message.who}: ${message.text!.slice(0, 4000)}`).join('\n').slice(-32000)
   }
   private async finish(agent: CoreAgent) {
     const terminal = this.source.agents.terminal(agent)
-    if (!terminal) throw Error('Process cleanup is not confirmed; reconnect core')
-    if (terminal.state === 'finished') return
+    if (!terminal || !this.source.machineConnected(agent.machine)) throw Error('Process cleanup is not confirmed; reconnect core')
     if (agent.pid !== undefined && terminal.pid !== agent.pid) throw Error('Coordinator process identity changed')
-    await this.source.core.call('terminal.kill', { terminal: terminal.address })
+    const identity = { address: terminal.address, pid: terminal.pid, created: terminal.created_ms }
+    if (terminal.state === 'finished') return
+    await this.source.core.call('terminal.kill', { terminal: identity.address })
     const deadline = Date.now() + 15_000
     while (Date.now() < deadline) {
-      if (this.source.agents.terminal(agent)?.state === 'finished') return
-      if (!this.source.machineConnected(agent.machine)) break
+      const current = this.source.agents.terminal(agent)
+      if (!this.source.machineConnected(agent.machine) || !current) break
+      if (current.address !== identity.address || current.pid !== identity.pid || current.created_ms !== identity.created) throw Error('Coordinator process identity changed')
+      if (current.state === 'finished') return
       await Bun.sleep(100)
     }
     throw Error('Coordinator cleanup is pending; retry after core reconnects')
   }
+
   revoke(id: string, keepWorkers = false) {
     const stopped = this.source.pilots.policy.stop(id, keepWorkers)
     this.denyPermissions(stopped)

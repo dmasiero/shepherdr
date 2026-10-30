@@ -401,12 +401,9 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const space = this.space(action.chat)
         if (!space) throw new Error('No such coordinator')
         const agent = this.agents.get(action.chat)
-        const terminal = agent && this.agents.terminal(agent)
-        if (terminal?.state === 'live') await this.core.call('terminal.kill', { terminal: terminal.address })
         const kind = action.kind || agent?.kind || this.agentKind()
         if (kind !== 'claude' && kind !== 'codex') throw new Error('Choose Claude Code or Codex')
-        if (action.save) this.settings.saveAgent('coordinator', space.id, { kind, model: action.model, effort: action.effort })
-        await this.agents.launch(space, action.chat, kind, '', { model: action.model, effort: action.effort, resume: true })
+        await this.pilots.lifecycle.regularRestart(space.id, { kind, model: action.model, effort: action.effort }, action.save)
         return {}
       }
       default: throw new Error(`This rewrite slice has not implemented ${action.type} yet; see the parity checklist`)
