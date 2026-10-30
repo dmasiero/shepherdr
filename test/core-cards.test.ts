@@ -52,3 +52,26 @@ test('permission expiry refreshes both chats and keeps its authority denied', as
     expect(f.source.snapshot().asks['EX-1/Agent']).toBeUndefined()
   } finally { f.close() }
 })
+
+test('merged and replaced merge cards close in original and forwarded chats without granting an answer', async () => {
+  const f = fixture(), q = { ...question, id: 'merge-proof', title: 'Merge EX-1?', choices: [{ label: 'Merge' }, { label: 'Not yet' }] }
+  try {
+    const task = f.source.tasks.get('EX-1')!
+    task.workflow = 'ready'; task.readyHead = 'a'.repeat(40); task.mergeQuestion = q.id
+    f.source.store.set('task', task.id, task)
+    f.source.store.set('merge-question', q.id, { task: task.id, head: task.readyHead })
+    f.source.post(task.chat, { id: q.id, who: 'agent', question: q, at: 100 })
+    f.source.forwardQuestion(task.chat, q)
+    expect(f.source.chat(task.chat)!.messages[0].question?.closed).toBeUndefined()
+    task.workflow = 'merged'; f.source.store.set('task', task.id, task)
+    expect(f.source.chat(task.chat)!.messages[0].question).toMatchObject({ sent: -1, closed: 'This task is already merged' })
+    const forwarded = f.source.chat('space')!.messages.find(m => m.card?.ask)!
+    expect(forwarded.card?.ask?.open).toBe(false)
+    expect(forwarded.card?.ask?.questions?.[0].closed).toBe('This task is already merged')
+    expect(f.source.chat(task.chat)!.messages[0].at).toBe(100)
+    expect(f.source.tasks.get(task.id)?.approvedHead).toBeUndefined()
+    await expect(f.source.tasks.answer(q.id, 0, task.chat)).rejects.toThrow('no longer current')
+    task.workflow = 'ready'; task.mergeQuestion = 'new-request'; f.source.store.set('task', task.id, task)
+    expect(f.source.chat(task.chat)!.messages[0].question?.closed).toBe('This merge request is no longer current')
+  } finally { f.close() }
+})

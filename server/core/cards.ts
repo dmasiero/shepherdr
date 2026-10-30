@@ -14,6 +14,14 @@ export class CoreCards {
       const reason = permission.expires <= Date.now() ? 'Permission request expired' : this.source.agents.get(chat)?.grant !== permission.grant ? 'Session replaced; ask the agent for a fresh card' : undefined
       if (reason) return { ...question, sent: -1, said: reason, closed: reason }
     }
+    const merge = this.source.store.get<{ task: string; head: string }>('merge-question', question.id)
+    if (merge && chat === `${merge.task}/Agent`) {
+      const task = this.source.tasks.get(merge.task)
+      if (!task || task.chat !== chat || task.workflow !== 'ready' || task.mergeQuestion !== question.id || task.readyHead !== merge.head) {
+        const reason = task?.workflow === 'merged' ? 'This task is already merged' : 'This merge request is no longer current'
+        return { ...question, sent: -1, said: reason, closed: reason }
+      }
+    }
     const request = this.source.store.get<{ chat: string; grant: string; answered: boolean; question: Question }>('question', question.id)
     if (request?.chat === chat) {
       if (request.answered) return { ...question, ...request.question, sent: request.question.sent ?? -1 }
