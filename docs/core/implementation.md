@@ -1426,3 +1426,30 @@ Active foreground Pause remains unverified: native Claude rejected standalone sl
 ### Baseline home Autopilot scope audit
 
 Verified directly against legacy ebb17d585c82906b788a8473237921802920b5c5: source.ts:1011/1105 and docs/autopilot.md already refuse home-space Autopilot and non-Linux containment. The rewrite's refusal preserves that actual baseline; historical generic home-news routing is not evidence that home containment was supported. Main/remote ordinary home overview has its real native acceptance above. Remaining Autopilot event/profile/browser/device checks are still required.
+
+Pause follow-up: a subsequent message received native PAUSE_RESUME_SAME_SESSION_OK without tools or file changes. Independent core/private checks confirmed the same live PID 308220/t37 and ordinary working workflow restored (PAUSE_MESSAGE_RESUME_SAME_NATIVE_PID_OK). The proof artifact hf2s v24 now includes held-work, GitHub feedback/rebase/recovery, closed merge cards and active native Pause; light/dark checker pictures inspected. No full parity/readiness claim.
+
+### Scoped secret use and human CLI parity (2026-10-30)
+
+Real phone-width Settings saved a generated disposable secret for github-proof only.
+The native Claude task listed its name, used `secret run` without printing its value,
+refused a nonignored env file, and wrote a mode-0600 git-ignored env file. It removed
+that file and restored Git exclude bytes exactly; its checkout remained clean.
+The main-home Codex coordinator could not list the project-scoped name. Removing the
+secret in Settings immediately revoked a fresh list/run; no child command ran and no
+test value remains. Native markers: SCOPED_SECRET_RUN_ENV_CLEAN_OK,
+HOME_SECRET_SCOPE_ISOLATED_OK, SCOPED_SECRET_REMOVAL_REVOKED_OK. Screenshot inspected:
+she301-scoped-secret-settings-phone.png. UI Replace is not yet separately verified.
+
+Integration review found human CLI set/rm missing, rather than merely unverified.
+Implemented a separate private local operator socket with bounded input, owner/mode
+checks, no web route, no caller-selected agent identity, and one server vault writer.
+The repository command routes only human secret set/rm there; credentialed agents
+remain on core mailbox and cannot use those verbs. Real isolated CLI generated a fresh
+value internally, set it for github-proof, replaced it, removed it, and independently
+checked snapshots contained the name only while present. Marker:
+HUMAN_PRIVATE_CLI_SCOPED_SET_REPLACE_REMOVE_OK. No value was printed or put in command
+arguments, core documents or chat. Review found partial startup cleanup missing if
+operator bind fails; startup now unwinds source, app and socket before returning error.
+CI coverage added for scope/alias resolution, command-word refusal, mailbox refusal,
+private socket permissions and server-owned vault writes; local suites were not run.

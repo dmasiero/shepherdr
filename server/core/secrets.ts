@@ -2,6 +2,7 @@ import { Refusal } from './client.ts'
 import { randomUUID } from 'node:crypto'
 import { Vault, SECRET_NAME, secretPages } from '../live/secrets.ts'
 import { one, parseArgs } from '../live/args.ts'
+import { findCoreSpace } from './space-names.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Action, Message, SecretAsk, SettingSection } from '../../shared/types.ts'
@@ -24,6 +25,22 @@ export class CoreSecrets {
     if (level !== 'all' && !this.source.spaces().some(space => space.id === level || `m:${space.machine}` === level)) throw new Refusal('Choose an existing machine or space')
   }
   pages(settings: SettingSection[]) { return secretPages(settings, this.vault.names()) }
+  /** Called only by the private, local operator socket, never the agent mailbox. */
+  async operator(args: string[], stdin?: string) {
+    const parsed = parseArgs(args), [command, verb, name] = parsed.words
+    if (command !== 'secret' || !['set', 'rm', 'remove'].includes(verb!) || parsed.words.length !== 3 ||
+      [...parsed.flags].some(flag => flag !== 'machine') || Object.keys(parsed.opts).some(key => key !== 'space') ||
+      (parsed.opts.space?.length ?? 0) > 1 || parsed.flags.has('machine') && !!one(parsed, 'space'))
+      throw new Refusal('Use secret set NAME [--machine | --space NAME] < file, or secret rm NAME [--machine | --space NAME]')
+    if (!name || !SECRET_NAME.test(name)) throw new Refusal('Use an environment variable name, such as GITHUB_TOKEN')
+    const machine = this.source.localMachineId(), selected = one(parsed, 'space')
+    const space = selected ? findCoreSpace(this.source, machine, selected) : undefined
+    if (selected && !space) throw new Refusal('Choose a space on the main machine')
+    const level = space?.id ?? (parsed.flags.has('machine') ? `m:${machine}` : 'all')
+    if (verb === 'set' && (typeof stdin !== 'string' || !stdin.replace(/[\r\n]+$/, ''))) throw new Refusal('Give the value on stdin: secret set NAME < file; never put it in command words')
+    await this.act({ type: 'secret', level, name, value: verb === 'set' ? stdin! : null })
+    return `${verb === 'set' ? 'Saved' : 'Removed'} ${name} for ${this.name(level)}.\n`
+  }
   async cli(agent: CoreAgent, args: string[]) {
     const parsed = parseArgs(args), [, verb = 'list', name] = parsed.words
     if (agent.role === 'reviewer') throw new Refusal('Reviewers cannot use secrets')

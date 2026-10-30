@@ -93,3 +93,11 @@ test('revoking an unchanged session during validation refuses publication', asyn
   await expect(source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'Example'], cwd)).rejects.toThrow('replaced session')
   expect(source.artifacts.list()).toHaveLength(0)
 }))
+
+test('artifact space selection accepts visible aliases and refuses ambiguous aliases', async () => fixture(async (source, agent) => {
+  source.store.set('name', agent.space, 'renamed-one')
+  expect(await source.artifacts.cli(agent, ['artifact', 'list', '--space', 'renamed-one'], '/unused')).toBe('No artifacts here yet.')
+  const other = { ...source.space(agent.space)!, id: 'p:machine:two', name: 'two' }
+  source.store.set('space', other.id, other); source.store.set('name', other.id, 'renamed-one')
+  await expect(source.artifacts.cli(agent, ['artifact', 'list', '--space', 'renamed-one'], '/unused')).rejects.toThrow('unambiguous')
+}))

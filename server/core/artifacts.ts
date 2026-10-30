@@ -6,6 +6,7 @@ import { wrapPage } from '../frame.ts'
 import { one, parseArgs } from '../live/args.ts'
 import { browserNamespace } from './browser-id.ts'
 import { Refusal } from './client.ts'
+import { findCoreSpace } from './space-names.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Action, Artifact } from '../../shared/types.ts'
@@ -131,7 +132,7 @@ export class CoreArtifacts {
   }
   private async command(agent: CoreAgent, args: string[], cwd: string) {
     const parsed = parseArgs(args), [, verb = 'list', id, file] = parsed.words
-    const spaceFlag = one(parsed, 'space'), space = spaceFlag ? this.source.spaces().find(space => space.machine === agent.machine && (space.id === spaceFlag || space.name === spaceFlag)) : undefined
+    const spaceFlag = one(parsed, 'space'), space = spaceFlag ? findCoreSpace(this.source, agent.machine, spaceFlag) : undefined
     if (spaceFlag && !space) throw new Refusal('No such space on this machine')
     if (agent.pilot && (space && space.id !== agent.space || ['show', 'update', 'rm', 'remove', 'delete'].includes(verb) && this.get(id).place !== agent.space)) throw new Refusal('This artifact belongs to another space')
     if (verb === 'list') return this.list().filter(artifact => (!space || artifact.place === space.id) && (!agent.pilot || artifact.place === agent.space)).map(artifact => `${artifact.id} v${artifact.v} ${artifact.title}`).join('\n') || 'No artifacts here yet.'

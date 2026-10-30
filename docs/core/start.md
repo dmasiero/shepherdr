@@ -196,3 +196,20 @@ The base checkout is fetched and fast-forwarded only when it is on the expected
 branch and clean; dirty/diverged work is kept and syncing retries. Cleanup waits
 for sync and captured native completion before removing only landed clean work.
 The observer never initiates a GitHub merge or grants an approval.
+
+### Human secret commands
+
+On the main machine, use `shepherdr secret set NAME [--machine | --space NAME] < file`
+and `shepherdr secret rm NAME [--machine | --space NAME]`. Default scope is Everywhere;
+space names include renamed display names. Use `--home PATH` for an isolated preview.
+Values are accepted only on bounded stdin, never as command words. Settings remains
+the masked interactive route. The running server is the sole vault writer.
+
+These two human commands use an OS-owned mode-0600 Unix socket inside the mode-0700
+installation home. They have no HTTP endpoint and do not pass values through core
+documents or chat. Socket location is recorded per server boot in private `run.json`.
+The OS account is trusted, as it already owns the core socket and vault. Agents keep
+using their launch credential and authenticated core mailbox; their `secret set/rm`
+commands are refused. Agent `secret list/ask/run/env` scope rules are unchanged.
+A stopped server must be started explicitly; these commands never start it or migrate
+legacy state. Existing installed 2.0 helpers remain the command for legacy sessions.

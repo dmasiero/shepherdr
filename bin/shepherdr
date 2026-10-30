@@ -14,4 +14,7 @@ if [ -n "$SHEPHERDR_CORE_CREDENTIAL" ] || [ "$SHEPHERDR_BACKEND" = core ]; then
   [ "$1" = agent ] && shift
   exec bun "$here/helper/core-cli.ts" "$@"
 fi
+case "$1:$2" in
+  secret:set|secret:rm|secret:remove) exec bun "$here/helper/core-operator.ts" "$@" ;;
+esac
 exec perl "$here/helper/route.pl" "$here/server/cli.ts" "$@"

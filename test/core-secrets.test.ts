@@ -54,3 +54,20 @@ test('an older helper receives the owning launch command path, never secret valu
   await expect(source.secrets.cli(agent, ['secret', 'run', 'DEMO'])).rejects.toThrow('/private/current/helper/bin/shepherdr')
   try { await source.secrets.cli(agent, ['secret', 'run', 'DEMO']) } catch (error) { expect(String(error)).not.toContain('synthetic-value') }
 }))
+
+test('human operator set and removal preserve scope, reject command-word values, and are not mailbox verbs', async () => fixture(async (source, agent) => {
+  source.localMachineId = () => agent.machine
+  source.store.set('name', agent.space, 'renamed-one')
+  await source.secrets.operator(['secret', 'set', 'KEY', '--space', 'renamed-one'], 'scoped-fixture\n')
+  expect(source.secrets.use(agent, { names: ['KEY'] }).secrets.KEY).toBe('scoped-fixture')
+  await expect(source.secrets.operator(['secret', 'set', 'KEY', 'never-a-value'], 'replacement')).rejects.toThrow('Use secret')
+  await expect(source.secrets.cli(agent, ['secret', 'set', 'KEY'])).rejects.toThrow('Settings')
+  await expect(source.secrets.operator(['secret', 'set', 'KEY', '--space', 'missing'], 'replacement')).rejects.toThrow('Choose a space')
+  await expect(source.secrets.operator(['secret', 'set', 'KEY', '--machine', '--space', 'one'], 'replacement')).rejects.toThrow('Use secret')
+  await source.secrets.operator(['secret', 'set', 'KEY'], 'global-fixture')
+  await source.secrets.operator(['secret', 'rm', 'KEY', '--space', 'renamed-one'])
+  expect(source.secrets.use(agent, { names: ['KEY'] }).secrets.KEY).toBe('global-fixture')
+  await source.secrets.operator(['secret', 'remove', 'KEY'])
+  expect(() => source.secrets.use(agent, { names: ['KEY'] })).toThrow('No secret')
+  expect(JSON.stringify(source.store.db.query('SELECT * FROM records').all())).not.toContain('scoped-fixture')
+}))

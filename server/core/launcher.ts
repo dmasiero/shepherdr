@@ -6,7 +6,7 @@ import { CoreClient } from './client.ts'
 import { coreConfig, coreEnvironment, type CoreConfig } from './config.ts'
 import { inspectHome, prepareHome } from './home.ts'
 
-export interface RunRecord { pid: number; boot: string; home: string; port: number; root: string }
+export interface RunRecord { pid: number; boot: string; home: string; port: number; root: string; operator?: string }
 export interface Health { product: 'shepherdr-core'; boot: string; pid: number; core: boolean }
 
 export function runRecord(home: string): RunRecord | undefined {
