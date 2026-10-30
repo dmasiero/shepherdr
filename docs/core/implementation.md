@@ -1842,3 +1842,16 @@ read/edit/patch/delete preview. Docs distinguish authenticated transport masking
 from arbitrary native-tool output. The screenshot containing that synthetic line
 was discarded and is not in the proof artifact. Existing revoked synthetic fixture
 history was not selectively erased.
+
+### Visual pass follow-up: elapsed task ages
+
+The real task list exposed a missed parity detail: CoreTask persisted the placeholder
+age now and the presenter never recomputed it. Preserved 2.0 derives task age from
+archive/completion time, creation for To do, or last workflow/status change; agent
+age uses its launch. Restored those sources with a shared pure formatter. Workflow
+writes save updatedAt; existing automation observations persist a changed-status
+timestamp without refreshing it every scan. Snapshots remain read-only, old records
+fall back to their known timestamps, and the existing five-second snapshot refresh
+updates ages. Regressions cover working/status, To do, Done and archived precedence
+without mutating task records. Typecheck passed; real phone before showed now on
+all old tasks. Only the isolated preview restarted for the after check.

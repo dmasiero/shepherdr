@@ -13,7 +13,7 @@ import type { TaskNewsEvent, StallCause } from './news.ts'
 const checked = <T>(run: () => T): T => { try { return run() } catch (error) { throw new Refusal((error as Error).message) } }
 
 interface Run { id: string; automation: string; place: string; at: number; timed: boolean; state: 'queued' | 'starting' | 'done'; task?: string; error?: string }
-interface Seen { id: string; place: string; workflow: string; status: string; failure?: string; quietLife?: number; overReport?: number }
+interface Seen { at?: number; id: string; place: string; workflow: string; status: string; failure?: string; quietLife?: number; overReport?: number }
 
 /** Product schedules persist beside task records; all task launches still go through core. */
 export class CoreAutomations {
@@ -122,7 +122,7 @@ export class CoreAutomations {
         const attempt = task.launchAttempt ?? agent?.launch
         const failure = task.startError && !['merged', 'closed', 'merging'].includes(task.workflow) ? `start:${attempt ? attempt + ':' : ''}${task.startError}` : task.workflow === 'working' && terminal?.state === 'finished' &&
           (terminal.exit_code != null && terminal.exit_code !== 0 || terminal.signal != null) ? `${agent!.launch}:${terminal.reason}:${terminal.exit_code}:${terminal.signal}` : undefined
-        const next: Seen = { id: task.id, place: task.place, workflow: task.workflow, status, failure, quietLife: previous?.quietLife, overReport: previous?.overReport }
+        const next: Seen = { at: previous && previous.status !== status ? now : previous?.at, id: task.id, place: task.place, workflow: task.workflow, status, failure, quietLife: previous?.quietLife, overReport: previous?.overReport }
         const events: Exclude<TaskNewsEvent, 'closed'>[] = []
         if (!previous && !task.automation) events.push('added')
         if (previous?.workflow !== task.workflow && task.workflow === 'ready') events.push('ready')

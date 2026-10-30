@@ -1,3 +1,4 @@
+import { age } from '../common/age.ts'
 import { findCoreSpace } from './space-names.ts'
 import { CoreError, Refusal } from './client.ts'
 import { createHash, randomUUID } from 'node:crypto'
@@ -68,6 +69,7 @@ export interface CoreTask extends Task {
   reviewerModel?: string
   reviewerEffort?: string
   overrides?: Record<string, string>
+  updatedAt?: number
   reportedAt?: number
   launchAttempt?: string
   readyAt?: number
@@ -103,7 +105,7 @@ export class CoreTasks {
   all() { return this.source.store.all<CoreTask>('task') }
   get(id: string) { return this.source.store.get<CoreTask>('task', id) }
   forChat(chat: string) { return this.all().find(task => task.chat === chat || `${task.id}/Reviewer` === chat || chat.startsWith(`${task.id}/Reviewer-`)) }
-  private save(task: CoreTask) { this.source.store.set('task', task.id, task); this.source.emit('snapshot') }
+  private save(task: CoreTask) { task.updatedAt = Date.now(); this.source.store.set('task', task.id, task); this.source.emit('snapshot') }
   private assert(grant: Grant, task: CoreTask) {
     const agent = this.source.agents.get(grant.chat)
     if (this.source.store.get<CoreSpace>('space', task.place)?.removed || this.source.places?.removing(task.place)) throw new Refusal('This space is removed or being removed; add it again before changing its tasks')
@@ -118,7 +120,13 @@ export class CoreTasks {
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
       : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : nativeStatus === 'need' || waiting && !provider || terminal?.state === 'finished' ? 'need' : 'work'
     const retryLine = provider ? `${provider.reason}${provider.due ? ` · retry in ${Math.max(1, Math.ceil((provider.due - Date.now()) / 60000))}m` : provider.over ? '' : ' · retrying'}` : undefined
-    return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: nativeStatus === 'off' ? 'off' : status, age: task.age, note: retryLine || task.report?.msg || '' } : undefined,
+    const created = Date.parse(task.created)
+    const observed = this.source.store.get<{ status: string; at?: number }>('automation-seen', task.id)
+    const changed = Math.max(...[task.updatedAt, task.reportedAt, task.readyAt, observed?.status === status ? observed.at : undefined].filter((at): at is number => typeof at === 'number' && Number.isFinite(at)), Number.isFinite(created) ? created : 0)
+    const when = task.archived ?? (status === 'done' ? task.doneAt ?? changed : status === 'todo' ? created : changed)
+    const taskAge = Number.isFinite(when) && when > 0 ? age(when) : task.age
+    const agentAge = agent?.started && Number.isFinite(agent.started) ? age(agent.started) : taskAge
+    return { ...task, age: taskAge, status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: nativeStatus === 'off' ? 'off' : status, age: agentAge, note: retryLine || task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: CoreTaskInput) {

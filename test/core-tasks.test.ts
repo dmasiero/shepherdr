@@ -640,3 +640,18 @@ test('task pushes accept its own rebase with a lease but preserve someone elseâ€
   await expect(tasks.git.pushTaskBranch(location, task.branch, second)).rejects.toThrow()
   expect(await tasks.git.run(location, ['ls-remote', '--heads', 'origin', `refs/heads/${task.branch}`])).toBe(`${foreign}\trefs/heads/${task.branch}`)
 }))
+
+
+test('task ages use saved creation, status, completion and archive times without mutating workflow', () => withTask(async ({ tasks, task }) => {
+  const now = Date.now(), source = (tasks as unknown as { source: CoreSource }).source
+  task.created = new Date(now - 2 * 3600000).toISOString()
+  task.updatedAt = now - 45 * 60000
+  task.reportedAt = now - 10 * 60000
+  source.store.set('automation-seen', task.id, { status: 'work', at: now - 5 * 60000 })
+  const original = JSON.stringify(task)
+  expect(tasks.view(task).age).toBe('5m')
+  expect(tasks.view({ ...task, workflow: 'todo' }).age).toBe('2h')
+  expect(tasks.view({ ...task, workflow: 'closed', doneAt: now - 30 * 60000 }).age).toBe('30m')
+  expect(tasks.view({ ...task, workflow: 'closed', doneAt: now - 30 * 60000, archived: now - 3 * 86400000 }).age).toBe('3d')
+  expect(JSON.stringify(task)).toBe(original)
+}))

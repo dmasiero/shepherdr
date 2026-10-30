@@ -1,3 +1,4 @@
+import { age } from '../common/age.ts'
 import { randomBytes } from 'node:crypto'
 import { dirname, join, basename } from 'node:path'
 import { readFileSync } from 'node:fs'
@@ -13,10 +14,7 @@ import type { Action, Artifact } from '../../shared/types.ts'
 
 interface Version { n: number; at: number; by: string; chat: string; note?: string; html: number; data?: number; what?: 'data' | 'title' }
 interface Record { id: string; title: string; place: string; at: number; versions: Version[]; sent?: { html: number; text: string }; thumb?: boolean }
-const age = (at: number) => {
-  const seconds = Math.max(0, (Date.now() - at) / 1000)
-  return seconds < 60 ? 'now' : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h` : `${Math.floor(seconds / 86400)}d`
-}
+
 const IMAGE_TYPES: { [ext: string]: string } = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', avif: 'image/avif' }
 
 /** Artifacts belong to the app; every input on any machine is read only through core. */
