@@ -24,7 +24,14 @@ try {
     const saved = secretEnv(args, result.secrets)
     process.stdout.write(saved.out); process.exit(saved.code)
   }
-  const result = await coreRequest(credential.endpoint ?? credential.socket ?? (() => { throw new Error('Missing core endpoint') })(), credential.mail, 'cli', { args, cwd: process.cwd() }, {
+  let stdin: string | undefined
+  if (args[0] === 'heartbeat' && args[1] === 'set') {
+    if (process.stdin.isTTY) throw new Error('Give the whole checklist on stdin: heartbeat set < file')
+    const chunks: Buffer[] = []; let size = 0
+    for await (const chunk of process.stdin) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > 64 * 1024) throw new Error('Keep the heartbeat checklist under 64 KiB'); chunks.push(bytes) }
+    stdin = Buffer.concat(chunks).toString('utf8')
+  }
+  const result = await coreRequest(credential.endpoint ?? credential.socket ?? (() => { throw new Error('Missing core endpoint') })(), credential.mail, 'cli', { args, cwd: process.cwd(), ...(stdin !== undefined ? { stdin } : {}) }, {
     timeout: args[0] === 'merge' || args[0] === 'checks' || args[0] === 'artifact' ? 110_000 : 60_000,
   }) as { out: string; code: number }
   process.stdout.write(result.out)

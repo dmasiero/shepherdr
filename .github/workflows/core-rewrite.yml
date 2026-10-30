@@ -13,6 +13,8 @@ on:
       - 'server/activity.ts'
       - 'server/automations.ts'
       - 'server/health.ts'
+      - 'server/heartbeat.ts'
+      - 'server/live/heartbeat.ts'
       - 'server/live/health.ts'
       - 'plugins/health/**'
       - 'test/health.test.ts'
@@ -74,7 +76,7 @@ jobs:
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-rewrite
       - run: bun test test/core-*.test.ts test/artifacts.test.ts test/models.test.ts test/activity.test.ts test/order.test.ts test/health.test.ts
-      - run: bun test test/live.test.ts --test-name-pattern 'triggers|automations'
+      - run: bun test test/live.test.ts --test-name-pattern 'triggers|automations|heartbeat'
 
   task-layout:
     if: github.ref == 'refs/heads/work/301-build-shepherdr-2-1-on-core'

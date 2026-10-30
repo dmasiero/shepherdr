@@ -528,7 +528,7 @@ core exec; home chat displayed the existing health button. At max 1, probe/REMO-
 worked on a harmless sleep while REMO-6 showed Queued with its slot reason. It
 started after the first task returned To do. Later, with both native chats already
 open, a second message to REMO-6 remained queued while REMO-5 occupied the slot.
-Final delivery, full device comparison, alert crossing/recovery, top process detail,
+The saved message later reached native Claude, which returned LIVE_HELD_MESSAGE_OK and kept To do. Full device comparison, alert crossing/recovery, top process detail,
 actual SSH/macOS and full queue parity are still pending.
 
 Scoped fresh review (three rounds) found capacity bypasses for live/Ready agents
@@ -536,3 +536,32 @@ and long reviewer turns, plus a hidden health-input display bug. Fixes and regre
 cases are in this slice; the final reviewer-chat fix awaits the complete rewrite's
 fresh review rather than claiming a fourth scoped round. This slice is not a full
 rewrite readiness result. No live state or service changed.
+
+
+## Heartbeat checklist storage (2026-10-30)
+
+The shared heartbeat model now takes explicit storage. Legacy retains its existing
+files; core stores its checklists, held news and last-beat cursors in the isolated
+product database. Authenticated coordinators may write checklists only on their
+own machine; other roles can read but cannot change them. Empty input stays empty
+across restarts. The core CLI forwards bounded 64 KiB stdin only for heartbeat set.
+An old helper without stdin forwarding gets a refusal naming its current command.
+No automatic wake-up or Autopilot containment is claimed by this storage slice.
+
+Manual second-core coordinator saved HEARTBEAT_CHECKLIST_OK through its current
+immutable helper, read it back and returned HEARTBEAT_SAVED_OK. The resumed native
+chat first used an old helper path from its history and correctly failed; supplying
+the current launch command succeeded without credential copying or repo edits.
+The phone reply screenshot was inspected. Fresh scoped review was clear; tests are
+written for GitHub and only typecheck ran locally.
+
+A separate status fix removes a contradictory startup result: a live process whose
+health response is delayed says alive/unconfirmed, rather than stopped. Successful
+start reuses its authenticated health observation instead of probing a second time.
+Fresh scoped review was clear; a regression covers the unconfirmed live process.
+
+Real SSH evidence: Tailscale reports the Mac mini online at
+eliass-mac-mini.tailda0205.ts.net. A documented core machine.add via strict,
+noninteractive SSH to port 22 timed out (2026-10-30). No machine was added or binary
+installed there; machine.ls still shows only probe. Actual remote acceptance remains
+blocked on a reachable SSH endpoint, not replaced with another transport.

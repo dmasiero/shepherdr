@@ -26,6 +26,7 @@ import { CoreActivity } from './activity.ts'
 import { CoreWorktree } from './worktree.ts'
 import { CorePlaces } from './places.ts'
 import { CoreBrowsers } from './browsers.ts'
+import { CoreHeartbeats } from './heartbeats.ts'
 import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
@@ -44,6 +45,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly mailbox: Mailbox
   readonly agents: CoreAgents
   readonly logs: CoreLogs
+  readonly heartbeats: CoreHeartbeats
   readonly health: CoreHealth
   readonly automations: CoreAutomations
   readonly browsers: CoreBrowsers
@@ -91,6 +93,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.browsers = new CoreBrowsers(this, installation.id)
     this.automations = new CoreAutomations(this)
     this.health = new CoreHealth(this)
+    this.heartbeats = new CoreHeartbeats(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -409,6 +412,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   review ID | pr ID | checks ID
   ready ID --summary TEXT [--facts TEXT]
   merge ID (requires the human's exact-commit card approval)
+  heartbeat [SPACE] | heartbeat set [SPACE] < FILE
   automation add NAME --task TITLE --brief TEXT --when "FREQ=MINUTELY;INTERVAL=30" | --on EVENTS [--space NAME]
   automation edit|list|pause|resume|run|remove NAME
   todo ID | task close ID
@@ -424,6 +428,11 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
       if (args[0] === 'artifact') {
         if (!grant.actions.includes('artifact')) throw new Error('This session has no artifact permission')
         return { out: await this.artifacts.cli(agent, args, typeof (input as { cwd?: unknown }).cwd === 'string' ? (input as { cwd: string }).cwd : this.space(agent.space)!.folder), code: 0 }
+      }
+      if (args[0] === 'heartbeat') {
+        const stdin = (input as { stdin?: unknown }).stdin
+        if (stdin !== undefined && typeof stdin !== 'string') throw new Error('Invalid heartbeat input')
+        return { out: this.heartbeats.cli(agent, args, stdin) + '\n', code: 0 }
       }
       if (args[0] === 'automation') return { out: await this.automations.cli(agent, args) + '\n', code: 0 }
       if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
