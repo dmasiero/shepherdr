@@ -39,7 +39,8 @@ rollback. Until then, renix syncs `main` (2.0) only, never this line.
 
 ## The layer
 
-Everything is upstream's except these. `git diff upstream/main 2.1` shows it all.
+Everything is upstream's except these. `git diff upstream/main 2.1` shows it all once a sync has brought in upstream's
+newest commits (`git diff v2.1.0 2.1` before the first one).
 
 | File | What |
 | --- | --- |
