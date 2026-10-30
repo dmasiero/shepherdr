@@ -499,3 +499,34 @@ for (const empty of ['none', 'nothing', '-', ' NONE ']) test(`queue clearing acc
   expect(result.out).toContain('No dependencies remain')
   expect(tasks.get(task.id)).toMatchObject({ after: [], workflow: 'working' })
 }))
+
+test('task view separates explicit native waiting from process idle and retains workflow precedence', () => withTask(async ({ tasks, task }) => {
+  const source = (tasks as unknown as { source: CoreSource }).source
+  let waiting = false
+  Object.defineProperty(source, 'logs', { value: { waiting: () => waiting } })
+  expect(tasks.view(task).status).toBe('work')
+  waiting = true
+  expect(tasks.view(task)).toMatchObject({ status: 'need', state: 'Needs you' })
+  source.status = () => 'work'
+  expect(tasks.view(task).status).toBe('work')
+  source.status = () => 'idle'
+  expect(tasks.view({ ...task, workflow: 'todo' }).status).toBe('todo')
+  expect(tasks.view({ ...task, workflow: 'ready' }).status).toBe('ready')
+  expect(tasks.view({ ...task, workflow: 'closed' }).status).toBe('done')
+}))
+
+test('failed creation returns its saved task ID and never hides the surviving record behind a raw start error', async () => {
+  const { CoreSource } = await import('../server/core/source.ts')
+  const home = mkdtempSync(join(tmpdir(), 'shep-task-start-error-')), source = new CoreSource({ home, socket: '/unused', binary: 'hc', session: 'test', port: 0 })
+  try {
+    const space = { id: 'space', name: 'project', machine: source.localMachineId(), folder: '/isolated/repo', base: 'main', prefix: 'APP', mode: 'regular' as const, added: 1 }
+    source.store.set('space', space.id, space)
+    source.files.exec = async () => Buffer.alloc(0)
+    source.agents.worktreeRoot = async () => '/isolated/worktrees'
+    source.tasks.git.addWorktree = async () => { throw Error('Missing requested base') }
+    await expect(source.tasks.addInSpace(space, { title: 'Failure proof', brief: 'Full brief', base: 'missing' })).rejects.toThrow('APP-1 was saved but could not start: Missing requested base')
+    expect(source.tasks.all()).toHaveLength(1)
+    expect(source.tasks.get('APP-1')).toMatchObject({ workflow: 'todo', startError: 'Missing requested base' })
+    expect(source.agents.get('APP-1/Agent')).toBeUndefined()
+  } finally { source.stop(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
+})

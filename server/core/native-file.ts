@@ -19,6 +19,7 @@ export class CoreNativeFile {
   private carried = 0
   private offset = 0
   constructor(readonly path: string) {}
+  get complete() { return !this.carried && !this.skipping }
   async read(files: CoreFiles, machine: string, bun: string, reset: () => void): Promise<{ lines: NativeLine[]; more: boolean; oversized?: boolean }> {
     const result = JSON.parse((await files.exec(machine, [bun, '-e', script], undefined,
       Buffer.from(JSON.stringify({ path: this.path, from: this.position, identity: this.identity, anchor: this.anchor, modified: this.modified })))).toString('utf8')) as Chunk

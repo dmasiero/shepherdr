@@ -127,3 +127,40 @@ test('completion cleanup requires its private command receipt and later captured
     expect(logs.cleanupComplete(agent, 'other-token')).toBe(false)
   } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+// Actual native JSONL parsing and bounded file reads, not an idle-screen guess.
+test('task waiting requires a captured current turn end and no open turn/background job', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-log-wait-')), store = new CoreStore(home), now = Date.now() - 10000
+  const agent = { chat: 'TASK-1/Agent', space: 'space', machine: 'machine', launch: 'one', grant: 'grant', kind: 'codex', role: 'task', started: now, hook: join(home, 'hooks'), transcript: join(home, 'native'), state: 'idle' } as import('../server/core/model.ts').CoreAgent
+  const event = (type: string, turn = 'turn', delta = 1, extra = {}) => JSON.stringify({ timestamp: new Date(now + delta).toISOString(), type: 'event_msg', payload: { type, turn_id: turn, ...extra } }) + '\n'
+  writeFileSync(agent.hook, '')
+  writeFileSync(agent.transcript!, event('task_started', 'old', -2) + event('task_complete', 'old', -1))
+  const files = { exec: async (_machine: string, argv: string[], _cwd: string, input: Uint8Array) => { const result = Bun.spawnSync(argv, { stdin: input }); if (result.exitCode) throw Error(result.stderr.toString()); return result.stdout } } as unknown as CoreFiles
+  const agents = { all: () => [agent], get: () => agent, hook: () => {}, bun: async () => process.execPath } as unknown as CoreAgents
+  let logs = new CoreLogs(agents, files, store, () => {}, () => {})
+  try {
+    await logs.poll(); expect(logs.waiting(agent)).toBe(false) // old launch history is not this turn
+    appendFileSync(agent.transcript!, event('task_started'))
+    await logs.poll(); expect(logs.waiting(agent)).toBe(false)
+    appendFileSync(agent.transcript!, event('task_complete', 'turn', 2))
+    await logs.poll(); expect(logs.waiting(agent)).toBe(true)
+    expect(logs.waiting({ ...agent, started: now + 3, launch: 'replacement' })).toBe(false)
+    const job = (kind: string, delta: number) => event('item_completed', 'turn', delta, { item: { type: 'SubAgentActivity', agent_thread_id: 'child', agent_path: 'helper', kind } })
+    appendFileSync(agent.transcript!, job('started', 3))
+    await logs.poll(); expect(logs.waiting(agent)).toBe(false)
+    appendFileSync(agent.transcript!, job('completed', 4))
+    await logs.poll(); expect(logs.waiting(agent)).toBe(true)
+    const next = event('task_started', 'next', 5)
+    appendFileSync(agent.transcript!, next.slice(0, -1))
+    await logs.poll(); expect(logs.waiting(agent)).toBe(false) // partial tail is not fully captured
+    appendFileSync(agent.transcript!, '\n')
+    await logs.poll(); expect(logs.waiting(agent)).toBe(false)
+    appendFileSync(agent.transcript!, event('task_complete', 'next', 6))
+    await logs.poll(); expect(logs.waiting(agent)).toBe(true)
+    logs.stop(); logs = new CoreLogs(agents, files, store, () => {}, () => {})
+    expect(logs.waiting(agent)).toBe(false)
+    await logs.poll(); expect(logs.waiting(agent)).toBe(true)
+    writeFileSync(agent.transcript!, '')
+    await logs.poll(); expect(logs.waiting(agent)).toBe(false)
+  } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
+})

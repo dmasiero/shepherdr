@@ -9,13 +9,16 @@ import type { AgentHook, CoreAgent } from './model.ts'
 import { CoreNativeFile } from './native-file.ts'
 import { CoreReviewReader } from './review-reader.ts'
 import { chatMessages } from './chat.ts'
+import { activityOf } from '../activity.ts'
 
-interface Cursor { path: string; file: CoreNativeFile; reader?: Reader; reset?: () => void }
+interface Cursor { gap?: boolean; caughtUp?: boolean; ended?: boolean; path: string; file: CoreNativeFile; reader?: Reader; reset?: () => void }
 interface SavedMessage extends Message { source?: string }
 interface CleanupReceipt { launch: string; receipt: string; seen: boolean; complete: boolean; offset?: number }
 
 /** Native transcripts and explicit hooks only. No terminal reads or screen-status heuristics. */
 export class CoreLogs {
+  private revisions = new Map<string, number>()
+  private waits = new Map<string, { launch: string; started: number; revision: number; waiting: boolean }>()
   private hooks = new Map<string, Cursor>()
   private logs = new Map<string, Cursor>()
   private busy = new Set<string>()
@@ -52,6 +55,18 @@ export class CoreLogs {
       .filter(message => !(message.who === 'you' && message.source === message.id && /^\s*<hc>[\s\S]*<\/hc>\s*$/.test(message.text ?? '')))
       .sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
   }
+  /** An ended native turn is Needs you only after current-log capture, with no recorded background work. */
+  waiting(agent: CoreAgent) {
+    const cursor = this.logs.get(agent.chat)
+    if (agent.role !== 'task' || cursor?.path !== agent.transcript || !cursor?.caughtUp || cursor.gap || !cursor.ended) return false
+    const revision = this.revisions.get(agent.chat) ?? 0, old = this.waits.get(agent.chat)
+    if (old?.launch === agent.launch && old.started === agent.started && old.revision === revision) return old.waiting
+    const events = this.store.all<LogEvent>(`event:${agent.chat}`).filter(event => Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000)
+    const activity = activityOf(events)
+    const waiting = !!activity.turns.length && !activity.open && !activity.jobs.length
+    this.waits.set(agent.chat, { launch: agent.launch, started: agent.started, revision, waiting })
+    return waiting
+  }
   outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); if (message.who !== 'you') this.incoming(chat, message); this.changed(chat) }
 
   private async lines(chat: string, machine: string, cursor: Cursor, receive: (lines: { text: string; offset: number }[]) => void) {
@@ -60,10 +75,12 @@ export class CoreLogs {
     for (let count = 0; count < 4; count++) {
       const batch = await cursor.file.read(this.files, machine, bun, () => { cursor.reader?.reset?.(cursor.path); cursor.reset?.() })
       if (batch.oversized) {
+        cursor.gap = true
         const text = 'A native log record exceeds the 64 MiB display limit and was skipped. Later records will still load.'
         this.error(chat, text)
         this.outgoing(chat, { id: 'native-log-record-limit', who: 'agent', text, at: Date.now() })
       }
+      cursor.caughtUp = !batch.more && cursor.file.complete
       if (batch.lines.length) receive(batch.lines)
       if (!batch.more) break
     }
@@ -92,6 +109,7 @@ export class CoreLogs {
       this.logs.set(agent.chat, cursor)
     }
     cursor.reset = () => {
+      cursor!.caughtUp = false; cursor!.ended = false; cursor!.gap = false; this.waits.delete(agent.chat)
       const receipt = this.store.get<CleanupReceipt>('task-cleanup-receipt', agent.chat)
       if (receipt?.launch === agent.launch && !receipt.complete) { receipt.seen = false; delete receipt.offset; this.store.set('task-cleanup-receipt', agent.chat, receipt) }
     }
@@ -127,6 +145,8 @@ export class CoreLogs {
       agent.activityAt = event.at; this.store.set('agent', agent.chat, agent)
     }
     this.store.set(`event:${agent.chat}`, event.id + ':' + event.kind, event)
+    this.revisions.set(agent.chat, (this.revisions.get(agent.chat) ?? 0) + 1)
+    if (event.kind === 'turn-end' && Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000) { const cursor = this.logs.get(agent.chat); if (cursor && cursor.path === agent.transcript) cursor.ended = true }
     if (event.kind === 'session') { agent.session = event.sessionId; this.store.set('agent', agent.chat, agent) }
     if (event.kind === 'turn-start' || event.kind === 'turn-end') {
       if (!agent.permission) { agent.state = event.kind === 'turn-start' ? 'working' : 'idle'; this.store.set('agent', agent.chat, agent) }

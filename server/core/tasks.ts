@@ -105,10 +105,11 @@ export class CoreTasks {
   }
   view(task: CoreTask): Task {
     const agent = this.source.agents.get(task.chat)
-    const terminal = agent && this.source.agents.terminal(agent)
+    const terminal = agent && this.source.agents.terminal(agent), nativeStatus = agent && this.source.status(agent)
+    const waiting = agent && nativeStatus === 'idle' && this.source.logs?.waiting?.(agent)
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
-      : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : this.source.status(agent) === 'need' || terminal?.state === 'finished' ? 'need' : 'work'
-    return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
+      : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : nativeStatus === 'need' || waiting || terminal?.state === 'finished' ? 'need' : 'work'
+    return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: nativeStatus === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: CoreTaskInput) {
@@ -160,7 +161,7 @@ export class CoreTasks {
         await this.source.files.exec(space.machine, ['mkdir', '-p', join(folder, '..')])
         await this.git.addWorktree({ machine: space.machine, folder: space.folder }, folder, branch, task.base!)
         await this.launchNow(task, undefined, task.model, task.effort)
-      } catch (error) { task.startError = (error as Error).message; task.workflow = 'todo'; delete task.reservedAt; this.save(task); throw error }
+      } catch (error) { task.startError = (error as Error).message; task.workflow = 'todo'; delete task.reservedAt; this.save(task); throw new Refusal(`${task.id} was saved but could not start: ${task.startError}\nDo not add it again. Read task show ${task.id} before deciding its next step.`) }
       this.card(task, task.workflow === 'queued' ? task.capacity ? 'Queued: ' + task.capacity : 'Queued after ' + after.join(', ') : task.workflow === 'todo' ? 'Waiting for your go' : 'Started')
       return task
     })
