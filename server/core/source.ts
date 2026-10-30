@@ -255,7 +255,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().filter(task => spaces.some(space => space.id === task.place)).map(task => this.tasks.view(task)), artifacts: this.artifacts.list().filter(artifact => spaces.some(space => space.id === artifact.place)), automations: this.automations.view(), asks, attentionRequests,
-      settings: this.secrets.pages([...this.settings.sections(this.devices(), this.pushWarnings()).map(section => this.pilots.wakes.section(section)), this.plugins.section(this.pluginUpdates?.status()), ...spaces.filter(space => !space.home).flatMap(space => [repositorySection(space.id, space.machine, space.base), taskIdsSection(space.id, space.machine, space.prefix, taskSequence(this.store, space).last + 1)])]),
+      settings: this.secrets.pages([...this.settings.sections(this.devices(), this.pushWarnings()).map(section => this.pilots.wakes.section(section)), this.plugins.section(this.pluginUpdates?.status()), { name: 'Machines', about: 'Every machine Shepherdr reaches, and how it is now.', rows: [
+        { label: this.store.get<string>('name', `m:${this.local.id}`) || this.local.name, key: '', value: this.connected() ? 'Main · reachable' : "Main · can't reach", fixed: true },
+        ...this.machines.map(machine => ({ label: this.store.get<string>('name', `m:${machine.id}`) || machine.name, key: '', value: this.machineConnected(machine.id) ? 'Reachable' : "Can't reach", fixed: true })),
+      ] }, ...spaces.filter(space => !space.home).flatMap(space => [repositorySection(space.id, space.machine, space.base), taskIdsSection(space.id, space.machine, space.prefix, taskSequence(this.store, space).last + 1)])]),
       last: this.unread.last(), read: this.unread.read(),
     }
   }

@@ -1748,3 +1748,17 @@ passed, no local suites. Full integration review round 3 at ed75b57e reported no
 remaining concrete critical/major findings; this subsequent small feedback fix is
 not included in that review. External/device/voice/provider-failure proof remains
 unverified; review is not acceptance evidence.
+
+### Settings navigation comparison against preserved legacy source
+
+A separate UI-only demo copy of verified v2.0 was rendered with scratch state,
+127.0.0.1 ports 17892/17893 and no legacy agents or live home. Only its preview
+proxy/asset allowlist was adjusted. It is a historical visual reference, not
+backend acceptance. Manual comparison exposed further real-source omissions:
+Time zone needed its existing global marker; Plugins needed to be an unscoped
+About page; the read-only Machines page was absent. Restored all three, existing
+Browser name/help, private-rules prompt grouping and familiar section ordering.
+Machine values use current core connection state and saved display names, never
+invent a last-disconnect time. CI regressions inspect real-source section scope
+and machine presentation. Only isolated preview restarted; live state unchanged.
+These follow-up changes postdate final review round 3 and are recorded separately.

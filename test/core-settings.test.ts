@@ -138,3 +138,12 @@ test('fresh devices can enroll alerts Everywhere, while device names and deliver
   expect(() => settings.set('alerts', 'Add this device')).toThrow('Add this device')
   expect(() => settings.set('voice.service', 'ElevenLabs', 'p:box:one')).toThrow('Everywhere')
 }))
+
+
+test('global scheduling remains visible from every scope and familiar Browser and private-rule pages remain', () => fixture(settings => {
+  const sections = settings.sections()
+  expect(sections.filter(section => section.name === 'Time zone')).toHaveLength(1)
+  expect(sections.find(section => section.name === 'Time zone')).toMatchObject({ global: true, level: 'all' })
+  expect(sections.find(section => section.name === 'Browser' && section.level === 'p:box:one')).toBeDefined()
+  expect(sections.find(section => section.name === 'Private instructions' && section.level === 'p:box:one')?.told).toBe(true)
+}))

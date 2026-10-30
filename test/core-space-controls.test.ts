@@ -138,7 +138,10 @@ test('task, automation and heartbeat commands resolve renamed spaces to the same
 test('real core snapshots expose repository and ID pages; UI edits preserve existing tasks and validate branches', async () => fixture(async f => {
   const existing = { id: 'DEMO-1', chat: 'DEMO-1/Agent', place: f.space.id, machine: f.space.machine, workflow: 'todo', base: 'main' } as CoreTask
   f.source.store.set('task', existing.id, existing)
-  let pages = f.source.snapshot().settings!.filter(page => page.level === f.space.id)
+  const settings = f.source.snapshot().settings!
+  for (const name of ['Plugins', 'Machines']) { const page = settings.find(page => page.name === name); expect(page).toBeDefined(); expect(page?.level).toBeUndefined(); expect(page?.global).toBeUndefined() }
+  expect(settings.find(page => page.name === 'Machines')?.rows[0].value).toBe('Main · reachable')
+  let pages = settings.filter(page => page.level === f.space.id)
   expect(pages.find(page => page.name === 'Repository')?.rows[0]).toMatchObject({ key: 'space.base', value: 'main' })
   expect(pages.find(page => page.name === 'Task IDs')?.rows.map(row => row.key)).toEqual(['taskIds.prefix', 'taskIds.next'])
   await f.source.act({ type: 'setting', place: f.space.id, key: 'space.base', value: 'next' })

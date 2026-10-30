@@ -129,7 +129,7 @@ export class CorePlugins {
   has(name: string) { return !this.configured || this.catalog.some(item => item.name === name && item.on) }
   section(updates?: { updating: boolean; error?: string; off: string[] }): SettingSection {
     return {
-      name: 'Plugins', level: 'all',
+      name: 'Plugins',
       about: 'Built in, and your own from ~/.shepherdr/plugins (one with a built-in name replaces it). Shepherdr rebuilds with a change in seconds.',
       rows: this.catalog.map((item, index) => {
         const warning = this.failed[item.name] || item.broken || (index === 0 && updates?.error ? `Plugin update failed; the previous build is still running:\n${updates.error}` : undefined)

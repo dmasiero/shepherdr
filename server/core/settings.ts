@@ -35,9 +35,9 @@ const CATALOG: SettingSection[] = [
     { label: 'Alerts on', key: 'alerts', value: 'No device yet', options: ['Add this device'] },
     { label: 'Voice agent', key: 'voice.service', value: 'ElevenLabs', options: ['ElevenLabs'] },
   ] },
-  { name: 'Time zone', about: 'The time zone of every schedule: heartbeats and automations, on every machine.', rows: [{ label: 'Time zone', key: 'time.zone', value: OWN_ZONE, text: true }] },
-  { name: 'Shared browser', rows: [{ label: 'Close idle browser after', key: 'browser.idleClose', value: '10 min', num: { min: 1, max: 1440, unit: 'min', off: true } }] },
-  { name: 'Private instructions', about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
+  { name: 'Time zone', global: true, about: 'The time zone of every schedule: heartbeats and automations, on every machine.', rows: [{ label: 'Time zone', key: 'time.zone', value: OWN_ZONE, text: true }] },
+  { name: 'Browser', about: "A task's browser closes after this long with no agent using it and no one watching it, so it stops using CPU. Sign-ins stay; the agent's next command or opening the Browser panel starts it again.", rows: [{ label: 'Close idle browser after', key: 'browser.idleClose', value: '10 min', num: { min: 1, max: 1440, unit: 'min', off: true } }] },
+  { name: 'Private instructions', told: true, about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
     { key: 'coordinator.instructions', label: 'Coordinators', value: '', multiline: true },
     { key: 'task.instructions', label: 'Task agents', value: '', multiline: true },
     { key: 'reviewer.instructions', label: 'Reviewers', value: '', multiline: true },
@@ -55,6 +55,8 @@ const CATALOG: SettingSection[] = [
     { group: 'Backup', key: 'backup.effort', label: 'Effort', value: 'default', options: ['default', ...TABLE.codex.efforts] },
     ...roleRows('coordinator', 'Coordinators')] },
 ]
+const SECTION_ORDER = ['Private instructions', 'How tasks work', 'Agents', 'Tasks', 'Autopilot', 'Browser', 'Notify', 'Machine', 'Time zone', 'Alerts and voice']
+CATALOG.sort((a, b) => SECTION_ORDER.indexOf(a.name) - SECTION_ORDER.indexOf(b.name))
 const rows = CATALOG.flatMap(section => section.rows)
 
 /** Explicit store + machine identity; importing this module never reads the live installation. */
