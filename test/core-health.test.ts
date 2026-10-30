@@ -14,7 +14,7 @@ async function fixture(run: (context: { source: CoreSource; health: CoreHealth; 
   const state = { load: 2, memory: 40, online: true }
   const source = { store, connected: () => true, machineConnected: () => state.online, machineIds: () => ['box'], quiescing: false,
     agents: { bun: async () => process.execPath, get: () => undefined }, automations: { zone: () => 'UTC', event: async () => { events.push('health') } },
-    spaces: () => [{ id: 'p:box:~', machine: 'box', home: true }], tasks: { all: () => tasks, get: (id: string) => tasks.find(task => task.id === id), tick: async () => {} }, post() {}, emit() {}, retryPending() {},
+    spaces: () => [{ id: 'p:box:~', machine: 'box', home: true }], tasks: { all: () => tasks, get: (id: string) => tasks.find(task => task.id === id), view: (task: CoreTask) => ({ ...task, status: 'work' }), tick: async () => {} }, post() {}, emit() {}, retryPending() {},
     files: { exec: async (_machine: string, argv: string[]) => { calls.push(argv); return Buffer.from(JSON.stringify({ at: Date.now(), cores: 8, load: state.load, memTotal: 1000, memUsed: state.memory * 10, disks: [], gpus: [] })) } },
   } as unknown as CoreSource
   Object.assign(source, { settings: new CoreSettings(store, {} as CoreFiles, () => [], id => id, () => {}) })
@@ -66,8 +66,28 @@ test('queueing a task retains its slot until the native turn really becomes idle
   source.settings.set('machine.maxTasks', '1', 'm:box')
   const state = { value: 'working' }
   Object.assign(source.agents, { get: () => ({ state: state.value }), terminal: () => ({ state: 'live' }) })
+  source.status = () => state.value === 'working' ? 'work' : 'idle'
   tasks.push({ id: 'DEMO-1', machine: 'box', chat: 'DEMO-1/Agent', workflow: 'queued', reservedAt: Date.now() - 120_000, reservedChats: ['DEMO-1/Agent'] } as CoreTask)
   expect(health.room('box')).toContain('limit 1')
   state.value = 'idle'
   expect(health.room('box')).toBeUndefined()
+}))
+
+test('a native task needing a human frees its slot without changing workflow or losing a reviewer reservation', async () => fixture(async ({ source, health, tasks }) => {
+  await health.refresh()
+  source.settings.set('machine.maxTasks', '1', 'm:box')
+  const activity = { main: 'need', reviewer: 'idle' }
+  const main = { chat: 'DEMO-1/Agent' }, reviewer = { chat: 'DEMO-1/Reviewer-1' }
+  Object.assign(source.agents, { get: (chat: string) => chat === main.chat ? main : reviewer, terminal: () => ({ state: 'live' }) })
+  source.status = agent => (agent?.chat === main.chat ? activity.main : activity.reviewer) as ReturnType<CoreSource['status']>
+  source.tasks.view = task => ({ ...task, status: activity.main }) as ReturnType<CoreSource['tasks']['view']>
+  tasks.push({ id: 'DEMO-1', machine: 'box', chat: main.chat, workflow: 'working', reservedChats: [main.chat, reviewer.chat], reservedAt: Date.now() - 120_000 } as CoreTask)
+  expect(health.room('box')).toBeUndefined()
+  expect(tasks[0].workflow).toBe('working')
+  activity.reviewer = 'work'
+  expect(health.room('box')).toContain('limit 1')
+  activity.reviewer = 'idle'; activity.main = 'work'
+  expect(health.room('box')).toContain('limit 1')
+  activity.main = 'need'; tasks[0].reservedAt = Date.now()
+  expect(health.room('box')).toContain('limit 1')
 }))

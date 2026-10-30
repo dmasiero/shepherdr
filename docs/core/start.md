@@ -104,10 +104,50 @@ Enabling it is an explicit operator action; the application never enables it.
 Choose either service control or detached manual startup as the process owner.
 `shepherdr status` reports either; do not start a second supervisor.
 
-On macOS, the equivalent is a user LaunchAgent with `RunAtLoad`, `KeepAlive`
-restricted to unsuccessful exit, absolute `ProgramArguments` for
-`bin/shepherdr start --foreground`, and an explicit PATH containing Bun and hc.
-An operator loads/unloads it with launchctl; no plist is installed automatically.
+For Linux boot startup without a login, the operator must also choose whether to
+allow user services to linger (`loginctl enable-linger USER`). Inspect the current
+setting first; this build does not change it. Add `UMask=0077` to the service unit.
+
+On macOS, first initialise the approved home with a manual start/stop, then an
+operator can save the following as `~/Library/LaunchAgents/dev.shepherdr.plist`.
+Replace every absolute path and NAME; do not leave a detached manual instance running.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.shepherdr</string>
+  <key>ProgramArguments</key><array>
+    <string>/absolute/path/to/shepherdr/bin/shepherdr</string>
+    <string>start</string><string>--foreground</string>
+    <string>--home</string><string>/Users/NAME/.shepherdr</string>
+  </array>
+  <key>WorkingDirectory</key><string>/absolute/path/to/shepherdr</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/absolute/path/to/bun/bin:/absolute/path/to/hc/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>2</integer>
+  <key>Umask</key><integer>63</integer>
+  <key>StandardOutPath</key><string>/Users/NAME/.shepherdr/service.log</string>
+  <key>StandardErrorPath</key><string>/Users/NAME/.shepherdr/service.log</string>
+</dict></plist>
+```
+
+After deployment approval, operator commands are:
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.shepherdr.plist
+launchctl print gui/$(id -u)/dev.shepherdr
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/dev.shepherdr.plist
+```
+
+LaunchAgents start at user login, not before login. `shepherdr stop` exits normally
+and leaves agents running; the unsuccessful-exit policy does not immediately undo
+that manual stop. For manual service restart use bootout/bootstrap. The plist is a
+reviewable template; macOS service installation/crash recovery remains unverified.
+No plist is installed or loaded automatically.
 
 The application reconnects with a fresh core snapshot after disconnect. Its
 recovery loop starts the configured core again if that core crashes; it never

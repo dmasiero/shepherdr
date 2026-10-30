@@ -49,6 +49,7 @@ export interface CoreTask extends Task {
   reviewFailure?: string
   mergeQuestion?: string
   startError?: string
+  includesPending?: boolean
   providerTakeover?: { from: AgentKind; to: AgentKind; why: string; at: number; launch: string; state: 'starting' | 'queued' | 'started' | 'failed'; handover?: string }
   model?: string
   effort?: string
@@ -164,6 +165,7 @@ export class CoreTasks {
     return this.change(task.id, async () => {
       if (!this.source.space(space.id) || this.source.places?.removing(space.id)) throw new Refusal('This space is being removed')
       if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && (other.workflow === 'working' || other.workflow === 'merging')).length)
+      task.includesPending = true
       this.save(task) // Number and record survive a failed worktree/agent start; never reuse their branch number.
       try {
         await this.source.files.exec(space.machine, ['mkdir', '-p', join(folder, '..')])
@@ -331,7 +333,9 @@ export class CoreTasks {
     if (task.workflow !== 'todo' || task.pilot) { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
     task.launchAttempt = randomUUID(); delete task.startError; this.save(task)
     try {
-    await this.git.ensureWorktree({ machine: task.machine, folder: task.repo }, task.folder, task.branch, task.base)
+    const created = await this.git.ensureWorktree({ machine: task.machine, folder: task.repo }, task.folder, task.branch, task.base)
+    if (created) { task.includesPending = true; this.save(task) }
+    if (task.includesPending) { await this.seedIncludes(task); delete task.includesPending; this.save(task) }
     await this.source.browsers?.close(task.id)
     const pilot = task.pilot ? this.source.pilots.policy.live(task.pilot) : undefined
     if (task.pilot && (!pilot || !['on', 'workers'].includes(pilot.state) || !pilot.tasks.includes(task.id))) throw new Refusal('This task’s contained run has stopped')
@@ -362,6 +366,11 @@ export class CoreTasks {
   private async label(task: CoreTask) {
     const agent = this.source.agents.get(task.chat), terminal = agent && this.source.agents.terminal(agent)
     if (terminal) await this.source.core.call('terminal.label', { terminal: terminal.address, labels: { 'shepherdr.state': task.workflow } })
+  }
+  async seedIncludes(task: CoreTask) {
+    const runtime = await this.source.agents.browserRuntime(task.machine)
+    await this.source.files.exec(task.machine, [runtime.bun, join(runtime.root, 'helper/core-worktree-includes.ts')], undefined,
+      Buffer.from(JSON.stringify({ repo: task.repo, folder: task.folder, branch: task.branch })), 90)
   }
   private card(task: CoreTask, text: string) {
     const id = randomUUID()

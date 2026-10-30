@@ -1523,3 +1523,52 @@ Next explicit baseline audit item: ignored-file `.worktreeinclude` seeding was
 provided by terminal-herdr worktree creation, while the core rewrite currently
 uses Git worktree creation directly. Its ordinary/contained semantics must be
 verified and implemented safely before full worktree parity can be claimed.
+
+### Ignored worktree configuration seeding (2026-10-30)
+
+Baseline audit correction: legacy docs/tasks.md promised `.worktreeinclude` copying,
+but the installed terminal-herdr is 0.9.3. Its primary versioned source
+[src/app/api/worktrees/deferred.rs](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api/worktrees/deferred.rs)
+and [src/worktree.rs](https://github.com/herdrdev/herdr/blob/v0.9.3/src/worktree.rs)
+create a Git worktree without a built-in include-copy step. This is a documented
+product capability to preserve, not evidence that core implements it or a reason
+to reintroduce a plugin/SSH bridge. No third-party plugin is installed.
+
+Implemented an app-owned stateless include helper, provisioned through core with
+other immutable helpers. On a fresh/recreated task checkout, Git applies native
+include-rule syntax; only untracked files ignored in both source and destination
+are copied. Tracked, excluded and nonignored files are left alone. Links, unsafe
+parents, wrong checkout/branch/repository identity, oversized selections and missing
+destination ignore rules refuse explicitly. Existing task files are never replaced.
+No setup hooks or fsmonitor callbacks run. Bounds: 64 KiB rule file, 2 MiB selection,
+2048 files, 16 MiB/file and 64 MiB total bytes.
+
+Copies stage privately outside both Git checkouts, fsync complete bytes, then publish
+without replacement. Interrupted staging links are reconciled by verified private
+inode identity; only staging aliases are removed, restoring single-link task files.
+An unconfirmed/foreign link is left untouched and refuses launch. `includesPending`
+is durable until core confirms the copy; reopening an existing checkout does not
+reseed it. A newly recreated checkout is seeded again. All worktree/transfer actions
+still use core exec. Three scoped reviews: two minor crash/publication cases fixed,
+last round none. Real-Git regressions are written for GitHub, not run locally.
+
+A real new Codex research task probe/INCL-1 started in the same-host remote core,
+using only harmless public fixture files. Native tool output confirmed the exact
+selected bytes, exclusions, tracked fixture and clean Git status; it deleted only
+its own copied public file. Independent reads confirmed source fixture and the
+existing REMO-15 held-work bytes unchanged. Native completion through the helper
+has not passed: its ordinary tool sandbox reports Core disconnected. The run is
+not complete and is not external vm-ssa acceptance.
+
+### Capacity follows current work, not workflow (2026-10-30)
+
+Reproduced with probe/INCL-1 held at the unchanged one-task limit while REMO-15
+was Needs you with a native ended turn. Legacy busy() counts effective Working
+status; the rewrite incorrectly counted durable workflow=working. CoreHealth now
+uses the existing task status calculation, which retains conservative Working
+while native capture is uncertain or background work remains. Recent start grace
+and active reviewer reservations still count. A fresh scoped review found no
+findings. After restarting only the isolated preview, INCL-1 started without
+changing the machine limit or REMO-15 launch/workflow/PID/held file. CI regression
+covers waiting, active work, reviewer work and recent reservations. Local
+bun run typecheck passed; no local suites or full build ran.

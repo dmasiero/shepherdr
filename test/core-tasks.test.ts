@@ -44,6 +44,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
     post: (chat: string, message: Message) => store.set(`message:${chat}`, message.id, message),
   } as unknown as CoreSource
   const tasks = new CoreTasks(source)
+  tasks.seedIncludes = async () => {} // Native include execution is covered separately in core-worktree-includes.
   try { await run({ tasks, task, grant, repo, worktree, git, state }) }
   finally { store.close(); rmSync(root, { recursive: true, force: true }) }
 }
