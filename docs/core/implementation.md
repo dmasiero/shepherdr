@@ -1968,3 +1968,29 @@ snapshot (ISOLATED_PROFILE_STARTUP_OK). Removed that exact owned file, restarted
 the actual global Git first name returned (ISOLATED_GIT_NAME_RESTORED_OK). Core agents were not stopped.
 CI coverage checks profile fallbacks/rejections and named remote attachment delivery; only typecheck ran locally.
 This correction postdates the third full fresh-eyes review and is not claimed as reviewed by that round.
+
+### Final real main-red job logs and restoration (2026-10-30)
+
+A second deliberately failing commit in the owned private acceptance repository, 4d3e9a874d744285f027b754f45b3f355e396fc3,
+failed Actions 41037375181. The production observer fetched the actual failed job's bounded log through the
+configured host's documented Actions REST endpoint and delivered it to the native coordinator, which replied
+MAIN_RED_LOG_NATIVE_OBSERVED_OK exactly once. Its stored context contains SHE301_MAIN_RED_EXPECTED_FAILURE and
+no unavailable marker. Restore commit 6c4a7bf3a721b193e9832f26c6255a19d28347e2 passed Actions 41037544708; the
+observer re-armed to that green head with no red incident. Git diff against the original scratch baseline confirms
+exact original workflow/example bytes. GITH-2 remains To do with its same PID 308220 and launch identity.
+Read-only confirmation: REAL_MAIN_RED_LOG_NATIVE_ONCE_GREEN_REARM_EXACT_RESTORE_HELD_AGENT_OK.
+
+This proves real main-red observation/log context/native notification/green recovery, separately from the first
+pending-newer-head timeline proof. It does not prove check-dependent product merge: the correct-host `gh pr checks`
+still refuses GraphQL statusCheckRollup access for the configured token. No permissions or authentication changed.
+
+### Final Agents layout comparison (2026-10-30)
+
+Manual desktop dark comparison against the isolated verified-v2.0 UI found Agents groups ordered Tasks/Backup/
+Coordinators and missing the legacy explanatory paragraph. Restored Tasks/Coordinators/Backup and the exact
+explanation, then restarted only the isolated preview and captured the corrected screen. Configured values and
+inheritance naturally differ between the fixture baseline and fresh installation; their styling is unchanged.
+Autopilot comparison retained the existing layout; its policy description names actual core containment differences,
+and now uses public Claude Code/Codex names. The baseline also appends read-only Wake-up diagnostic rows after the
+editable groups, so that ordering is preserved. CI asserts the restored Agents group order. Local typecheck passed.
+These changes postdate the third full fresh-eyes review; no fourth round or new review claim was added.
