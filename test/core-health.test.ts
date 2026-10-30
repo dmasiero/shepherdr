@@ -14,7 +14,7 @@ async function fixture(run: (context: { source: CoreSource; health: CoreHealth; 
   const state = { load: 2, memory: 40, online: true }
   const source = { store, connected: () => true, machineConnected: () => state.online, machineIds: () => ['box'], quiescing: false,
     agents: { bun: async () => process.execPath, get: () => undefined }, automations: { zone: () => 'UTC', event: async () => { events.push('health') } },
-    spaces: () => [{ id: 'p:box:~', machine: 'box', home: true }], tasks: { all: () => tasks, tick: async () => {} }, post() {}, emit() {}, retryPending() {},
+    spaces: () => [{ id: 'p:box:~', machine: 'box', home: true }], tasks: { all: () => tasks, get: (id: string) => tasks.find(task => task.id === id), tick: async () => {} }, post() {}, emit() {}, retryPending() {},
     files: { exec: async (_machine: string, argv: string[]) => { calls.push(argv); return Buffer.from(JSON.stringify({ at: Date.now(), cores: 8, load: state.load, memTotal: 1000, memUsed: state.memory * 10, disks: [], gpus: [] })) } },
   } as unknown as CoreSource
   Object.assign(source, { settings: new CoreSettings(store, {} as CoreFiles, () => [], id => id, () => {}) })
