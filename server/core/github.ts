@@ -1,3 +1,4 @@
+import { failureLogTail } from './github-logs.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { CoreSource } from './source.ts'
 import type { CoreSpace } from './model.ts'
@@ -122,7 +123,7 @@ export class CoreGitHub {
         } catch { context.unavailable = true }
         const failed = selected.verdict.failed[0], run = failed?.databaseId ?? Number(failed?.url.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1])
         if (Number.isSafeInteger(run) && run > 0) {
-          try { context.logTail = (await this.source.tasks.git.ghRun(repo, ['run', 'view', String(run), '--repo', target, '--log-failed'], 20)).slice(-12000) }
+          try { context.logTail = await failureLogTail(this.source.tasks.git, repo, target, run) }
           catch { context.unavailable = true }
         }
       }

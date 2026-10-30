@@ -1887,3 +1887,36 @@ against ambiguous new repository names. Sidebar, CLI space listing and new artif
 keeper/author labels share the presentation helper. CI regression covers old-record
 read-only presentation, canonical identity, aliases and explicit rename. Typecheck
 passed; no legacy state import/mutation or native-agent replacement.
+
+### Real main-red acceptance and configured-host log access
+
+A harmless isolated core/gh read distinguished the actual restrictions: Actions
+run/history reads work on the configured github.localhost target. `gh run view
+--log-failed` tried api.github.com and hit an anonymous rate-limit 403; that is not
+proof that the configured login cannot read Actions logs. Explicit same-login
+REST job/log reads on the configured host succeeded (the installed CLI required
+its documented --allow-escape-sequences flag for raw logs). No login/token/access
+configuration changed. PR check-read denial remains separate and unverified.
+
+In the existing private disposable she301-core-acceptance-20261030 repository,
+actual main commit ecf37da intentionally failed Acceptance run 41036379555. Newer
+27271ab ran a harmless 90-second CI wait (41036465897). The production observer
+kept the earlier failed SHA, posted one card, included merged-commit context and
+delivered one native MAIN_RED_NATIVE_OBSERVED_OK. Its log tail was explicitly
+unavailable on this first run. A read-only independent check compared the incident
+milliseconds with GitHub's newer-run created/job-completed timestamps, confirmed
+exactly-one card/native reply, then confirmed green re-arming. Restored the exact
+original workflow/content in 6da8d2f; restore run 41036818996 passed. Marker:
+REAL_MAIN_RED_DURING_NEWER_PENDING_RUN_NATIVE_ONCE_GREEN_REARM_RESTORED_OK.
+This was a real private scratch Actions run, not a local test suite or a claim
+about PR check-dependent merge. Rewrite main/v2.0 and live state were untouched.
+
+The log reader now uses the documented Actions jobs/log endpoints through the
+same CoreGit/core machine.exec route and explicit configured host. It validates
+bounded job results, fetches at most two failed jobs, honors the core output bound,
+keeps a 12,000-character tail, and strips terminal controls before agent delivery.
+An explicitly requested CLI control-sequence flag is retried only for that exact
+CLI refusal; permission/other failures remain unavailable with no alternate account.
+Regression coverage checks host pinning, invalid/truncated job lists, terminal
+controls and refusal behavior. Typecheck passed; actual new-tail delivery is next.
+Primary API reference: [GitHub workflow job logs](https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run).

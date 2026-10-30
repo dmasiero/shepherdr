@@ -25,7 +25,7 @@ async function fixture(run: (f: { source: CoreSource; monitor: CoreGitHub; space
   const source = { store, connected: () => true, machineConnected: () => true, space: (id: string) => id === space.id ? space : undefined, spaces: () => [space], status: () => 'idle',
     agents: { get: () => ({ chat: space.id, launch: 'launch' }), terminal: () => ({ state: 'live' }) },
     tasks: { all: () => [{ place: space.id, base: 'main', workflow: 'merged', pr: { number: 1 }, doneAt: now }], git: {
-      remote: async () => 'github.test/o/r', ghRun: async (_repo: unknown, args: string[]) => { calls.push(args); return args[0] === 'run' ? 'A harmless compiler error tail' : head }, gh: async (_repo: unknown, args: string[]) => { calls.push(args); if (args[0] === 'api') return args.some(arg => arg.includes('?sha=')) ? [...new Set([head, sha])] : [{ sha, message: 'DEMO-1: Example merge' }]; return rows },
+      remote: async () => 'github.test/o/r', ghRun: async (_repo: unknown, args: string[]) => { calls.push(args); return args.some(arg => arg.includes('/actions/jobs/')) ? 'A harmless compiler error tail' : head }, gh: async (_repo: unknown, args: string[]) => { calls.push(args); if (args.some(arg => arg.includes('/actions/runs/'))) return { total_count: 1, jobs: [{ id: 1, name: 'Check', status: 'completed', conclusion: 'failure' }] }; if (args[0] === 'api') return args.some(arg => arg.includes('?sha=')) ? [...new Set([head, sha])] : [{ sha, message: 'DEMO-1: Example merge' }]; return rows },
     } }, automations: { record: (event: Happened) => { events.push(event); store.set('rule-proof', String(events.length), event) } },
     post: (chat: string, message: { id: string }) => store.set(`message:${chat}`, message.id, message),
     saveAndDeliver: (_chat: string, id: string, _text: string, save: () => void) => store.db.transaction(() => { save(); sent.push(id) })(),
@@ -126,7 +126,7 @@ test('newer pending branch commits do not hide an older failed commit, and only 
   expect(f.events).toHaveLength(1)
   expect(f.source.store.all<{ red?: string }>('github-main')[0].red).toBe(sha)
   const notice = f.source.store.all<{ text: string }>('github-notice')[0]
-  expect(JSON.parse(notice.text)).toMatchObject({ head: sha, context: { merged: [{ sha, title: 'DEMO-1: Example merge' }], logTail: 'A harmless compiler error tail' } })
+  expect(JSON.parse(notice.text)).toMatchObject({ head: sha, context: { merged: [{ sha, title: 'DEMO-1: Example merge' }], logTail: '\nCheck\nA harmless compiler error tail' } })
   f.setRows([row('success', 'completed', later), row()])
   await f.monitor.watchMain(f.space)
   expect(f.source.store.all<{ red?: string; green?: string }>('github-main')[0]).toMatchObject({ green: later })
