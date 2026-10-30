@@ -1,3 +1,4 @@
+import { line } from '../common/chatlines.ts'
 import { machineName } from '../../shared/types.ts'
 import { Refusal } from './client.ts'
 import { randomUUID } from 'node:crypto'
@@ -78,7 +79,7 @@ export class CoreSecrets {
     if (!result.ok) throw new Refusal(result.error || 'The secret could not be saved')
     if (request && action.value !== null) {
       const saved = this.name(action.level), message = this.source.store.get<Message>(`message:${request.chat}`, request.id)
-      this.source.saveAndDeliver(request.chat, `secret-saved-${request.id}`, `<secret name="${action.name}" for="${saved.replace(/["<>]/g, '')}"/>`, () => {
+      this.source.saveAndDeliver(request.chat, `secret-saved-${request.id}`, line.secret(this.source.snapshot().user || 'You', action.name, saved), () => {
         this.source.store.delete('secret-request', request!.id)
         if (message) this.source.store.set(`message:${request!.chat}`, request!.id, { ...message, secret: { ...request!.ask, saved } })
       })

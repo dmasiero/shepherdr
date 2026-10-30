@@ -1953,3 +1953,18 @@ when rendering, without changing their stored identity or already-readable histo
 Regression coverage uses deliberately different main ID/name, remote ordering,
 renames, voice/Settings names, future health events and read-only old-card display.
 Only typecheck ran locally; shared-browser before/after captured and inspected.
+
+### Final parity: human sender profile (2026-10-30)
+
+Restored the legacy human-name fallback: first word of the main machine's global Git name, then capitalized
+account name. An optional profile is read only from the selected initialized installation's config.json;
+no legacy home is consulted. The profile reader rejects links, oversized/nonregular/multiply-linked/foreign-owner
+files and invalid sender strings. The name is presentation, never authentication. Native reply, attachment,
+reaction, artifact-action and secret-saved lines now carry the selected name, matching answers/browser notes.
+Git lookup goes through the main core's documented exec API with a three-second bound.
+
+Manual isolated application startup with a newly created private profile returned SHE301 Profile in the real
+snapshot (ISOLATED_PROFILE_STARTUP_OK). Removed that exact owned file, restarted only the preview and confirmed
+the actual global Git first name returned (ISOLATED_GIT_NAME_RESTORED_OK). Core agents were not stopped.
+CI coverage checks profile fallbacks/rejections and named remote attachment delivery; only typecheck ran locally.
+This correction postdates the third full fresh-eyes review and is not claimed as reviewed by that round.

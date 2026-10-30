@@ -1,3 +1,4 @@
+import { humanName } from './human-name.ts'
 import { coreSpaceName } from './space-names.ts'
 import { repositorySection } from '../common/space-settings.ts'
 import { taskIdsSection } from '../common/task-ids.ts'
@@ -54,6 +55,7 @@ interface PendingSend { id: string; chat: string; text: string; launch?: string;
 export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly kind = 'live' as const
   quiescing = false
+  private human = 'You'
   readonly core: CoreSession
   readonly store: CoreStore
   readonly files: CoreFiles
@@ -152,7 +154,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       agent.permission = this.openPermissions(agent)[0]?.id
       this.store.set('agent', agent.chat, agent)
     }
-    await this.core.start(); await this.refresh(); this.tasks.recoverProviderFallbacks(); this.logs.start(); this.automations.start(); this.health.start(); this.github.start()
+    await this.core.start(); await this.refresh(); this.human = await humanName(this.config.home, async () => (await this.files.exec(this.local.id, ['git', 'config', '--global', 'user.name'], undefined, undefined, 3)).toString('utf8')); this.tasks.recoverProviderFallbacks(); this.logs.start(); this.automations.start(); this.health.start(); this.github.start()
     this.recovery = setInterval(() => {
       if (!this.quiescing) void this.pilots.lifecycle.tick().then(() => this.pilots.completion.tick()).catch(error => this.faults.set('pilot-lifecycle', error.message))
       if (!this.quiescing) { this.pilots.wakes.tick(); this.news.deliver() }
@@ -250,7 +252,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       else if (this.status(agent) === 'need') attentionRequests[agent.chat] = ['attention']
     }
     return {
-      terminalTransport: 'core', name: 'Shepherdr', host: this.local.id, user: this.store.get<string>('setting', 'user') || 'You',
+      terminalTransport: 'core', name: 'Shepherdr', host: this.local.id, user: this.store.get<string>('setting', 'user') || this.human,
       ...this.places.present(spaces.map(space => ({ id: space.id, name: coreSpaceName(this, space), machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },

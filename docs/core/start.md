@@ -55,6 +55,14 @@ watcher and switches. Ordinary startup watches the selected home's plugins and o
 of the started application, and swaps plugin runtime/assets without restarting agents. It never follows main or
 another checkout ref. Keep the installed source/dependencies available while it runs. See [Plugins](../plugins.md).
 
+## Your chat name
+
+The human sender name keeps the legacy default: the first name from the main machine's global Git name,
+then the capitalized account name. An optional `config.json` in this installation's initialized home can set
+`{"user":"Avery Lee"}`; restart the application after changing it. Replies, reactions, attachments, artifact
+comments, browser notes and secret-saved notices use that name. It is presentation only, never mailbox or secret
+authority. Preview homes do not read or import the legacy home's profile.
+
 ## Private URL
 
 The server binds only to `127.0.0.1`. Startup discovers existing Serve mappings;

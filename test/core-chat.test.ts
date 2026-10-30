@@ -32,6 +32,7 @@ test('remote uploads cross core in bounded chunks, retain bytes and cannot borro
   const root = mkdtempSync(join(tmpdir(), 'shep-chat-')), source = new CoreSource({ home: join(root, 'app'), port: 17887, session: 'test', socket: '/unused', binary: 'hc' })
   const space: CoreSpace = { id: 'p:remote:~', machine: 'remote', name: '~', home: true, folder: root, base: 'main', prefix: 'TASK', mode: 'regular', added: 1 }
   source.store.set('space', space.id, space)
+  source.store.set('setting', 'user', 'Avery Lee')
   source.agents.bun = async () => process.execPath
   const sizes: number[] = []
   source.files.exec = async (_machine, argv, cwd, input) => {
@@ -43,6 +44,7 @@ test('remote uploads cross core in bounded chunks, retain bytes and cannot borro
   try {
     const bytes = Buffer.alloc(3 * 1024 * 1024, 17), path = await source.upload(space.id, 'proof"1.bin', bytes)
     const text = await source.chats.text({ type: 'send', chat: space.id, text: '', attachments: [path] }, space.machine)
+    expect(text).toContain('from="Avery Lee"')
     const file = chatMessages([{ id: 'file', who: 'you', text }])[0].file!
     expect(file.path).not.toBe(path)
     expect(file.path).not.toContain('"')

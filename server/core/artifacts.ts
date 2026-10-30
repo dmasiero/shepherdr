@@ -1,3 +1,4 @@
+import { tag as chatTag } from '../common/chatlines.ts'
 import { age } from '../common/age.ts'
 import { randomBytes } from 'node:crypto'
 import { dirname, join, basename } from 'node:path'
@@ -201,7 +202,7 @@ export class CoreArtifacts {
     const version = this.version(artifact, action.v), chat = this.keeper(artifact)
     const text = action.type === 'artifact-note' ? action.note : action.text
     const tag = action.type === 'artifact-note' ? 'artifact-note' : action.type === 'artifact-say' ? 'artifact-comment' : 'artifact-sent'
-    this.source.saveAndDeliver(chat, `artifact-action-${randomBytes(12).toString('hex')}`, `<${tag} artifact="${artifact.id}" version="${version.n}" title="${artifact.title.replace(/["<>]/g, '')}"${action.type === 'artifact-note' && action.target ? ` target="${action.target.replace(/["<>]/g, '')}"` : ''}>${text}</${tag}>`, () => {
+    this.source.saveAndDeliver(chat, `artifact-action-${randomBytes(12).toString('hex')}`, chatTag(tag, { from: this.source.snapshot().user || 'You', artifact: artifact.id, version: version.n, title: artifact.title, target: action.type === 'artifact-note' ? action.target : undefined }, text), () => {
       if (action.type === 'artifact-send') { artifact.sent = { html: version.html, text }; this.source.store.set('core-artifact', artifact.id, artifact) }
     })
     this.source.emit('snapshot'); return { to: this.name(chat) }

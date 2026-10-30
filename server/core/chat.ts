@@ -95,14 +95,14 @@ export class CoreChat {
     if (action.reply) {
       const message = this.source.chat(action.chat)?.messages.find(item => item.id === action.reply)
       const artifact = message?.artifact && this.source.artifacts.list().find(item => item.id === message.artifact!.id)
-      if (artifact) text = line.replyArtifact('You', line.artifact(artifact.title, artifact.id, message!.artifact!.v), text)
-      else if (message?.text || message?.file) text = line.reply('You', message.text || message.file!.name, text)
+      if (artifact) text = line.replyArtifact(this.source.snapshot().user || 'You', line.artifact(artifact.title, artifact.id, message!.artifact!.v), text)
+      else if (message?.text || message?.file) text = line.reply(this.source.snapshot().user || 'You', message.text || message.file!.name, text)
     }
     const paths = action.attachments ?? []
     if (paths.length > 20 || new Set(paths).size !== paths.length) throw new Error('Send at most 20 different attachments at once')
     const records = paths.map(path => { const record = this.records().find(item => item.chat === action.chat && item.path === path); if (!record) throw new Error('That file was not uploaded to this chat'); return record })
     const files: string[] = []
-    for (const record of records) files.push(line.attach('You', record.name, await this.copy(record, machine)))
+    for (const record of records) files.push(line.attach(this.source.snapshot().user || 'You', record.name, await this.copy(record, machine)))
     return [text, ...files].filter(Boolean).join('\n')
   }
   reaction(chat: string, id: string, emoji: string) {
@@ -111,9 +111,9 @@ export class CoreChat {
     if (!message) throw new Error('No such message')
     const mine = message.reactions?.some(item => item.emoji === emoji && item.by !== 'them')
     const artifact = message.artifact && this.source.artifacts.list().find(item => item.id === message.artifact!.id)
-    if (artifact) return (mine ? line.unreactArtifact : line.reactArtifact)('You', emoji, line.artifact(artifact.title, artifact.id, message.artifact!.v))
-    if (message.file) return (mine ? line.unreactFile : line.reactFile)('You', emoji, message.file.name, message.file.path)
-    if (message.text) return (mine ? line.unreact : line.react)('You', emoji, message.text)
+    if (artifact) return (mine ? line.unreactArtifact : line.reactArtifact)(this.source.snapshot().user || 'You', emoji, line.artifact(artifact.title, artifact.id, message.artifact!.v))
+    if (message.file) return (mine ? line.unreactFile : line.reactFile)(this.source.snapshot().user || 'You', emoji, message.file.name, message.file.path)
+    if (message.text) return (mine ? line.unreact : line.react)(this.source.snapshot().user || 'You', emoji, message.text)
     throw new Error('This message cannot take reactions')
   }
 }
