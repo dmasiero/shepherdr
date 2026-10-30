@@ -14,18 +14,19 @@ not an absence of implementation. Historical slice notes remain below for audit;
 the later dated entries supersede their pending statements.
 
 - Full GitHub Check **41031514810 passed** at 7bd30e01 (all three shards, types, build).
-- Rewrite check **41032009696 passed** at de674bb8, including real-source Settings.
+- Rewrite **41041511007 passed** at 82da3bad, including the fresh-repository regression and all space-control guards; later first-use guidance is being checked.
 - Rewrite **41032408275 passed** at b8ad5df0, including the real production plugin compiler: compiled edit/replacement, persistent state and last-good fallback (11 assertions; 4.12 s on GitHub).
 - Final full review: three rounds. Round 1's two Settings majors and round 2's
   failed-base observer major/context minor fixed; round 3 reported no remaining
   concrete critical/major findings at ed75b57e. Later manual Settings feedback and
-  navigation fixes, plus added production-compiler coverage, postdate that review.
-- Proof artifact **hf2s v27** contains actual branch runs and explicit limits.
+  navigation/profile/repository fixes, native first-use guidance and added production-compiler coverage postdate that review.
+- Proof artifact **hf2s v29** contains actual branch runs and explicit limits.
 - **External vm-ssa acceptance skipped**, as Elias instructed: no saved address or
   working trusted connection was available. No access configuration changed.
+- Real main-red observation now passed, including a failure behind a pending newer head, actual failed-job logs, one native notification, green re-arm and exact scratch workflow restoration.
 - Still unverified: physical phone/lock-screen/offline return, actual ElevenLabs
   voice (no key in isolated state), native provider-failure takeover, product GitHub
-  merge/main-check observation (configured check-read 403), installed service/macOS
+  merge (configured GraphQL status-check refusal), installed service/macOS
   behavior, manual production plugin/device acceptance and every-feature side-by-side UX parity.
 - Nothing merged into main; no live state, agents, services, sharing mapping,
   credentials, version, tag, release or publication changed. v2.0 stays preserved.
@@ -102,11 +103,11 @@ not evidence of a working feature.
 
 | Feature | Legacy baseline | 2.1 acceptance evidence |
 | --- | --- | --- |
-| First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; phone sections/order/moves/rename and restart persistence checked; full device/first-run parity pending |
-| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; native activity rows and recorded read output shown; background child details, large logs and full device parity pending |
+| First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; phone sections/order/moves/rename and restart persistence checked; fresh installation → new/existing-folder initialization → native Claude coordinator → Codex worktree/research Done verified; full device parity pending |
+| Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; native activity rows and recorded read output shown; native background child details/output and large-log bounded readers verified separately; full device parity pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Partial: real dependency validation/capacity delivery; phone Restart preserves To do and unfinished file; explicit contained resume/ordinary relocation; task options; confirmed Stop of replacement and retired-root child; pin/archive/unarchive/stopped-task pause. Clean Close/research Done, regular coordinator Restart, clean Stop/removal and message-driven checkout recreation verified; native ended-turn Needs you and restart notice/PID preservation verified. Held-work Stop/Close/Delete and failure exit codes verified. Active native foreground Pause verified with same live PID/unchanged work; long shell-tool interruption and full parity pending |
 | Provider retries and configured backup agent | server/live/retry.ts; server/live/engine/engine.ts cantGoOn | Implemented: native completed-log failure classifier, durable 1/2/4/8m retries, explicit-message reset, one-shot ordinary backup with retained checkout/handover, capacity and interrupted-start recovery. Two scoped reviews passed after a minor queued-context fix; CI passed; real native provider-failure/handover acceptance pending. Contained tasks do not auto-switch, matching legacy |
-| Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. Real private GitHub PR creation, exact-head Ready/draft promotion, published-comment native follow-up, conflict/rebase leased push, external merge and dirty-base sync/cleanup verified. Product check-dependent merge remains unverified (configured GitHub check-read 403); full checks/main-red/device parity pending |
+| Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. Real private GitHub PR creation, exact-head Ready/draft promotion, published-comment native follow-up, conflict/rebase leased push, external merge and dirty-base sync/cleanup verified. Product check-dependent merge remains unverified (configured GitHub check-read 403); real main-red/pending-head/log/native-alert/green recovery passed; full checks/device parity pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Partial: actual merge and synthetic secret cards answered in phone-width preview; stale permission cards disable correctly; native GITH-3 multi-choice and two-step plan approved, followed by clean research Done; physical lock-screen and complete native permission parity pending |
 | Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; loopback SSH transport checked; external vm-ssa acceptance skipped for missing configured address/host trust; external disconnect acceptance unverified; legacy transport/launcher removal and native tool-environment recovery passed scoped review and branch CI |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; real targeted versioned note reached native keeper, same-artifact update appeared live, and disposable artifact deletion removed stored versions/list entry; device parity still pending |
@@ -115,10 +116,10 @@ not evidence of a working feature.
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Implemented with bounded private provider bridge and CI coverage; page/control visible. Actual ElevenLabs call unverified: isolated home has no API key; no live credentials borrowed |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Partial: real contained Claude/Codex runs, child checkpoint/review, phone on/wake/off, contained restart/outlive children, durable keep-workers return/completion and post-report usage limit. Full events/browser/limit/device acceptance pending; contained Autopilot remains Linux-only as in legacy |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Partial: native coordinator saved rules/checklist; actual Run now and scheduled-once tasks answered; app restart preserved state; real failed and 20-minute quiet rules each produced exactly one native handler; complete recurrence/events/device parity pending |
-| Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; phone Files and added-file Diff inspected through second core; resizing/reconnect and actual PR acceptance pending |
+| Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; phone Files and added-file Diff inspected through second core; real core-confirmed phone/tablet/desktop resizing and app reconnect preserved PID; PR creation/Ready/comment/rebase/external-merge recovery verified, product check-dependent merge and lost-input-ack acceptance pending |
 | Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change and native runtime model before/after inspected; observed runtime is separate from launch choices; real Repository/base and Task IDs/prefix/forward-only numbering exercised by native INCQ-40; global Time zone, Plugins and Machines restored after legacy UI comparison; full acceptance pending |
 | Health, alerts, unread/search, keyboard and mobile layouts | plugins/health; plugins/keyboard; src/layout* | Partial: phone unread/search/attention and keyboard reaction bar checked; machine capacity held/delivered messages; complete health/alerts/device parity pending |
-| User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Partial: API-2 client/server action and retained state inspected; isolated hot rebuild/switch/fallback code and CI coverage added, production/manual acceptance and full gating parity pending; 2.0 plugins require migration |
+| User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Partial: API-2 client/server action and retained state inspected; isolated hot rebuild/switch/fallback code and CI coverage added, real production compiler/assets/runtime replacement, persistent state and last-good fallback passed in GitHub; full manual/device/gating parity pending; 2.0 plugins require migration |
 | Standalone start/stop/status, installation and optional service | New requirement | Partial: isolated idempotent start/status/stop + crash/core restart exercised; final install/service/cutover pending, no live service enabled |
 | Browser WebSocket resync, bounded output, duplicate-safe commands | server/app.ts; src | Partial: real server/core restart recovery and simulated browser offline for 10m03s caught up native TEN_MIN_OFFLINE_OK once; bounds/duplicate handling have branch CI coverage; physical-device return and full slow-client acceptance pending |
 
@@ -130,7 +131,7 @@ server and core restart during a 30-second tool call, then returned
 `SURVIVED_RESTART`. Standalone repeated start retained the same server PID; stop
 left core and agents alive. No live state or mappings changed.
 
-Not yet verified: full task lifecycle for both agents; an external remote worktree/task through
+Real scratch lifecycle includes both native agents and the task/review/approved-merge runs above. Not yet verified: an external remote worktree/task through
 permission notification, artifact and merge (vm-ssa access skipped as instructed); physical-device
 offline return/lock-screen answers; every parity row; identical UX across device sizes. The simulated
 browser offline check above passed; it is not a physical-device check.
@@ -2035,3 +2036,10 @@ and successful app space removal. Core listed only finished owned t1–t4. Stopp
 and its Vite process, then removed the three exact newly created scratch folders after checking their complete
 entry sets and public fixture bytes. Kept private proof state/transcripts for review. Main acceptance agents,
 waiting worktrees, live legacy and all Tailscale mappings remained untouched.
+
+CI 41041708042 passed core/types/build and production plugin, but its lost-response automation layout case timed
+out waiting for the different-action refusal after tapping Pause. The server run snapshot and lost-response error
+arrive separately and the inserted Last run moves that control. The regression now waits for the authoritative
+GTM-51 run and uses the repository's existing still() helper before Pause/retry. It retains all same-ID/no-extra-
+command assertions; no product retry behavior changed. This timing explanation is being checked by branch CI,
+not claimed as a reproduced production defect. Only typecheck ran locally.

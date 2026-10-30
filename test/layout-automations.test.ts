@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { layout } from './layout.ts'
+import { layout, still } from './layout.ts'
 
 const { browser, server } = await layout({ everything: true })
 describe.skipIf(!browser)('automation actions after a lost response', () => {
@@ -24,10 +24,17 @@ describe.skipIf(!browser)('automation actions after a lost response', () => {
       const detail = page.locator(`#${await row.getAttribute('aria-controls')}`)
       await detail.getByRole('button', { name: 'Run now' }).click()
       await detail.getByText('The action was not confirmed.', { exact: false }).waitFor()
-      await detail.getByRole('button', { name: 'Pause', exact: true }).click()
+      // The completed server action inserts its run while the lost-response error arrives separately.
+      // Wait for that snapshot and its layout before tapping a button that just moved.
+      await detail.getByText('GTM-51', { exact: true }).waitFor()
+      const pause = detail.getByRole('button', { name: 'Pause', exact: true })
+      await still(pause)
+      await pause.click()
       await detail.getByText('Confirm the previous action', { exact: false }).waitFor()
       expect(commands).toHaveLength(1)
-      await detail.getByRole('button', { name: 'Run now' }).click()
+      const retry = detail.getByRole('button', { name: 'Run now' })
+      await still(retry)
+      await retry.click()
       await detail.getByText('GTM-51', { exact: true }).waitFor()
       expect(commands).toHaveLength(2)
       expect(commands[1].cid).toBe(commands[0].cid)
