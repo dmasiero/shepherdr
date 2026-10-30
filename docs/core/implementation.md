@@ -2054,7 +2054,7 @@ no product duplicate-action safeguard was removed. Full Check 41031514810 passed
 No later whole-suite pass is claimed. Proof artifact hf2s v30 was checked and its light/dark phone images viewed; the final text-only CI update is v31.
 
 Source preservation audit against verified v2.0: src/styles.css, src/ui.tsx, src/App.tsx, the folder picker,
-artifact viewer and keyboard plugin remain byte-for-byte identical Git objects. Reviewed the changed client files:
+artifact viewer and keyboard plugin entrypoint (plugins/keyboard/client.tsx) remain byte-for-byte identical Git objects. The search submodule changed as documented below. Reviewed the changed client files:
 core-only browser/terminal transports, canonical remote task IDs, bounded log-loading/error messages, safe closed
 cards, observed runtime labels, explicit refusal feedback, duplicate-safe actions and search result invalidation.
 These explain the client differences; this source audit does not replace remaining full-device visual acceptance.
