@@ -11,7 +11,7 @@ import type { CoreClient } from './client.ts'
 
 type Viewer = { send(raw: string): void; close(): void; buffered?(): number }
 interface Record { id: string; task: string; chat: string; launch: string; machine: string; key: string; name: string; terminal?: string; pid?: number; config: string; root: string; bun: string; driver?: 'agent' | 'you' }
-interface Hub { task: string; clients: Set<Viewer>; record?: Record; stream?: Awaited<ReturnType<CoreClient['attach']>>; connecting?: Promise<void>; epoch: string; pending: Map<string, { timer: ReturnType<typeof setTimeout>; resolve(): void; reject(error: Error): void }>; state?: string; frame?: string; stopping?: boolean; closing?: Promise<void>; lastWatch?: number }
+interface Hub { task: string; clients: Set<Viewer>; record?: Record; stream?: Awaited<ReturnType<CoreClient['attach']>>; connecting?: Promise<void>; epoch: string; pending: Map<string, { timer: ReturnType<typeof setTimeout>; resolve(): void; reject(error: Error): void }>; state?: string; frame?: string; stopping?: boolean; closing?: Promise<void>; closed?: CoreTerminal; lastWatch?: number }
 const quote = (word: string) => `'${word.replaceAll("'", `'"'"'`)}'`
 
 /** Browser traffic uses a core child on its owning machine and the existing local core socket. */
@@ -147,7 +147,13 @@ export class CoreBrowsers {
       this.source.store.set('browser-relay', task.id, record)
     }
     hub.record = record
-    let terminal = [...this.source.core.current.terminals.values()].find(terminal => terminal.labels['shepherdr.browser'] === record.id && terminal.labels['shepherdr.installation'] === this.installation && terminal.state === 'live')
+    const matches = [...this.source.core.current.terminals.values()].filter(terminal => terminal.labels['shepherdr.browser'] === record.id && terminal.labels['shepherdr.installation'] === this.installation && terminal.state === 'live' && (!record.terminal || terminal.address === record.terminal))
+    if (matches.length > 1) throw Error('Browser start is ambiguous; cleanup was refused')
+    let terminal = matches[0]
+    if (!terminal && record.terminal) {
+      const previous = this.source.core.current.terminals.get(record.terminal)
+      if (!previous || previous.state !== 'finished' || record.pid !== undefined && previous.pid !== record.pid) throw Error('Previous browser exit is unconfirmed; reconnect before replacing it')
+    }
     if (!terminal) {
       const previousDriver = record.driver
       const on = await this.source.route(task.machine), candidate = agent && this.source.agents.terminal(agent), parent = candidate?.state === 'live' ? candidate : undefined
@@ -166,6 +172,7 @@ export class CoreBrowsers {
       }
     }
     if (record.pid && record.pid !== terminal.pid) throw Error('Browser relay process identity changed')
+    record.terminal = terminal.address; record.pid = terminal.pid ?? undefined; this.source.store.set('browser-relay', task.id, record)
     const frames = new BrowserFrames(record.key, value => {
       const event = value as { type: string; message?: BrowserDown; id?: string; ok?: boolean; error?: string; text?: string }
       if (event.type === 'down' && event.message) {
@@ -228,13 +235,14 @@ export class CoreBrowsers {
       }).map(promise => promise.catch(() => {})))
     } finally { this.scanning = false }
   }
-  async close(task: string, forget = false) {
+  async close(task: string, forget = false, track?: (terminal: CoreTerminal) => void) {
     const record = this.source.tasks.get(task)
     if (!this.source.store.get('browser-relay', task) && (!record || !this.source.agents.get(record.chat)?.browser)) return
     const hub = this.hub(task)
-    if (hub.closing) return hub.closing
+    if (hub.closing) { await hub.closing; if (hub.closed) track?.(hub.closed); return }
+    hub.closed = undefined
     hub.closing = this.closeNow(task, hub, forget)
-    try { await hub.closing } finally { hub.closing = undefined }
+    try { await hub.closing; if (hub.closed) track?.(hub.closed) } finally { hub.closing = undefined }
   }
   private async closeNow(task: string, hub: Hub, forget: boolean) {
     hub.stopping = true
@@ -242,7 +250,10 @@ export class CoreBrowsers {
       await hub.connecting?.catch(() => {})
       if (!hub.stream) await this.start(hub, true)
       if (!hub.stream) throw Error('The browser could not confirm cleanup; reconnect its machine and retry')
+      const terminal = hub.record?.terminal && this.source.core.current.terminals.get(hub.record.terminal)
+      if (!terminal || hub.record?.pid !== terminal.pid) throw Error('Browser cleanup process identity is unconfirmed')
       await this.send(hub, { type: 'close', forget }, 45_000)
+      hub.closed = { ...terminal }
       this.source.store.delete('browser-relay', task)
       this.error(hub, 'The browser closed with the task.', true)
       // The acknowledged relay may close its attach before the command promise resumes.

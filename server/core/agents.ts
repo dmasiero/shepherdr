@@ -63,7 +63,8 @@ export class CoreAgents {
   reconcile() {
     for (const agent of this.all()) {
       const terminal = this.terminal(agent)
-      if (terminal && (agent.terminal !== terminal.address || agent.pid === undefined && terminal.pid != null)) { agent.terminal = terminal.address; agent.pid ??= terminal.pid ?? undefined; this.store.set('agent', agent.chat, agent); if (agent.pilot) this.store.set('pilot-capture', agent.launch, agent); this.changed(agent.chat) }
+      if (!this.store.get('agent-launch', agent.launch)) this.store.set('agent-launch', agent.launch, agent)
+      if (terminal && (agent.terminal !== terminal.address || agent.pid === undefined && terminal.pid != null)) { agent.terminal = terminal.address; agent.pid ??= terminal.pid ?? undefined; this.store.set('agent', agent.chat, agent); this.store.set('agent-launch', agent.launch, agent); if (agent.pilot) this.store.set('pilot-capture', agent.launch, agent); this.changed(agent.chat) }
     }
   }
 
@@ -73,11 +74,12 @@ export class CoreAgents {
   } = {}): Promise<CoreAgent> {
     if (this.launching.has(chat)) throw new Error('This agent is already starting')
     this.launching.add(chat)
-    let prepared: PilotPrepared | undefined, previous: CoreAgent | undefined, submitted = false, cleanup: (() => Promise<void>) | undefined
+    let prepared: PilotPrepared | undefined, previous: CoreAgent | undefined, launchRecord: CoreAgent | undefined, submitted = false, cleanup: (() => Promise<void>) | undefined
     try {
     previous = this.get(chat)
     if (previous && this.terminal(previous)?.state === 'live') throw new Error('This agent is already running')
     if (previous && !previous.terminal) throw new Error('The previous start is still unconfirmed. Reconnect core and check its state before retrying.')
+    if (previous) this.store.set('agent-launch', previous.launch, previous)
     const on = await this.route(space.machine)
     const remote = on ? await this.remotes.prepare(space.machine) : undefined
     const launch = randomUUID()
@@ -122,7 +124,9 @@ This start replaces every earlier command path and routing instruction. Your aut
       session: !options.pilot && options.resume && previous?.kind === kind ? previous.session : undefined, model: options.model, effort: options.effort,
       pilot: options.pilot && prepared ? { run: options.pilot.run, home: prepared.sandbox.home, captures: prepared.paths.captures, pending: true } : undefined,
     }
+    launchRecord = record
     this.store.set('agent', chat, record)
+    this.store.set('agent-launch', record.launch, record)
     if (record.pilot) this.store.set('pilot-capture', record.launch, record)
     let argv: string[] = [kind]
     const headless = kind === 'codex' && options.readOnly
@@ -182,9 +186,14 @@ This start replaces every earlier command path and routing instruction. Your aut
     if (!current || current.launch !== launch || current.grant !== grant.id) throw new Error('Agent launch was replaced before core confirmed it')
     current.terminal = terminal.address
     current.pid = terminal.pid ?? undefined
-    this.store.set('agent', chat, current); if (current.pilot) this.store.set('pilot-capture', current.launch, current); this.changed(chat)
+    this.store.set('agent', chat, current); this.store.set('agent-launch', current.launch, current); if (current.pilot) this.store.set('pilot-capture', current.launch, current); this.changed(chat)
     return current
     } catch (error) {
+      if (launchRecord && !submitted) {
+        this.store.delete('agent-launch', launchRecord.launch)
+        this.mailbox.revoke(chat)
+        if (this.get(chat)?.launch === launchRecord.launch) { if (previous) this.store.set('agent', chat, previous); else this.store.delete('agent', chat); this.changed(chat) }
+      }
       if (prepared && !submitted) {
         this.mailbox.revoke(chat)
         for (const capture of this.store.all<CoreAgent>('pilot-capture')) if (capture.pilot?.captures === prepared.paths.captures) this.store.delete('pilot-capture', capture.launch)

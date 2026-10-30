@@ -67,3 +67,25 @@ test('read-only Codex reviewers capture native JSON events without bypassing hoo
     expect(result).toMatchObject({ transcript: launch.log, transcriptFormat: 'codex-exec', state: 'working' })
   } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('ordinary replacement preserves both private launch identities for later descendant cleanup', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-ordinary-history-')), store = new CoreStore(home)
+  try {
+    const terminals = new Map<string, import('../server/core/protocol.ts').CoreTerminal>()
+    let count = 0
+    const core = { current: { terminals }, call: async (_method: string, input: { labels: Record<string, string> }) => {
+      const address = `t${++count}`, terminal = { address, labels: input.labels, pid: count * 10, state: 'live', created_ms: count } as import('../server/core/protocol.ts').CoreTerminal
+      terminals.set(address, terminal); return terminal
+    } } as unknown as CoreSession
+    const mailbox = { issue: () => ({ id: `grant-${count}`, credential: {} }) } as unknown as Mailbox
+    const agents = new CoreAgents({ home, port: 0, session: 'test', socket: '/unused', binary: 'hc' }, { format: 'shepherdr-core', schema: 1, id: 'installation' }, core, store, mailbox, async () => undefined, () => {})
+    const space = { id: 'space', name: 'Example', machine: 'machine', folder: '/unused', base: 'main', prefix: 'EX', mode: 'regular' as const, added: 1 }
+    const first = await agents.launch(space, 'EX-1/Agent', 'codex', 'Wait', { role: 'task', task: 'EX-1' })
+    terminals.get(first.terminal!)!.state = 'finished'
+    const second = await agents.launch(space, first.chat, 'codex', 'Wait', { role: 'task', task: 'EX-1' })
+    expect(first.launch).not.toBe(second.launch)
+    expect(store.get('agent-launch', first.launch)).toMatchObject({ terminal: 't1', pid: 10, role: 'task', pilot: undefined })
+    expect(store.get('agent-launch', second.launch)).toMatchObject({ terminal: 't2', pid: 20, role: 'task', pilot: undefined })
+    expect(store.all('pilot-capture')).toHaveLength(0)
+  } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+})

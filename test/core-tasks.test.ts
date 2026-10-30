@@ -38,7 +38,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
     } },
     agents: { all: () => [], get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
       terminal: () => ({ address: 't1', state: state.terminal }), send: async () => {} },
-    core: { call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
+    core: { current: { terminals: new Map() }, call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
     post: (chat: string, message: Message) => store.set(`message:${chat}`, message.id, message),
   } as unknown as CoreSource
   const tasks = new CoreTasks(source)

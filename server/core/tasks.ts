@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import { SUMMARY_MAX, TITLE_MAX, STATUS_MAX, slugify, type Action, type Question, type Task } from '../../shared/types.ts'
 import { CorePilotRepositories } from './pilot-repositories.ts'
 import { CoreTaskRelocation } from './task-relocation.ts'
+import { CoreTaskProcesses } from './task-processes.ts'
 import { taskOptions, validateTaskSettings } from './task-options.ts'
 import { kindOf } from './settings.ts'
 import { CoreGit } from './git.ts'
@@ -187,14 +188,14 @@ export class CoreTasks {
     if (task.pilot !== run?.id) {
       if (task.pilot && this.source.pilots.policy.get(task.pilot)?.state !== 'stopped') throw new Refusal('Stop and finish cleaning up the previous Autopilot run first')
       // Include retired launches: replacing an agent record is never proof its process ended.
-      const records = [...this.source.agents.all(), ...this.source.store.all<import('./model.ts').CoreAgent>('pilot-capture')]
+      const records = [...this.source.agents.all(), ...this.source.store.all<import('./model.ts').CoreAgent>('agent-launch'), ...this.source.store.all<import('./model.ts').CoreAgent>('pilot-capture')]
         .filter(agent => agent.chat === task.chat || agent.chat === task.reviewChat || agent.chat.startsWith(`${task.id}/Reviewer`))
       if (records.some(agent => this.source.agents.terminal(agent)?.state !== 'finished')) throw new Refusal('Previous task and reviewer exits must be confirmed before changing its access profile')
       if (run) {
         const owned = this.source.pilots.policy.get(run.id)!.tasks
         this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.id !== task.id && (other.pilot === run.id && other.workflow === 'working' || owned.includes(other.id) && this.busy(other.id))).length)
       }
-      if (run && !task.pilot) { await this.source.browsers?.close(task.id); await new CoreTaskRelocation(this.source).adopt(task) }
+      if (run && !task.pilot) { await new CoreTaskProcesses(this.source).stop(task, false); await new CoreTaskRelocation(this.source).adopt(task) }
       if (run && this.source.pilots.policy.live(run.id).state !== 'on') throw new Refusal('This run no longer accepts adopted tasks')
       const harness = run ? run.config.harness : this.source.settings.launch('task', task.place)
       const reviewer = run ? run.config.reviewer : this.source.settings.agent('reviewer', task.place)
@@ -473,13 +474,17 @@ export class CoreTasks {
     }
     return { held, worktree: !!block, branch: !!head }
   }
-  private async stopAgents(task: CoreTask) {
-    for (const agent of this.source.agents.all().filter(agent => agent.chat.startsWith(`${task.id}/`))) {
-      const terminal = this.source.agents.terminal(agent)
-      if (terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
-      this.source.mailbox.revoke(agent.chat)
-    }
-    await this.source.browsers?.close(task.id)
+  private async stopAgents(task: CoreTask) { await new CoreTaskProcesses(this.source).stop(task) }
+  async stop(grant: Grant, id: string) {
+    return this.change(id, async () => {
+      const task = this.get(id)
+      if (!task) throw new Refusal('No such task')
+      this.assert(grant, task)
+      if (!['merged', 'closed'].includes(task.workflow)) { task.workflow = 'todo'; delete task.reservedAt; delete task.capacity; this.save(task) }
+      try { await this.stopAgents(task); delete task.startError; this.save(task); await this.label(task) }
+      catch (error) { task.startError = (error as Error).message; this.save(task); throw error }
+      return task
+    })
   }
   async close(task: CoreTask, force = false) { return this.change(task.id, () => this.closeNow(task, force)) }
   private async closeNow(task: CoreTask, force = false) {
@@ -627,6 +632,7 @@ export class CoreTasks {
     this.assert(grant, task)
     if (verb === 'task' && sub === 'show') return text(this.view(task))
     if (verb === 'task' && sub === 'start') return text(this.view(await this.start(grant, id, rest.slice(1).join(' ') || undefined)))
+    if (verb === 'task' && sub === 'stop') return text(this.view(await this.stop(grant, id)))
     if (verb === 'task' && sub === 'close') return text(await this.close(task, parsed.flags.has('force')))
     if (verb === 'status') {
       const left = one(parsed, 'left'), match = left?.match(/^(?:(\d+)h)?(?:(\d+)m)?$/)

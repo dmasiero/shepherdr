@@ -33,6 +33,7 @@ test('browser controls use only the owning core child, await cleanup and never r
     return terminal as T
   }
   source.core.attach = async (_terminal, stream) => {
+    expect(_terminal).toBe('t2') // A copied browser label on another address is never its private binding.
     receive = stream
     return { input(bytes: Uint8Array) {
       const command = browserOpen(key(), 'up', Buffer.from(bytes).toString().trim()) as { id: string; input: typeof inputs[number] }
@@ -75,6 +76,10 @@ test('browser controls use only the owning core child, await cleanup and never r
     expect(sentNotes[0]).not.toContain(otherShot)
     viewer.message(JSON.stringify({ type: 'take' })); await Bun.sleep(0)
     expect(inputs.filter(input => input.message?.type === 'take')).toHaveLength(1)
+    const actual = source.core.current.terminals.get('t2')!
+    ;(source.core.current.terminals as Map<string, CoreTerminal>).delete('t2')
+    ;(source.core.current.terminals as Map<string, CoreTerminal>).set('forged', { ...actual, address: 'forged' })
+    ;(source.core.current.terminals as Map<string, CoreTerminal>).set('t2', actual)
     receive!.close({ reason: 'disconnected' })
     viewer.message(JSON.stringify({ type: 'input_keyboard', eventType: 'keyDown', key: 'Enter' }))
     await Bun.sleep(0)

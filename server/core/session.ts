@@ -126,7 +126,7 @@ export class CoreSession {
         else if (old) terminals.set(p.terminal, { ...old, labels: data.labels as Record<string, string> })
         break
       case 'finished':
-        if (old) terminals.set(p.terminal, { ...old, ...data, state: 'finished', pid: null, foreground: null })
+        if (old) terminals.set(p.terminal, { ...old, ...data, state: 'finished', foreground: null })
         break
       case 'lost':
         if (old) terminals.set(p.terminal, { ...old, ...data, pid: null, foreground: null })

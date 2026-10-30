@@ -127,3 +127,21 @@ test('agent-side documented hc connect uses the same pinned framed protocol', as
     expect(await client.call('server.status')).toEqual({ connected: true })
   }, () => ({ connected: true }), true)
 })
+
+test('finished events retain process identity for confirmed cleanup, unlike a lost holder', async () => {
+  const terminal = { address: 't1', labels: {}, argv: ['agent'], cwd: '/work', created_ms: 1, pid: 123, state: 'live', cols: 80, rows: 24 }
+  await fixture(async (client, wire) => {
+    const session = new CoreSession(client.path)
+    let changed = Promise.withResolvers<void>()
+    session.onChange(view => { if (view.seq > 0) changed.resolve() })
+    const send = (seq: number, type: string) => wire.send(2, JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { seq, type, terminal: 't1', data: { reason: type === 'lost' ? 'holder_lost' : 'killed', exit_code: 129, finished_ms: 2 } } }) + '\n')
+    try {
+      await session.start()
+      send(1, 'finished'); await changed.promise
+      expect(session.current.terminals.get('t1')).toMatchObject({ state: 'finished', pid: 123, foreground: null })
+      changed = Promise.withResolvers<void>()
+      send(2, 'lost'); await changed.promise
+      expect(session.current.terminals.get('t1')?.pid).toBeNull()
+    } finally { session.stop() }
+  }, () => ({ channel: 2, seq: 0, terminals: [terminal] }))
+})
