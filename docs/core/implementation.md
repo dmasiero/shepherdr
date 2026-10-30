@@ -824,3 +824,20 @@ before cursor commit is verified and completed on retry. New identities require 
 captured bytes. It never opens a host source path from an agent. Coverage includes reconstruction, partial-write
 recovery, conflicting/gapped retries, empty resets and path/symlink escapes. Fresh scoped review round 1 found no
 findings; typecheck passed. Outer HTTP gateway, native launch and product-policy integration remain pending.
+Capture writer/client fix commit 72a51036 passed both GitHub jobs (40990598020).
+
+The outside per-agent Unix gateway is now implemented as a library, still not launched by product agents. Its
+backend receives fixed command fields/IDs, never caller chat/grant/cwd authority. Private socket ownership,
+request/response/action/concurrency bounds, all-answer public DNS validation, resolved-IP TCP, shared pre-forward
+traffic reservations and shutdown cancellation are covered by new branch tests. Initial CONNECT head bytes retain
+order; incoming stream completion waits for asynchronous metering so final bytes are not dropped on normal EOF.
+
+Proxy review round 1 found CONNECT-only routing could send another TLS name at a shared IP. A bounded first
+ClientHello/SNI guard now rejects plaintext, missing/different SNI and ECH before forwarding tunnel bytes. Structures
+were checked against [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446.html), [RFC 6066](https://www.rfc-editor.org/info/rfc6066/)
+and [RFC 9849](https://www.rfc-editor.org/rfc/rfc9849.html). The gate inspects only complete records, with bounded
+fragments/bytes/time and cancellation; a native TLS-client ClientHello case is written for CI. Encrypted HTTP Host
+and application payloads remain uninspected, matching the legacy profile's explicit destination-only limitation;
+this is not TLS interception or a claim to stop encrypted application-level domain fronting. Round 2 found no
+remaining findings against that declared TCP/TLS destination contract. Typecheck passed. Provider startup/actual
+namespace/remote/core-runtime integration is still unverified and the controls stay unoffered.
