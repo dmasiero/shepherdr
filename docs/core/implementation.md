@@ -898,3 +898,6 @@ finished process, while absence during core reconnect stays distinct from confir
 written for private identity, binding/renewal PID checks, quota failure, path mapping, both cancel orderings,
 cross-grant cancellation, oversized input, finished processes and unknown connectivity. Fresh scoped review rounds
 1 and 2 found no findings. This is dispatch assembly, not launch/task/Autopilot acceptance; no new UI proof is claimed.
+Dispatch commit fc76120f passed layout but failed core CI (40993414386): new shutdown reconciliation reached an old
+unread fixture's permission rows that omitted their required question. All dispatch regressions passed. The fixture
+now includes actual permission-card data; no production permission validation was weakened. A passing rerun is pending.
