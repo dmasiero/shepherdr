@@ -16,7 +16,8 @@ const pluginParts = (): Plugin => ({
     if (!id.startsWith('@plugins/')) return null
     const rest = id.slice('@plugins/'.length)
     const mine = at(`./user-plugins/${rest}`)
-    const compatible = pluginCatalog().some(plugin => plugin.name === rest.split('/')[0] && plugin.from === 'user' && plugin.on)
+    // Vite bundles imported helpers into node_modules/.vite-temp: pass this config's original root explicitly.
+    const compatible = pluginCatalog(at('./')).some(plugin => plugin.name === rest.split('/')[0] && plugin.from === 'user' && plugin.on)
     return this.resolve(compatible && existsSync(mine) ? mine : at(`./plugins/${rest}`), importer, { skipSelf: true })
   },
 })

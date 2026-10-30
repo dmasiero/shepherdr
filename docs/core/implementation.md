@@ -617,3 +617,9 @@ server-only fixture, client-extension visual proof, on/off switches, built-in se
 last-good fallback and full device comparison remain unverified/unimplemented. No live plugin directory was read
 or changed. Fresh scoped review round 1 reported no findings. Typecheck passed; new tests await branch CI.
 Voice commit d1bb3eff branch CI 40984454359 passed both jobs.
+
+Plugin contract CI 40984980305 passed core/protocol/plugin tests. Layout builds failed before running: Vite bundled
+`build-plugins.ts` into `.vite-temp`, so its default module-relative root pointed at `node_modules/plugins.json`.
+The resolver now passes the config's actual project root explicitly. Existing branch layout builds cover that
+integration; no local build or suite was run. The scrolled phone page also showed `core-proof` under Yours
+(`/tmp/she301-plugin-contract-yours-phone.png`).
