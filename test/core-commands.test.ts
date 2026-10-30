@@ -66,12 +66,13 @@ test('heartbeat settings return plain schedule words and plans do not enter sett
   expect(await c.cli('plan', '--step', 'Work')).toBeUndefined()
 }))
 
-test('main-home task alerts keep exact remote destination and current question actions without widening mutation scope', () => fixture(async f => {
+test('main-home task alerts keep current question actions while core reconnects without widening mutation scope', () => fixture(async f => {
   const home = f.actor('home'), project = f.actor('app'), worker = f.actor('remote', 'task')
   const task = { id: 'box/REMOTE-1', localId: 'REMOTE-1', place: 'remote', machine: 'remote', chat: worker.agent.chat, name: 'Remote task', kind: 'claude', workflow: 'working', base: 'main', age: 'now' } as CoreTask
   f.source.store.set('task', task.id, task)
   const question = { id: 'question', title: 'Allow the harmless step?', choices: [{ label: 'Allow once' }, { label: 'Deny' }] }
   f.source.store.set('question', question.id, { id: question.id, chat: task.chat, grant: worker.agent.grant, question, answered: false })
+  f.source.connected = () => false // an authenticated unanswered card still waits on the human
   const alerts: Alert[] = []
   f.source.requirePlugin = () => {}
   f.source.on('alert', alert => alerts.push(alert))

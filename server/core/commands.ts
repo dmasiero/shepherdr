@@ -47,7 +47,7 @@ export class CoreCommands {
       this.source.emit('alert', { id: randomUUID(), from: about ? 'Shepherdr' : this.source.store.get<string>('name', agent.space) || this.source.space(agent.space)!.name,
         title: about?.title || clip(title, TITLE_MAX), body: clip(about ? [about.body, [title, body].filter(Boolean).join(': ')].join('\n') : body, BODY_MAX),
         go: { place: task?.place ?? agent.space, ...(task ? { task: task.id } : {}), ...(question ? { focus: question.id } : {}) },
-        ...(task && (agent.role === 'task' || status === 'need' || status === 'ready') ? { tag: task.id, task: true as const } : {}),
+        ...(task && (agent.role === 'task' || !!question || status === 'need' || status === 'ready') ? { tag: task.id, task: true as const } : {}),
         ...(task && question ? { card: { chat: task.chat, question: question.id, choices: quickChoices(question) } } : {}) })
       return result('Alert sent')
     }
