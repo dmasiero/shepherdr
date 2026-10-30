@@ -11,7 +11,7 @@ import { CoreTaskProcesses } from './task-processes.ts'
 import { taskOptions, validateTaskSettings } from './task-options.ts'
 import { CLI_NAME, kindOf } from './settings.ts'
 import { CoreForgeGit } from './forge.ts' // fork: GitHub or Gitea pull requests (forge.ts)
-import { mergedEarlier, newPrText } from './follow-up.ts' // fork: Gitea follow-up pull requests
+import { mergedEarlier, newPrText, pushLease } from './follow-up.ts' // fork: Gitea follow-up pull requests
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import type { CorePilotRun } from './pilot-policy.ts'
@@ -557,7 +557,8 @@ export class CoreTasks {
     const repo = { machine: task.machine, folder: task.folder }
     const remote = await this.git.remote(repo)
     if (!remote) throw new Refusal('This task has no GitHub origin')
-    task.pushedHead = await this.git.pushTaskBranch(repo, task.branch, task.pushedHead); this.save(task)
+    // fork: after a merge on Gitea, its branch may be where the merge left it, or deleted (follow-up.ts)
+    task.pushedHead = await this.git.pushTaskBranch(repo, task.branch, await pushLease(this.git, task)); this.save(task)
     let pr = await this.git.findPullRequest(repo, task.branch, task.base)
     if (!pr) {
       // fork: through the repo's forge (forge.ts); a Gitea task whose last pull request merged opens a follow-up

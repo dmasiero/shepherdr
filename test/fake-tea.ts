@@ -31,6 +31,8 @@ export interface FakeGitea {
   logins?: { name: string; url: string; ssh_host: string }[]
   /** the login's token is refused (GET user answers 401) */
   refused?: boolean
+  /** Gitea deletes a pull request's branch once it merges it */
+  deleteBranches?: boolean
   prs: FakeGiteaPr[]
   /** the commit statuses on any pull request's head, as Gitea lists them */
   statuses?: { context: string; status: string; target_url?: string }[]
@@ -121,8 +123,10 @@ if (import.meta.main) {
     }
   }
   const repo = `repos/${st.repo}`
-  const json = (p: FakeGiteaPr) => {
-    const at = p.state === 'open' ? headOf(p.head) : p.at
+  // As Gitea 28 does: its list names a closed pull request's head where it closed, and its answer for one pull
+  // request names its branch's tip, wherever that went since (refs/pull/<n>/head keeps where it closed).
+  const json = (p: FakeGiteaPr, one = false) => {
+    const at = p.state === 'open' || one && headOf(p.head) ? headOf(p.head) : p.at
     // a pull request whose branch is gone: Gitea names its head by the pull request, and keeps the branch as its label
     const ref = headOf(p.head) ? p.head : `refs/pull/${p.number}/head`
     // Gitea's mergeable: the branch merges into its base without a conflict
@@ -143,7 +147,7 @@ if (import.meta.main) {
     const all = st.prs.filter((p) => state === 'all' || p.state === state).reverse()
     const limit = Number(q.get('limit') ?? 30)
     const page = Number(q.get('page') ?? 1)
-    answer(200, all.slice((page - 1) * limit, page * limit).map(json))
+    answer(200, all.slice((page - 1) * limit, page * limit).map((p) => json(p)))
   }
   if (path === `${repo}/pulls` && method === 'POST') {
     if (!headOf(body!.head)) answer(422, { message: `branch ${body!.head} does not exist` })
@@ -159,7 +163,7 @@ if (import.meta.main) {
       if (body!.title !== undefined) p.title = body!.title
       if (body!.state === 'closed' && p.state === 'open') Object.assign(p, { state: 'closed', at: headOf(p.head) })
     }
-    answer(200, json(p))
+    answer(200, json(p, true))
   }
   if ((m = path.match(/^repos\/[^/]+\/[^/]+\/pulls\/(\d+)\/merge$/)) && method === 'POST') {
     const p = pr(m[1]) ?? answer(404, { message: 'pull request does not exist' })!
@@ -174,7 +178,8 @@ if (import.meta.main) {
       g('clone', '-q', '-b', p.base, st.origin, '.')
       g('fetch', '-q', 'origin', p.head)
       try {
-        g('merge', '--squash', 'FETCH_HEAD')
+        if (body!.Do === 'squash') g('merge', '--squash', 'FETCH_HEAD')
+        else g('-c', 'user.email=gitea@t', '-c', 'user.name=Gitea', 'merge', '--no-ff', '--no-commit', 'FETCH_HEAD')
       } catch {
         // Gitea refuses a pull request that conflicts with "try again later", and marks it not mergeable
         rmSync(tmp, { recursive: true, force: true })
@@ -182,11 +187,16 @@ if (import.meta.main) {
       }
       g('-c', 'user.email=gitea@t', '-c', 'user.name=Gitea', 'commit', '-q', '-m', `${body!.MergeTitleField ?? p.title}\n\n${body!.MergeMessageField ?? ''}`.trim())
       g('push', '-q', 'origin', `HEAD:refs/heads/${p.base}`)
+      if (st.deleteBranches) g('push', '-q', 'origin', `:refs/heads/${p.head}`)
       Object.assign(p, { state: 'closed', merged: true, at, mergeCommit: g('rev-parse', 'HEAD').trim() })
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
     answer(200, undefined)
+  }
+  if ((m = path.match(/^repos\/[^/]+\/[^/]+\/git\/refs\/pull\/(\d+)\/head$/))) {
+    const p = pr(m[1]) ?? answer(404, { message: 'reference does not exist' })!
+    answer(200, [{ ref: `refs/pull/${p.number}/head`, object: { type: 'commit', sha: p.state === 'open' ? headOf(p.head) : p.at } }])
   }
   if ((m = path.match(/^repos\/[^/]+\/[^/]+\/issues\/(\d+)\/comments$/)) && method === 'POST') {
     const list = ((st.api ??= {})[path] ??= []) as unknown[]

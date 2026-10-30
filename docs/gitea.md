@@ -3,8 +3,8 @@
 Fork only ([FORK.md](../FORK.md)). A space whose remote is on a Gitea server gets its pull requests there, through
 `tea`, Gitea's command line, as a space on GitHub gets them through `gh`. Everything a task does with a pull request
 works the same: `shepherdr pr` pushes the branch and opens a draft, `shepherdr ready` writes the summary into it and
-readies it, `shepherdr checks` shows its checks, `shepherdr merge` squash-merges it at the commit this machine has (the
-branch is kept, as on GitHub), news on it (a failed check, a review, a comment) wakes its agent, a pull request merged
+readies it, `shepherdr checks` shows its checks, `shepherdr merge` merges it with a merge commit at the commit this
+machine has (the branch is kept; on GitHub, upstream squash-merges), news on it (a failed check, a review, a comment) wakes its agent, a pull request merged
 on Gitea by hand is seen and the task marked merged, and the task panel shows it with its checks. The task's `pr`
 (`{number, url}`) is the Gitea pull request, its link ending in `/pulls/<n>`. What Shepherdr tells the agents and the
 coordinator about it (the skills, a brief's Settings block, refusals, news) names Gitea, not GitHub.
@@ -46,4 +46,9 @@ gitea.example.org …`). A login Gitea refuses (HTTP 401), or a server not answe
   request; the merge stops there, to be readied and merged as any other. With nothing new since, that merge was the
   task's. On GitHub, upstream's behavior stays.
 - **Main going red** is watched on GitHub only for now: a Gitea space's base branch is not.
+- **A merged pull request's head** is read from its `refs/pull/<n>/head`, where Gitea left it at the merge: Gitea's
+  answer for a single pull request names its branch's tip, which may have moved on since.
+- **After a merge, the branch** may still be where the merge left it, or gone if Gitea deletes merged branches: either
+  way the next push of the task's branch (for its follow-up) goes ahead. Any other remote update is refused, as on
+  GitHub.
 - Gitea has no merge queue and its auto-merge is never set: Shepherdr merges by itself.

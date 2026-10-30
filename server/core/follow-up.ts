@@ -35,14 +35,27 @@ export async function mergedEarlier(git: CoreForgeGit, task: FollowTask, pr: For
   const worktree = { machine: task.machine, folder: task.folder }
   if (pr.state !== 'MERGED' || pr.headRefOid === head || pr.baseRefName !== task.base || !await git.gitea(worktree)) return undefined
   if (!await workSince(git, task, pr, head)) return { landed: true as const }
-  // The remote branch may still be where the merged pull request left it (pushed by hand), or gone (Gitea deleted it
-  // after the merge): either is known, so the push lease takes it. Anything else is someone else's, and refused.
-  const ref = `refs/heads/${task.branch}`, listed = (await git.run(worktree, ['ls-remote', '--heads', 'origin', ref], 60)).split('\n').find(line => line.endsWith(`\t${ref}`))?.split('\t')[0] ?? ''
-  const pushed = await git.pushTaskBranch(worktree, task.branch, [pr.headRefOid, ''].includes(listed) ? listed || undefined : task.pushedHead)
+  const pushed = await git.pushTaskBranch(worktree, task.branch, await pushLease(git, task, pr))
   await git.createPr(worktree, remote, { base: task.base, branch: task.branch, title: `${task.id}: ${task.name}${MARK}`, body: followUpBody(pr, task.said || task.desc || task.name) })
   const opened = await git.pullRequest(worktree, task.branch, false)
   if (opened.state !== 'OPEN' || opened.number === pr.number) throw Error(`PR #${pr.number} was merged already and ${task.branch} has work since, but Gitea did not show its follow-up pull request`)
   return { opened: { number: opened.number, url: opened.url }, pushed, said: `PR #${pr.number} was merged already at an earlier commit, and ${task.branch} has work since that it did not bring in: opened follow-up PR #${opened.number} (${opened.url}) with it. Report ready again, then merge.` }
+}
+
+/** the push lease for the task's branch. After its Gitea pull request merged, the remote branch may still be where
+ *  that merge left it, or gone (Gitea deleted it): either is known, so the lease takes it. Anything else, and every
+ *  other case, is the task's own last push, as upstream: someone else's update is refused. */
+export async function pushLease(git: CoreForgeGit, task: FollowTask, merged?: ForgePr) {
+  const worktree = { machine: task.machine, folder: task.folder }
+  if (!merged) {
+    const gitea = task.pr && await git.gitea(worktree)
+    if (!gitea || !task.pr) return task.pushedHead
+    merged = await gitea.pull(task.pr.number)
+  }
+  if (merged.state !== 'MERGED') return task.pushedHead
+  const ref = `refs/heads/${task.branch}`
+  const listed = (await git.run(worktree, ['ls-remote', '--heads', 'origin', ref], 60)).split('\n').find(line => line.endsWith(`\t${ref}`))?.split('\t')[0] ?? ''
+  return listed === '' ? undefined : listed === merged.headRefOid ? listed : task.pushedHead
 }
 
 /** a new task pull request's title and body: a follow-up's when the task's last one on Gitea was merged */

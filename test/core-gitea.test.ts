@@ -124,7 +124,7 @@ test('forge choice: GitHub origins never ask tea; a Gitea host is Gitea; shepher
   await expect(noTea().giteaTarget(location)).rejects.toThrow(TEA_MISSING)
 }))
 
-test('a task on Gitea: draft opened, readied with its summary, held on checks, squash-merged at its head and synced', async () => withGitea(async (world) => {
+test('a task on Gitea: draft opened, readied with its summary, held on checks, merged with a merge commit at its head and synced', async () => withGitea(async (world) => {
   const { tasks, task, grant, repo, worktree, tea } = world
   const pr = await tasks.pr(grant, task.id)
   expect(pr).toEqual({ number: 1, url: 'https://gitea.test/o/r/pulls/1' })
@@ -143,7 +143,8 @@ test('a task on Gitea: draft opened, readied with its summary, held on checks, s
   const merged = await tasks.merge(grant, task.id)
   const gitea = tea.read()
   expect(gitea.prs[0]).toMatchObject({ state: 'closed', merged: true })
-  expect(gitea.calls.find(call => call.path.endsWith('/pulls/1/merge'))?.body).toEqual({ Do: 'squash', head_commit_id: run(worktree, 'rev-parse', 'HEAD'), delete_branch_after_merge: false })
+  expect(gitea.calls.find(call => call.path.endsWith('/pulls/1/merge'))?.body).toEqual({ Do: 'merge', head_commit_id: run(worktree, 'rev-parse', 'HEAD'), delete_branch_after_merge: false })
+  expect(run(world.origin, 'rev-list', '--parents', '-n', '1', gitea.prs[0].mergeCommit!).split(' ')).toHaveLength(3) // a merge commit
   expect(merged).toMatchObject({ workflow: 'merged', mergeCommit: gitea.prs[0].mergeCommit, baseSyncPending: true })
   await tasks.syncBase(task.id)
   expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('after\n')
@@ -226,6 +227,45 @@ test('merge finds an unrecorded merged pull request with nothing new since: that
   await readyAndApproved(world)
   await expect(tasks.merge(grant, task.id)).resolves.toMatchObject({ workflow: 'merged', mergeCommit: tea.read().prs[0].mergeCommit })
   expect(tea.read().prs.length).toBe(1)
+}))
+
+test('a merged pull request’s head is where it merged, not where its branch went since: later work is no merge', async () => withGitea(async (world) => {
+  const { tasks, task, grant, worktree, tea } = world
+  await mergedByHand(world)
+  const merged = run(worktree, 'rev-parse', 'HEAD')
+  writeFileSync(join(worktree, 'more.txt'), 'more\n'); run(worktree, 'add', '.'); run(worktree, 'commit', '-m', 'more')
+  run(worktree, 'push', '-q', 'origin', `HEAD:refs/heads/${task.branch}`) // pushed by hand, past the merge
+  expect((await tasks.git.pullRequest({ machine: task.machine, folder: worktree }, task.branch)).headRefOid).toBe(merged)
+  await readyAndApproved(world)
+  await expect(tasks.merge(grant, task.id)).rejects.toThrow('opened follow-up PR #2')
+  expect(tasks.get(task.id)?.workflow).toBe('ready')
+  expect(tea.read().prs[1]).toMatchObject({ state: 'open', title: 'WIP: DEMO-1: Example (follow-up)' })
+}))
+
+test('a branch Gitea deleted after its merge: shepherdr pr pushes it again and opens the follow-up', async () => withGitea(async (world) => {
+  const { tasks, task, grant, worktree, tea, origin } = world
+  tea.write({ ...tea.read(), deleteBranches: true })
+  await tasks.pr(grant, task.id)
+  await readyAndApproved(world)
+  await expect(tasks.merge(grant, task.id)).resolves.toMatchObject({ workflow: 'merged' })
+  expect(run(origin, 'branch', '--list', task.branch)).toBe('')
+  // The same branch again, as an agent going on would (the task record is reopened for the test).
+  const source = (tasks as unknown as { source: CoreSource }).source
+  source.store.set('task', task.id, { ...tasks.get(task.id)!, workflow: 'working', status: 'work' })
+  writeFileSync(join(worktree, 'more.txt'), 'more\n'); run(worktree, 'add', '.'); run(worktree, 'commit', '-m', 'more')
+  expect(await tasks.pr(grant, task.id)).toEqual({ number: 2, url: 'https://gitea.test/o/r/pulls/2' })
+  expect(tea.read().prs[1]).toMatchObject({ title: 'WIP: DEMO-1: Example (follow-up)', state: 'open' })
+}))
+
+test('a task’s closed pull request is found past 100 closed ones, newest first', async () => withGitea(async (world) => {
+  const { tasks, task, worktree, tea } = world
+  await mergedByHand(world)
+  const gitea = tea.read(), ours = gitea.prs[0]
+  const others = Array.from({ length: 120 }, (_, n) => ({ ...ours, number: n + 2, head: `other/${n}`, title: `Other ${n}`, mergeCommit: undefined }))
+  // The list is newest first (the fake lists them backwards): ours, merged last, comes first.
+  tea.write({ ...gitea, prs: [...others, { ...ours, number: 122 }] })
+  const found = await tasks.git.pullRequest({ machine: task.machine, folder: worktree }, task.branch, false)
+  expect(found).toMatchObject({ number: 122, state: 'MERGED' })
 }))
 
 test('GitHub keeps upstream’s refusal for a pull request merged at an earlier commit', async () => withGitea(async (world) => {

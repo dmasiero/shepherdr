@@ -2,7 +2,8 @@
 // shapes 2.1's GitHub calls do (git.ts, github-pr.ts), so tasks do with a Gitea repo what they do with a GitHub one
 // (forge.ts picks which). A draft is Gitea's "WIP:" title; checks are the commit statuses on the pull request's head
 // (Gitea Actions report as those), with any its base's branch protection requires and that have not shown yet counted
-// as pending. FORK.md, docs/gitea.md.
+// as pending; a merge is a merge commit. A closed pull request's head is its refs/pull/<n>/head: Gitea's answer for one
+// pull request names its branch's tip, which may have moved on since. FORK.md, docs/gitea.md.
 import type { PrCheck, PullRequest } from '../../shared/types.ts'
 import type { GitHubComment } from './github-pr.ts'
 import { okAnswer, said, type Answer } from './tea.ts'
@@ -41,8 +42,9 @@ export class CoreGitea {
     if (!okAnswer(answer)) throw Error(said(answer))
     return answer
   }
-  /** a list, page by page, at most `pages` of them; more than that is unread, never taken as all */
-  private async list<T>(path: string, pages = 5): Promise<T[]> {
+  /** a list, page by page, at most `pages` of them; more than that is unread, never taken as all, unless `newest`
+   *  says the first pages (newest first) are all that is wanted */
+  private async list<T>(path: string, pages = 5, newest = false): Promise<T[]> {
     const out: T[] = []
     for (let page = 1; page <= pages; page++) {
       const rows = await this.get<T[]>(`${path}${path.includes('?') ? '&' : '?'}limit=${PAGE}&page=${page}`)
@@ -50,6 +52,7 @@ export class CoreGitea {
       out.push(...rows)
       if (rows.length < PAGE) return out
     }
+    if (newest) return out
     throw Error('Too many Gitea results for one bounded read')
   }
   /** a link Gitea gave without its server (/owner/repo/actions/runs/1/jobs/0), whole */
@@ -65,15 +68,19 @@ export class CoreGitea {
   }
   /** its branch: Gitea calls a merged one's whose branch is gone refs/pull/<n>/head, and keeps the name as its label */
   private branchOf(pr: RawPr) { return pr.head?.ref && !pr.head.ref.startsWith('refs/pull/') ? pr.head.ref : pr.head?.label ?? '' }
-  /** the branch's pull requests: its open ones, else its closed ones, the newest first */
+  /** the branch's pull requests: its open ones, else its closed ones among the 200 updated last, the newest first */
   private async prsOf(branch: string): Promise<RawPr[]> {
     const open = (await this.list<RawPr>(`${this.root}/pulls?state=open`)).filter(pr => this.branchOf(pr) === branch)
     if (open.length) return open
-    return (await this.list<RawPr>(`${this.root}/pulls?state=closed&sort=recentupdate`, 2).catch(error => {
-      // Two pages of recent closed pull requests are enough to find a task's; past them it has none here.
-      if (String(error.message).startsWith('Too many')) return []
-      throw error
-    })).filter(pr => this.branchOf(pr) === branch)
+    return (await this.list<RawPr>(`${this.root}/pulls?state=closed&sort=recentupdate`, 4, true)).filter(pr => this.branchOf(pr) === branch)
+  }
+  /** where a closed pull request's head stood when it closed: refs/pull/<n>/head, which Gitea moves only while open */
+  private async closedHead(pr: RawPr): Promise<RawPr> {
+    if (pr.state === 'open') return pr
+    const refs = await this.get<{ ref?: string; object?: { sha?: string } }[] | { ref?: string; object?: { sha?: string } }>(`${this.root}/git/refs/pull/${pr.number}/head`)
+    const sha = (Array.isArray(refs) ? refs : [refs]).find(ref => ref?.ref === `refs/pull/${pr.number}/head`)?.object?.sha
+    if (!sha || !SHA.test(sha)) throw Error(`Gitea did not return the head of closed PR #${pr.number}`)
+    return { ...pr, head: { ...pr.head, sha } }
   }
   /** an open pull request from `branch` into `base`, as git.ts findPullRequest: none, or exactly one */
   async find(branch: string, base: string) {
@@ -85,11 +92,13 @@ export class CoreGitea {
   async view(branch: string, checks = true): Promise<ForgePr> {
     const prs = await this.prsOf(branch)
     if (prs.filter(pr => pr.state === 'open').length > 1) throw Error('Gitea did not return an unambiguous task pull request')
-    const pr = prs[0]
-    if (!pr) throw Error(`no pull requests found for branch "${branch}"`)
-    return this.shape(pr, checks && pr.head?.sha ? await this.checks(pr.head.sha, pr.base?.ref ?? '') : [])
+    if (!prs[0]) throw Error(`no pull requests found for branch "${branch}"`)
+    const pr = await this.closedHead(prs[0])
+    return this.shape(pr, checks && pr.state === 'open' && pr.head?.sha ? await this.checks(pr.head.sha, pr.base?.ref ?? '') : [])
   }
   async raw(number: number) { return this.get<RawPr>(`${this.root}/pulls/${number}`) }
+  /** one pull request by number, its head where it closed for a closed one */
+  async pull(number: number) { return this.shape(await this.closedHead(await this.raw(number))) }
   /** open a pull request from the pushed branch; a draft is its title with WIP: in front */
   async create(o: { branch: string; base: string; title: string; body: string; draft: boolean }) {
     const title = o.draft && !isWip(o.title) ? `WIP: ${o.title}` : o.title
@@ -102,10 +111,10 @@ export class CoreGitea {
     const pr = await this.raw(number)
     if (isWip(pr.title)) await this.send('PATCH', `${this.root}/pulls/${number}`, { title: withoutWip(pr.title) })
   }
-  /** squash-merge while the head is still `head`, as gh pr merge --squash --match-head-commit; the branch is kept.
-   *  For a conflict Gitea only says to try later: its mergeable flag says it conflicts. */
+  /** merge with a merge commit while the head is still `head` (as gh pr merge --match-head-commit); the branch is
+   *  kept. For a conflict Gitea only says to try later: its mergeable flag says it conflicts. */
   async merge(number: number, head: string) {
-    const answer = await this.api('POST', `${this.root}/pulls/${number}/merge`, { Do: 'squash', head_commit_id: head, delete_branch_after_merge: false }, 120)
+    const answer = await this.api('POST', `${this.root}/pulls/${number}/merge`, { Do: 'merge', head_commit_id: head, delete_branch_after_merge: false }, 120)
     if (okAnswer(answer)) return
     if (answer.code === 405) {
       const pr = await this.raw(number).catch(() => undefined)
