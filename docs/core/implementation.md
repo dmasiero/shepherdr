@@ -850,3 +850,21 @@ maps them into the private captured tree; it never opens the supplied host path 
 Fresh scoped review round 1 found no findings. These functions are not yet wired to source dispatch/launches;
 permission cancellation, actor authorization at dispatch, actual containment/provider runs and product controls
 remain pending, so this does not establish a working Autopilot feature.
+
+Backend/path-boundary commit 2d746415 passed both GitHub jobs (40991997576). Fresh runtime preparation now copies
+only the chosen provider's bounded, owned login/configuration files to a new private home; sanitizes executable
+configuration; and copies an explicit inside-helper list with no core backend/credential. Host login files are not
+overwritten. Failed preparation removes its own new directories. Fresh scoped preparation review found no findings.
+
+The outside runtime library now joins that private home with the real Unix gateway and capture writer, checks a
+private lease before spawn and periodically, and launches only through bubblewrap. Revocation kills its owned
+detached process group. An independent coreutils timeout enforces the shared deadline even if the wrapper's event
+loop is busy. Normal cleanup removes the gateway and retains native history. Runtime review rounds 1 and 2 found
+no findings; process-lifecycle regression cases use an explicitly fake bwrap and do not claim namespace proof.
+
+A harmless manual run used the actual library, real `/usr/bin/bwrap`, a disposable read-only project, empty provider
+home and `/bin/sh` as a stand-in executable. It returned `NAMESPACE_BOUNDARY_OK`: an outside private marker and the
+isolated core socket were absent, the core credential env was empty, project modification failed read-only with
+the original bytes unchanged, private HOME writes worked, and connecting to the real preview's host loopback port
+17887 was refused. Temporary files were removed. Its lease/accounting callbacks were isolated fakes, so this only
+proves this Linux mount/network boundary, not provider startup, product policy or working Autopilot.
