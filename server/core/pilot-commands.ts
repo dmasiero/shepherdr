@@ -60,21 +60,19 @@ export class CorePilotCommands {
       return text(await this.source.artifacts.cli(agent, args, this.source.tasks.forChat(agent.chat)?.folder ?? this.source.space(agent.space)!.folder))
     }
     if (command === 'task' && op === 'add') return this.source.tasks.cli(grant, args)
-    if (command === 'task' && op === 'list') return text(this.source.tasks.list(grant, parsed.flags.has('archived'), one(parsed, 'space')).filter(task => task.place === run.place && task.machine === run.machine && (agent.role === 'coordinator' || task.pilot === run.id && run.tasks.includes(task.id))).map(task => this.source.tasks.view(task)))
+    if (command === 'task' && op === 'list') return text(this.source.tasks.listPage(this.source.tasks.list(grant, parsed.flags.has('archived'), one(parsed, 'space')).filter(task => task.place === run.place && task.machine === run.machine && (agent.role === 'coordinator' || task.pilot === run.id && run.tasks.includes(task.id))), one(parsed, 'after')))
     const target = command === 'checkpoint' ? this.source.tasks.forChat(agent.chat) : this.source.tasks.resolve(grant, command === 'task' ? words[2] : op)
     if (command === 'task' && op === 'start' && agent.role === 'coordinator' && target?.place === run.place && target.machine === run.machine) return this.source.tasks.cli(grant, args)
     if (command === 'task' && ['show', 'chat'].includes(op) && agent.role === 'coordinator' && target?.place === run.place && target.machine === run.machine) {
-      if (op === 'show') return text(this.source.tasks.view(target))
+      if (op === 'show') return this.source.tasks.cli(grant, args)
       const limit = Number(one(parsed, 'limit') || 20)
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Refusal('Choose 1 to 100 chat lines')
-      return text(this.source.logs.messages(target.chat).slice(-limit).map(message => ({ who: message.who, text: message.text?.slice(0, 2000), at: message.at })))
+      return text(this.source.tasks.chatPage(target, limit, one(parsed, 'before')))
     }
     if (!target || target.pilot !== run.id || !run.tasks.includes(target.id) || target.place !== run.place || target.machine !== run.machine) throw new Refusal('This run does not own that task')
-    if (command === 'task' && op === 'show') return text(this.source.tasks.view(target))
+    if (command === 'task' && op === 'show') return this.source.tasks.cli(grant, args)
     if (command === 'task' && op === 'chat') {
       const limit = Number(one(parsed, 'limit') || 20)
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Refusal('Choose 1 to 100 chat lines')
-      return text(this.source.logs.messages(target.chat).slice(-limit).map(message => ({ who: message.who, text: message.text?.slice(0, 2000), at: message.at })))
+      return text(this.source.tasks.chatPage(target, limit, one(parsed, 'before')))
     }
     if (agent.role === 'task' && target.chat !== agent.chat) throw new Refusal('A worker may change only its own task')
     if (command === 'checkpoint') {

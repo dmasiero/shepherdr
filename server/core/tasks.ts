@@ -1,6 +1,6 @@
 import { findCoreSpace } from './space-names.ts'
 import { CoreError, Refusal } from './client.ts'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { SUMMARY_MAX, TITLE_MAX, STATUS_MAX, slugify, type Action, type Question, type Task } from '../../shared/types.ts'
@@ -14,7 +14,7 @@ import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import type { CorePilotRun } from './pilot-policy.ts'
 import type { Grant } from './mailbox.ts'
-import { one, parseArgs, summaryOpts } from '../live/args.ts'
+import { one, parseArgs, summaryOpts, type Parsed } from '../live/args.ts'
 import type { LogEvent } from '../live/readers/types.ts'
 import { reserveTaskId } from './ids.ts'
 import { taskDependencies } from './dependencies.ts'
@@ -687,16 +687,76 @@ export class CoreTasks {
     } finally { this.ticking = false }
   }
 
-  resolve(grant: Grant, rawId: string | undefined) {
+  private readScope(grant: Grant) {
     const caller = this.source.agents.get(grant.chat)
-    const short = this.all().filter(task => task.place === caller?.space && (/^\d+$/.test(rawId || '') ? task.id.endsWith(`-${rawId}`) : task.localId === rawId))
-    if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in the space')
+    if (!caller || caller.launch !== grant.session || caller.grant !== grant.id || caller.machine !== grant.machine) throw new Refusal('This session is no longer current')
+    const home = this.source.space(caller.space)?.home && caller.role === 'coordinator' && !caller.pilot
+    const global = home && caller.machine === this.source.localMachineId()
+    return { caller, allows: (place: string, machine: string) => !!(global || home && machine === caller.machine || machine === caller.machine && place === caller.space) }
+  }
+  private readable(grant: Grant) {
+    const { allows } = this.readScope(grant)
+    return this.all().filter(task => !this.source.store.get<CoreSpace>('space', task.place)?.removed && allows(task.place, task.machine))
+  }
+
+  resolve(grant: Grant, rawId: string | undefined) {
+    const readable = this.readable(grant), exact = readable.find(task => task.id === rawId)
+    if (exact) return exact
+    const short = readable.filter(task => /^\d+$/.test(rawId || '') ? task.id.endsWith(`-${rawId}`) : task.localId === rawId)
+    if (short.length > 1) throw new Refusal('Use the full task ID; this number occurs more than once in your scope')
     return this.get(short[0]?.id || rawId || '')
   }
   list(grant: Grant, archived = false, selected?: string) {
-    const caller = this.source.agents.get(grant.chat)
-    if (selected && selected !== caller?.space && selected !== (caller && this.source.space(caller.space))?.name && selected !== (caller && this.source.store.get<string>('name', caller.space))) throw new Refusal('This session can list only its own space')
-    return this.all().filter(task => task.place === caller?.space && task.machine === caller?.machine && !!task.archived === archived)
+    let tasks = this.readable(grant)
+    if (selected) {
+      const { caller, allows } = this.readScope(grant)
+      const places = new Set([...tasks.map(task => task.place), ...this.source.store.all<CoreSpace>('space').filter(space => !space.removed && allows(space.id, space.machine)).map(space => space.id)])
+      places.add(caller.space)
+      const matches = [...places].filter(id => id === selected || this.source.space(id)?.name === selected || this.source.store.get<string>('name', id) === selected)
+      if (matches.length !== 1) throw new Refusal('Choose an unambiguous space within this session’s scope')
+      tasks = tasks.filter(task => task.place === matches[0])
+    }
+    return tasks.filter(task => !!task.archived === archived)
+  }
+  listPage(tasks: CoreTask[], after?: string) {
+    const start = after ? tasks.findIndex(task => task.id === after) + 1 : 0
+    if (after && !start) throw new Refusal('That list cursor changed; read the first page again')
+    const rows: { id: string; name: string; status: string; place: string; machine: string; archived?: number; pinned?: number; sub?: string }[] = []
+    for (const task of tasks.slice(start, start + 50)) {
+      const row = { id: task.id, name: task.name.slice(0, TITLE_MAX), status: this.view(task).status, place: task.place, machine: task.machine,
+        archived: task.archived, pinned: task.pinned, sub: (task.capacity || task.report?.msg || task.startError)?.slice(0, 200) }
+      if (rows.length && Buffer.byteLength(JSON.stringify([...rows, row])) > 24000) break
+      rows.push(row)
+    }
+    return { tasks: rows, total: tasks.length, next: start + rows.length < tasks.length ? rows.at(-1)?.id : undefined }
+  }
+  private details(task: CoreTask, parsed?: Parsed) {
+    const value = this.view(task), json = JSON.stringify(value), bytes = Buffer.from(json), raw = parsed && one(parsed, 'from')
+    if (raw === undefined && bytes.length <= 24000) return value
+    const from = raw === undefined ? 0 : Number(raw), revision = createHash('sha256').update(bytes).digest('hex')
+    if (!Number.isSafeInteger(from) || from < 0 || from > bytes.length || from < bytes.length && (bytes[from] & 0xc0) === 0x80) throw new Refusal('Use the returned nextFrom byte offset')
+    if (from && one(parsed!, 'revision') !== revision) throw new Refusal('Task details changed; read from 0 again with the new revision')
+    let end = Math.min(bytes.length, from + 8192)
+    while (end < bytes.length && end > from && (bytes[end] & 0xc0) === 0x80) end--
+    return { id: task.id, workflow: task.workflow, status: value.status, state: value.state, data: bytes.subarray(from, end).toString('utf8'), from, totalBytes: bytes.length, revision, nextFrom: end < bytes.length ? end : undefined }
+  }
+  chatPage(task: CoreTask, limit: number, before?: string) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Refusal('Choose 1 to 100 chat lines')
+    const all = this.source.logs.messages(task.chat), cursor = (id: string) => createHash('sha256').update(id).digest('hex')
+    const index = before ? all.findIndex(message => cursor(message.id) === before) : all.length
+    if (index < 0) throw new Refusal('That chat cursor changed; read the latest page again')
+    const messages: object[] = []
+    let first = index
+    for (let i = index - 1; i >= Math.max(0, index - limit); i--) {
+      const message = all[i]!, text = message.text?.slice(0, 2000)
+      const row = { id: message.id.slice(0, 256), cursor: cursor(message.id), who: message.who, text, at: message.at,
+        textTruncated: !!message.text && message.text.length > 2000,
+        ...(message.file ? { file: { name: message.file.name.slice(0, 180), path: message.file.path.slice(0, 1024) }, fileTruncated: message.file.name.length > 180 || message.file.path.length > 1024 } : {}),
+        ...(message.artifact ? { artifact: { id: message.artifact.id.slice(0, 128), v: message.artifact.v } } : {}) }
+      if (messages.length && Buffer.byteLength(JSON.stringify([row, ...messages])) > 24000) break
+      messages.unshift(row); first = i
+    }
+    return { messages, total: all.length, before: first > 0 ? cursor(all[first]!.id) : undefined }
   }
   async cli(grant: Grant, args: string[]): Promise<{ out: string; code: number }> {
     const parsed = parseArgs(args), [verb, sub, ...rest] = parsed.words
@@ -710,12 +770,18 @@ export class CoreTasks {
       return text(`${task.id}: ${task.name}\nBranch: ${task.branch}\nWorktree: ${task.folder}\nCore terminal: ${this.source.agents.get(task.chat)?.terminal || 'starting'}`)
     }
     if (verb === 'task' && (sub === 'list' || !sub)) {
-      return text(this.list(grant, parsed.flags.has('archived'), one(parsed, 'space')).map(task => this.view(task)))
+      return text(this.listPage(this.list(grant, parsed.flags.has('archived'), one(parsed, 'space')), one(parsed, 'after')))
     }
     const rawId = verb === 'task' ? rest[0] : sub
     const task = this.resolve(grant, rawId)
     const id = task?.id ?? rawId
     if (!task) throw new Refusal('No such task or unsupported task command')
+    if (verb === 'task' && ['show', 'chat'].includes(sub)) {
+      if (!this.readable(grant).some(item => item.id === task.id)) throw new Refusal('This session cannot read that task')
+      if (sub === 'show') return text(this.details(task, parsed))
+      const limit = Number(one(parsed, 'limit') || 20)
+      return text(this.chatPage(task, limit, one(parsed, 'before')))
+    }
     this.assert(grant, task)
     if (verb === 'task' && ['close', 'delete', 'archive', 'unarchive', 'pause', 'pin', 'unpin'].includes(sub)) {
       if (this.source.agents.get(grant.chat)?.role !== 'coordinator') throw new Refusal('Only a coordinator changes this task control, when the human asks')
@@ -725,9 +791,8 @@ export class CoreTasks {
         : sub === 'pin' || sub === 'unpin' ? { type: 'pin' as const, on: sub === 'pin' } : { type: 'pause' as const }
       return text(await this.act({ ...action, chat: task.chat }))
     }
-    if (verb === 'task' && sub === 'show') return text(this.view(task))
-    if (verb === 'task' && sub === 'start') return text(this.view(await this.start(grant, id, rest.slice(1).join(' ') || undefined)))
-    if (verb === 'task' && sub === 'stop') return text(this.view(await this.stop(grant, id)))
+    if (verb === 'task' && sub === 'start') return text(this.details(await this.start(grant, id, rest.slice(1).join(' ') || undefined)))
+    if (verb === 'task' && sub === 'stop') return text(this.details(await this.stop(grant, id)))
     if (verb === 'status') {
       const left = one(parsed, 'left'), match = left?.match(/^(?:(\d+)h)?(?:(\d+)m)?$/)
       if (left && (!match || !match[1] && !match[2])) throw new Refusal('Use a time such as 5m or 1h20m')

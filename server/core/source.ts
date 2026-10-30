@@ -499,7 +499,9 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   task add TITLE --brief FULL_BRIEF [--desc FULL_BRIEF] [--agent claude|codex] [--model ID] [--effort LEVEL]
     [--reviewer claude|codex] [--reviewer-model ID] [--reviewer-effort LEVEL] [--set KEY=VALUE]
     [--space NAME] [--base BRANCH] [--later] [--after ID,ID]
-  task list [--archived] [--space NAME] | task show ID | task start ID [MESSAGE] | task tell ID TEXT
+  task list [--archived] [--space NAME] [--after next] | task show ID [--from nextFrom --revision REV]
+  task chat ID [--limit 1..100] [--before CURSOR]
+  task start ID [MESSAGE] | task tell ID TEXT
   task queue ID --after ID,ID|none | task stop ID
   task pause|pin|unpin|archive|unarchive ID (coordinator only, when the human asks)
   task close|delete ID [--force] (coordinator only; force may discard held work on delete)

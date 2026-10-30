@@ -37,7 +37,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
       if (result.exitCode !== 0) throw new Error(result.stderr.toString())
       return result.stdout
     } },
-    agents: { all: () => [], get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
+    agents: { all: () => [], get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, space: task.place, kind: 'codex' } : undefined,
       terminal: () => ({ address: 't1', state: state.terminal }), send: async () => {} },
     browsers: { close: async () => {} }, github: { prs: { comments: async () => [] } },
     core: { current: { terminals: new Map() }, call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
