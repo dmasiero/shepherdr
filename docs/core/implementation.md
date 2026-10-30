@@ -935,3 +935,14 @@ exercised immutable remote provisioning, hc-connect endpoints, authenticated rem
 and Claude native capture hooks. Their private remote helper installations were removed through core after confirmed
 exit; temporary app/login copies and scratch projects were removed too. This is still a same-host second-core
 fixture, explicitly not real SSH-machine acceptance. No legacy/live helper or another agent was changed.
+
+A checked Git/GH helper is now implemented but not exposed or connected to product commands. It disables hooks,
+filters, merge/diff callbacks, fsmonitor, editors, signing and custom remote helpers, and inspects every configuration
+include (including inactive conditions) before effect. Writable workspace/provider-home includes are refused even
+when currently missing. Validated Git metadata and worktree are pinned for Git and GH children; callback names in
+inactive includes are disabled before branch changes. SSH is deliberately refused until a checked account/config
+adapter exists; this incomplete foundation is not claimed as SSH parity. Source-level command/target ownership,
+all writable-root tracking and every task/panel Git call still need integration before Autopilot is exposed.
+Review round 1 found a major core.worktree redirection and a minor descendant timeout leak; both were fixed, plus
+inactive-include traversal coverage. Round 2 found no remaining findings. New actual-Git regression coverage runs
+only on GitHub; local verification is typecheck only. No live state, service or Tailscale mapping was changed.
