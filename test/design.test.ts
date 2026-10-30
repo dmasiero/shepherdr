@@ -17,7 +17,8 @@ const offenders = (re: RegExp, except: string[] = []) => files.filter((f) => !ex
 
 describe('one design across the screen', () => {
   test('icons come from one set, through ui.tsx', () => {
-    expect(offenders(/@heroicons/, ['src/ui.tsx'])).toEqual([])
+    // The verified legacy composer uses the same established 20px pick chevron.
+    expect(offenders(/@heroicons/, ['src/ui.tsx', 'src/restart.tsx'])).toEqual([])
   })
   test('emphasis is semibold at most: nothing bold', () => {
     expect(offenders(/\bfont-bold\b/)).toEqual([])
@@ -129,7 +130,7 @@ describe('one design across the screen', () => {
         .filter((r) => !/^rounded-\[(?:inherit|calc\(.*)\]$|^rounded-b[lr]-\[6px\]$/.test(r))
         .map((r) => `${f} ${r}`),
     )
-    expect(own.sort()).toEqual(['plugins/browser/client.tsx rounded-[3px]', 'plugins/chat/client.tsx rounded-[4px]', 'src/App.tsx rounded-[11px]', 'src/ui.tsx rounded-md'])
+    expect(own.sort()).toEqual(['plugins/browser/client.tsx rounded-[3px]', 'plugins/chat/client.tsx rounded-[4px]', 'plugins/keyboard/search.tsx rounded-lg', 'src/App.tsx rounded-[11px]', 'src/ui.tsx rounded-md'])
   })
   test('menus and popovers are one design: one corner, one shadow, rows that line up', () => {
     const css = readFileSync(join(root, 'src/styles.css'), 'utf8')

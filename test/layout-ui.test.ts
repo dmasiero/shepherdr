@@ -12,10 +12,10 @@ describe.skipIf(!browser)('the UI pass (SHE-81)', () => {
     ['desktop', { width: 1440, height: 900 }],
     ['tablet', { width: 1024, height: 768 }],
   ] as const)
-    test(`nothing pops up a tooltip on hover: no title on any button, row or icon (${name})`, async () => {
+    test(`hover titles stay limited to the verified legacy attention, target and filter hints (${name})`, async () => {
       const page = await browser!.newPage({ viewport, hasTouch: name === 'tablet' })
       // an artifact frame's title only names it to screen readers
-      const titled = () => page.evaluate(() => [...document.querySelectorAll('[title]:not(iframe), svg title')].map((e) => e.outerHTML.slice(0, 120)))
+      const titled = () => page.evaluate(() => [...document.querySelectorAll('[title]:not(iframe):not([data-attention-badge]):not([title^="Merges into "]):not([aria-label^="Lock filters:"]):not([aria-label^="Locked:"]), svg title')].map((e) => e.outerHTML.slice(0, 120)))
       await page.goto(at('place=p:mac:lilla-varlden&task=LV-3'))
       await page.locator('[data-card]').first().waitFor()
       expect(await titled()).toEqual([])

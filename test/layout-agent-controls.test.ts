@@ -15,11 +15,12 @@ describe.skipIf(!browser)('composer + agent controls', () => {
         world.chats[chat].cli = 'Codex'
         const before = JSON.stringify(world.chats[chat].agent)
         const page = await browser!.newPage({ viewport: { width, height: 900 }, colorScheme })
+        page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
         await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}${task ? '&task=GTM-17' : ''}`)
-        const controls = page.locator('[data-agent-controls]').last()
-        await page.locator('[data-composer]').last().waitFor()
+        const controls = page.locator('[data-agent-controls]:visible').last()
+        await page.locator('[data-composer]:visible').last().waitFor()
         expect(await controls.count()).toBe(0)
-        await page.locator('[data-composer] button[aria-label="Attach files and more"]').last().click()
+        await page.locator('[data-composer]:visible button[aria-label="Attach files and more"]').last().click()
         await controls.waitFor()
         await page.getByRole('menuitem', { name: 'File or photo', exact: true }).waitFor()
         expect(await page.locator('[data-restart-hint]').count()).toBe(0)
@@ -53,9 +54,10 @@ describe.skipIf(!browser)('composer + agent controls', () => {
     world.chats[key].agent = { kind: 'codex' }
     world.chats[key].cli = 'Codex'
     const page = await browser!.newPage({ viewport: { width: 320, height: 844 } })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     await page.goto(`http://127.0.0.1:${server!.port}/?place=all&task=GTM-17`)
-    await page.locator('[data-composer] button[aria-label="Attach files and more"]').last().click()
-    const controls = page.locator('[data-agent-controls]')
+    await page.locator('[data-composer]:visible button[aria-label="Attach files and more"]').last().click()
+    const controls = page.locator('[data-agent-controls]:visible')
     await controls.getByRole('menuitem', { name: 'Model: Not reported. Select and restart', exact: true }).waitFor()
     expect(await controls.getByRole('menuitem', { name: 'Effort: Not reported. Select and restart', exact: true }).count()).toBe(1)
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320)
@@ -71,9 +73,10 @@ describe.skipIf(!browser)('composer + agent controls', () => {
       world.chats[chat].agent = { kind: 'codex', runtime: { model: 'config-overridden-model', effort: 'high', source: 'session', at: Date.now() } }
       world.chats[chat].cli = 'Codex'
       const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
+      page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
       await page.goto(`http://127.0.0.1:${server!.port}/?place=${encodeURIComponent(p.id)}${chat.includes('/') ? '&task=GTM-17' : ''}`)
-      await page.locator('[data-composer] button[aria-label="Attach files and more"]').last().click()
-      const controls = page.locator('[data-agent-controls]').last()
+      await page.locator('[data-composer]:visible button[aria-label="Attach files and more"]').last().click()
+      const controls = page.locator('[data-agent-controls]:visible').last()
       await controls.getByRole('menuitem', { name: 'Model: config-overridden-model. Select and restart', exact: true }).waitFor()
       world.chats[chat].agent!.runtime = { model: 'changed-live-model', effortUnsupported: true, source: 'session', at: Date.now() }
       world.emit('chat', chat)
@@ -90,9 +93,10 @@ describe.skipIf(!browser)('composer + agent controls', () => {
     world.chats[key].agent = { kind: 'codex', model: 'retired-model' }
     world.chats[key].cli = 'Codex'
     const page = await browser!.newPage({ viewport: { width: 390, height: 844 } })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     await page.goto(`http://127.0.0.1:${server!.port}/?place=all&task=GTM-17`)
-    await page.locator('[data-composer] button[aria-label="Attach files and more"]').last().click()
-    await page.locator('[data-agent-controls]').last().getByRole('menuitem', { name: /^Model:/ }).click()
+    await page.locator('[data-composer]:visible button[aria-label="Attach files and more"]').last().click()
+    await page.locator('[data-agent-controls]:visible').last().getByRole('menuitem', { name: /^Model:/ }).click()
     const sheet = page.getByRole('alertdialog')
     await sheet.getByText('retired-model is unavailable.', { exact: false }).waitFor()
     expect(await sheet.getByRole('button', { name: 'Restart', exact: true }).isDisabled()).toBe(true)

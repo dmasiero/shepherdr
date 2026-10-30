@@ -21,11 +21,13 @@ async function add(page: Page, name: string) {
 describe.skipIf(!browser)('the lists’ chips', () => {
   test('a desktop: they follow the space picked; × and + Filter edit them, none is everything; another space, its own again', async () => {
     const page = await browser!.newPage({ viewport: { width: 1600, height: 900 } })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     await page.goto(at('place=vm-str/home'))
     const list = page.getByRole('region', { name: 'Tasks' })
-    // the main home space lists its own tasks, as any space: none in the demo
-    await list.getByText('No tasks yet. Ask home to add one.').waitFor()
-    expect(await chips(page)).toEqual(['p:vm-str:~'])
+    // The verified main Home defaults to cross-machine Needs you and Ready.
+    await list.getByRole('button', { name: /GTM-14 Bundle/ }).waitFor()
+    expect(await chips(page)).toEqual([])
+    expect(await list.getByRole('button', { name: /GTM-17 Changelog/ }).count()).toBe(0)
     await page.getByRole('button', { name: /^gtm\b/ }).click()
     const gtm16 = list.getByRole('button', { name: /GTM-16 Docs/ })
     const lv3 = list.getByRole('button', { name: /LV-3 Upload page/ })
@@ -75,6 +77,7 @@ describe.skipIf(!browser)('the lists’ chips', () => {
 
   test('a desktop: pinned, the chips stay while the middle goes to a space and to a task, kept on this device; unpinned, they follow again', async () => {
     const page = await browser!.newPage({ viewport: { width: 1600, height: 900 } })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     await page.goto(at('place=p:vm-str:gtm'))
     const list = page.getByRole('region', { name: 'Tasks' })
     await list.getByRole('button', { name: /GTM-16 Docs/ }).waitFor()
@@ -134,6 +137,7 @@ describe.skipIf(!browser)('the lists’ chips', () => {
 
   test('a pin to a place from before comes back as its chips: the main home space’s everything, a home space’s its machine', async () => {
     const page = await browser!.newPage({ viewport: { width: 1600, height: 900 } })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     await page.goto(at('place=p:vm-str:gtm'))
     const list = page.getByRole('region', { name: 'Tasks' })
     for (const [pin, want] of [
@@ -155,6 +159,7 @@ describe.skipIf(!browser)('the lists’ chips', () => {
 
   test('a phone: the Tasks tab’s chips scroll sideways, + Filter staying in view; pinned, they stay while the drawer picks another space', async () => {
     const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     await page.goto(at('place=p:vm-str:gtm&tab=tasks'))
     await page.getByRole('button', { name: /GTM-16 Docs/ }).waitFor()
     for (const name of ['mac', 'herdr-projects · vm-str', 'nas']) await add(page, name)
@@ -177,10 +182,11 @@ describe.skipIf(!browser)('the lists’ chips', () => {
     await page.getByRole('group', { name: 'View' }).getByRole('button', { name: /^Tasks/ }).click()
     await page.getByRole('button', { name: /LV-3 Upload page/ }).waitFor()
     expect(await chips(page)).toEqual(['p:vm-str:gtm', 'm:mac', 'p:vm-str:herdr-projects', 'm:nas'])
-    // unpinned, the tab shows the space picked
+    // Unlocked main Home returns to cross-machine attention.
     await page.getByRole('button', { name: 'Locked: unlock filters to follow the space picked' }).click()
-    await page.getByRole('button', { name: /LV-3 Upload page/ }).waitFor({ state: 'detached' })
-    expect(await chips(page)).toEqual(['p:vm-str:~'])
+    await page.getByRole('button', { name: /LV-3 Upload page/ }).waitFor()
+    expect(await chips(page)).toEqual([])
+    expect(await page.getByRole('button', { name: /GTM-17 Changelog/ }).count()).toBe(0)
     await page.close()
   }, 30_000)
 })

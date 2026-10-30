@@ -9,6 +9,7 @@ const { browser, world, url } = await layout()
 describe.skipIf(!browser)('renaming spaces and machines', () => {
   test('a space renames in its row, a machine in Rename machine: Enter keeps it, Escape does not, a name taken or against the rules is refused; it shows in the header, tasks and search (desktop)', async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } })
+    page.setDefaultTimeout(10_000) // Surface the failing locator before the enclosing test deadline.
     try {
       await page.goto(url().replace('place=vm-str/home', 'place=vm-str/gtm'))
       const places = page.locator('#places')
@@ -73,7 +74,10 @@ describe.skipIf(!browser)('renaming spaces and machines', () => {
       // new names
       await places.locator('li[data-project="p:vm-str:~"]').getByRole('button', { name: /^home/ }).click()
       const tasks = page.locator('section[aria-label="Tasks"]')
-      await tasks.getByRole('button', { name: 'Remove home · Work VM' }).click()
+      // Home already includes every machine; explicitly choose Everything to
+      // inspect ordinary tasks too, beyond its default attention-only view.
+      await tasks.getByRole('button', { name: 'Filter', exact: true }).click()
+      await page.getByRole('menuitemcheckbox', { name: 'Everything', exact: true }).click()
       await tasks.locator('li', { hasText: 'Work VM · go-to-market' }).first().waitFor()
 
       // a home space is renamed as any space, by the same rules

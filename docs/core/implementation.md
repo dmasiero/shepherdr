@@ -1630,3 +1630,18 @@ only the isolated app restarted. Screenshots she301-native-runtime-before.png an
 she301-native-runtime-after.png captured and inspected. Fresh scoped review found
 no findings; local bun run typecheck passed. Native GitHub regressions cover policy
 separation, old runtime, replacement launches and removal of omitted effort fields.
+
+### Full-suite baseline fixture reconciliation (2026-10-30)
+
+Check 41026368007 exposed older assertions that no longer describe verified legacy
+ebb17d5. Fresh read-only review compared source: existing 20px pick chevron and
+search-row corner, Search this chat and beyond menu, native runtime events, target
+branch suffixes, selected-first Backup choices, duplicate responsive base banners,
+Home's cross-machine attention default and split need/ready badges. Tests now
+assert those established details instead of changing the product to an older
+fixture. Responsive composer operations target visible elements. Several failing
+layout pages use a 10-second locator timeout to show the failing action before the
+enclosing 30-second test expires. No suite is skipped or removed by this change.
+Review found one minor remaining hidden composer wait, fixed. Types passed locally;
+full GitHub rerun remains necessary. Rewrite CI 41027509005 passed native runtime
+integration; endpoint/resume CI 41027247187 also passed.
