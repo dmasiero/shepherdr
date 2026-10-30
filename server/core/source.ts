@@ -15,6 +15,7 @@ import type { CoreConfig } from './config.ts'
 import { coreEnvironment } from './config.ts'
 import type { AgentKind, CoreAgent, CoreSpace } from './model.ts'
 import { CoreTasks } from './tasks.ts'
+import { CoreCommands } from './commands.ts'
 import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
@@ -219,7 +220,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const word = terminal?.status?.state ?? agent.state
     return word === 'blocked' || agent.permission ? 'need' : word === 'working' || word === 'starting' ? 'work' : 'idle'
   }
-  private openPermissions(agent: CoreAgent) {
+  openPermissions(agent: CoreAgent) {
     return this.store.all<Permission>('permission').filter(item => item.chat === agent.chat && item.grant === agent.grant && !item.settled && item.expires > Date.now())
   }
   snapshot(): Snapshot {
@@ -493,7 +494,9 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       if (!Array.isArray(input.args) || !input.args.every(arg => typeof arg === 'string')) throw new Error('Invalid command words')
       const args = input.args as string[]
       if (!args.length || args[0] === 'help' || args.includes('--help')) return { out: `Shepherdr standalone core commands (authenticated agent session):
-  show
+  show [--space NAME | --machine] [--section NAME] | models [claude|codex]
+  set KEY VALUE | unset KEY [--space NAME | --machine] (regular coordinator, when the human asks)
+  alert TITLE [--body WHY] [--task ID]
   space list | space add PATH [--name NAME] | space rename NAME NEW_NAME | space remove NAME
   space set base BRANCH --space NAME
   task add TITLE --brief FULL_BRIEF [--desc FULL_BRIEF] [--agent claude|codex] [--model ID] [--effort LEVEL]
@@ -506,7 +509,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   task pause|pin|unpin|archive|unarchive ID (coordinator only, when the human asks)
   task close|delete ID [--force] (coordinator only; force may discard held work on delete)
   status ID TEXT --done 0..100 --left 5m|1h20m
-  ask TITLE --choice LABEL --choice LABEL | plan TITLE --choice LABEL --choice LABEL
+  ask TITLE --choice LABEL --choice LABEL | plan [ID] --title TITLE --step TEXT --step TEXT
   review ID | pr ID | checks ID [--comments [--offset N] [--from nextFrom]]
   ready ID --summary TEXT [--facts TEXT]
   merge ID (requires the human's exact-commit card approval)
@@ -534,7 +537,8 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
         return { out: this.heartbeats.cli(agent, args, stdin) + '\n', code: 0 }
       }
       if (args[0] === 'automation') return { out: await this.automations.cli(agent, args) + '\n', code: 0 }
-      if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
+      const common = await new CoreCommands(this).cli(agent, grant, args)
+      if (common) return common
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
       if (args[0] === 'space') return { out: await this.places.cli(agent, args) + '\n', code: 0 }
       return this.tasks.cli(grant, args)

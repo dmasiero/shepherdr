@@ -189,7 +189,15 @@ export class CoreSettings {
       return { ...dynamic, value, ...(picked.level === level ? { inherits: { value: inherited.value, from: words(inherited.level) } } : { from: words(picked.level) }) }
     }) })))
   }
-  describe(level: string) { return CATALOG.map(section => `${section.name}:\n${section.rows.filter(row => !row.key.endsWith('.instructions')).map(row => `- ${row.group ? row.group + ' ' : ''}${row.label}: ${this.get(row.key, level)}`).join('\n')}`).join('\n\n') + '\n' }
+  describe(level: string, name?: string) {
+    const sections = CATALOG.filter(section => !name || section.name.toLowerCase() === name.toLowerCase())
+    if (!sections.length) throw Error('Choose a settings section: ' + CATALOG.map(section => section.name).join(', '))
+    const where = (at: string) => at === 'default' ? 'default' : at === 'all' ? 'Everywhere' : at.startsWith('m:') ? this.machineName(at.slice(2)) || at : this.spaces().find(space => space.id === at)?.name || at
+    return sections.map(section => `${section.name}:\n${section.rows.filter(row => !row.key.endsWith('.instructions')).map(row => {
+      const picked = this.pick(row.key, level)
+      return `- ${row.group ? row.group + ' ' : ''}${row.label}: ${picked.value} (${row.key}; from ${where(picked.level)})`
+    }).join('\n')}`).join('\n\n') + '\n'
+  }
   /** Query the CLI on its own machine, through core only. No app startup dependency. */
   probe(machine: string) {
     if (this.probing.has(machine)) return

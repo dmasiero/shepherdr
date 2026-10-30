@@ -492,3 +492,10 @@ test('deferred cleanup retains commits made after the recorded squash head', asy
     expect(tasks.get(task.id)?.cleanupPending).toBeUndefined()
   })
 })
+
+for (const empty of ['none', 'nothing', '-', ' NONE ']) test(`queue clearing accepts ${JSON.stringify(empty)} without changing an active workflow`, () => withTask(async ({ tasks, task, grant }) => {
+  task.after = ['OLD-1']
+  const result = await tasks.cli(grant, ['task', 'queue', task.id, '--after', empty])
+  expect(result.out).toContain('No dependencies remain')
+  expect(tasks.get(task.id)).toMatchObject({ after: [], workflow: 'working' })
+}))

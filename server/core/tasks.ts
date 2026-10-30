@@ -837,7 +837,7 @@ export class CoreTasks {
       if (['merged', 'closed', 'merging'].includes(task.workflow)) throw new Refusal(`${task.id} is already ${task.workflow}; its queue cannot change`)
       const raw = one(parsed, 'after')
       if (!raw?.trim()) throw new Refusal('Choose --after <task IDs>, or --after none')
-      const after = taskDependencies(this.all(), task, raw === 'none' ? [] : [raw], machine => this.source.machineName(machine))
+      const after = taskDependencies(this.all(), task, ['none', 'nothing', '-'].includes(raw.trim().toLowerCase()) ? [] : [raw], machine => this.source.machineName(machine))
       const open = after.filter(id => !['merged', 'closed'].includes(this.get(id)!.workflow))
       const was = task.workflow
       task.after = after
