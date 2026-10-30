@@ -118,3 +118,18 @@ jobs:
       - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts test/layout-automations.test.ts test/layout-voice.test.ts test/layout-search.test.ts test/layout-unread.test.ts test/layout-attention.test.ts test/layout-cards.test.ts test/browser.test.ts test/voice.test.ts
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-layout
+
+  production-plugin:
+    if: github.ref == 'refs/heads/work/301-build-shepherdr-2-1-on-core'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun test --isolate test/core-plugin-production.test.ts
+        env:
+          SHEPHERDR_REAL_PLUGIN_BUILD: '1'
+          SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-production-plugin

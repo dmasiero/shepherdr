@@ -1762,3 +1762,17 @@ Machine values use current core connection state and saved display names, never
 invent a last-disconnect time. CI regressions inspect real-source section scope
 and machine presentation. Only isolated preview restarted; live state unchanged.
 These follow-up changes postdate final review round 3 and are recorded separately.
+
+Full Check 41031514810 passed all three test shards, types and build at 7bd30e01.
+Rewrite CI 41032009696 passed at de674bb8 including restored navigation regression.
+The Repository screen was compared by hand to the preserved v2.0 UI at 390×844,
+820×1180 and 1440×1000, light/dark. Source names/data differ; the page's layout,
+field, wording, spacing and colours are retained. This is one screen comparison,
+not a full per-feature visual parity pass. Screenshots are outside Git.
+
+Added a separate branch-only CI job for the actual production plugin compiler:
+real client/server extension, hot replacement with persistent state, then invalid
+TypeScript retaining last-good compiled assets/runtime. It is explicitly enabled
+only by SHEPHERDR_REAL_PLUGIN_BUILD=1 in that job; ordinary suite runs skip that
+costly build case. It has not run locally. This adds production-path coverage beyond
+injected compiler fixtures, not physical-device or authenticated native-agent proof.
