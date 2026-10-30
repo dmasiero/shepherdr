@@ -1033,3 +1033,18 @@ private accounting until fully drained; completed captures are skipped durably. 
 chat projection and never reads terminal screens. Regression coverage was added for GitHub only. Three scoped
 review rounds fixed omitted sidechain usage, malformed JSON handling and reset identity aliasing; the last found
 no remaining findings. Local typecheck passed; branch CI pending for this slice. UI lifecycle remains unfinished.
+
+Internal Autopilot stop/keep-workers lifecycle now revokes authority before awaiting core cleanup. It persists
+private terminal identity in the capture journal, includes retired launches, refuses changed PIDs, and retries
+uncertain/offline cleanup after reconnect. Missing terminals are not claimed dead. Keep-workers retains only
+workers/reviewers; a later default stop tightens it. Limit failure also triggers cleanup. No unrestricted
+coordinator is launched by fallback, restart or cleanup while its contained profile remains recorded.
+
+A real contained Claude coordinator (`t1z`) created an actual scratch child (`t20`). Keep-workers ended the
+coordinator, retained the privately bound live child beyond cleanup, and restored regular mode metadata. Default
+stop then ended the child and confirmed stopped, with 674,776 encrypted bytes. All owned processes were confirmed
+ended before scratch state/login copies were removed. This checks the internal lifecycle, not its unfinished UI,
+regular coordinator replacement, wake scheduling or SSH. Scoped fresh review: two rounds; one major pending-card
+revocation race fixed by synchronous denial and a post-answer private-actor recheck; final round no findings.
+New offline/retired-process/identity/keep-workers regressions are for GitHub only; local typecheck passed.
+Usage commit 5d19cfb8 passed both GitHub jobs (40999359491).

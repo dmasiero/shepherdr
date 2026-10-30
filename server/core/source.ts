@@ -138,6 +138,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
     await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start()
     this.recovery = setInterval(() => {
+      if (!this.quiescing) void this.pilots.lifecycle.tick().catch(error => this.faults.set('pilot-lifecycle', error.message))
       if (!this.quiescing) void this.pilots.usage.poll().catch(error => this.faults.set('pilot-usage', error.message))
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return
@@ -277,6 +278,9 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.forwardQuestion(permission.chat, permission.question, reason, 'task', 'No longer waiting')
     this.permissions.get(permission.id)?.({ allow: false }); this.permissions.delete(permission.id)
   }
+  denyPermissions(agent: CoreAgent, reason: string) {
+    for (const permission of this.store.all<Permission>('permission')) if (permission.chat === agent.chat && permission.grant === agent.grant && !permission.settled) this.expirePermission(permission, reason)
+  }
   private reconcilePermissions(chat: string) {
     for (const permission of this.store.all<Permission>('permission')) if (permission.chat === chat && !permission.settled) {
       const agent = this.agents.get(chat)
@@ -371,6 +375,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           onWords: agent?.kind ?? this.agentKind(), want: this.settings.agent('coordinator', action.chat), clis: this.settings.clis(action.chat), working: agent?.state === 'working' } }
       }
       case 'restart': {
+        if (this.agents.get(action.chat)?.pilot || this.space(action.chat)?.mode === 'autopilot') throw new Error('Change Autopilot mode before replacing this contained coordinator')
         const space = this.space(action.chat)
         if (!space) throw new Error('No such coordinator')
         const agent = this.agents.get(action.chat)
@@ -414,6 +419,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const task = this.tasks.forChat(chat)
         const space = this.space(chat) || task && this.space(task.place)
         if (!space) return
+        if (this.pilots.lifecycle.busy(space.id)) return
         if (task && this.tasks.busy(task.id)) return
         const agent = this.agents.get(chat)
         if (item.launch && (agent?.launch !== item.launch || this.agents.terminal(agent)?.state !== 'live')) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); this.deliveryNotice(item, true); continue }
@@ -423,6 +429,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           if (task) await this.tasks.deliver(task.id, chat, item.text, !!item.launch)
           else if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
           else {
+            if (space.mode === 'autopilot' || agent?.pilot) throw new Error('This contained coordinator has stopped; change mode or explicitly restart its contained run before sending')
             const pick = this.settings.agent('coordinator', space.id)
             await this.agents.launch(space, chat, agent?.kind ?? pick.kind, item.text, agent ? { model: agent.model, effort: agent.effort, resume: true } : { ...pick, resume: true })
           }
@@ -608,6 +615,6 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async artifactThumb(id: string, dark: boolean) { if (!this.plugins.has('artifacts')) return null; try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; this.pluginUpdates?.stop(); await this.pluginUpdates?.drain(); this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); await this.pilots.usage.drain(); return this.tasks.drain() }
+  async drain() { this.quiescing = true; this.pluginUpdates?.stop(); await this.pluginUpdates?.drain(); this.plugins.stop(); this.voices.stop(); this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); await this.pilots.usage.drain(); await this.pilots.lifecycle.drain(); return this.tasks.drain() }
   stop() { clearInterval(this.recovery); this.pluginUpdates?.stop(); this.plugins.stop(); this.voices.stop(); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }

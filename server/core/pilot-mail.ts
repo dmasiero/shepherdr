@@ -2,16 +2,18 @@ import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Grant, MailRequest } from './mailbox.ts'
 import { CorePilotPolicy, type PilotActor } from './pilot-policy.ts'
+import { CorePilotLifecycle } from './pilot-lifecycle.ts'
 import { CorePilotUsage } from './pilot-usage.ts'
 import { CorePilotCommands } from './pilot-commands.ts'
 import { pilotHook } from './pilot-hook.ts'
 
 /** Private actor/lease accounting dispatch. Product launch and managed-task commands are not exposed yet. */
 export class CorePilotMail {
+  readonly lifecycle: CorePilotLifecycle
   readonly usage: CorePilotUsage
   readonly commands: CorePilotCommands
   readonly policy: CorePilotPolicy
-  constructor(private source: CoreSource) { this.policy = new CorePilotPolicy(source.store); this.commands = new CorePilotCommands(source); this.usage = new CorePilotUsage(source) }
+  constructor(private source: CoreSource) { this.policy = new CorePilotPolicy(source.store); this.commands = new CorePilotCommands(source); this.usage = new CorePilotUsage(source); this.lifecycle = new CorePilotLifecycle(source) }
   actor(agent: CoreAgent): PilotActor {
     if (!agent.pilot) throw Error('This is not a contained agent')
     const run = this.policy.get(agent.pilot.run)
@@ -57,6 +59,9 @@ export class CorePilotMail {
     if (event.event === 'PermissionRequest' && (JSON.stringify(raw.tool_input, null, 2)?.length ?? 0) > 16_000) throw Error('Native permission input is too large to show in full; review it in Terminal')
     this.source.agents.hook(agent, event)
     if (event.event !== 'PermissionRequest') return {}
-    return this.source.requestPermission(agent, grant, { ...request, args: { id, tool: event.tool, input: raw.tool_input } }, id)
+    const answer = await this.source.requestPermission(agent, grant, { ...request, args: { id, tool: event.tool, input: raw.tool_input } }, id)
+    // A response may have been waiting while the human stopped this run.
+    try { this.policy.actor(runId, actor) } catch { return { allow: false } }
+    return answer
   }
 }

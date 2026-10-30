@@ -63,7 +63,7 @@ export class CoreAgents {
   reconcile() {
     for (const agent of this.all()) {
       const terminal = this.terminal(agent)
-      if (terminal && (agent.terminal !== terminal.address || agent.pid === undefined && terminal.pid != null)) { agent.terminal = terminal.address; agent.pid ??= terminal.pid ?? undefined; this.store.set('agent', agent.chat, agent); this.changed(agent.chat) }
+      if (terminal && (agent.terminal !== terminal.address || agent.pid === undefined && terminal.pid != null)) { agent.terminal = terminal.address; agent.pid ??= terminal.pid ?? undefined; this.store.set('agent', agent.chat, agent); if (agent.pilot) this.store.set('pilot-capture', agent.launch, agent); this.changed(agent.chat) }
     }
   }
 
@@ -182,7 +182,7 @@ This start replaces every earlier command path and routing instruction. Your aut
     if (!current || current.launch !== launch || current.grant !== grant.id) throw new Error('Agent launch was replaced before core confirmed it')
     current.terminal = terminal.address
     current.pid = terminal.pid ?? undefined
-    this.store.set('agent', chat, current); this.changed(chat)
+    this.store.set('agent', chat, current); if (current.pilot) this.store.set('pilot-capture', current.launch, current); this.changed(chat)
     return current
     } catch (error) {
       if (prepared && !submitted) {

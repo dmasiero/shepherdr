@@ -1,0 +1,63 @@
+import { expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { CoreStore } from '../server/core/store.ts'
+import { CorePilotPolicy } from '../server/core/pilot-policy.ts'
+import { CorePilotLifecycle } from '../server/core/pilot-lifecycle.ts'
+import type { CoreSource } from '../server/core/source.ts'
+import type { CoreAgent } from '../server/core/model.ts'
+
+async function fixture(work: (f: ReturnType<typeof setup>) => Promise<void>) {
+  const home = mkdtempSync(join(tmpdir(), 'shep-pilot-stop-')), store = new CoreStore(home)
+  try { await work(setup(store)) } finally { store.close(); rmSync(home, { recursive: true, force: true }) }
+}
+function setup(store: CoreStore) {
+  const policy = new CorePilotPolicy(store), run = policy.begin('space', 'machine', { harness: { kind: 'claude' }, reviewer: { kind: 'codex' }, hosts: ['api.anthropic.com'], secrets: [], approvals: ['merge'], parallel: 2 })
+  policy.activate(run.id, { chat: 'space', role: 'coordinator', launch: 'coord' })
+  const records = ['coord', 'worker', 'retired'].map((launch, i) => ({ chat: i ? 'TASK-1/Agent' : 'space', role: i ? 'task' : 'coordinator', launch, machine: 'machine', space: 'space', pid: 100 + i, pilot: { run: run.id, captures: `/private/${launch}`, home: '/inside' } }) as CoreAgent)
+  for (const record of records) store.set('pilot-capture', record.launch, record)
+  const terminals = new Map(records.map(record => [record.launch, { address: record.launch, state: 'live', pid: record.pid }]))
+  const denied: string[] = [], killed: string[] = [], space = { id: 'space', mode: 'autopilot' }, on = { connected: true }
+  const source = { store, pilots: { policy }, agents: { all: () => [records[0], records[1]], terminal: (agent: CoreAgent) => terminals.get(agent.launch) }, machineConnected: () => on.connected,
+    denyPermissions: (agent: CoreAgent) => { denied.push(agent.launch) }, core: { call: async (_: string, input: { terminal: string }) => { killed.push(input.terminal) } }, space: () => space, emit() {} } as unknown as CoreSource
+  return { source, policy, run, records, terminals, killed, denied, space, on, lifecycle: new CorePilotLifecycle(source) }
+}
+test('stop denies authority immediately, preserves unknown processes and retries retired launches after reconnect', () => fixture(async f => {
+  f.on.connected = false
+  await f.lifecycle.stop(f.run.id)
+  expect(f.policy.get(f.run.id)?.state).toBe('stopping'); expect(f.killed).toEqual([])
+  expect(new Set(f.denied)).toEqual(new Set(['coord', 'worker', 'retired']))
+  f.on.connected = true; f.terminals.delete('retired')
+  await new CorePilotLifecycle(f.source).tick()
+  expect(f.killed).toEqual(['coord', 'worker']); expect(f.space.mode).toBe('autopilot')
+  for (const terminal of f.terminals.values()) terminal.state = 'finished'
+  await f.lifecycle.tick(); expect(f.policy.get(f.run.id)?.state).toBe('stopping')
+  f.terminals.set('retired', { address: 'retired', state: 'live', pid: 102 })
+  await f.lifecycle.tick(); expect(f.killed.at(-1)).toBe('retired')
+  f.terminals.get('retired')!.state = 'finished'
+  await f.lifecycle.tick()
+  expect(f.policy.get(f.run.id)?.state).toBe('stopped'); expect(f.space.mode).toBe('regular')
+}))
+test('keep workers stops only old coordinators; later default stop also kills retained and retired workers', () => fixture(async f => {
+  await f.lifecycle.stop(f.run.id, true)
+  expect(f.killed).toEqual(['coord']); expect(new Set(f.denied)).toEqual(new Set(['coord']))
+  f.terminals.get('coord')!.state = 'finished'
+  await f.lifecycle.tick()
+  expect(f.policy.get(f.run.id)?.state).toBe('workers'); expect(f.space.mode).toBe('regular')
+  await f.lifecycle.stop(f.run.id)
+  expect(f.killed).toEqual(['coord', 'worker', 'retired'])
+  expect(f.policy.get(f.run.id)?.state).toBe('stopping')
+}))
+test('cleanup refuses a changed process identity and leaves a newer run mode intact', () => fixture(async f => {
+  f.terminals.get('coord')!.pid = 999
+  await expect(f.lifecycle.stop(f.run.id)).rejects.toThrow('identity')
+  expect(f.killed).toEqual([])
+  f.terminals.get('coord')!.pid = 100
+  for (const terminal of f.terminals.values()) terminal.state = 'finished'
+  await f.lifecycle.tick()
+  const next = f.policy.begin('space', 'machine', f.run.config)
+  f.space.mode = 'autopilot'
+  await f.lifecycle.tick()
+  expect(f.policy.current('space')?.id).toBe(next.id); expect(f.space.mode).toBe('autopilot')
+}))
