@@ -9,8 +9,9 @@ import type { CoreFiles } from '../server/core/files.ts'
 test('remote helpers are immutable private files and launch credentials cannot follow symlinks', async () => {
   const home = mkdtempSync(join(tmpdir(), 'shep-remote-'))
   const files = { exec: async (_machine: string, argv: string[], _cwd?: string, input?: Uint8Array) => {
+    if (argv[0] === 'rm') { const result = Bun.spawnSync(argv); if(result.exitCode) throw Error(result.stderr.toString()); return result.stdout }
     if (argv[0] === 'sh') return Buffer.from(process.execPath)
-    if (argv[2].startsWith("const o=require")) return Buffer.from(JSON.stringify({ home, bun: process.execPath, hc: '/core/hc', path: '/core', version: 'hc 0.1.14', session: 'isolated' }))
+    if (argv[2].startsWith("const o=require")) return Buffer.from(JSON.stringify({ home, bun: process.execPath, hc: '/core/hc', path: '/core', version: 'hc 0.1.14', session: 'isolated', platform: process.platform, arch: process.arch, musl: false }))
     if (argv[2].startsWith('const {CoreClient}')) return Buffer.from('identity verified')
     const result = Bun.spawnSync(argv, { stdin: input ?? 'ignore' })
     if (result.exitCode) throw new Error(result.stderr.toString())
@@ -23,6 +24,10 @@ test('remote helpers are immutable private files and launch credentials cannot f
     expect(statSync(runtime.root).mode & 0o077).toBe(0)
     expect(statSync(join(runtime.root, 'bin/shepherdr')).mode & 0o777).toBe(0o700)
     expect((await remotes.prepare('machine')).root).toBe(runtime.root)
+    expect(readFileSync(runtime.browser, 'utf8')).toContain('vendor/agent-browser/bin/')
+    const version = Bun.spawnSync([runtime.browser, '--version'])
+    expect(version.exitCode).toBe(0)
+    expect(version.stdout.toString()).toContain('0.39.4')
     const credential = join(runtime.root, 'sessions/one.credential')
     await remotes.privateFile('machine', runtime, credential, 'private test token')
     expect(statSync(credential).mode & 0o777).toBe(0o600)

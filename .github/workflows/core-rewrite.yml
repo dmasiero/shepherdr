@@ -20,6 +20,11 @@ on:
       - 'plugins/chat/**'
       - 'plugins/worktree/**'
       - 'plugins/terminal/**'
+      - 'plugins/browser/**'
+      - 'shared/browser.ts'
+      - 'server/browser-pick.ts'
+      - 'server/live/pick.ts'
+      - 'test/browser.test.ts'
       - 'plugins/tasks/**'
       - 'plugins/places/**'
       - 'shared/order.ts'
@@ -77,6 +82,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: core-rewrite-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun x playwright-core install --only-shell chromium
-      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts
+      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts test/browser.test.ts
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-layout

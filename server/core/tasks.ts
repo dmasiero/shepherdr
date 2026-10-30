@@ -77,7 +77,7 @@ export class CoreTasks {
     const terminal = agent && this.source.agents.terminal(agent)
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
       : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : this.source.status(agent) === 'need' || terminal?.state === 'finished' ? 'need' : 'work'
-    return { ...task, status, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
+    return { ...task, status, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: { title: string; brief: string; space?: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string }) {
@@ -128,6 +128,9 @@ export class CoreTasks {
     task = this.get(task.id) || (() => { throw new Refusal('No such task') })()
     const space = this.source.space(task.place)
     if (!space) throw new Refusal('Task space is missing')
+    const prior = this.source.agents.get(task.chat)
+    if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
+    await this.source.browsers?.close(task.id)
     let parent = this.source.agents.get(space.id)
     if (!parent || this.source.agents.terminal(parent)?.state !== 'live') {
       const pick = this.source.settings.agent('coordinator', space.id)
@@ -244,6 +247,7 @@ export class CoreTasks {
       }
       task.workflow = 'merged'; task.status = 'done'; task.doneAt = Date.now(); task.outcome = 'done'
       this.save(task); await this.label(task); this.card(task, task.said || 'Merged')
+      await this.source.browsers?.close(task.id, true).catch(() => this.source.post(task.chat, { id: 'browser-cleanup-pending', who: 'agent', text: 'The task merged. Browser cleanup is waiting for its machine to reconnect.', at: Date.now() }))
       return task
     } finally {
       this.merging.delete(id)
@@ -297,9 +301,11 @@ export class CoreTasks {
       case 'pin': task.pinned = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
       case 'archive':
         if (action.on && terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
+        if (action.on) await this.source.browsers?.close(task.id, task.workflow === 'merged' || task.workflow === 'closed')
         task.archived = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
       case 'pause':
         if (terminal?.state === 'live') await this.source.core.call('terminal.interrupt', { terminal: terminal.address })
+        await this.source.browsers?.close(task.id)
         task.workflow = 'todo'; this.save(task); await this.label(task); return { ok: true }
       case 'restart-info': return { ok: true, info: { role: 'task', space: this.source.space(task.place)?.name, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
         onWords: agent?.kind ?? task.kind, want: this.source.settings.agent('task', task.place), working: agent?.state === 'working',
@@ -307,6 +313,7 @@ export class CoreTasks {
       case 'restart':
         if (action.kind && action.kind !== 'claude' && action.kind !== 'codex') throw new Refusal('Choose Claude Code or Codex')
         if (terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
+        await this.source.browsers?.close(task.id)
         task.kind = action.kind as AgentKind || task.kind; task.model = action.model || undefined; task.effort = action.effort || undefined
         if (action.save) this.source.settings.saveAgent('task', task.place, { kind: task.kind, model: task.model, effort: task.effort })
         delete task.startError; this.save(task)
@@ -338,6 +345,7 @@ export class CoreTasks {
       if (terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
       this.source.mailbox.revoke(agent.chat)
     }
+    await this.source.browsers?.close(task.id)
   }
   async close(task: CoreTask, force = false) { return this.change(task.id, () => this.closeNow(task, force)) }
   private async closeNow(task: CoreTask, force = false) {
@@ -346,6 +354,7 @@ export class CoreTasks {
     if (held.length && !force) return { ok: false, held }
     await this.stopAgents(task)
     if (task.workflow === 'merged' || task.workflow === 'closed') return { ok: true }
+    await this.source.browsers?.close(task.id, true)
     task.workflow = 'closed'; task.doneAt = Date.now(); task.outcome = 'done'; task.status = 'done'
     this.save(task); await this.label(task); this.card(task, 'Marked done; nothing merged')
     return { ok: true }
@@ -356,6 +365,7 @@ export class CoreTasks {
     await this.stopAgents(task)
     const state = await this.held(task)
     if (state.held.length && !force) return { ok: false, held: state.held, stopped: true }
+    await this.source.browsers?.close(task.id, true)
     const repo = { machine: task.machine, folder: task.repo }
     if (state.worktree) await this.git.run(repo, ['worktree', 'remove', ...(force ? ['--force'] : []), task.folder])
     if (state.branch) {

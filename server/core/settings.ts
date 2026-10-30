@@ -14,6 +14,7 @@ const roleRows = (role: Role, group: string): SettingRow[] => [
 ]
 // Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
 const CATALOG: SettingSection[] = [
+  { name: 'Shared browser', rows: [{ label: 'Close idle browser after', key: 'browser.idleClose', value: '10 min', num: { min: 1, max: 1440, unit: 'min', off: true } }] },
   { name: 'Private instructions', about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
     { key: 'coordinator.instructions', label: 'Coordinators', value: '', multiline: true },
     { key: 'task.instructions', label: 'Task agents', value: '', multiline: true },
@@ -65,10 +66,12 @@ export class CoreSettings {
         if (!kind) throw new Error('Choose Claude Code or Codex')
         value = names[kind]
       } else if (row.num) {
-        const match = value.match(/^(\d+)(?: rounds?)?$/)
-        const number = Number(match?.[1])
-        if (!match || number < row.num.min || number > row.num.max) throw new Error('Choose 1 to 10 review rounds')
-        value = `${number} ${number === 1 ? 'round' : 'rounds'}`
+        if (row.num.off && value === 'off') value = 'off'
+        else {
+          const match = value.match(/^(\d+)(?: (\w+))?$/), number = Number(match?.[1])
+          if (!match || match[2] && ![row.num.unit, row.num.one].includes(match[2]) || number < row.num.min || number > row.num.max) throw new Error(`Choose ${row.num.min} to ${row.num.max} ${row.num.unit}${row.num.off ? ', or off' : ''}`)
+          value = `${number} ${number === 1 ? row.num.one || row.num.unit : row.num.unit}`
+        }
       } else if (row.options && !key.endsWith('.effort') && !row.options.includes(value)) throw new Error('Choose one of the offered values')
       else if (key.endsWith('.effort') && value !== 'default') {
         const role = key.split('.')[0] as Role, config = this.agent(role, level)

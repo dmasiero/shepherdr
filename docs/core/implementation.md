@@ -84,7 +84,7 @@ not evidence of a working feature.
 | Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; real SSH/disconnect acceptance pending; old implementation removal pending |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; notes/delete/device parity still pending |
 | Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; CI, env/set/rm and stale-scope acceptance pending |
-| Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Pending |
+| Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Partial: real second-core browser frames, takeover, navigation, fit, markup crop and native BROWSER_NOTES_OK shown; app restart retained takeover. Agent-only idle cleanup, real SSH and full device parity pending |
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Pending |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Pending |
@@ -419,3 +419,52 @@ Search this chat and beyond row. Tests now assert that current baseline (includi
 both counts and keyboard order) and select the actual drawer during transitions.
 Scoped read-only test review found no issues. No product appearance was changed
 for these failures. Full sidebar CI rerun pending.
+
+
+## Core browser slice (2026-10-30)
+
+The existing Browser panel now uses an installation-owned core child on the task's
+machine. Main talks only to its core socket. The child talks locally to the pinned
+agent-browser daemon/CDP; no remote listener, tunnel, direct tailnet stream or
+worker fallback is provisioned. Unknown OSC 777 envelopes carry authenticated,
+direction-separated frames/controls through raw core attach, not screen reading.
+The child is an outliving task child where its agent is live.
+
+Browser configuration and handoff journals are private files; HMAC keys stay out
+of labels, agent prompts and logs. A record binds task, launch, machine and child
+identity. Snapshot/reconnect adopts that child and reattaches. Input is never
+replayed; timeouts ask the human to inspect the page. Command receipts, bounded
+input/output queues and slow-viewer frame dropping prevent reconnect duplication
+and unbounded buffering. Takeover/handback news uses durable authenticated IDs
+and the native agent delivery queue; it stays out of the human chat.
+
+The server provisions agent-browser 0.39.4's platform binary and its guide/assets
+inside the existing immutable helper bundle, using chunked core exec, private
+files and hash verification. Supported packaged targets are Linux/macOS x64/arm64
+(with Linux musl detection). Chrome must already be installed, or be installed
+explicitly with the pinned wrapper's documented install command on that machine.
+No service, global PATH or Tailscale mapping is changed by provisioning. Missing
+Chrome reports a setup hint. Other platforms remain unverified/unsupported.
+
+A viewer lease expires after disconnect and hands the browser back after the
+normal leave delay. Agent-only usage marks are discovered through core and get
+an idle owner even without a viewer. The helper enforces the scoped idle setting
+independently of the app. Task stop/restart first interrupts/stops its own agent,
+then awaits authenticated browser cleanup; merge cleanup failures remain queued
+for retry instead of hiding the merge result. Explicit delete/merge forgets that
+browser profile; ordinary pause/archive preserves sign-ins.
+
+Browser note retries retain the same command ID and uploaded screenshot references.
+Only screenshots uploaded by this chat can be included; attachment captions retain
+the original filename after private remote copying. The panel's look is unchanged.
+
+Manual isolated evidence: probe/REMO-2 used the real core browser child, took over,
+navigated to its scratch artifact, fitted the page, selected Send proof, added a
+note and sent its actual crop. Native Claude returned BROWSER_NOTES_OK once and
+kept the task To do. Desktop screenshot and phone chat screenshot were inspected.
+Stopping/restarting only the isolated app preserved both browser page and takeover.
+The second core is on this host, not SSH. Actual SSH, agent-only idle expiry,
+lock-screen/browser-on-phone input, full device comparison and crash cleanup are
+still unverified. Fresh review: three scoped rounds; two major cleanup/idle gaps
+fixed, later rounds clear. Regression tests are written for branch CI only; no
+local suites were run. This does not complete the full rewrite acceptance gate.

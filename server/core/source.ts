@@ -25,11 +25,12 @@ import { CoreChat } from './chat.ts'
 import { CoreActivity } from './activity.ts'
 import { CoreWorktree } from './worktree.ts'
 import { CorePlaces } from './places.ts'
+import { CoreBrowsers } from './browsers.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
-interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' }
+interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain'; quiet?: boolean }
 
 /** Product state is Shepherdr's; terminals, machine commands, files and agent children are core's. */
 export class CoreSource extends Emitter<SourceEvents> implements Source {
@@ -41,6 +42,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly mailbox: Mailbox
   readonly agents: CoreAgents
   readonly logs: CoreLogs
+  readonly browsers: CoreBrowsers
   readonly places: CorePlaces
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
@@ -82,6 +84,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.chats = new CoreChat(this, installation.id)
     this.activities = new CoreActivity(this)
     this.worktrees = new CoreWorktree(this)
+    this.browsers = new CoreBrowsers(this, installation.id)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -274,6 +277,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
         return { answered: true }
       }
+      case 'browser-notes': return this.browsers.notes(action)
       case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
       case 'setting':
@@ -469,21 +473,23 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   }
   watch(_chats: string[], _terms: string[]) {}
   private deliveryNotice(item: PendingSend, uncertain = false) {
-    this.post(item.chat, { id: `delivery-${item.id}`, who: 'agent', text: uncertain
+    if (item.quiet && !uncertain) return
+    this.post(item.chat, { id: `delivery-${item.id}`, who: 'agent', text: item.quiet ? 'Browser handoff was not confirmed. Check with the agent before letting it use the browser.' : uncertain
       ? 'Shepherdr could not confirm delivery of your saved answer. Check with the agent before answering again; it will not be sent to a replacement session.'
       : 'Shepherdr saved your answer and is waiting for the agent to receive it.', at: Date.now() })
   }
   /** The card's change and its delivery queue entry commit together before any transport effect. */
-  saveAndDeliver(chat: string, id: string, text: string, save: () => void) {
+  saveAndDeliver(chat: string, id: string, text: string, save: () => void, quiet = false) {
     const agent = this.agents.get(chat)
     if (!agent) throw new Error('The card’s agent session is missing')
     this.store.db.transaction(() => {
       save()
-      this.store.set('pending-send', id, { id, chat, text, launch: agent.launch, state: 'queued' } satisfies PendingSend)
-      this.deliveryNotice({ id, chat, text, launch: agent.launch, state: 'queued' })
+      this.store.set('pending-send', id, { id, chat, text, launch: agent.launch, state: 'queued', quiet } satisfies PendingSend)
+      this.deliveryNotice({ id, chat, text, launch: agent.launch, state: 'queued', quiet })
     })()
     queueMicrotask(() => { void this.flush(chat) })
   }
+  browser(task: string, client: Parameters<CoreBrowsers['attach']>[1]) { return this.browsers.attach(task, client) }
   terminal(chat: string, ws: Parameters<typeof terminalBridge>[2]) { return terminalBridge(this, chat, ws) }
   async worktree(ask: WorktreeAsk) { return this.worktrees.ask(ask) }
   async activity(ask: ActivityAsk) { return this.activities.ask(ask) }
@@ -492,5 +498,5 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
   async drain() { this.quiescing = true; return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.logs.stop(); this.core.stop() }
+  stop() { clearInterval(this.recovery); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }

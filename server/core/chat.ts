@@ -64,6 +64,7 @@ export class CoreChat {
     this.source.store.set('upload', id, { id, chat, path, name: clean } satisfies Upload)
     return path
   }
+  uploadName(chat: string, path: string) { return this.records().find(item => item.chat === chat && item.path === path)?.name }
   async attachment(chat: string, path: string) {
     const record = this.records().find(item => item.chat === chat && (item.path === path || [...Object.values(item.copies ?? {}), ...(item.paths ?? [])].includes(path)))
     return record ? new Blob([this.read(record)], { type: Bun.file(record.path).type }) : null

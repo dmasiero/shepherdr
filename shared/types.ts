@@ -886,7 +886,7 @@ export type Action =
   | { type: 'artifact-say'; place: string; artifact: string; v: number; text: string }
   | { type: 'artifact-delete'; place: string; artifact: string }
   /** Mark up's notes from the shared browser, sent together into the task's chat */
-  | { type: 'browser-notes'; chat: string; url: string; title?: string; viewport?: { w: number; h: number }; notes: BrowserNote[] }
+  | { type: 'browser-notes'; cid?: string; chat: string; url: string; title?: string; viewport?: { w: number; h: number }; notes: BrowserNote[] }
   | { type: 'mode'; place: string; mode: Mode; keepWorkers?: boolean }
   | { type: 'autopilot-run'; place: string }
   /** a project's automation: pause or go on, run now, remove. Only agents add or change one, through the command. By

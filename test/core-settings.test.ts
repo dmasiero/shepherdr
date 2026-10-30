@@ -57,3 +57,17 @@ test('a changed CLI never inherits a foreign model, including from another scope
   expect(settings.agent('task', 'p:other:one').model).toBeUndefined()
   expect(() => settings.set('task.model', 'gpt-6.1-sol')).toThrow('model offered')
 }))
+
+
+test('browser idle settings keep minute units, bounds and off across scopes', () => fixture(settings => {
+  settings.set('browser.idleClose', '1 min', 'p:box:one')
+  expect(settings.get('browser.idleClose', 'p:box:one')).toBe('1 min')
+  settings.set('browser.idleClose', 'off', 'm:box')
+  expect(settings.get('browser.idleClose', 'p:box:two')).toBe('off')
+  expect(settings.get('browser.idleClose', 'p:other:one')).toBe('10 min')
+  expect(() => settings.set('browser.idleClose', '0 min')).toThrow()
+  expect(() => settings.set('browser.idleClose', '1441 min')).toThrow()
+  expect(() => settings.set('browser.idleClose', '2 rounds')).toThrow()
+  settings.set('review.rounds', '1 round')
+  expect(settings.get('review.rounds')).toBe('1 round')
+}))
