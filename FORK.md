@@ -46,12 +46,11 @@ newest commits (`git diff v2.1.0 2.1` before the first one).
 | --- | --- |
 | `FORK.md` | This page. |
 | `scripts/sync-upstream.sh`, `flake.nix`, `flake.lock` | The sync with upstream that renix runs, and its dev shell (Bun, Node, gh, git, tea). |
+| `server/voice.ts`, `test/fork-voice.test.ts` | Voice calls start without a first_message override (below). |
 
 Planned, each its own change that adds its row here, its `fork:` comments in upstream's files and its tests to the
 sync's check list:
 
-- **Voice calls start without a first_message override**: ElevenLabs closes a call whose agent doesn't allow that
-  override (2.0 had the same fix).
 - **Gitea pull requests through `tea`**: 2.1 opens, checks and merges pull requests on GitHub only; the fork's spaces
   are on Gitea.
 - **Task commands for scripts**: `shepherdr task add/list/tell` from scripts outside an agent session, for the
@@ -61,6 +60,23 @@ sync's check list:
   fixed, `test/core-pilot-git.test.ts` fails here and stays out of the sync's check list.
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment.
+
+### Voice calls start without a first_message override
+
+On 2.0, ElevenLabs closed every call right after "Listening" (1008, `Override for field 'first_message' is not allowed
+by config.`), though the agent allowed that override, and 2.1's `server/voice.ts` sends the same override. The call
+now overrides only the prompt. The agent Shepherdr makes says its own first message, "You're through to {{agent}}. Go
+ahead.", naming who you called through the `agent` dynamic variable the call already sends (placeholder "your
+agent"), and no longer allows a first_message override. Tested in `test/fork-voice.test.ts`.
+
+2.1 keeps its agent's id in its own `state.sqlite` (kind `voice-agent`, keyed by the API key's SHA-256) and makes a new
+agent on the first call when there is none; it never reads 2.0's `voice.json`. So after the cutover the first call
+makes a new agent with this first message, and the 2.0 agent stays at ElevenLabs, unused.
+
+### Not carried from 2.0
+
+- **The artifact checker runs `browserBin()`**: 2.1's checker (`server/core/artifacts.ts`) already runs the app's own
+  `bin/agent-browser` by its absolute path, not a bare `agent-browser` from the server's PATH.
 
 ## Syncing with upstream
 
