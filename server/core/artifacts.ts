@@ -42,9 +42,14 @@ export class CoreArtifacts {
     const chat = artifact.versions.at(-1)!.chat, task = this.source.tasks.forChat(chat)
     return task && ['merged', 'closed'].includes(task.workflow) ? artifact.place : this.source.agents.get(chat) ? chat : artifact.place
   }
+  private name(chat: string) {
+    const task = this.source.tasks.forChat(chat)
+    if (task) return `${task.id} ${chat.slice(chat.lastIndexOf('/') + 1).toLowerCase()}`
+    return this.source.store.get<string>('name', chat) || this.source.space(chat)?.name || 'Coordinator'
+  }
   list(): Artifact[] {
     return this.source.store.all<Record>('core-artifact').map(artifact => ({ id: artifact.id, title: artifact.title, place: artifact.place, at: artifact.at,
-      v: artifact.versions.at(-1)!.n, when: age(artifact.at), by: artifact.versions.at(-1)!.by, keeper: this.keeper(artifact), thumb: artifact.thumb,
+      v: artifact.versions.at(-1)!.n, when: age(artifact.at), by: artifact.versions.at(-1)!.by, keeper: this.name(this.keeper(artifact)), thumb: artifact.thumb,
       chats: [...new Set(artifact.versions.map(version => version.chat))], versions: [...artifact.versions].reverse().map(version => ({ n: version.n, when: age(version.at), by: version.by, note: version.note, html: version.html, what: version.what })) }))
   }
   page(id: string, n?: number) {
@@ -198,6 +203,6 @@ export class CoreArtifacts {
     this.source.saveAndDeliver(chat, `artifact-action-${randomBytes(12).toString('hex')}`, `<${tag} artifact="${artifact.id}" version="${version.n}" title="${artifact.title.replace(/["<>]/g, '')}"${action.type === 'artifact-note' && action.target ? ` target="${action.target.replace(/["<>]/g, '')}"` : ''}>${text}</${tag}>`, () => {
       if (action.type === 'artifact-send') { artifact.sent = { html: version.html, text }; this.source.store.set('core-artifact', artifact.id, artifact) }
     })
-    this.source.emit('snapshot'); return { to: chat }
+    this.source.emit('snapshot'); return { to: this.name(chat) }
   }
 }

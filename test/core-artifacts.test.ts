@@ -101,3 +101,24 @@ test('artifact space selection accepts visible aliases and refuses ambiguous ali
   source.store.set('space', other.id, other); source.store.set('name', other.id, 'renamed-one')
   await expect(source.artifacts.cli(agent, ['artifact', 'list', '--space', 'renamed-one'], '/unused')).rejects.toThrow('unambiguous')
 }))
+
+
+test('artifact keeper labels use friendly names while note delivery keeps canonical ownership', async () => fixture(async (source, agent) => {
+  await source.artifacts.cli(agent, ['artifact', 'new', 'page.html', '--title', 'Naming proof'], source.space(agent.space)!.folder)
+  const id = source.artifacts.list()[0].id
+  expect(source.artifacts.list()[0].keeper).toBe('one')
+  source.store.set('name', agent.space, 'Renamed space')
+  expect(source.artifacts.list()[0].keeper).toBe('Renamed space')
+  let target = ''
+  source.saveAndDeliver = (chat, _id, _text, save) => { target = chat; save() }
+  expect(await source.artifacts.act({ type: 'artifact-note', place: agent.space, artifact: id, v: 1, note: 'A harmless note' })).toEqual({ to: 'Renamed space' })
+  expect(target).toBe(agent.chat)
+  const taskChat = 'ONE-1/Agent'
+  source.store.set('task', 'ONE-1', { id: 'ONE-1', chat: taskChat, workflow: 'working', place: agent.space })
+  source.store.set('agent', taskChat, { ...agent, chat: taskChat, role: 'task' })
+  const record = source.store.get<{ versions: { chat: string }[] }>('core-artifact', id)!
+  record.versions.at(-1)!.chat = taskChat; source.store.set('core-artifact', id, record)
+  expect(source.artifacts.list()[0].keeper).toBe('ONE-1 agent')
+  source.store.set('task', 'ONE-1', { id: 'ONE-1', chat: taskChat, workflow: 'closed', place: agent.space })
+  expect(source.artifacts.list()[0].keeper).toBe('Renamed space')
+}))

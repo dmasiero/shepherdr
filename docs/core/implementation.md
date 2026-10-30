@@ -1855,3 +1855,15 @@ fall back to their known timestamps, and the existing five-second snapshot refre
 updates ages. Regressions cover working/status, To do, Done and archived precedence
 without mutating task records. Typecheck passed; real phone before showed now on
 all old tasks. Only the isolated preview restarted for the after check.
+
+### Artifact viewer follow-up: friendly keeper names
+
+The real desktop viewer showed Ask p:<core-id>:~ for a change and used that internal
+ID in sent confirmations. Legacy presents a coordinator name or TASK agent there.
+The public artifact view and action reply now resolve saved display names while
+routing continues to use only the canonical keeper chat. A completed task still
+hands ownership back to its artifact's space. Regressions cover renamed spaces,
+active tasks, completed tasks and unchanged canonical note delivery. Manual before
+and after on the same live artifact/desktop show the raw ID replaced by ~; no
+artifact version/data or native agent was changed for that comparison. Typecheck
+passed. Task-age CI 41034443552 passed at 69dc6c4e; its phone before/after was inspected.
