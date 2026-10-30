@@ -82,6 +82,9 @@ test('a contained To-do native turn still consumes its run’s parallel slot, an
     const next = { ...f.task, id: 'EX-2', chat: 'EX-2/Agent', workflow: 'queued' as const }
     f.source.store.set('task', next.id, next)
     expect(f.source.health.room('machine', next.id)).toContain('Autopilot tasks are working (limit 1)')
+    // Native end-of-turn status takes precedence over the older working hook.
+    f.source.agents.terminal = () => ({ address: 't1', state: 'live', pid: 1, status: { app: 'codex', state: 'done' } }) as ReturnType<typeof f.source.agents.terminal>
+    expect(f.source.health.room('machine', next.id)).toBeUndefined()
     worker.state = 'idle'; f.source.store.set('agent', worker.chat, worker)
     expect(f.source.health.room('machine', next.id)).toBeUndefined()
     const run = f.source.pilots.policy.get(f.run.id)!; run.config.runtime = 1; run.started = 1; f.source.store.set('pilot-run', run.id, run)
