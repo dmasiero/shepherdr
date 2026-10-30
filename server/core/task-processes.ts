@@ -7,7 +7,7 @@ import { Refusal } from './client.ts'
 /** Product-owned roots and their actual core descendants, never names or caller-supplied labels. */
 export class CoreTaskProcesses {
   constructor(private source: CoreSource) {}
-  async stop(task: CoreTask, cancel = true) {
+  async stop(task: CoreTask, cancel = true, forgetBrowser = false) {
     const records = [...new Map([...this.source.agents.all(), ...this.source.store.all<CoreAgent>('agent-launch'), ...this.source.store.all<CoreAgent>('pilot-capture')]
       .filter(agent => agent.chat.startsWith(`${task.id}/`)).map(agent => [agent.launch, agent])).values()]
     const owned = new Map<string, { pid: number | null | undefined; created: number }>()
@@ -55,7 +55,7 @@ export class CoreTaskProcesses {
       }
       if (!pending) {
         if (browserClosed) return
-        await this.source.browsers?.close(task.id, false, terminal => { owned.set(terminal.address, { pid: terminal.pid, created: terminal.created_ms }) })
+        await this.source.browsers?.close(task.id, forgetBrowser, terminal => { owned.set(terminal.address, { pid: terminal.pid, created: terminal.created_ms }) })
         browserClosed = true
         continue // Include any cleanup relay that has not yet published its exit.
       }

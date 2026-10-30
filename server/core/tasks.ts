@@ -426,8 +426,7 @@ export class CoreTasks {
     switch (action.type) {
       case 'pin': task.pinned = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
       case 'archive':
-        if (action.on) await this.stopAgents(task)
-        if (action.on) await this.source.browsers?.close(task.id, task.workflow === 'merged' || task.workflow === 'closed')
+        if (action.on) await this.stopAgents(task, task.workflow === 'merged' || task.workflow === 'closed')
         task.archived = action.on ? Date.now() : undefined
         if (action.on) delete task.pinned; else task.unarchived = Date.now()
         this.save(task); return { ok: true }
@@ -473,7 +472,7 @@ export class CoreTasks {
     }
     return { held, worktree: !!block, branch: !!head }
   }
-  private async stopAgents(task: CoreTask) { await new CoreTaskProcesses(this.source).stop(task) }
+  private async stopAgents(task: CoreTask, forgetBrowser = false) { await new CoreTaskProcesses(this.source).stop(task, true, forgetBrowser) }
   async stop(grant: Grant, id: string) {
     return this.change(id, async () => {
       const task = this.get(id)
@@ -485,25 +484,35 @@ export class CoreTasks {
       return task
     })
   }
-  async close(task: CoreTask, force = false) { return this.change(task.id, () => this.closeNow(task, force)) }
-  private async closeNow(task: CoreTask, force = false) {
+  async close(task: CoreTask, force = false, summary?: string, facts?: string) { return this.change(task.id, () => this.closeNow(task, force, summary, facts)) }
+  private async closeNow(task: CoreTask, force = false, summary?: string, facts?: string) {
     task = this.get(task.id) || (() => { throw new Refusal('No such task') })()
+    if (summary !== undefined && (!summary.trim() || summary.length > SUMMARY_MAX)) throw new Refusal(`Write a summary of at most ${SUMMARY_MAX} characters`)
     const { held } = await this.held(task)
     if (held.length && !force) return { ok: false, held }
-    await this.stopAgents(task)
+    await this.stopAgents(task, true)
     if (task.workflow === 'merged' || task.workflow === 'closed') return { ok: true }
-    await this.source.browsers?.close(task.id, true)
+    // Re-read after agents exit: a worker may have written more while cleanup awaited its exit.
+    const remaining = await this.held(task)
+    if (remaining.held.length && !force) return { ok: false, held: remaining.held, stopped: true }
+    if (!remaining.held.length) {
+      const repo = { machine: task.machine, folder: task.repo }, head = remaining.branch ? await this.git.head({ machine: task.machine, folder: task.repo }, task.branch) : undefined
+      if (head && !await this.git.contains(repo, task.base, head)) throw new Refusal('The task branch changed during cleanup; its work was kept')
+      if (remaining.worktree) await this.git.run(repo, ['worktree', 'remove', task.folder])
+      if (head) await this.git.run(repo, ['update-ref', '-d', `refs/heads/${task.branch}`, head])
+    }
+    if (summary !== undefined) task.said = summary.trim()
+    if (facts !== undefined) task.facts = facts
     task.workflow = 'closed'; task.doneAt = Date.now(); task.outcome = 'done'; task.status = 'done'
-    this.save(task); await this.label(task); this.card(task, 'Marked done; nothing merged')
-    return { ok: true }
+    this.save(task); await this.label(task); this.card(task, task.said || 'Marked done; nothing merged')
+    return { ok: true, kept: remaining.held }
   }
   async remove(task: CoreTask, force = false) { return this.change(task.id, () => this.removeNow(task, force)) }
   private async removeNow(task: CoreTask, force = false) {
     task = this.get(task.id) || (() => { throw new Refusal('No such task') })()
-    await this.stopAgents(task)
+    await this.stopAgents(task, true)
     const state = await this.held(task)
     if (state.held.length && !force) return { ok: false, held: state.held, stopped: true }
-    await this.source.browsers?.close(task.id, true)
     const repo = { machine: task.machine, folder: task.repo }
     if (state.worktree) await this.git.run(repo, ['worktree', 'remove', ...(force ? ['--force'] : []), task.folder])
     if (state.branch) {
@@ -638,7 +647,7 @@ export class CoreTasks {
     this.assert(grant, task)
     if (verb === 'task' && ['close', 'delete', 'archive', 'unarchive', 'pause', 'pin', 'unpin'].includes(sub)) {
       if (this.source.agents.get(grant.chat)?.role !== 'coordinator') throw new Refusal('Only a coordinator changes this task control, when the human asks')
-      if (sub === 'close') return text(await this.close(task, parsed.flags.has('force')))
+      if (sub === 'close') { const summary = summaryOpts(parsed); return text(await this.close(task, parsed.flags.has('force'), summary.said, summary.facts)) }
       if (sub === 'delete') return text(await this.remove(task, parsed.flags.has('force')))
       const action = sub === 'archive' || sub === 'unarchive' ? { type: 'archive' as const, on: sub === 'archive' }
         : sub === 'pin' || sub === 'unpin' ? { type: 'pin' as const, on: sub === 'pin' } : { type: 'pause' as const }

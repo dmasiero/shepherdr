@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { CoreTasks, type CoreTask } from '../server/core/tasks.ts'
@@ -38,6 +38,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
     } },
     agents: { all: () => [], get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
       terminal: () => ({ address: 't1', state: state.terminal }), send: async () => {} },
+    browsers: { close: async () => {} },
     core: { current: { terminals: new Map() }, call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
     post: (chat: string, message: Message) => store.set(`message:${chat}`, message.id, message),
   } as unknown as CoreSource
@@ -171,7 +172,10 @@ test('CLI and screen mutations cannot race a merge already in flight', async () 
   const merge = tasks.merge(grant, task.id)
   await reached
   try {
-    for (const args of [['task', 'close', task.id, '--force'], ['todo', task.id], ['task', 'queue', task.id, '--after', 'none']]) await expect(tasks.cli(grant, args)).rejects.toThrow('finishing another action')
+    const coordinator = { ...grant, chat: task.place, id: 'coord-grant', session: 'coord-launch' }, get = source.agents.get
+    source.agents.get = chat => chat === coordinator.chat ? { chat, launch: coordinator.session, grant: coordinator.id, role: 'coordinator', machine: task.machine, space: task.place, kind: 'codex', hook: '/unused', started: 1, state: 'idle' } : get(chat)
+    await expect(tasks.cli(coordinator, ['task', 'close', task.id, '--force'])).rejects.toThrow('finishing another action')
+    for (const args of [['todo', task.id], ['task', 'queue', task.id, '--after', 'none']]) await expect(tasks.cli(grant, args)).rejects.toThrow('finishing another action')
     await expect(tasks.act({ type: 'delete', chat: task.chat, force: true })).rejects.toThrow('finishing another action')
     await expect(tasks.ready(grant, task.id, 'Another ready')).rejects.toThrow('finishing another action')
     await expect(tasks.report(grant, task.id, 'Late status', 50)).rejects.toThrow('finishing another action')
@@ -297,5 +301,42 @@ test('task controls require a coordinator and lists separate archived tasks in i
     await tasks.cli(grant, ['task', 'unarchive', task.id]); expect(tasks.list(grant).map(t => t.id)).toEqual([task.id])
     await tasks.cli(grant, ['task', 'pause', task.id]); expect(tasks.get(task.id)?.workflow).toBe('todo')
     await tasks.cli(grant, ['task', 'unpin', task.id]); expect(tasks.get(task.id)?.pinned).toBeUndefined()
+  })
+})
+
+test('close removes a clean fully-contained worktree and branch but keeps its summary and chat record', async () => {
+  await withTask(async ({ tasks, task, worktree, git, repo }) => {
+    git(worktree, 'reset', '--hard', 'main')
+    expect(await tasks.close(task, false, 'Nothing to merge', 'Checked the original file')).toMatchObject({ ok: true, kept: [] })
+    expect(tasks.get(task.id)).toMatchObject({ workflow: 'closed', said: 'Nothing to merge', facts: 'Checked the original file' })
+    expect(Bun.spawnSync(['git', 'show-ref', '--verify', `refs/heads/${task.branch}`], { cwd: repo }).exitCode).not.toBe(0)
+    expect(existsSync(worktree)).toBe(false)
+  })
+})
+
+test('confirmed close preserves held commits and uncommitted work even with force', async () => {
+  await withTask(async ({ tasks, task, worktree }) => {
+    writeFileSync(join(worktree, 'unfinished.txt'), 'KEEP_UNFINISHED')
+    expect(await tasks.close(task)).toMatchObject({ ok: false, held: ['uncommitted changes', 'unmerged commits'] })
+    expect(tasks.get(task.id)?.workflow).toBe('working')
+    expect(await tasks.close(task, true)).toMatchObject({ ok: true, kept: ['uncommitted changes', 'unmerged commits'] })
+    expect(readFileSync(join(worktree, 'unfinished.txt'), 'utf8')).toBe('KEEP_UNFINISHED')
+    expect(tasks.get(task.id)?.workflow).toBe('closed')
+  })
+})
+
+test('close rechecks work written during shutdown and performs browser cleanup once with final intent', async () => {
+  await withTask(async ({ tasks, task, worktree, git }) => {
+    git(worktree, 'reset', '--hard', 'main')
+    const source = (tasks as unknown as { source: CoreSource }).source
+    let calls = 0
+    source.browsers.close = async (_id: string, forget?: boolean) => {
+      calls++; expect(forget).toBe(true)
+      writeFileSync(join(worktree, 'late.txt'), 'KEEP_LATE_WRITE')
+    }
+    expect(await tasks.close(task)).toMatchObject({ ok: false, stopped: true, held: ['uncommitted changes'] })
+    expect(calls).toBe(1)
+    expect(tasks.get(task.id)?.workflow).toBe('working')
+    expect(readFileSync(join(worktree, 'late.txt'), 'utf8')).toBe('KEEP_LATE_WRITE')
   })
 })
