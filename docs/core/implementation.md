@@ -1453,3 +1453,24 @@ arguments, core documents or chat. Review found partial startup cleanup missing 
 operator bind fails; startup now unwinds source, app and socket before returning error.
 CI coverage added for scope/alias resolution, command-word refusal, mailbox refusal,
 private socket permissions and server-owned vault writes; local suites were not run.
+
+### Native multi-choice, plan and research completion (2026-10-30)
+
+The github-proof coordinator created exactly one read-only Claude task GITH-3.
+Its authenticated helper posted a multi-choice card with two described choices;
+both were selected and sent in the shared phone-width browser. The same native
+agent received the answer and returned MULTI_CHOICE_NATIVE_OK, then posted the
+actual two-step plan. The browser selected Approve the plan and sent it; the agent
+ran only branch/status reads and returned PLAN_APPROVAL_NATIVE_OK. It marked the
+research task Done with no changes to merge; its clean checkout was removed.
+Persisted cards independently confirm multi-choice answered and plan choice 0.
+Screenshots inspected: she301-native-multi-choice-phone.png and
+she301-native-plan-phone.png. Physical lock-screen answering remains unverified.
+
+Regular coordinators now match verified legacy creation-news behavior: ordinary
+added events do not produce a second news wake or main-home card; the original
+creation card remains. Existing waiting added echoes retire without replay.
+GITH-3 had no persisted added news, while its Done news was present and delivered.
+Marker: NATIVE_MULTI_CHOICE_PLAN_APPROVAL_RESEARCH_DONE_NO_ADDED_ECHO_OK.
+Automation/Autopilot added-event processing is unchanged. Scoped fresh review had
+no findings, and meaningful no-echo/delivery CI cases were written, not run locally.

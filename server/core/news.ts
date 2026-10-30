@@ -28,7 +28,7 @@ export class CoreTaskNews {
     const targets = new Set([space.id, ...(main ? [main.id] : [])])
     for (const target of targets) {
       const owner = this.source.space(target)
-      if (!owner || owner.mode !== 'regular') continue
+      if (!owner || owner.mode !== 'regular' || event === 'added') continue // Legacy regular coordinators do not echo creation news.
       const observed = { ...baseObserved }
       // One still-waiting observation of each kind suffices; newer evidence supersedes the older one.
       for (const old of this.source.store.all<Notice>('task-news')) if (old.task === task.id && old.target === target && old.event === event && old.state === 'waiting') {
@@ -51,6 +51,7 @@ export class CoreTaskNews {
   }
   private valid(notice: Notice, task: CoreTask, now: number) {
     const agent = this.source.agents.get(task.chat), terminal = agent && this.source.agents.terminal(agent), was = notice.observed
+    if (notice.event === 'added') return false // Retire an older waiting echo without replaying it.
     if (task.place !== notice.place || task.archived || task.workflow !== was.workflow || task.launchAttempt !== was.attempt || agent?.launch !== was.agent) return false
     if (notice.event === 'ready') return task.readyAt === was.ready && task.workflow === 'ready'
     if (notice.event === 'merged' || notice.event === 'closed') return task.doneAt === was.done

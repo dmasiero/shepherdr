@@ -34,7 +34,8 @@ function setup(source: CoreSource) {
 }
 
 test('task news reaches its own regular coordinator and main overview once, never unrelated regular spaces', () => fixture(async f => {
-  f.source.news.record(f.task, 'added', 10)
+  f.task.workflow = 'ready'; f.task.readyAt = 10; f.source.store.set('task', f.task.id, f.task)
+  f.source.news.record(f.task, 'ready', 10)
   f.source.news.deliver(10)
   expect(f.sent.map(item => item.chat)).toEqual(['app', 'main-home'])
   expect(f.sent.every(item => item.quiet && item.text.startsWith('<news>'))).toBe(true)
@@ -54,7 +55,8 @@ test('waiting news waits for idle/reconnect, cancels changed evidence, and never
   f.source.news.deliver(11); expect(f.sent).toHaveLength(0)
   expect(f.source.store.all<{ state: string }>('task-news').every(item => item.state === 'cancelled')).toBe(true)
   f.source.store.delete('agent', 'main-home')
-  f.source.news.record(f.task, 'added', 12)
+  f.task.workflow = 'ready'; f.task.readyAt = 12; f.source.store.set('task', f.task.id, f.task)
+  f.source.news.record(f.task, 'ready', 12)
   f.source.machineConnected = () => false
   f.source.news.deliver(12); expect(f.sent).toHaveLength(0)
   f.source.machineConnected = () => true
@@ -85,8 +87,10 @@ test('home Autopilot receives original-space news through its own configured wak
 }))
 
 test('per-pass delivery is bounded per coordinator and old settled receipts can be pruned without replay', () => fixture(async f => {
-  f.source.news.record(f.task, 'added', 1)
-  f.source.news.record(f.task, 'stalled', 2)
+  f.task.workflow = 'ready'; f.task.readyAt = 1; f.source.store.set('task', f.task.id, f.task)
+  const other = { ...f.task, id: 'APP-2', chat: 'APP-2/Agent', readyAt: 2 }; f.source.store.set('task', other.id, other)
+  f.source.news.record(f.task, 'ready', 1)
+  f.source.news.record(other, 'ready', 2)
   f.source.news.deliver(3)
   expect(f.sent).toHaveLength(2)
   f.source.news.deliver(4)
@@ -140,4 +144,13 @@ test('coalescing one busy target never repeats an overdue cause already delivere
   f.source.store.set('agent', 'app', { ...f.source.agents.get('app')!, state: 'idle' })
   f.source.news.deliver(now + 3)
   expect(f.sent.map(item => item.chat)).toEqual(['main-home', 'app'])
+}))
+
+
+test('regular coordinators keep the legacy no-echo behavior for task creation', () => fixture(async f => {
+  f.source.news.record(f.task, 'added', 10)
+  f.source.news.deliver(11)
+  expect(f.sent).toEqual([])
+  expect(f.source.store.all('task-news')).toEqual([])
+  expect(f.source.logs.messages('main-home')).toEqual([])
 }))
