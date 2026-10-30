@@ -213,18 +213,23 @@ export class CoreTasks {
   private async finishForRestart(agent: import('./model.ts').CoreAgent) {
     const terminal = this.source.agents.terminal(agent)
     if (!this.source.machineConnected(agent.machine) || !terminal) throw new Refusal('Reconnect before restarting; the old task process is unconfirmed')
-    if (terminal.state === 'finished') return
     if (agent.pid !== undefined && agent.pid !== terminal.pid) throw new Refusal('Task process identity changed; restart was refused')
+    const identity = { address: terminal.address, pid: terminal.pid, created: terminal.created_ms }
     this.source.mailbox.revoke(agent.chat)
     this.source.denyPermissions(agent, 'Task restarted; ask again in the new session')
-    await this.source.core.call('terminal.kill', { terminal: terminal.address })
+    if (terminal.state === 'finished') return
+    await this.source.core.call('terminal.kill', { terminal: identity.address })
     const deadline = Date.now() + 15000
     while (Date.now() < deadline && this.source.machineConnected(agent.machine)) {
-      if (this.source.agents.terminal(agent)?.state === 'finished') return
+      const current = this.source.agents.terminal(agent)
+      if (!current) break
+      if (current.address !== identity.address || current.pid !== identity.pid || current.created_ms !== identity.created) throw new Refusal('Task process identity changed; restart was refused')
+      if (current.state === 'finished') return
       await Bun.sleep(100)
     }
     throw new Refusal('Old task cleanup is unconfirmed; retry after it finishes or reconnects')
   }
+
   async deliver(id: string, chat: string, message: string, internal = false) {
     return this.change(id, async () => {
       const task = this.get(id)
@@ -450,13 +455,14 @@ export class CoreTasks {
         const owned = task.pilot && this.source.pilots.policy.get(task.pilot)
         const profile = owned && ['on', 'workers'].includes(owned.state) ? this.source.pilots.policy.live(owned.id) : current?.state === 'on' ? this.source.pilots.policy.live(current.id) : undefined
         if (profile && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
+        const choice = this.source.settings.checkedAgent(task.place, { kind: action.kind || task.kind, model: action.model, effort: action.effort })
         if (agent) await this.finishForRestart(agent)
         await this.profile(task, profile)
         await this.source.browsers?.close(task.id)
-        task.kind = action.kind as AgentKind || task.kind; task.model = action.model || undefined; task.effort = action.effort || undefined
-        if (action.save) this.source.settings.saveAgent('task', task.place, { kind: task.kind, model: task.model, effort: task.effort })
+        task.kind = choice.kind; task.model = choice.model; task.effort = choice.effort
         delete task.startError; this.save(task)
         await this.launchNow(task, task.workflow === 'working' ? 'Continue your agreed task. Preserve existing work.' : undefined, task.model, task.effort)
+        if (action.save && !this.get(task.id)?.capacity) this.source.settings.saveAgent('task', task.place, choice)
         return { ok: true }
       case 'close': return this.closeNow(task, !!action.force)
       case 'delete': return this.removeNow(task, !!action.force)

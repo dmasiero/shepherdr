@@ -75,3 +75,38 @@ test('lost core state and shutdown prevent replacement; a failed launch does not
   await expect(f.source.act({ type: 'restart', chat: f.space.id, kind: 'claude', save: true })).rejects.toThrow('unavailable')
   expect(f.saved).toEqual([])
 }))
+
+function taskRestart(f: ReturnType<typeof setup>) {
+  const task = { id: 'DEMO-1', chat: 'DEMO-1/Agent', name: 'Task', desc: 'Wait for go', place: f.space.id, machine: f.space.machine,
+    folder: '/worktree', repo: '/repo', branch: 'work/1-task', base: 'main', kind: 'claude', workflow: 'todo', status: 'todo', state: 'To do',
+    mergePolicy: 'ask', review: { on: false, kind: 'codex', rounds: 3, mustFix: 'major' }, age: 'now', created: new Date().toISOString(), on: 'test' } as import('../server/core/tasks.ts').CoreTask
+  f.source.store.set('task', task.id, task)
+  f.source.store.set('agent', task.chat, { ...f.agent, chat: task.chat, role: 'task' })
+  f.source.agents.terminal = agent => agent.chat === task.chat ? f.on.current : f.child
+  f.source.browsers.close = async () => {}
+  return task
+}
+
+test('task restart validates settings before revocation and checks identity even for a finished old root', () => fixture(async f => {
+  const task = taskRestart(f)
+  await expect(f.source.act({ type: 'restart', chat: task.chat, kind: 'claude', model: 'invalid' })).rejects.toThrow('offered')
+  expect(f.revoked).toEqual([]); expect(f.killed).toEqual([])
+  f.terminal.state = 'finished'; f.terminal.pid = 999
+  await expect(f.source.act({ type: 'restart', chat: task.chat, kind: 'claude' })).rejects.toThrow('identity changed')
+  expect(f.launches).toEqual([]); expect(f.saved).toEqual([])
+}))
+
+test('task restart refuses a substituted exit and saves defaults only after a successful native start', () => fixture(async f => {
+  const task = taskRestart(f)
+  f.source.core.call = async <T>() => { f.terminal.state = 'finished'; f.terminal.pid = 999; return {} as T }
+  await expect(f.source.act({ type: 'restart', chat: task.chat, kind: 'claude', save: true })).rejects.toThrow('identity changed')
+  expect(f.launches).toEqual([]); expect(f.saved).toEqual([])
+  f.terminal.pid = 100
+  f.source.agents.launch = async () => { throw Error('Native launch failed') }
+  await expect(f.source.act({ type: 'restart', chat: task.chat, kind: 'claude', save: true })).rejects.toThrow('Native launch failed')
+  expect(f.saved).toEqual([])
+  f.source.agents.launch = async (...args) => { f.launches.push(args); return { ...f.agent, chat: task.chat, launch: 'new' } }
+  await f.source.act({ type: 'restart', chat: task.chat, kind: 'claude', save: true })
+  expect(f.launches).toHaveLength(1); expect(f.saved).toHaveLength(1)
+  expect(f.source.tasks.get(task.id)?.workflow).toBe('todo')
+}))
