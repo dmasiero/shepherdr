@@ -24,7 +24,8 @@ test('contained task commands use durable ownership, never caller labels or anot
   try {
     f.source.store.set('task', 'EX-2', { ...f.task, id: 'EX-2', localId: 'EX-2', chat: 'EX-2/Agent', pilot: undefined })
     expect((await f.cli('task', 'list')).out).toContain('EX-1')
-    expect((await f.cli('task', 'list')).out).not.toContain('EX-2')
+    expect((await f.cli('task', 'list')).out).toContain('EX-2')
+    expect((await f.cli('task', 'show', 'EX-2')).out).toContain('EX-2')
     expect((await f.cli('task', 'show', '1')).out).toContain('EX-1')
     await expect(f.cli('task', 'close', 'EX-2', '--run', f.run.id)).rejects.toThrow('does not own')
     await expect(f.cli('space', 'add', '/outside')).rejects.toThrow('needs the human')
@@ -84,5 +85,51 @@ test('a contained To-do native turn still consumes its run’s parallel slot, an
     const run = f.source.pilots.policy.get(f.run.id)!; run.config.runtime = 1; run.started = 1; f.source.store.set('pilot-run', run.id, run)
     expect(f.source.health.room('machine', next.id)).toContain('runtime limit')
     expect(f.source.pilots.policy.get(run.id)?.state).toBe('failed')
+  } finally { f.close() }
+})
+
+
+test('explicit contained start adopts a stopped run task without changing its worktree or review requirement', async () => {
+  const f = fixture()
+  try {
+    f.source.store.set('space', 'space', { id: 'space', name: 'project', machine: 'machine', folder: '/repo', base: 'main', prefix: 'EX', mode: 'autopilot', added: 1 })
+    const old = { ...f.run, id: 'old-run', state: 'stopped' as const, tasks: [f.task.id], actors: [] }
+    f.source.store.set('pilot-run', old.id, old)
+    f.source.store.set('task', f.task.id, { ...f.task, pilot: old.id, workflow: 'todo', readyHead: 'old-head', approvedHead: 'old-head' })
+    f.source.machineConnected = () => true
+    f.source.health.room = () => undefined
+    let launches = 0
+    f.source.agents.launch = async (_space, chat, kind, _prompt, options) => {
+      launches++
+      expect(options?.pilot?.run).toBe(f.run.id)
+      expect(options?.folder).toBe('/repo/work')
+      expect(options?.resume).toBe(false)
+      const worker: CoreAgent = { ...f.agent, chat, kind, role: 'task', launch: 'fresh-contained', pilot: { ...f.agent.pilot!, run: f.run.id } }
+      f.source.store.set('agent', chat, worker)
+      return worker
+    }
+    await f.cli('task', 'start', f.task.id)
+    expect(launches).toBe(1)
+    expect(f.source.tasks.get(f.task.id)).toMatchObject({ pilot: f.run.id, workflow: 'working', folder: '/repo/work', review: { on: true }, mergePolicy: 'ask' })
+    expect(f.source.tasks.get(f.task.id)?.approvedHead).toBeUndefined()
+    expect(f.source.pilots.policy.get(f.run.id)?.actors).toContainEqual({ chat: f.task.chat, launch: 'fresh-contained', role: 'task', task: f.task.id })
+    expect(() => f.source.pilots.policy.actor(old.id, { chat: f.task.chat, launch: 'old-worker', role: 'task', task: f.task.id })).toThrow()
+  } finally { f.close() }
+})
+
+test('adoption refuses retained, disconnected and unconfirmed retired workers before granting new authority', async () => {
+  const f = fixture()
+  try {
+    const old = { ...f.run, id: 'old-run', state: 'workers' as const, tasks: [f.task.id], actors: [] }
+    f.source.store.set('pilot-run', old.id, old)
+    f.source.store.set('task', f.task.id, { ...f.task, pilot: old.id, workflow: 'todo' })
+    f.source.machineConnected = () => true
+    await expect(f.cli('task', 'start', f.task.id)).rejects.toThrow('previous Autopilot')
+    f.source.store.set('pilot-run', old.id, { ...old, state: 'stopped' })
+    f.source.store.set('pilot-capture', 'retired', { ...f.agent, chat: f.task.chat, launch: 'retired', role: 'task', pilot: { ...f.agent.pilot!, run: old.id } })
+    await expect(f.cli('task', 'start', f.task.id)).rejects.toThrow('exits must be confirmed')
+    f.source.machineConnected = () => false
+    await expect(f.cli('task', 'start', f.task.id)).rejects.toThrow('reconnect')
+    expect(f.source.tasks.get(f.task.id)?.pilot).toBe(old.id)
   } finally { f.close() }
 })

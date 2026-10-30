@@ -23,7 +23,7 @@ export class CorePilotCommands {
     const run = this.run(agent)
     this.source.pilots.policy.command(run.id, this.source.pilots.actor(agent), words)
     const text = (value: unknown) => ({ out: (typeof value === 'string' ? value : JSON.stringify(value, null, 2)) + '\n', code: 0 })
-    if (command === 'help') return text('Contained Shepherdr: show, models, heartbeat, progress [TEXT], complete EVIDENCE, task add/list/show/chat/tell/queue/close, status, checkpoint MESSAGE, review, ready, pr, checks, merge, ask, plan, alert, secret list/ask/run/env, artifact list/show. Every action stays inside this run’s profile and owned tasks.')
+    if (command === 'help') return text('Contained Shepherdr: show, models, heartbeat, progress [TEXT], complete EVIDENCE, task add/list/show/chat/start/tell/queue/close, status, checkpoint MESSAGE, review, ready, pr, checks, merge, ask, plan, alert, secret list/ask/run/env, artifact list/show. Every action stays inside this run’s profile and owned tasks.')
     if (command === 'show') return text(this.source.settings.describe(agent.space))
     if (command === 'models') return text(this.source.settings.clis(agent.space))
     if (command === 'heartbeat') return text(this.source.heartbeats.cli(agent, ['heartbeat']))
@@ -60,8 +60,15 @@ export class CorePilotCommands {
       throw new Refusal('Contained artifact file export is not connected yet; ask the human to open it in the app')
     }
     if (command === 'task' && op === 'add') return this.source.tasks.cli(grant, args)
-    if (command === 'task' && op === 'list') return text(this.source.tasks.all().filter(task => task.pilot === run.id && run.tasks.includes(task.id)).map(task => this.source.tasks.view(task)))
+    if (command === 'task' && op === 'list') return text(this.source.tasks.all().filter(task => task.place === run.place && task.machine === run.machine && (agent.role === 'coordinator' || task.pilot === run.id && run.tasks.includes(task.id))).map(task => this.source.tasks.view(task)))
     const target = command === 'checkpoint' ? this.source.tasks.forChat(agent.chat) : this.source.tasks.resolve(grant, command === 'task' ? words[2] : op)
+    if (command === 'task' && op === 'start' && agent.role === 'coordinator' && target?.place === run.place && target.machine === run.machine) return this.source.tasks.cli(grant, args)
+    if (command === 'task' && ['show', 'chat'].includes(op) && agent.role === 'coordinator' && target?.place === run.place && target.machine === run.machine) {
+      if (op === 'show') return text(this.source.tasks.view(target))
+      const limit = Number(one(parsed, 'limit') || 20)
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Refusal('Choose 1 to 100 chat lines')
+      return text(this.source.logs.messages(target.chat).slice(-limit).map(message => ({ who: message.who, text: message.text?.slice(0, 2000), at: message.at })))
+    }
     if (!target || target.pilot !== run.id || !run.tasks.includes(target.id) || target.place !== run.place || target.machine !== run.machine) throw new Refusal('This run does not own that task')
     if (command === 'task' && op === 'show') return text(this.source.tasks.view(target))
     if (command === 'task' && op === 'chat') {

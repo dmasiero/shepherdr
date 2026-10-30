@@ -137,6 +137,50 @@ export class CoreTasks {
     })
   }
   async launch(task: CoreTask, message?: string, model = task.model, effort = task.effort) { return this.change(task.id, () => this.launchNow(task, message, model, effort)) }
+  /** Explicit coordinator start. A stopped run never silently becomes an unrestricted worker. */
+  async start(grant: Grant, id: string, message = 'Continue the agreed brief. Preserve existing work.') {
+    return this.change(id, async () => {
+      const task = this.get(id)
+      if (!task) throw new Refusal('No such task')
+      this.assert(grant, task)
+      const caller = this.source.agents.get(grant.chat)!
+      if (caller.role !== 'coordinator') throw new Refusal('Only the coordinator can start a task')
+      if (task.archived || ['merged', 'closed', 'merging'].includes(task.workflow)) throw new Refusal('Unarchive an open task before starting it')
+      if (!this.source.machineConnected(task.machine)) throw new Refusal('Wait for the task’s machine to reconnect')
+      const run = caller.pilot && this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
+      if (run && (run.state !== 'on' || run.place !== task.place || run.machine !== task.machine)) throw new Refusal('This run cannot start that task')
+      const changingProfile = task.pilot !== (run ? run.id : undefined)
+      if (changingProfile) {
+        if (task.pilot && this.source.pilots.policy.get(task.pilot)?.state !== 'stopped') throw new Refusal('Stop and finish cleaning up the previous Autopilot run first')
+        // Include retired launches: replacing an agent record is never proof its process ended.
+        const records = [...this.source.agents.all(), ...this.source.store.all<import('./model.ts').CoreAgent>('pilot-capture')]
+          .filter(agent => agent.chat === task.chat || agent.chat === task.reviewChat || agent.chat.startsWith(`${task.id}/Reviewer`))
+        if (records.some(agent => this.source.agents.terminal(agent)?.state !== 'finished')) throw new Refusal('Previous task and reviewer exits must be confirmed before changing its access profile')
+        if (run && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
+        if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && other.workflow === 'working').length)
+        const harness = run ? run.config.harness : this.source.settings.launch('task', task.place)
+        const reviewer = run ? run.config.reviewer : this.source.settings.agent('reviewer', task.place)
+        task.pilot = run ? run.id : undefined
+        task.kind = harness.kind; task.model = harness.model; task.effort = harness.effort
+        task.review.kind = reviewer.kind; task.reviewerModel = reviewer.model; task.reviewerEffort = reviewer.effort
+        if (run?.config.approvals.includes('merge')) task.mergePolicy = 'ask'
+      }
+      const prior = this.source.agents.get(task.chat)
+      if (prior && !this.source.agents.terminal(prior)) throw new Refusal('Previous task start is unconfirmed; reconnect before starting it again')
+      task.after = taskDependencies(this.all(), task, task.after ?? [], machine => this.source.machineName(machine))
+      task.workflow = task.after.some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || '')) ? 'queued' : 'working'
+      delete task.startError; delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion
+      this.save(task)
+      const room = this.source.health?.room(task.machine, task.id)
+      if (room) { task.workflow = 'queued'; task.capacity = room; this.save(task); return task }
+      delete task.capacity; this.save(task)
+      if (prior && this.source.agents.terminal(prior)?.state === 'live') {
+        await this.label(task)
+        if (task.workflow === 'working') this.source.saveAndDeliver(task.chat, `go-${randomUUID()}`, `<go>${message}</go>`, () => {}, true)
+      } else await this.launchNow(task, task.workflow === 'working' ? message : undefined)
+      return this.get(id)!
+    })
+  }
   async deliver(id: string, chat: string, message: string, internal = false) {
     return this.change(id, async () => {
       const task = this.get(id)
@@ -180,7 +224,7 @@ export class CoreTasks {
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
     const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. ${pilot ? 'Your Git metadata is read-only: use shepherdr checkpoint MESSAGE to commit, and shepherdr review TASK for a fresh managed reviewer. Use the product broker for managed agents and messages; no core socket or outside helper is available.' : 'Use hc for child agents, messages and waits.'} Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
     const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${message ? `\n<go>${message}</go>` : ''}`
-    const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
+    const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
     if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
   }
@@ -535,6 +579,7 @@ export class CoreTasks {
     if (!task) throw new Refusal('No such task or unsupported task command')
     this.assert(grant, task)
     if (verb === 'task' && sub === 'show') return text(this.view(task))
+    if (verb === 'task' && sub === 'start') return text(this.view(await this.start(grant, id, rest.slice(1).join(' ') || undefined)))
     if (verb === 'task' && sub === 'close') return text(await this.close(task, parsed.flags.has('force')))
     if (verb === 'status') {
       const left = one(parsed, 'left'), match = left?.match(/^(?:(\d+)h)?(?:(\d+)m)?$/)

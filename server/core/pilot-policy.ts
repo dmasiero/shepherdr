@@ -161,6 +161,7 @@ export class CorePilotPolicy {
     if (command === 'secret' && ['list', 'ask', 'run', 'env'].includes(op)) return run // Secret names are separately checked against the run snapshot.
     if (command === 'task' && ['list', 'show', 'chat'].includes(op)) return run
     if (command === 'task' && op === 'add' && actor.role === 'coordinator' && run.state === 'on') return run
+    if (command === 'task' && op === 'start' && actor.role === 'coordinator' && run.state === 'on') return run
     if (command === 'task' && ['tell', 'pause', 'queue', 'edit', 'close'].includes(op) && actor.role !== 'reviewer') return run // Target must separately pass owns().
     if (['status', 'ready', 'todo', 'pr', 'checks', 'review'].includes(command) && actor.role !== 'reviewer') return run
     if (command === 'merge' || command === 'task' && op === 'merge') {
