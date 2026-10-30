@@ -14,13 +14,13 @@ not an absence of implementation. Historical slice notes remain below for audit;
 the later dated entries supersede their pending statements.
 
 - Full GitHub Check **41031514810 passed** at 7bd30e01 (all three shards, types, build).
-- Rewrite **41041511007 passed** at 82da3bad, including the fresh-repository regression and all space-control guards; later first-use guidance is being checked.
+- Rewrite **41042086343 passed** at 15318781: core/types/build, task layout and real production plugin. Includes fresh repositories, default-HEAD space-control guards, first-use guidance and stable lost-response automation taps.
 - Rewrite **41032408275 passed** at b8ad5df0, including the real production plugin compiler: compiled edit/replacement, persistent state and last-good fallback (11 assertions; 4.12 s on GitHub).
 - Final full review: three rounds. Round 1's two Settings majors and round 2's
   failed-base observer major/context minor fixed; round 3 reported no remaining
   concrete critical/major findings at ed75b57e. Later manual Settings feedback and
   navigation/profile/repository fixes, native first-use guidance and added production-compiler coverage postdate that review.
-- Proof artifact **hf2s v29** contains actual branch runs and explicit limits.
+- Proof artifact **hf2s v31** contains actual branch runs and explicit limits.
 - **External vm-ssa acceptance skipped**, as Elias instructed: no saved address or
   working trusted connection was available. No access configuration changed.
 - Real main-red observation now passed, including a failure behind a pending newer head, actual failed-job logs, one native notification, green re-arm and exact scratch workflow restoration.
@@ -46,9 +46,9 @@ the later dated entries supersede their pending statements.
 
 ## Build order and acceptance gates
 
-- [ ] Core connection: pinned schema, framed RPC/attach, bounds, reconnect/resnapshot,
+- [x] Core connection: pinned schema, framed RPC/attach, bounds, reconnect/resnapshot,
   mailbox authentication, remote document/file exchange, both agents' real status sources.
-- [ ] Coordinator/chat: standalone launch, first run, spaces, Claude Code/Codex,
+- [x] Coordinator/chat: standalone launch, first run, spaces, Claude Code/Codex,
   native transcript readers, messages and persisted reconnect.
 - [ ] Tasks/review/merge: core children, worktrees, workflow labels, queues,
   review, permission cards, merge safeguards and proof.
@@ -2043,3 +2043,38 @@ arrive separately and the inserted Last run moves that control. The regression n
 GTM-51 run and uses the repository's existing still() helper before Pause/retry. It retains all same-ID/no-extra-
 command assertions; no product retry behavior changed. This timing explanation is being checked by branch CI,
 not claimed as a reproduced production defect. Only typecheck ran locally.
+
+
+### Current integration handoff (2026-10-30)
+
+Code validation: local typecheck passed; rewrite CI 41042086343 passed all three jobs at 15318781, including
+build/types, 440 core tests (two expected skips are covered separately or environment-specific), browser/layout
+cases and the real production plugin compiler. The earlier 41041708042 layout timeout is superseded by that pass;
+no product duplicate-action safeguard was removed. Full Check 41031514810 passed all three shards at 7bd30e01.
+No later whole-suite pass is claimed. Proof artifact hf2s v30 was checked and its light/dark phone images viewed; the final text-only CI update is v31.
+
+Source preservation audit against verified v2.0: src/styles.css, src/ui.tsx, src/App.tsx, the folder picker,
+artifact viewer and keyboard plugin remain byte-for-byte identical Git objects. Reviewed the changed client files:
+core-only browser/terminal transports, canonical remote task IDs, bounded log-loading/error messages, safe closed
+cards, observed runtime labels, explicit refusal feedback, duplicate-safe actions and search result invalidation.
+These explain the client differences; this source audit does not replace remaining full-device visual acceptance.
+
+The fresh-install check's exact new Codex project trust entry was removed after deleting its owned scratch folder.
+Parsed configuration comparison confirmed every other setting unchanged. Native historical logs/cache metadata
+remain; no credentials or unrelated trust entries were copied, deleted or altered.
+
+This is a complete reviewable implementation branch, not approved deployment or verified full parity. The
+remaining gates are the unchecked matrix entries and front-page limits: external vm-ssa skipped for absent usable
+access; physical-device notifications/offline return, actual voice, native provider failure/takeover, restricted
+product GitHub check-dependent merge, installed service/macOS and full per-feature/device parity. Final full review
+ended cleanly at ed75b57e after three rounds; subsequent manual corrections are explicitly outside that review.
+Do not merge or cut over based solely on this handoff. The concrete safe execution/rollback order is in cutover.md;
+actual legacy writer/launcher inventory must be reverified at the separately approved maintenance window.
+
+Final read-only safety recheck: origin/main and origin/v2.0 both still resolve to
+ ebb17d585c82906b788a8473237921802920b5c5. The active herdr user service is owned by
+/home/exedev/.config/systemd/user/herdr.service (ExecStart /home/exedev/.local/bin/herdr server);
+its main PID was 742764 at inspection. helper/main.sock currently has exedev ownership. These observations do not
+identify every live supervisor/forward owner or authorize stopping anything. Re-inventory at cutover; do not rely
+on older ownership/PID observations as permanent launch configuration. Only the owned baseline UI reference
+servers were stopped; the isolated core preview remains available in the shared browser for review.
