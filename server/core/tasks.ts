@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs'
 import { SUMMARY_MAX, TITLE_MAX, STATUS_MAX, slugify, type Action, type Question, type Task } from '../../shared/types.ts'
 import { CorePilotRepositories } from './pilot-repositories.ts'
 import { CoreTaskRelocation } from './task-relocation.ts'
+import { taskOptions, validateTaskSettings } from './task-options.ts'
+import { kindOf } from './settings.ts'
 import { CoreGit } from './git.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
@@ -15,6 +17,12 @@ import type { LogEvent } from '../live/readers/types.ts'
 import { reserveTaskId } from './ids.ts'
 import { taskDependencies } from './dependencies.ts'
 import { archiveAfterMs } from '../../shared/archive.ts'
+
+export interface CoreTaskInput {
+  title: string; brief: string; space?: string; base?: string; after?: string[]; later?: boolean
+  kind?: AgentKind; model?: string; effort?: string; reviewer?: AgentKind; reviewerModel?: string; reviewerEffort?: string
+  settings?: Record<string, string>; automation?: string; pilot?: string
+}
 
 export interface CoreTask extends Task {
   branch: string
@@ -50,6 +58,7 @@ export interface CoreTask extends Task {
   unarchived?: number
   reviewerModel?: string
   reviewerEffort?: string
+  overrides?: Record<string, string>
 }
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
@@ -91,7 +100,7 @@ export class CoreTasks {
     return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
-  async add(grant: Grant, input: { title: string; brief: string; space?: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string }) {
+  async add(grant: Grant, input: CoreTaskInput) {
     const caller = this.source.agents.get(grant.chat)
     if (caller?.role !== 'coordinator' || caller.grant !== grant.id || caller.launch !== grant.session) throw new Refusal('Only a coordinator can add a task')
     const space = input.space ? this.source.spaces().find(space => space.id === input.space || space.name === input.space && space.machine === caller.machine) : this.source.space(caller.space)
@@ -101,13 +110,12 @@ export class CoreTasks {
     if (caller.pilot) {
       const run = this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
       if (run.place !== space.id || run.state !== 'on') throw new Refusal('This run may add tasks only in its own space while on')
-      if (input.kind && input.kind !== run.config.harness.kind || input.model && input.model !== run.config.harness.model || input.effort && input.effort !== run.config.harness.effort) throw new Refusal('Contained tasks use this run’s selected agent, model and effort')
       pilot = run.id
     }
     return this.addInSpace(space, { ...input, pilot })
   }
   /** Trusted product scheduler entry; no caller labels or mailbox data grant this authority. */
-  async addInSpace(space: CoreSpace, input: { title: string; brief: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string; automation?: string; pilot?: string }) {
+  async addInSpace(space: CoreSpace, input: CoreTaskInput) {
     if (!input.title.trim() || input.title.length > TITLE_MAX) throw new Refusal(`Write a title of at most ${TITLE_MAX} characters`)
     if (!input.brief.trim()) throw new Refusal('Give the task its full brief')
     if (!this.source.space(space.id) || space.home) throw new Refusal('Choose a repository space for the task')
@@ -118,13 +126,19 @@ export class CoreTasks {
       .filter(id => !['merged', 'closed'].includes(this.get(id)!.workflow))
     const run = input.pilot ? this.source.pilots.policy.get(input.pilot) : undefined
     if (input.pilot && (!run || run.place !== space.id || run.machine !== space.machine || run.state !== 'on')) throw new Refusal('The contained run no longer accepts tasks here')
-    const defaults = run?.config.harness ?? this.source.settings.launch('task', space.id, input.kind)
-    const reviewer = run?.config.reviewer ?? this.source.settings.agent('reviewer', space.id)
-    const merge = this.source.settings.get('brief.merge', space.id)
+    const selected = run?.config.harness ?? this.source.settings.launch('task', space.id, input.kind)
+    const defaults = this.source.settings.checkedAgent(space.id, { kind: input.kind ?? selected.kind, model: input.model ?? selected.model, effort: input.effort ?? selected.effort })
+    const reviewDefault = run?.config.reviewer ?? this.source.settings.launch('reviewer', space.id, input.reviewer)
+    const reviewer = this.source.settings.checkedAgent(space.id, { kind: input.reviewer ?? reviewDefault.kind, model: input.reviewerModel ?? reviewDefault.model, effort: input.reviewerEffort ?? reviewDefault.effort })
+    if (run && (defaults.kind !== run.config.harness.kind || defaults.model !== run.config.harness.model || defaults.effort !== run.config.harness.effort || reviewer.kind !== run.config.reviewer.kind || reviewer.model !== run.config.reviewer.model || reviewer.effort !== run.config.reviewer.effort)) throw new Refusal('Contained tasks and reviewers use this run’s selected agent, model and effort')
+    const overrides: Record<string, string> = { ...validateTaskSettings(input.settings ?? {}),
+      ...(input.kind ? { 'task.agent': defaults.kind } : {}), ...(input.model !== undefined ? { 'task.model': defaults.model || 'default' } : {}), ...(input.effort !== undefined ? { 'task.effort': defaults.effort || 'default' } : {}),
+      ...(input.reviewer ? { 'reviewer.agent': reviewer.kind } : {}), ...(input.reviewerModel !== undefined ? { 'reviewer.model': reviewer.model || 'default' } : {}), ...(input.reviewerEffort !== undefined ? { 'reviewer.effort': reviewer.effort || 'default' } : {}) }
+    const merge = overrides['brief.merge'] ?? this.source.settings.get('brief.merge', space.id)
     const task: CoreTask = {
       id, localId, pilot: input.pilot, automation: input.automation, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
-      chat: `${id}/Agent`, kind: input.kind || defaults.kind, model: input.model || defaults.model, effort: input.effort || defaults.effort, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
-      reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: run?.config.approvals.includes('merge') || merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', review: { on: this.source.settings.get('brief.review', space.id) === 'on', kind: reviewer.kind, rounds: parseInt(this.source.settings.get('review.rounds', space.id)), mustFix: this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
+      chat: `${id}/Agent`, kind: defaults.kind, model: defaults.model, effort: defaults.effort, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
+      reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: run?.config.approvals.includes('merge') || merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', overrides, review: { on: (overrides['brief.review'] ?? this.source.settings.get('brief.review', space.id)) === 'on', kind: reviewer.kind, rounds: parseInt(overrides['review.rounds'] ?? this.source.settings.get('review.rounds', space.id)), mustFix: overrides['review.mustFix'] ?? this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }
     return this.change(task.id, async () => {
       if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && (other.workflow === 'working' || other.workflow === 'merging')).length)
@@ -185,6 +199,7 @@ export class CoreTasks {
       const harness = run ? run.config.harness : this.source.settings.launch('task', task.place)
       const reviewer = run ? run.config.reviewer : this.source.settings.agent('reviewer', task.place)
       task.pilot = run ? run.id : undefined
+      task.overrides = Object.fromEntries(Object.entries(task.overrides ?? {}).filter(([key]) => !key.startsWith('task.') && !key.startsWith('reviewer.')))
       task.kind = harness.kind; task.model = harness.model; task.effort = harness.effort
       task.review.kind = reviewer.kind; task.reviewerModel = reviewer.model; task.reviewerEffort = reviewer.effort
       if (run?.config.approvals.includes('merge')) task.mergePolicy = 'ask'
@@ -249,7 +264,7 @@ export class CoreTasks {
       : task.workflow === 'ready' ? 'This task is already Ready. Preserve the work and wait for the human. Do not begin implementation or merge.' : ''
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
     const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. ${pilot ? 'Your Git metadata is read-only: use shepherdr checkpoint MESSAGE to commit, and shepherdr review TASK for a fresh managed reviewer. Use the product broker for managed agents and messages; no core socket or outside helper is available.' : 'Use hc for child agents, messages and waits.'} Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
-    const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${message ? `\n<go>${message}</go>` : ''}`
+    const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Agent: ${task.kind}${task.model ? `, model ${task.model}` : ''}${task.effort ? `, effort ${task.effort}` : ''}\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}${task.reviewerModel ? `, model ${task.reviewerModel}` : ''}${task.reviewerEffort ? `, effort ${task.reviewerEffort}` : ''}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${Object.keys(task.overrides ?? {}).length ? `Set by the coordinator for this task: ${Object.entries(task.overrides!).map(([key, value]) => `${key}=${value}`).join(', ')}\n` : ''}${message ? `\n<go>${message}</go>` : ''}`
     const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
     if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
@@ -597,10 +612,11 @@ export class CoreTasks {
     const parsed = parseArgs(args), [verb, sub, ...rest] = parsed.words
     const text = (value: unknown) => ({ out: typeof value === 'string' ? value + '\n' : JSON.stringify(value, null, 2) + '\n', code: 0 })
     if (verb === 'task' && sub === 'add') {
-      const kind = one(parsed, 'agent')
-      if (kind && kind !== 'claude' && kind !== 'codex') throw new Refusal('Choose Claude Code or Codex')
-      const task = await this.add(grant, { title: rest.join(' '), brief: one(parsed, 'brief') || '', space: one(parsed, 'space'), base: one(parsed, 'base'),
-        after: one(parsed, 'after')?.split(',').filter(Boolean), later: parsed.flags.has('later'), kind: kind as AgentKind | undefined, model: one(parsed, 'model'), effort: one(parsed, 'effort') })
+      const settings = taskOptions(parsed), agentName = one(parsed, 'agent'), reviewerName = one(parsed, 'reviewer')
+      const kind = agentName === undefined ? undefined : kindOf(agentName), reviewer = reviewerName === undefined ? undefined : kindOf(reviewerName)
+      if (agentName !== undefined && !kind || reviewerName !== undefined && !reviewer) throw new Refusal('Choose Claude Code or Codex')
+      const task = await this.add(grant, { title: rest.join(' '), brief: one(parsed, 'brief') ?? one(parsed, 'desc') ?? '', space: one(parsed, 'space'), base: one(parsed, 'base'),
+        after: one(parsed, 'after')?.split(',').filter(Boolean), later: parsed.flags.has('later'), kind, model: one(parsed, 'model'), effort: one(parsed, 'effort'), reviewer, reviewerModel: one(parsed, 'reviewer-model'), reviewerEffort: one(parsed, 'reviewer-effort'), settings })
       return text(`${task.id}: ${task.name}\nBranch: ${task.branch}\nWorktree: ${task.folder}\nCore terminal: ${this.source.agents.get(task.chat)?.terminal || 'starting'}`)
     }
     if (verb === 'task' && sub === 'list') return text(this.all().filter(task => this.source.agents.get(grant.chat)?.space === task.place).map(task => this.view(task)))
