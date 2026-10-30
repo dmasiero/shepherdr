@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import type { PilotRepositoryContext } from './pilot-repositories.ts'
 import type { CoreFiles } from './files.ts'
+import { teaArgv } from './tea.ts' // fork: tea runs as gh does (forge.ts)
 
 export interface RepoLocation { machine: string; folder: string }
 /** Same GitHub host forms as legacy, without importing its worker/SSH transport. */
@@ -13,9 +14,9 @@ export class CoreGit {
   constructor(private readonly files: CoreFiles,
     private readonly guard?: (repo: RepoLocation, additional?: string[]) => PilotRepositoryContext | undefined,
     private readonly runtime?: (machine: string) => Promise<{ bun: string; root: string }>) {}
-  private async execute(repo: RepoLocation, tool: 'git' | 'gh', args: string[], timeout: number, stdin?: string, additional?: string[]) {
+  private async execute(repo: RepoLocation, tool: 'git' | 'gh' | 'tea', args: string[], timeout: number, stdin?: string, additional?: string[]) {
     const context = this.guard?.(repo, additional)
-    if (!context) return this.files.exec(repo.machine, [tool, ...args], repo.folder, stdin === undefined ? undefined : Buffer.from(stdin), timeout)
+    if (!context) return this.files.exec(repo.machine, tool === 'tea' ? teaArgv(args) : [tool, ...args], repo.folder, stdin === undefined ? undefined : Buffer.from(stdin), timeout)
     if (!this.runtime) throw Error('Checked repository runtime is unavailable')
     const runtime = await this.runtime(repo.machine)
     return this.files.exec(repo.machine, [runtime.bun, join(runtime.root, 'helper/core-pilot-git.ts')], undefined,
@@ -23,6 +24,8 @@ export class CoreGit {
   }
   async run(repo: RepoLocation, args: string[], timeout = 30, stdin?: string, additional?: string[]) { return (await this.execute(repo, 'git', args, timeout, stdin, additional)).toString('utf8').trim() }
   async ghRun(repo: RepoLocation, args: string[], timeout = 60, stdin?: string) { return (await this.execute(repo, 'gh', args, timeout, stdin)).toString('utf8').trim() }
+  // fork: Gitea's command line, for forge.ts; its output keeps tea api -i's status lines (tea.ts teaArgv)
+  async teaRun(repo: RepoLocation, args: string[], timeout = 60, stdin?: string) { return (await this.execute(repo, 'tea', args, timeout, stdin)).toString('utf8') }
   async head(repo: RepoLocation, ref = 'HEAD') { return this.run(repo, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]) }
   async branchHead(repo: RepoLocation, branch: string) {
     const ref = `refs/heads/${branch}`

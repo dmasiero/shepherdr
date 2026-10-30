@@ -85,6 +85,8 @@ export class CoreGitHub {
     try {
       const repo = { machine: space.machine, folder: space.folder }, target = await this.source.tasks.git.remote(repo)
       if (!this.current(space)) return
+      // fork: main going red is read from GitHub's Actions only; a Gitea space is not watched yet (FORK.md)
+      if (target && this.source.tasks.git.known?.(repo) === 'gitea') { delete next.error; this.source.store.set('github-main', id, next); return }
       if (!target) { delete next.error; this.source.store.set('github-main', id, next); return }
       const slash = target.indexOf('/'), host = target.slice(0, slash), name = target.slice(slash + 1)
       const baseHead = await this.source.tasks.git.ghRun(repo, ['api', '--hostname', host, `repos/${name}/commits/${encodeURIComponent(space.base)}`, '--jq', '.sha'])

@@ -46,14 +46,18 @@ newest commits (`git diff v2.1.0 2.1` before the first one).
 | --- | --- |
 | `FORK.md` | This page. |
 | `scripts/sync-upstream.sh`, `flake.nix`, `flake.lock` | The sync with upstream that renix runs, and its dev shell (Bun, Node, gh, git, tea). |
+| `server/core/forge.ts` | Which forge a repo is on (GitHub or Gitea, `shepherdr.forge`), and each pull request call sent to gh or tea. `CoreForgeGit` is upstream's `CoreGit` with these on top. |
+| `server/core/gitea.ts` | Gitea's pull requests, checks, merge, comments and panel view, in the shapes of upstream's GitHub calls. |
+| `server/core/tea.ts` | tea's logins and one call of Gitea's API through `tea api -i`, with its HTTP status. |
+| `server/core/follow-up.ts` | A Gitea pull request merged already at an earlier commit: the follow-up pull request. |
+| `docs/gitea.md` | What Gitea support does and needs. |
+| `test/core-gitea.test.ts`, `test/fake-tea.ts` | Its tests, with tea faked as a Gitea kept in a JSON file and a bare repo. |
 
 Planned, each its own change that adds its row here, its `fork:` comments in upstream's files and its tests to the
 sync's check list:
 
 - **Voice calls start without a first_message override**: ElevenLabs closes a call whose agent doesn't allow that
   override (2.0 had the same fix).
-- **Gitea pull requests through `tea`**: 2.1 opens, checks and merges pull requests on GitHub only; the fork's spaces
-  are on Gitea.
 - **Task commands for scripts**: `shepherdr task add/list/tell` from scripts outside an agent session, for the
   dispatchers that make tasks.
 - **Git over SSH on NixOS**: 2.1's checked Git (`helper/core-pilot-ssh.ts`) refuses an SSH configuration file with
@@ -61,6 +65,22 @@ sync's check list:
   fixed, `test/core-pilot-git.test.ts` fails here and stays out of the sync's check list.
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment.
+
+**Gitea pull requests through `tea`** ([docs/gitea.md](docs/gitea.md)): 2.1 opens, checks and merges pull requests
+on GitHub only, and the fork's spaces are on Gitea. A space whose origin is on Gitea now gets them there, and GitHub
+keeps upstream's calls as they are. Its hooks:
+
+- `server/core/git.ts`: `teaRun`, tea run as `gh` is (its status lines kept, `tea.ts` `teaArgv`).
+- `server/core/tasks.ts`: `CoreForgeGit` for `CoreGit`; `prNow`, `readyNow` and `merge` call `createPr`, `editPr`,
+  `readyPr` and `mergePr` instead of their `gh pr` commands; `merge` and `prNow` open a Gitea follow-up
+  (`follow-up.ts`); the brief's Settings block, its "Merged on GitHub" lines and the refusals of `ready`, `merge`
+  and `pr` are said in the forge's words.
+- `server/core/agents.ts`, `server/core/source.ts`: the skills given to every agent are said in the space's forge's
+  words (`forgeWords`).
+- `server/core/github-pr.ts`: a Gitea pull request's comments come from `gitea.ts`; its card and notice name Gitea.
+- `server/core/github.ts`: a Gitea space's base is not watched for going red (GitHub's Actions only).
+- `server/core/worktree.ts`: the task panel's pull request comes from `gitea.ts` for a Gitea task.
+- `helper/core-pilot-git.ts`: the contained repository runner runs `tea` too.
 
 ## Syncing with upstream
 
