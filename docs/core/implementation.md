@@ -927,3 +927,11 @@ inside hooks and capture path mapping. Their private app/login copies and scratc
 confirmed exit. No live installation, other agent, service or Tailscale mapping was changed. This proves the internal
 contained launch/observation route, not user-facing Autopilot controls, managed tasks, hard-limit exhaustion, remote
 SSH or full parity. UI/scheduler callers and owned product/Git commands remain deliberately disconnected.
+Contained-launch commit 99fd1017 passed both GitHub jobs (40994624651).
+The same actual source/launch probes then ran on the second isolated core through alias `probe`, using a new private
+installation each time. Codex `probe/t1b` returned `REMOTE_CONTAINED_CODEX_OK`, exit 0, 1,488,752 accounted bytes;
+Claude `probe/t1c` returned `REMOTE_CONTAINED_CLAUDE_OK`, exit 0, 554,707 bytes. Both cleared pending binding. This
+exercised immutable remote provisioning, hc-connect endpoints, authenticated remote docs/events, core file reads
+and Claude native capture hooks. Their private remote helper installations were removed through core after confirmed
+exit; temporary app/login copies and scratch projects were removed too. This is still a same-host second-core
+fixture, explicitly not real SSH-machine acceptance. No legacy/live helper or another agent was changed.
