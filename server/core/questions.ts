@@ -15,8 +15,10 @@ export class CoreQuestions {
     for (const row of this.source.store.all<SavedQuestion>('question')) {
       if (row.chat !== chat || row.answered || this.source.agents.get(chat)?.grant === row.grant) continue
       row.answered = true; row.question.sent = -1; row.question.said = 'Session replaced; ask the agent for a fresh card'
+      row.question.closed = row.question.said
       this.source.store.set('question', row.id, row)
       this.source.post(chat, { id: row.id, who: 'agent', question: row.question, at: Date.now() })
+      this.source.forwardQuestion(chat, row.question, row.question.said, 'task', 'Session replaced')
     }
   }
   create(grant: Grant, args: string[]) {

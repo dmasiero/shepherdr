@@ -11,6 +11,7 @@ describe.skipIf(!browser)('attention count circles', () => {
     test(`zero, one-sided, split and capped counts, both themes at ${width}px`, async () => {
       const saved = world.tasks
       const page = await browser!.newPage({ viewport: { width, height: 1000 } })
+      page.setDefaultTimeout(5000)
       const template = saved.find((t) => t.status === 'ready')!
       const requests = world.chats[place].messages
       const asks = world.asks

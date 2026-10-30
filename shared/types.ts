@@ -286,6 +286,8 @@ export interface Question {
   to: string
   /** index of the choice sent, once answered; -1 answered without a pick */
   sent?: number
+  /** Closed without a human answer (expired/interrupted/replaced); never present this as a sent answer. */
+  closed?: string
   /** answered without a pick: the words it was answered with (an Other answer, or the message that answered it) */
   said?: string
   /** answered without a pick, and not on the card: by a message in the chat, or in the CLI's own terminal */

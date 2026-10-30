@@ -32,6 +32,7 @@ import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
 import { CorePlugins } from './plugins.ts'
 import { CoreUnread } from './unread.ts'
+import { CoreCards } from './cards.ts'
 import { clip, TITLE_MAX, BODY_MAX } from '../../shared/alerts.ts'
 import type { CorePluginUpdates } from './plugin-updates.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
@@ -60,6 +61,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
   readonly unread: CoreUnread
+  readonly cards: CoreCards
   plugins: CorePlugins
   pluginUpdates?: CorePluginUpdates
   readonly secrets: CoreSecrets
@@ -88,7 +90,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.core = new CoreSession(config.socket)
     this.files = new CoreFiles(this.core, machine => this.route(machine))
     this.mailbox = new Mailbox(config.home, this.core, machine => this.route(machine), (grant, request, id) => this.mail(grant, request, id))
-    const changed = (chat: string) => { this.questions?.reconcile(chat); this.secrets?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
+    const changed = (chat: string) => { this.reconcilePermissions(chat); this.questions?.reconcile(chat); this.secrets?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
     this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed, machine => this.machines.find(item => item.id === machine) ?? {})
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) }, (chat, message) => this.fresh(chat, message))
     this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => id === this.local.id ? this.local.name : this.machineName(id) || id, () => this.emit('snapshot'))
@@ -96,6 +98,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.places = new CorePlaces(this)
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
+    this.cards = new CoreCards(this)
     this.secrets = new CoreSecrets(this)
     this.artifacts = new CoreArtifacts(this, installation.id)
     this.chats = new CoreChat(this, installation.id)
@@ -115,11 +118,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     // A previous server's in-flight mailbox claim cannot be re-executed. Mark its cards honestly as interrupted.
     for (const permission of this.store.all<Permission>('permission')) {
       if (!permission.settled) {
-        permission.settled = true; permission.allow = false; permission.question.sent = -1; permission.question.said = 'Interrupted; ask again after reconnecting'
-        this.store.set('permission', permission.id, permission)
-        this.store.set(`message:${permission.chat}`, `permission-${permission.id}`, { id: `permission-${permission.id}`, who: 'agent', question: permission.question, at: Date.now() })
-        const agent = this.agents.get(permission.chat)
-        if (agent?.permission === permission.id) { delete agent.permission; this.store.set('agent', agent.chat, agent) }
+        this.expirePermission(permission, 'Interrupted; ask again after reconnecting')
       }
     }
     for (const pending of this.store.all<PendingSend>('pending-send')) {
@@ -240,7 +239,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (!agent && !this.space(key) && !this.tasks.forChat(key)) return undefined
     const terminal = agent && this.agents.terminal(agent)
     const status = this.status(agent)
-    const messages = this.logs.messages(key)
+    const messages = this.cards.messages(key, this.logs.messages(key))
     if (agent?.kind === 'codex' && agent.state === 'starting' && !agent.transcript) messages.push({ id: `setup-${agent.launch}`, who: 'agent', text: 'Codex may ask you to trust its folder or Shepherdr’s hooks. Open Terminal to review its own prompts. Chat connects after those hooks are trusted.', at: agent.started })
     return { key, ...this.activities.chat(key, messages, terminal?.state === 'live' && status === 'work'), cli: agent?.kind ?? this.agentKind(), working: status === 'work',
       failed: this.store.all<PendingSend>('pending-send').filter(item => item.chat === key && item.state === 'uncertain').map(item => ({ cid: item.id, error: 'Delivery was interrupted; check the chat before sending again' })),
@@ -255,12 +254,30 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (!this.unread.saw(chat, message.at) || !this.space(chat) || !message.at || message.at < this.born || message.card || message.question) return
     this.emit('alert', { id: message.id, from: 'Shepherdr', title: clip(this.store.get<string>('name', chat) || this.space(chat)!.name, TITLE_MAX), body: clip(message.text || 'New message', BODY_MAX), go: { place: chat, focus: message.id }, message: true })
   }
-  forwardQuestion(chat: string, question: Question, answer?: string, where: 'space' | 'task' = 'task') {
+  forwardQuestion(chat: string, question: Question, answer?: string, where: 'space' | 'task' = 'task', outcome = 'Answered') {
     const task = this.tasks.forChat(chat)
     if (!task) return
     const id = `ask-${question.id}`, previous = this.store.get<Message>(`message:${task.place}`, id)
-    this.post(task.place, { id, who: 'agent', at: previous?.at ?? Date.now(), card: { id, task: task.id, status: answer ? this.tasks.view(task).status : 'need', text: answer ? 'Answered' : 'Needs you',
+    this.post(task.place, { id, who: 'agent', at: previous?.at ?? Date.now(), card: { id, task: task.id, status: answer ? this.tasks.view(task).status : 'need', text: answer ? outcome : 'Needs you',
       ask: { chat, questions: [question], open: answer === undefined, answered: answer === undefined ? undefined : { where, text: answer } } } })
+  }
+  private expirePermission(permission: Permission, reason: string) {
+    if (permission.settled) return
+    permission.settled = true; permission.allow = false; permission.question.sent = -1; permission.question.said = reason
+    permission.question.closed = reason
+    this.store.set('permission', permission.id, permission)
+    const current = this.agents.get(permission.chat)
+    if (current?.permission === permission.id) { current.permission = this.openPermissions(current)[0]?.id; if (current.grant === permission.grant) current.state = current.permission ? 'blocked' : 'working'; this.store.set('agent', current.chat, current) }
+    const message = this.store.get<Message>(`message:${permission.chat}`, `permission-${permission.id}`)
+    this.post(permission.chat, { ...message, id: `permission-${permission.id}`, who: 'agent', question: permission.question, at: message?.at ?? Date.now() })
+    this.forwardQuestion(permission.chat, permission.question, reason, 'task', 'No longer waiting')
+    this.permissions.get(permission.id)?.({ allow: false }); this.permissions.delete(permission.id)
+  }
+  private reconcilePermissions(chat: string) {
+    for (const permission of this.store.all<Permission>('permission')) if (permission.chat === chat && !permission.settled) {
+      const reason = permission.expires <= Date.now() ? 'Permission request expired' : this.agents.get(chat)?.grant !== permission.grant ? 'Session replaced; ask the agent for a fresh card' : undefined
+      if (reason) this.expirePermission(permission, reason)
+    }
   }
 
   async act(action: Action): Promise<unknown> {
@@ -496,13 +513,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
       card: { chat: grant.chat, question: input.id, choices: question.choices.map((choice, index) => ({ label: choice.label, choice: index })) } })
     return new Promise(resolve => {
       const timer = setTimeout(() => {
-        this.permissions.delete(input.id!)
-        permission.settled = true; permission.allow = false; permission.question.sent = -1; permission.question.said = 'Permission request expired'
-        this.store.set('permission', permission.id, permission)
-        this.post(grant.chat, { id: `permission-${input.id}`, who: 'agent', question: permission.question, at: Date.now() })
-        const current = this.agents.get(grant.chat)
-        if (current?.grant === grant.id && current.permission === permission.id) { current.permission = this.openPermissions(current)[0]?.id; this.store.set('agent', current.chat, current) }
-        resolve({ allow: false })
+        this.expirePermission(permission, 'Permission request expired')
       }, Math.max(1, request.expires - Date.now() - 1000))
       this.permissions.set(input.id!, answer => { clearTimeout(timer); resolve(answer) })
     })

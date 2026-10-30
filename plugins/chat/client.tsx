@@ -1319,7 +1319,7 @@ export function QuestionCard({ q, chat, msg, from, space, source }: { q: Questio
   const [composing, setComposing] = useState(false)
   const [err, setErr] = useState('')
   const noteRef = useRef<HTMLTextAreaElement>(null)
-  const sent = q.sent !== undefined
+  const sent = q.sent !== undefined || !!q.closed
   const by = answeredBy(q, chat, msg)
   // a plan sent back says what to change in the note
   const needNote = q.noteRequiredFor !== undefined && sel[0] === q.noteRequiredFor
@@ -1420,13 +1420,13 @@ export function QuestionCard({ q, chat, msg, from, space, source }: { q: Questio
         />
       ) : null}
       {sent ? (
-        <Sent>
-          <CheckIcon className={ic} />
-          <span className="shrink-0">{q.elsewhere?.label ?? answeredHow(q)}</span>
+        <Sent className={q.closed ? 'text-fg2!' : undefined}>
+          {q.closed ? <XIcon className={ic} /> : <CheckIcon className={ic} />}
+          <span className="shrink-0">{q.closed ? 'Closed' : q.elsewhere?.label ?? answeredHow(q)}</span>
           {/* answered on its other copy: a link to that chat */}
-          {q.elsewhere ? <LinkButton onClick={() => goChat(q.elsewhere!.chat)}>{q.elsewhere.name}</LinkButton> : null}
+          {q.elsewhere && !q.closed ? <LinkButton onClick={() => goChat(q.elsewhere!.chat)}>{q.elsewhere.name}</LinkButton> : null}
           {/* the words it was answered with, on one line (a message in the chat shows as its quote, below) */}
-          {q.said && q.via !== 'chat' ? <span className="min-w-0 truncate text-fg2">“{q.said.replace(/\s+/g, ' ')}”</span> : null}
+          {q.closed ? <span className="min-w-0 truncate text-fg2">{q.closed}</span> : q.said && q.via !== 'chat' ? <span className="min-w-0 truncate text-fg2">“{q.said.replace(/\s+/g, ' ')}”</span> : null}
         </Sent>
       ) : null}
       {/* the message that answered it, as a reply's quote: a tap jumps to it */}

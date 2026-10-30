@@ -683,3 +683,29 @@ This remains CI evidence; automatic production builds were not invoked on this V
 Manual inspection also found a historical forwarded native permission card with active buttons after expiry in
 core-demo. The private permission answer already refuses stale authority, but that display needs correction before
 card parity is complete. It is a remaining concrete issue, not a verified feature.
+
+## Stale permission copies (2026-10-30)
+
+The historical forwarded card `ask-e2c77361-2654-4c68-a0b5-8689e758738c` in core-demo still showed active Allow once /
+Deny controls after CORE-1 was merged and its private permission was settled. Reproduced in the shared browser
+(`/tmp/she301-stale-permission-before-phone.png`). CoreCards now resolves both original and forwarded displays
+from private permission/question records. Settled/expired/replaced requests close without changing old message
+timestamps. Expiry and replacement update both chats and deny an outstanding native permission request; ordinary
+question replacement refreshes its coordinator copy too. This is display/lifecycle reconciliation, not authority
+from chat text or labels. The answer endpoint still rejects stale session/expiry.
+
+After only the isolated preview restart, the identical card rendered sent=-1 and “Interrupted; ask again after
+reconnecting”, with its choices disabled (`/tmp/she301-stale-permission-after-phone.png`). Actual task merge/native
+history remained in place. Fresh scoped review round 1 clear; typecheck passed. Canonical original/forwarded
+history and expiry regression coverage is written for branch CI. No live app/core/agent was stopped.
+
+The final card rendering uses optional `Question.closed`: muted Closed plus the reason, rather than “Sent to” for
+an interruption that sent no human answer. This preserves the existing card layout. Review round 2 caught the new
+field accidentally placed on Task; it was moved to Question and typecheck passed. Round 3 found no critical/major
+issues. One unfixed minor is limited to pre-flag alpha user-question history: negative sent can also mean a genuine
+Other answer, so those older rows are preserved rather than guessed closed. Fresh 2.1 state and every new replaced
+question carry the explicit field. There is no approved historical import at cutover.
+Unread/search CI 40987111965 passed core/logic tests; newly enabled search layout cases timed out opening search
+before initial page readiness. Their keyboard actions now wait for the composer; shorter locator deadlines expose
+any remaining selector issue before the outer timeout. Attention desktop timing is under investigation in CI;
+no local browser suite was run or represented as passed.

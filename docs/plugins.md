@@ -9,6 +9,8 @@ until you have checked the plugin against 2.1. There is no access to terminal-he
 
 The client keeps `definePlugin`, every `Registry` slot listed below, and existing plugin names. Its view models and
 actions now describe core-backed agents; process liveness and task workflow state remain separate.
+Optional `Question.closed` is a reason that a request ended without a human answer (expiry, interruption or replaced
+session). Closed cards disable their controls and show Closed, rather than claiming that an answer was sent.
 
 A server extension declares `api: 2` and can use `setup(context)`, returning a cleanup function. For example:
 
