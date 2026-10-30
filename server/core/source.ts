@@ -1,3 +1,6 @@
+import { repositorySection } from '../common/space-settings.ts'
+import { taskIdsSection } from '../common/task-ids.ts'
+import { automaticTaskPrefix, setTaskIdSetting, taskSequence } from './id-settings.ts'
 import { hostname, homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -72,6 +75,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly pilots: CorePilotMail
   plugins: CorePlugins
   pluginUpdates?: CorePluginUpdates
+  devices: () => string[] = () => []
+  pushWarnings: () => string[] = () => []
   readonly secrets: CoreSecrets
   readonly providerRetries: CoreProviderRetries
   readonly artifacts: CoreArtifacts
@@ -250,7 +255,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().filter(task => spaces.some(space => space.id === task.place)).map(task => this.tasks.view(task)), artifacts: this.artifacts.list().filter(artifact => spaces.some(space => space.id === artifact.place)), automations: this.automations.view(), asks, attentionRequests,
-      settings: this.secrets.pages([...this.settings.sections().map(section => this.pilots.wakes.section(section)), this.plugins.section(this.pluginUpdates?.status())]),
+      settings: this.secrets.pages([...this.settings.sections(this.devices(), this.pushWarnings()).map(section => this.pilots.wakes.section(section)), this.plugins.section(this.pluginUpdates?.status()), ...spaces.filter(space => !space.home).flatMap(space => [repositorySection(space.id, space.machine, space.base), taskIdsSection(space.id, space.machine, space.prefix, taskSequence(this.store, space).last + 1)])]),
       last: this.unread.last(), read: this.unread.read(),
     }
   }
@@ -367,6 +372,14 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
       case 'setting':
+        if (action.key === 'space.base') {
+          if (!action.place || !action.value) throw new Error('Choose a repository space and branch.')
+          await this.places.setBase(action.place, action.value); return { ok: true }
+        }
+        if (action.key.startsWith('taskIds.')) {
+          if (!action.place || this.places.removing(action.place)) throw new Error('Select a repository space in Settings.')
+          setTaskIdSetting(this.store, action.place, action.key, action.value); this.emit('snapshot'); return { ok: true }
+        }
         if (action.key === 'heartbeat.md') {
           const space = this.space(action.place || '')
           if (!space || typeof action.value !== 'string') throw Error('Choose this space and provide its heartbeat checklist')
@@ -637,7 +650,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
     if (concurrent) { if (concurrent.folder === repo.repo && !concurrent.removed) return { place: concurrent.id }; throw Error('This space name was reserved by another request; retry with another name') }
     const changedName = nameProblem(name, this.places.names(request.machine))
     if (changedName) throw Error(changedName)
-    this.store.set('space', id, { id, machine: request.machine, name, folder: repo.repo, base, prefix: name.replace(/[^a-z]/gi, '').slice(0, 4).toUpperCase() || 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+    this.store.set('space', id, { id, machine: request.machine, name, folder: repo.repo, base, prefix: automaticTaskPrefix(this.store, request.machine, name), mode: 'regular', added: Date.now() } satisfies CoreSpace)
     this.emit('snapshot'); return { place: id }
   }
   watch(_chats: string[], _terms: string[]) {}

@@ -1684,3 +1684,36 @@ while the existing task base stayed main. No product layout change.
 Capacity follow-up preserves the conservative original count for a missing native
 holder, distinct from a confirmed live ended turn or a finished holder. Regression
 checks those three states; a fresh scoped review found no critical/major findings.
+
+### Final full integration review: real Settings gaps (2026-10-30)
+
+Round 1 found two majors missed by fictional-demo layout coverage: fresh core
+snapshots omitted device push enrollment, and real Repository/Task IDs pages and
+actions were missing. Both are implemented on CoreSource now, reusing the existing
+UI. Global Alerts and voice supplies Notifications' Add this device action and
+Voice page; the actual Push instance supplies safe device names and delivery
+warnings. Device enrollment remains global from every scope. Real-source HTTP CI
+coverage exercises enrollment/name refresh and private failure diagnostics without
+sending a network push. Physical phone/lock-screen delivery remains unverified.
+
+Repository base writes validate the branch through the owning machine's core and
+recheck space/coordinator identity after that read. Existing tasks retain their
+saved base. Task IDs keeps permanent per-machine prefix ownership and ID tombstones,
+forward-only numbers across prefix changes, and automatic unique prefixes for new
+spaces. Settings snapshots are read-only. Reservation, counter and space-sequence
+writes are one SQLite transaction; a stale settings snapshot cannot allocate under
+an old prefix. No legacy state was imported or moved.
+
+Manual before: the actual isolated core snapshot contained none of Alerts and
+voice, Repository or Task IDs. After app-only restart all appeared. The phone
+Notifications page showed Add this device; clicking reached the browser permission
+flow, which returned Alerts are off for this device. This is enrollment reachability,
+not a claim of successful device registration or delivery. Repository changed only
+includes-proof's base to the new harmless she301-settings-next fixture branch;
+independent snapshot confirmed INCL-1 still targets main:
+CORE_REPOSITORY_UI_BASE_EDIT_EXISTING_TASK_TARGET_PRESERVED_OK. In the same phone UI,
+Task IDs changed its prefix INCL→INCQ and next number to 40. A real task using these
+settings is pending; no allocation pass is claimed yet. Screenshots captured and
+inspected. Full review round 2 confirmed both Settings findings fixed and found a
+separate main-check observer issue being repaired. Local typecheck passed; no local
+suite/browser test/full build was run.

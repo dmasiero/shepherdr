@@ -31,6 +31,10 @@ const CATALOG: SettingSection[] = [
     { group: 'Tell its coordinator when', label: 'Disk is over', key: 'machine.alertDisk', value: '90%', num: { min: 1, max: 100, unit: '%', off: true } },
     { group: 'Tell its coordinator when', label: 'core stops answering', key: 'machine.alertHerdr', value: 'on', options: ['on', 'off'] },
   ] },
+  { name: 'Alerts and voice', global: true, about: 'The same on every machine and space.', rows: [
+    { label: 'Alerts on', key: 'alerts', value: 'No device yet', options: ['Add this device'] },
+    { label: 'Voice agent', key: 'voice.service', value: 'ElevenLabs', options: ['ElevenLabs'] },
+  ] },
   { name: 'Time zone', about: 'The time zone of every schedule: heartbeats and automations, on every machine.', rows: [{ label: 'Time zone', key: 'time.zone', value: OWN_ZONE, text: true }] },
   { name: 'Shared browser', rows: [{ label: 'Close idle browser after', key: 'browser.idleClose', value: '10 min', num: { min: 1, max: 1440, unit: 'min', off: true } }] },
   { name: 'Private instructions', about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
@@ -77,6 +81,8 @@ export class CoreSettings {
     const row = rows.find(item => item.key === key)
     if (!row) throw new Error(`No setting ${key}`)
     this.chain(level)
+    if (key === 'alerts') throw new Error('Use Add this device in Notifications to enable alerts')
+    if (key.startsWith('voice.') && level !== 'all') throw new Error('Voice settings apply Everywhere')
     if (key.startsWith('machine.') && level !== 'all' && !level.startsWith('m:')) throw new Error('Machine limits apply Everywhere or to a machine')
     if (key === 'time.zone' && level !== 'all') throw new Error('Time zone applies Everywhere')
     if (value !== null) {
@@ -173,9 +179,10 @@ export class CoreSettings {
   clis(level: string): RestartCli[] {
     return (['claude', 'codex'] as const).map(kind => ({ kind, name: names[kind], ...this.catalog(kind, level) }))
   }
-  sections(): SettingSection[] {
+  sections(devices: string[] = [], pushWarnings: string[] = []): SettingSection[] {
     const levels = ['all', ...new Set(this.spaces().map(space => `m:${space.machine}`)), ...this.spaces().map(space => space.id)]
-    return levels.flatMap(level => CATALOG.filter(section => (level === 'all' || section.name !== 'Time zone') && (section.name !== 'Machine' || level === 'all' || level.startsWith('m:'))).map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
+    return levels.flatMap(level => CATALOG.filter(section => (!section.global || level === 'all') && (level === 'all' || section.name !== 'Time zone') && (section.name !== 'Machine' || level === 'all' || level.startsWith('m:'))).map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
+      if (row.key === 'alerts') return { ...row, value: devices.length ? devices.join(', ') : 'No device yet', ...(pushWarnings.length ? { warn: `${pushWarnings.length} device${pushWarnings.length === 1 ? '' : 's'} could not receive the last alert.\n${pushWarnings.slice(0, 3).join('\n')}` } : {}) }
       const picked = this.pick(row.key, level), inherited = this.chain(level).slice(1).map(at => this.pick(row.key, at)).find(value => value.level !== 'default') ?? { value: row.value, level: 'default' }
       let dynamic = { ...row }
       let value = picked.value

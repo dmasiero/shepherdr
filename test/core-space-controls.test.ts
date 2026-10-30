@@ -134,3 +134,21 @@ test('task, automation and heartbeat commands resolve renamed spaces to the same
   expect(f.source.heartbeats.read(f.space)).toBe('Keep alias checklist\n')
   await expect(f.source.places.cli({ ...f.caller, machine: 'other' }, ['space', 'rename', 'renamed', 'wrong'])).rejects.toThrow('machine')
 }))
+
+test('real core snapshots expose repository and ID pages; UI edits preserve existing tasks and validate branches', async () => fixture(async f => {
+  const existing = { id: 'DEMO-1', chat: 'DEMO-1/Agent', place: f.space.id, machine: f.space.machine, workflow: 'todo', base: 'main' } as CoreTask
+  f.source.store.set('task', existing.id, existing)
+  let pages = f.source.snapshot().settings!.filter(page => page.level === f.space.id)
+  expect(pages.find(page => page.name === 'Repository')?.rows[0]).toMatchObject({ key: 'space.base', value: 'main' })
+  expect(pages.find(page => page.name === 'Task IDs')?.rows.map(row => row.key)).toEqual(['taskIds.prefix', 'taskIds.next'])
+  await f.source.act({ type: 'setting', place: f.space.id, key: 'space.base', value: 'next' })
+  expect(f.source.space(f.space.id)?.base).toBe('next')
+  expect(f.source.tasks.get(existing.id)?.base).toBe('main')
+  await expect(f.source.act({ type: 'setting', place: f.space.id, key: 'space.base', value: 'missing' })).rejects.toThrow('Unknown branch')
+  expect(f.source.space(f.space.id)?.base).toBe('next')
+  await f.source.act({ type: 'setting', place: f.space.id, key: 'taskIds.prefix', value: 'NEW' })
+  await f.source.act({ type: 'setting', place: f.space.id, key: 'taskIds.next', value: '40' })
+  pages = f.source.snapshot().settings!.filter(page => page.level === f.space.id)
+  expect(pages.find(page => page.name === 'Task IDs')?.rows.map(row => row.value)).toEqual(['NEW', '40'])
+  expect(f.source.tasks.get(existing.id)?.id).toBe('DEMO-1')
+}))

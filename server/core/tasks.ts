@@ -140,7 +140,7 @@ export class CoreTasks {
     if (!input.title.trim() || input.title.length > TITLE_MAX) throw new Refusal(`Write a title of at most ${TITLE_MAX} characters`)
     if (!input.brief.trim()) throw new Refusal('Give the task its full brief')
     if (!this.source.space(space.id) || this.source.places?.removing(space.id) || space.home) throw new Refusal('Choose a repository space for the task')
-    const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine))
+    const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine), space)
     const branch = `work/${number}-${slugify(input.title).slice(0, 40)}`
     const folder = join(await (input.pilot ? this.source.agents.pilotWorktreeRoot(space.machine) : this.source.agents.worktreeRoot(space.machine)), space.name, branch.replaceAll('/', '-'))
     if (!this.source.space(space.id) || this.source.places?.removing(space.id)) throw new Refusal('This space changed before task creation; retry after it is added again')

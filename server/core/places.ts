@@ -65,15 +65,20 @@ export class CorePlaces {
     }
     if (op === 'set' && words[0] === 'base') {
       if (words.length !== 2 || !one(parsed, 'space') || parsed.flags.size || Object.keys(parsed.opts).some(key => key !== 'space')) throw new Refusal('Use space set base BRANCH --space NAME')
-      const space = find(one(parsed, 'space')), base = words[1]!
-      if (space.home || !/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(base) || base.includes('..')) throw new Refusal('Choose a valid base branch for a repository space')
-      await this.source.tasks.git.head({ machine: space.machine, folder: space.folder }, base)
-      const current = this.source.space(space.id), caller = this.source.agents.get(agent.chat)
-      if (!current || this.removing(space.id) || caller?.launch !== agent.launch || caller.grant !== agent.grant) throw new Refusal('Space or coordinator changed; retry the command')
-      current.base = base; this.source.store.set('space', current.id, current); this.source.emit('snapshot')
+      const space = await this.setBase(find(one(parsed, 'space')).id, words[1]!, agent), base = space.base
       return `New tasks in ${space.name} use ${base}; existing tasks keep their base`
     }
     throw new Refusal('Use space list|add|rename|remove, or space set base BRANCH --space NAME')
+  }
+  async setBase(id: string, base: string, actor?: CoreAgent) {
+    const space = this.source.space(id)
+    if (!space || space.home || this.removing(id)) throw new Refusal('Choose a repository space and branch.')
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(base) || base.includes('..')) throw new Refusal('Choose a valid base branch for a repository space')
+    await this.source.tasks.git.head({ machine: space.machine, folder: space.folder }, base)
+    const current = this.source.space(id), caller = actor && this.source.agents.get(actor.chat)
+    if (!current || this.removing(id) || current.folder !== space.folder || current.machine !== space.machine || current.base !== space.base && current.base !== base || actor && (caller?.launch !== actor.launch || caller.grant !== actor.grant)) throw new Refusal('Space or coordinator changed; retry the command')
+    current.base = base; this.source.store.set('space', id, current); this.source.emit('snapshot')
+    return current
   }
   present(places: Place[], machines: Machine[]) {
     const named = <T extends { id: string; name: string }>(item: T) => ({ ...item, name: this.source.store.get<string>('name', item.id) || item.name })

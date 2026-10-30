@@ -126,3 +126,15 @@ test('Autopilot restart choices validate before effects and save atomically', ()
   expect(() => settings.saveAgent('autopilot', level, { kind: 'claude', model: 'invalid', effort: 'wrong' })).toThrow()
   expect(settings.agent('autopilot', level).kind).toBe('codex')
 }))
+
+test('fresh devices can enroll alerts Everywhere, while device names and delivery failures remain visible from every scope', () => fixture(settings => {
+  const fresh = settings.sections().filter(section => section.name === 'Alerts and voice')
+  expect(fresh).toHaveLength(1)
+  expect(fresh[0]).toMatchObject({ level: 'all', global: true })
+  expect(fresh[0].rows.find(row => row.key === 'alerts')).toMatchObject({ value: 'No device yet', options: ['Add this device'] })
+  const configured = settings.sections(['a phone', 'a Mac'], ['Device 1 (a phone): Could not reach the push service.']).find(section => section.name === 'Alerts and voice')!
+  expect(configured.rows.find(row => row.key === 'alerts')).toMatchObject({ value: 'a phone, a Mac', warn: expect.stringContaining('Could not reach the push service.') })
+  expect(configured.rows.find(row => row.key === 'voice.service')).toMatchObject({ value: 'ElevenLabs' })
+  expect(() => settings.set('alerts', 'Add this device')).toThrow('Add this device')
+  expect(() => settings.set('voice.service', 'ElevenLabs', 'p:box:one')).toThrow('Everywhere')
+}))

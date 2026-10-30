@@ -18,9 +18,12 @@ export async function runCoreServer(config: CoreConfig, boot: string = randomUUI
   const { default: base, catalog, user } = await import('../../generated/server-plugins.ts')
   await source.plugins.start(catalog, [...base.map(plugin => [plugin.name, async () => plugin] as [string, () => Promise<typeof plugin>]), ...user.map(([name, load]) => [name, async () => (await load()).default] as [string, () => Promise<import('../plugin-api.ts').ServerPlugin>])])
   const { startApp } = await import('../app.ts')
-  const { Push } = await import('../push.ts')
+  const { Push, deviceName } = await import('../push.ts')
   if (config.plugins !== false) source.pluginUpdates = new CorePluginUpdates(source, join(import.meta.dir, '../..'))
-  const server = startApp({ source, port: config.port, host: '127.0.0.1', dist: join(import.meta.dir, '../../dist'), push: new Push(),
+  const push = new Push()
+  source.devices = () => push.devices.map(deviceName)
+  source.pushWarnings = () => push.warnings(deviceName)
+  const server = startApp({ source, port: config.port, host: '127.0.0.1', dist: join(import.meta.dir, '../../dist'), push,
     assets: source.pluginUpdates?.assets,
     health: () => ({ product: 'shepherdr-core', boot, pid: process.pid, core: source.connected() }) })
   cleanup.push(() => server.stop(true))

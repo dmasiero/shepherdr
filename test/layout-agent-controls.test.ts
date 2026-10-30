@@ -62,6 +62,7 @@ describe.skipIf(!browser)('composer + agent controls', () => {
     expect(await controls.getByRole('menuitem', { name: 'Effort: Not reported. Select and restart', exact: true }).count()).toBe(1)
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320)
     await page.getByRole('button', { name: 'Attach files and more', exact: true }).last().click()
+    await controls.waitFor({ state: 'hidden' })
     expect(await controls.count()).toBe(0)
     expect(world.chats[key].agent).toEqual({ kind: 'codex' })
     await page.close()

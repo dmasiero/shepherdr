@@ -28,7 +28,7 @@ describe.skipIf(!browser)('the lists’ chips', () => {
     await list.getByRole('button', { name: /GTM-14 Bundle/ }).waitFor()
     expect(await chips(page)).toEqual([])
     expect(await list.getByRole('button', { name: /GTM-17 Changelog/ }).count()).toBe(0)
-    await page.getByRole('button', { name: /^gtm\b/ }).click()
+    await page.locator('#places').getByRole('button', { name: /^gtm\b/ }).click()
     const gtm16 = list.getByRole('button', { name: /GTM-16 Docs/ })
     const lv3 = list.getByRole('button', { name: /LV-3 Upload page/ })
     await gtm16.waitFor()
@@ -68,7 +68,7 @@ describe.skipIf(!browser)('the lists’ chips', () => {
     expect(await lv3.isVisible()).toBe(true)
     expect(await list.getByRole('button', { name: /HP-201 Pinned count/ }).isVisible()).toBe(true)
     // following, another space puts its own chip back
-    await page.getByRole('button', { name: /^herdr-projects\b/ }).click()
+    await page.locator('#places').getByRole('button', { name: /^herdr-projects\b/ }).click()
     await page.getByRole('textbox', { name: 'Message herdr-projects…' }).waitFor()
     await lv3.waitFor({ state: 'detached' })
     expect(await chips(page)).toEqual(['p:vm-str:herdr-projects'])
@@ -126,8 +126,10 @@ describe.skipIf(!browser)('the lists’ chips', () => {
     // unpinned, they follow the space picked again, and a task opens over the list as before
     await list.getByRole('button', { name: 'Locked: unlock filters to follow the space picked' }).click()
     await list.getByRole('button', { name: 'Lock filters: keep them when switching spaces' }).waitFor()
-    await lv3.waitFor({ state: 'detached' })
-    await page.getByRole('button', { name: /^gtm\b/ }).click()
+    // Main Home's unlocked default still includes LV-3 because it needs you.
+    await lv3.waitFor()
+    expect(await chips(page)).toEqual([])
+    await page.locator('#places').getByRole('button', { name: /^gtm\b/ }).click()
     expect(await chips(page)).toEqual(['p:vm-str:gtm'])
     await list.getByRole('button', { name: /GTM-16 Docs/ }).click()
     await page.getByRole('textbox', { name: 'Message GTM-16…' }).waitFor()
