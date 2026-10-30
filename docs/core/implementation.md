@@ -79,18 +79,18 @@ not evidence of a working feature.
 | First run, spaces, sidebar ordering/sections, renames | plugins/places; server/live/places.ts | Partial: real local/second-core homes and scratch spaces created; phone sections/order/moves/rename and restart persistence checked; full device/first-run parity pending |
 | Coordinators and task chats, Claude/Codex, logs/activity, attachments, reactions | plugins/chat; plugins/coordinators; server/live/readers | Partial: both native chats and repeated sends/restart shown; real phone upload reached second-core Claude, native file reaction and human add/remove confirmed; quoted replies shown both ways; native activity rows and recorded read output shown; background child details, large logs and full device parity pending |
 | Task IDs, worktrees, briefs, queues, pause/restart/archive/close/delete | plugins/tasks; server/live/engine; server/live/task-ids.ts | Partial: real dependency validation/capacity delivery; phone Restart preserves To do and unfinished file; explicit contained resume/ordinary relocation; task options; confirmed Stop of replacement and retired-root child; pin/archive/unarchive/stopped-task pause. Clean Close/research Done, regular coordinator Restart, clean Stop/removal and message-driven checkout recreation verified; native ended-turn Needs you and restart notice/PID preservation verified. Held-work Stop/Close/Delete and failure exit codes verified. Active native foreground Pause verified with same live PID/unchanged work; long shell-tool interruption and full parity pending |
-| Provider retries and configured backup agent | server/live/retry.ts; server/live/engine/engine.ts cantGoOn | Implemented: native completed-log failure classifier, durable 1/2/4/8m retries, explicit-message reset, one-shot ordinary backup with retained checkout/handover, capacity and interrupted-start recovery. Two scoped reviews passed after a minor queued-context fix; CI and real native provider-failure/handover acceptance pending. Contained tasks do not auto-switch, matching legacy |
+| Provider retries and configured backup agent | server/live/retry.ts; server/live/engine/engine.ts cantGoOn | Implemented: native completed-log failure classifier, durable 1/2/4/8m retries, explicit-message reset, one-shot ordinary backup with retained checkout/handover, capacity and interrupted-start recovery. Two scoped reviews passed after a minor queued-context fix; CI passed; real native provider-failure/handover acceptance pending. Contained tasks do not auto-switch, matching legacy |
 | Review/PR/checks/ready/merge, conflicts and recovery | server/live/engine | Partial: real local CORE-1 scratch task committed 1222573, native reviewer round 2 reported no findings, exact-commit card approved, squash merge 6e3a817 confirmed. Real private GitHub PR creation, exact-head Ready/draft promotion, published-comment native follow-up, conflict/rebase leased push, external merge and dirty-base sync/cleanup verified. Product check-dependent merge remains unverified (configured GitHub check-read 403); full checks/main-red/device parity pending |
 | Questions, permissions, plans, secrets cards and notification answers | server/live/chats.ts; server/push.ts | Partial: actual merge and synthetic secret cards answered in phone-width preview; stale permission cards disable correctly; native GITH-3 multi-choice and two-step plan approved, followed by clean research Done; physical lock-screen and complete native permission parity pending |
-| Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; loopback SSH transport checked; external vm-ssa acceptance skipped for missing configured address/host trust; external disconnect acceptance unverified; legacy transport/launcher removal implemented and scoped review passed, branch CI pending |
-| Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; notes/delete/device parity still pending |
+| Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; loopback SSH transport checked; external vm-ssa acceptance skipped for missing configured address/host trust; external disconnect acceptance unverified; legacy transport/launcher removal and native tool-environment recovery passed scoped review and branch CI |
+| Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; real targeted versioned note reached native keeper, same-artifact update appeared live, and disposable artifact deletion removed stored versions/list entry; device parity still pending |
 | Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; real scoped run/env/ignored-file refusal and removal revocation passed; main-home scope isolation passed; private human CLI scoped set/replace/rm passed; UI Replace and full device acceptance pending |
 | Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Partial: real second-core browser frames, takeover, navigation, fit, markup crop and native BROWSER_NOTES_OK shown; app restart retained takeover. Agent-only open was detected without a viewer and one-minute expiry closed its Chrome. Real SSH and full device parity pending |
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Partial: real contained Claude/Codex runs, child checkpoint/review, phone on/wake/off, contained restart/outlive children, durable keep-workers return/completion and post-report usage limit. Full events/browser/limit/device acceptance pending; contained Autopilot remains Linux-only as in legacy |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Partial: native coordinator saved rules/checklist; actual Run now and scheduled-once tasks answered; app restart preserved state; real failed and 20-minute quiet rules each produced exactly one native handler; complete recurrence/events/device parity pending |
 | Terminal typing/resize, panels, files/diff/PR | plugins/terminal; plugins/worktree | Partial: raw core attach and phone typing returned TERMINAL_INPUT_OK; phone Files and added-file Diff inspected through second core; resizing/reconnect and actual PR acceptance pending |
-| Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change inspected; other sections and full acceptance pending |
+| Settings, agent/model/effort policies, private rules | server/live/settings.ts; server/live/models.ts | Partial: scoped role/task/review defaults + private launch rules implemented; phone scoped change and native runtime model before/after inspected; observed runtime is separate from launch choices; other sections and full acceptance pending |
 | Health, alerts, unread/search, keyboard and mobile layouts | plugins/health; plugins/keyboard; src/layout* | Partial: phone unread/search/attention and keyboard reaction bar checked; machine capacity held/delivered messages; complete health/alerts/device parity pending |
 | User plugins and documented new API | src/kernel.ts; server/plugin-api.ts; docs/plugins.md | Partial: API-2 client/server action and retained state inspected; isolated hot rebuild/switch/fallback code and CI coverage added, production/manual acceptance and full gating parity pending; 2.0 plugins require migration |
 | Standalone start/stop/status, installation and optional service | New requirement | Partial: isolated idempotent start/status/stop + crash/core restart exercised; final install/service/cutover pending, no live service enabled |
@@ -1645,3 +1645,42 @@ enclosing 30-second test expires. No suite is skipped or removed by this change.
 Review found one minor remaining hidden composer wait, fixed. Types passed locally;
 full GitHub rerun remains necessary. Rewrite CI 41027509005 passed native runtime
 integration; endpoint/resume CI 41027247187 also passed.
+
+### Scoped secret replacement and artifact note/delete (2026-10-30)
+
+Manual phone Settings → Secrets, scoped only to the scratch github-proof space:
+created a masked disposable random value, used Replace with a different generated
+value, then native GITH-2 secret run checked only its replacement-generation prefix
+and printed SECRET_UI_REPLACEMENT_USED_OK. No value/suffix was printed or placed
+in command words/files/chat. Remove → Remove it revoked it; native secret list
+excluded the name and secret run refused before its test child could execute:
+SECRET_UI_REPLACEMENT_REMOVAL_REVOKED_OK. Independent chat/task reads confirmed
+both markers, To do and the same scratch PR #2. No test secret remains. Screenshot
+she301-secret-replace-phone.png captured and inspected.
+
+Existing second-core native coordinator created disposable artifact ef77bfac. In
+the actual phone viewer, Mark up selected NOTE_TARGET; sent a real note asking for
+NOTE_ACCEPTED_OK. Native transcript independently contains exactly one artifact-note
+for version 1 and target NOTE_TARGET (button#note-target). The native keeper updated
+the same artifact to version 2, visible in the still-open viewer, and replied
+NATIVE_ARTIFACT_NOTE_UPDATED_OK. Independent private-state reads verified two
+versions and the requested new HTML marker:
+NATIVE_ARTIFACT_NOTE_VERSION_TARGET_AND_UPDATE_OK. Screenshots
+she301-artifact-note-sent-phone.png and she301-artifact-note-updated-phone.png were
+captured and inspected. Only this disposable artifact was then removed through
+More → Delete artifact → the named final delete action. The viewer closed and list
+showed no artifacts. Independent snapshot/private-state reads confirmed its list
+entry, both HTML versions and thumbnails gone:
+TEMPORARY_ARTIFACT_DELETE_REMOVES_LIST_AND_STORED_VERSIONS_OK.
+she301-artifact-deleted-phone-final.png records the completed deletion. The live
+SHE-301 proof artifact and prior acceptance artifacts were not removed.
+
+The second full Check 41028188221 passed types/build and test shards 1/3 and 2/3.
+Its only failure was a branch-banner selector: desktop can render two matching
+visible labels, so the narrow exact-text assertion now accepts the first visible
+matching banner at each viewport. It still checks the saved space default changed
+while the existing task base stayed main. No product layout change.
+
+Capacity follow-up preserves the conservative original count for a missing native
+holder, distinct from a confirmed live ended turn or a finished holder. Regression
+checks those three states; a fresh scoped review found no critical/major findings.

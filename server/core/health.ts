@@ -15,11 +15,12 @@ export class CoreHealth {
   private active(task: ReturnType<CoreSource['tasks']['all']>[number]) {
     if (task.archived) return false
     const main = this.source.agents.get(task.chat), terminal = main && this.source.agents.terminal(main)
-    if (task.pilot && main && terminal?.state !== 'finished' && this.source.status(main) === 'work') return true
+    if (task.pilot && main && terminal?.state !== 'finished' &&
+      (terminal ? this.source.status(main) === 'work' : ['starting', 'working', 'blocked'].includes(main.state))) return true
     // Workflow remains Working when a native turn needs a human. Count current
     // activity, not that durable workflow label; unknown captures stay conservative.
     if (task.workflow === 'working' && !task.startError && terminal?.state !== 'finished' &&
-      (!main || this.source.tasks.view(task).status === 'work')) return true
+      (!main || !terminal || this.source.tasks.view(task).status === 'work')) return true
     if (task.reservedAt && Date.now() - task.reservedAt < 60_000) return true
     return (task.reservedChats ?? []).some(chat => {
       const agent = this.source.agents.get(chat)

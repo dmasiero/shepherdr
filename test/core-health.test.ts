@@ -76,14 +76,19 @@ test('queueing a task retains its slot until the native turn really becomes idle
 test('a native task needing a human frees its slot without changing workflow or losing a reviewer reservation', async () => fixture(async ({ source, health, tasks }) => {
   await health.refresh()
   source.settings.set('machine.maxTasks', '1', 'm:box')
-  const activity = { main: 'need', reviewer: 'idle' }
+  const activity = { main: 'need', reviewer: 'idle', terminal: 'live' }
   const main = { chat: 'DEMO-1/Agent' }, reviewer = { chat: 'DEMO-1/Reviewer-1' }
-  Object.assign(source.agents, { get: (chat: string) => chat === main.chat ? main : reviewer, terminal: () => ({ state: 'live' }) })
+  Object.assign(source.agents, { get: (chat: string) => chat === main.chat ? main : reviewer, terminal: () => activity.terminal === 'missing' ? undefined : { state: activity.terminal } })
   source.status = agent => (agent?.chat === main.chat ? activity.main : activity.reviewer) as ReturnType<CoreSource['status']>
   source.tasks.view = task => ({ ...task, status: activity.main }) as ReturnType<CoreSource['tasks']['view']>
   tasks.push({ id: 'DEMO-1', machine: 'box', chat: main.chat, workflow: 'working', reservedChats: [main.chat, reviewer.chat], reservedAt: Date.now() - 120_000 } as CoreTask)
   expect(health.room('box')).toBeUndefined()
   expect(tasks[0].workflow).toBe('working')
+  activity.terminal = 'missing'
+  expect(health.room('box')).toContain('limit 1')
+  activity.terminal = 'finished'
+  expect(health.room('box')).toBeUndefined()
+  activity.terminal = 'live'
   activity.reviewer = 'work'
   expect(health.room('box')).toContain('limit 1')
   activity.reviewer = 'idle'; activity.main = 'work'
