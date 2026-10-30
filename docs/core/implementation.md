@@ -785,3 +785,12 @@ Private policy review round 1 caught a major stale stop retry reviving old worke
 monotonic/idempotent, terminal runs cannot revive, and cleanup confirmation requires stopping/failed state. Its
 private-host-suffix minor is fixed too; actual destination DNS/IP checks remain required in the gateway. Round 2
 reported no remaining findings. Typecheck passed. This model is not yet Autopilot runtime/containment acceptance.
+Containment-preparation helper now builds cleared-environment namespace/mount arguments, sanitizes selected provider
+config, rejects shared writable hardlinks, masks project sockets/FIFOs, and conservatively filters special-use IPs.
+The builder derives its own Git paths and masks rather than relying on caller-supplied omissions. Review round 1
+caught a critical hostile Git pointer mounting unrelated host directories. Fixed by bounded non-symlink pointer
+files, verified .git/worktrees structure and backlink, matching repository/worker common root, and real objects/refs.
+Round 2 reported no findings. Typecheck passed; CI regressions cover the hostile pointers and other preparation
+rules. Standard main/linked worktrees are supported; arbitrary separate Git-directory layouts fail closed here.
+Runtime gateway/launch/actual containment remains unimplemented and unverified. Policy commit b9f3f05c passed both
+GitHub jobs (40989188435). No core or app API is exposed by these preparation modules.
