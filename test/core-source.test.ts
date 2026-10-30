@@ -26,3 +26,123 @@ test('a dropping remote cannot block local startup snapshot or refresh', async (
     expect(source.snapshot().places.some(place => place.id === 'p:local:~')).toBe(true)
   } finally { source.stop(); await Promise.resolve(); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('phone send and direct launch cannot restart a stopped task during deletion; shutdown waits', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-source-delete-'))
+  const source = new CoreSource({ home, port: 17887, socket: '/unused', session: 'test', binary: 'hc' })
+  const space = { id: 'p:machine:demo', name: 'demo', machine: 'machine', folder: '/repo', base: 'main', prefix: 'DEMO', mode: 'regular' as const, added: 1 }
+  const task = { id: 'DEMO-1', chat: 'DEMO-1/Agent', name: 'Example', desc: 'Example', place: space.id, machine: space.machine, folder: '/worktree', repo: '/repo', branch: 'work/1-example', base: 'main', kind: 'claude' as const,
+    workflow: 'todo' as const, status: 'todo' as const, state: 'To do', mergePolicy: 'ask' as const, review: { on: false, kind: 'codex' as const, rounds: 3, mustFix: 'major' }, age: 'now', created: new Date().toISOString(), on: 'test' }
+  source.store.set('space', space.id, space); source.store.set('task', task.id, task)
+  source.store.set('agent', task.chat, { chat: task.chat, space: space.id, machine: space.machine, role: 'task', kind: 'claude', launch: 'old', grant: 'old', hook: '/unused', started: 1, state: 'idle' })
+  source.core.current.connected = true
+  source.agents.terminal = (() => ({ state: 'finished' })) as unknown as typeof source.agents.terminal
+  let launches = 0
+  source.agents.launch = async () => { launches++; throw Error('Should not launch during deletion') }
+  let release!: () => void, entered!: () => void
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  source.tasks.git.run = async (_repo, args) => {
+    if (args[0] === 'worktree' && args[1] === 'list') { entered(); await new Promise<void>(resolve => { release = resolve }); return 'worktree /worktree\nbranch refs/heads/work/1-example\n' }
+    return ''
+  }
+  source.tasks.git.clean = async () => true
+  source.tasks.git.head = async () => { throw Error('No branch was created') }
+  const removing = source.tasks.remove(task, true)
+  await reached
+  try {
+    await expect(source.act({ type: 'send', chat: task.chat, text: 'Continue' })).rejects.toThrow('finishing another action')
+    await expect(source.tasks.launch(task, 'Continue')).rejects.toThrow('finishing another action')
+    await expect(source.tasks.deliver(task.id, task.chat, 'Continue')).rejects.toThrow('finishing another action')
+    expect(source.store.all('pending-send')).toHaveLength(0)
+    let stopped = false
+    const draining = source.drain().then(waited => { stopped = true; return waited })
+    await Bun.sleep(0)
+    expect(stopped).toBe(false)
+    release()
+    expect(await removing).toMatchObject({ ok: true })
+    expect(await draining).toBe(true)
+    await Bun.sleep(0)
+    expect(launches).toBe(0)
+    expect(source.tasks.get(task.id)).toBeUndefined()
+  } finally {
+    release(); await removing.catch(() => {}); source.stop(); await Bun.sleep(0); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true })
+  }
+})
+
+function deliveryFixture() {
+  const home = mkdtempSync(join(tmpdir(), 'shep-source-delivery-'))
+  const source = new CoreSource({ home, port: 17887, socket: '/unused', session: 'test', binary: 'hc' })
+  const space = { id: 'p:machine:demo', name: 'demo', machine: 'machine', folder: '/repo', base: 'main', prefix: 'DEMO', mode: 'regular' as const, added: 1 }
+  const task = { id: 'DEMO-1', chat: 'DEMO-1/Agent', name: 'Example', desc: 'Example', place: space.id, machine: space.machine, folder: '/worktree', repo: '/repo', branch: 'work/1-example', base: 'main', kind: 'claude' as const,
+    workflow: 'working' as const, status: 'work' as const, state: 'Working', mergePolicy: 'ask' as const, review: { on: false, kind: 'codex' as const, rounds: 3, mustFix: 'major' }, age: 'now', created: new Date().toISOString(), on: 'test' }
+  source.store.set('space', space.id, space); source.store.set('task', task.id, task)
+  for (const [chat, role] of [[task.chat, 'task'], ['DEMO-1/Reviewer-1', 'reviewer']]) source.store.set('agent', chat!, { chat, space: space.id, machine: space.machine, role, kind: 'claude', launch: 'session', grant: 'grant', hook: '/unused', started: 1, state: 'idle' })
+  source.core.current.connected = true
+  source.agents.terminal = (() => ({ state: 'live' })) as unknown as typeof source.agents.terminal
+  const sent: { chat: string; text: string }[] = []
+  source.agents.send = async (chat, text) => {
+    sent.push({ chat, text })
+    for (const item of source.store.all<{ id: string; chat: string; text: string }>('pending-send')) if (item.chat === chat && item.text === text) source.store.delete('pending-send', item.id)
+  }
+  return { source, task, sent, async close() { source.stop(); await Bun.sleep(0); source.mailbox.close(); source.store.close(); rmSync(home, { recursive: true, force: true }) } }
+}
+
+test('a send to an idle reviewer leaves the preparation gate and reaches that reviewer once', async () => {
+  const f = deliveryFixture()
+  try {
+    await f.source.act({ type: 'send', chat: 'DEMO-1/Reviewer-1', text: 'Check again', cid: 'reviewer-send' })
+    await Bun.sleep(0)
+    expect(f.sent).toEqual([{ chat: 'DEMO-1/Reviewer-1', text: 'Check again' }])
+    expect(f.source.store.all('pending-send')).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test('shutdown retains a message prepared during drain without launching delivery', async () => {
+  const f = deliveryFixture()
+  let release!: () => void, entered!: () => void
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  f.source.chats.text = async () => { entered(); await new Promise<void>(resolve => { release = resolve }); return 'Keep queued' }
+  try {
+    const preparing = f.source.act({ type: 'send', chat: f.task.chat, text: 'Keep queued', cid: 'stopping-send' })
+    await reached
+    const draining = f.source.drain()
+    release()
+    await preparing; await draining; await Bun.sleep(0)
+    expect(f.sent).toEqual([])
+    expect(f.source.store.get('pending-send', 'stopping-send')).toMatchObject({ state: 'queued' })
+    f.source.quiescing = false
+    f.source.retry(f.task.chat)
+    await Bun.sleep(0)
+    expect(f.sent).toEqual([{ chat: f.task.chat, text: 'Keep queued' }])
+  } finally { release?.(); await f.close() }
+})
+
+test('shutdown finishes the current delivery but leaves the next queued message untouched', async () => {
+  const f = deliveryFixture()
+  let release!: () => void, entered!: () => void
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  const send = f.source.agents.send
+  f.source.agents.send = async (chat, text) => { entered(); await new Promise<void>(resolve => { release = resolve }); await send(chat, text) }
+  try {
+    for (const id of ['first', 'second']) f.source.store.set('pending-send', id, { id, chat: f.task.chat, text: id, state: 'queued' })
+    f.source.retry(f.task.chat)
+    await reached
+    const draining = f.source.drain()
+    release()
+    await draining; await Bun.sleep(0)
+    expect(f.sent).toEqual([{ chat: f.task.chat, text: 'first' }])
+    expect(f.source.store.get('pending-send', 'second')).toMatchObject({ state: 'queued' })
+  } finally { release?.(); await f.close() }
+})
+
+test('shutdown prevents queued tasks from receiving go even after their dependencies finish', async () => {
+  const f = deliveryFixture()
+  try {
+    f.source.store.set('task', f.task.id, { ...f.task, workflow: 'queued', after: [] })
+    await f.source.drain()
+    await f.source.tasks.tick()
+    await expect(f.source.tasks.change(f.task.id, async () => {})).rejects.toThrow('stopping')
+    expect(f.source.tasks.get(f.task.id)?.workflow).toBe('queued')
+    expect(f.sent).toEqual([])
+  } finally { await f.close() }
+})

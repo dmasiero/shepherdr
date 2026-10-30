@@ -36,7 +36,7 @@ async function withTask(run: (context: { tasks: CoreTasks; task: CoreTask; grant
       if (result.exitCode !== 0) throw new Error(result.stderr.toString())
       return result.stdout
     } },
-    agents: { get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
+    agents: { all: () => [], get: (chat: string) => chat === task.chat ? { chat, launch: grant.session, grant: grant.id, role: 'task', machine: task.machine, kind: 'codex' } : undefined,
       terminal: () => ({ address: 't1', state: state.terminal }), send: async () => {} },
     core: { call: async () => ({}) }, saveAndDeliver: (_chat: string, _id: string, _text: string, save: () => void) => save(), status: () => 'idle', connected: () => true, emit: () => {},
     post: (chat: string, message: Message) => store.set(`message:${chat}`, message.id, message),
@@ -154,5 +154,70 @@ test('headless review relay waits for a successful core holder exit', async () =
     code = 0
     await tasks.tick()
     expect(tasks.get(task.id)?.reviewReport).toBe('No findings')
+  })
+})
+
+
+test('CLI and screen mutations cannot race a merge already in flight', async () => withTask(async ({ tasks, task, grant, repo }) => {
+  await tasks.ready(grant, task.id, 'Changed example')
+  await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat)
+  const source = (tasks as unknown as { source: CoreSource }).source, exec = source.files.exec.bind(source.files)
+  let release!: () => void, entered!: () => void
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  source.files.exec = async (...args) => {
+    if (args[1][0] === 'git' && args[1][1] === 'merge-tree') { entered(); await new Promise<void>(resolve => { release = resolve }) }
+    return exec(...args)
+  }
+  const merge = tasks.merge(grant, task.id)
+  await reached
+  try {
+    for (const args of [['task', 'close', task.id, '--force'], ['todo', task.id], ['task', 'queue', task.id, '--after', 'none']]) await expect(tasks.cli(grant, args)).rejects.toThrow('finishing another action')
+    await expect(tasks.act({ type: 'delete', chat: task.chat, force: true })).rejects.toThrow('finishing another action')
+    await expect(tasks.ready(grant, task.id, 'Another ready')).rejects.toThrow('finishing another action')
+    await expect(tasks.report(grant, task.id, 'Late status', 50)).rejects.toThrow('finishing another action')
+    expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('before\n')
+  } finally { release() }
+  await merge
+  expect(tasks.get(task.id)?.workflow).toBe('merged')
+  expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('after\n')
+}))
+
+test('a task closing its held-work check cannot concurrently start a merge', async () => withTask(async ({ tasks, task, grant, repo }) => {
+  await tasks.ready(grant, task.id, 'Changed example')
+  await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat)
+  const source = (tasks as unknown as { source: CoreSource }).source, exec = source.files.exec.bind(source.files)
+  let release!: () => void, entered!: () => void
+  const reached = new Promise<void>(resolve => { entered = resolve })
+  source.files.exec = async (...args) => {
+    if (args[1][0] === 'git' && args[1][1] === 'worktree' && args[1][2] === 'list') { entered(); await new Promise<void>(resolve => { release = resolve }) }
+    return exec(...args)
+  }
+  const close = tasks.close(tasks.get(task.id)!)
+  await reached
+  try { await expect(tasks.merge(grant, task.id)).rejects.toThrow('finishing another action') }
+  finally { release() }
+  expect(await close).toMatchObject({ ok: false, held: ['unmerged commits'] })
+  expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('before\n')
+  await tasks.merge(grant, task.id)
+  expect(tasks.get(task.id)?.workflow).toBe('merged')
+}))
+
+test('an unchanged squash-merged branch cleans up without force; a new commit remains protected', async () => {
+  await withTask(async ({ tasks, task, grant, repo }) => {
+    await tasks.ready(grant, task.id, 'Changed example')
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat); await tasks.merge(grant, task.id)
+    expect(await tasks.close(tasks.get(task.id)!)).toMatchObject({ ok: true })
+    expect(tasks.get(task.id)?.workflow).toBe('merged')
+    expect(await tasks.remove(tasks.get(task.id)!)).toMatchObject({ ok: true })
+    expect(tasks.get(task.id)).toBeUndefined()
+    expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('after\n')
+  })
+  await withTask(async ({ tasks, task, grant, worktree, git }) => {
+    await tasks.ready(grant, task.id, 'Changed example')
+    await tasks.answer(tasks.get(task.id)!.mergeQuestion!, 0, task.chat); await tasks.merge(grant, task.id)
+    writeFileSync(join(worktree, 'later.txt'), 'KEEP_THIS_WORK\n'); git(worktree, 'add', '.'); git(worktree, 'commit', '-m', 'later work')
+    expect(await tasks.remove(tasks.get(task.id)!)).toMatchObject({ ok: false, held: ['unmerged commits'] })
+    expect(tasks.get(task.id)).toBeDefined()
+    expect(readFileSync(join(worktree, 'later.txt'), 'utf8')).toBe('KEEP_THIS_WORK\n')
   })
 })

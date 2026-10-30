@@ -342,3 +342,19 @@ minor findings. Expected reader failures use plain error envelopes. An unreadabl
 GitHub checks fallback now has an explicit checksError in the existing PR Checks
 slot, rather than claiming no checks exist. New helper and layout regressions
 cover that access failure; actual GitHub failure UI remains unverified manually.
+
+Task lifecycle safety slice: per-task changes now exclude merge, close, delete,
+restart, review/report/ready and message preparation/delivery from racing each
+other. A removed task cannot be resumed by a waiting send; reviewer messages
+retry their actual reviewer chat after preparation. Shutdown blocks new task
+changes, queued-go scheduling and pending-send retries, waits for active task
+changes/merges, and leaves undelivered messages queued for restart. An unchanged
+local squash-merged branch can be cleaned up without force using the recorded
+ready head and merge commit; later work stays protected. GitHub merge commits
+are recorded, but syncing the local base after GitHub merge remains pending.
+Three scoped review rounds found deletion/delivery, reviewer retry, shutdown
+retry and queued-go races; fixes have authored regressions. The final round's
+queued-go finding was fixed after its report, without a fourth review round.
+Typecheck passed. Manual second-core REMO-2 send after isolated app restart
+returned native LIFECYCLE_SEND_OK and remained To do, with its uncommitted panel
+marker preserved. Worktree CI 40976525268 passed; lifecycle branch CI pending.

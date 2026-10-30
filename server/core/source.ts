@@ -237,14 +237,20 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           const task = this.tasks.forChat(action.chat)
           const space = this.space(action.chat) || task && this.space(task.place)
           if (!space) throw new Error('No such coordinator space')
-          const text = await this.chats.text(action, space.machine)
-          const id = action.cid || randomUUID()
-          this.store.db.transaction(() => {
-            this.store.set('pending-send', id, { id, chat: action.chat, text, state: 'queued' } satisfies PendingSend)
-            this.post(action.chat, { id, cid: action.cid, who: 'you', text, at: Date.now(), waiting: true, waitsFor: 'start' })
-          })()
-          await this.flush(action.chat)
-          return { ok: true, waiting: !!this.store.get('pending-send', id) }
+          const prepare = async () => {
+            const text = await this.chats.text(action, space.machine)
+            const id = action.cid || randomUUID()
+            this.store.db.transaction(() => {
+              this.store.set('pending-send', id, { id, chat: action.chat, text, state: 'queued' } satisfies PendingSend)
+              this.post(action.chat, { id, cid: action.cid, who: 'you', text, at: Date.now(), waiting: true, waitsFor: 'start' })
+            })()
+            await this.flush(action.chat)
+            return { ok: true, waiting: !!this.store.get('pending-send', id) }
+          }
+          if (!task) return prepare()
+          const result = await this.tasks.change(task.id, prepare)
+          this.retry(action.chat)
+          return result
         }
         return action.cid ? this.store.command(action.cid, action, run) : run()
       }
@@ -308,26 +314,34 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
   }
 
+  retry(chat: string) {
+    if (this.quiescing) return
+    queueMicrotask(() => { if (!this.quiescing) void this.flush(chat) })
+  }
   private async flush(chat: string) {
-    if (this.sending.has(chat) || !this.connected()) return
+    if (this.quiescing || this.sending.has(chat) || !this.connected()) return
     this.sending.add(chat)
+    let progressed = false
     try {
       const pending = this.store.all<PendingSend>('pending-send').filter(item => item.chat === chat && item.state === 'queued')
       for (const item of pending) {
+        if (this.quiescing) return
         const task = this.tasks.forChat(chat)
         const space = this.space(chat) || task && this.space(task.place)
         if (!space) return
+        if (task && this.tasks.busy(task.id)) return
         const agent = this.agents.get(chat)
         if (item.launch && (agent?.launch !== item.launch || this.agents.terminal(agent)?.state !== 'live')) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); this.deliveryNotice(item, true); continue }
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
-          if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
-          else if (task) await this.tasks.launch(task, item.text)
+          if (task) await this.tasks.deliver(task.id, chat, item.text)
+          else if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
           else {
             const pick = this.settings.agent('coordinator', space.id)
             await this.agents.launch(space, chat, agent?.kind ?? pick.kind, item.text, agent ? { model: agent.model, effort: agent.effort, resume: true } : { ...pick, resume: true })
           }
+          progressed = true
           const message = this.store.get<Message>(`message:${chat}`, item.id)
           if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
         } catch (error) {
@@ -342,7 +356,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           this.emit('chat', chat); return
         }
       }
-    } finally { this.sending.delete(chat) }
+    } finally {
+      this.sending.delete(chat)
+      if (progressed && this.store.all<PendingSend>('pending-send').some(item => item.chat === chat && item.state === 'queued')) this.retry(chat)
+    }
   }
 
   private async mail(grant: Grant, request: MailRequest, requestId: string): Promise<unknown> {

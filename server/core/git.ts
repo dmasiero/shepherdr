@@ -27,7 +27,7 @@ export class CoreGit {
     await this.run(repo, ['worktree', 'add', '-b', branch, folder, base], 60)
   }
   async pullRequest(repo: RepoLocation, branch: string) {
-    return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; detailsUrl?: string }[] }>(repo,
-      ['pr', 'view', branch, '--json', 'number,url,state,headRefOid,baseRefName,statusCheckRollup'])
+    return this.gh<{ number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null; statusCheckRollup: { conclusion?: string; status?: string; state?: string; name?: string; detailsUrl?: string }[] }>(repo,
+      ['pr', 'view', branch, '--json', 'number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeCommit'])
   }
 }
