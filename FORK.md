@@ -65,7 +65,7 @@ Upstream's files change only where the layer hooks in, each marked with a `fork:
 
 `scripts/sync-upstream.sh`, run in the dev shell, merges upstream's main into a `sync/upstream-<version>` branch made
 from this line, in a worktree of its own, runs the fork's checks (`bun run typecheck`, the tests of what the layer
-touches, `bun run build`, at the lowest priority: the one exception to AGENTS.md's no-tests rule, as renix runs it at
+touches, `bun run build`, the tests at the lowest priority: the one exception to AGENTS.md's no-tests rule, as renix runs it at
 night before a merge no one reviews) and opens the sync pull request to `2.1`. A conflict (exit 3) or a failed check
 (exit 4) is fixed in that worktree, then the script goes on with `--continue`. By hand:
 

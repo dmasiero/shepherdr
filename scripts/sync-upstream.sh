@@ -79,6 +79,7 @@ fi
 branch=$(git rev-parse --abbrev-ref HEAD)
 . "$st"
 case "$branch" in sync/upstream-*) ;; *) die "$dir is on $branch, not a sync/upstream-* branch" ;; esac
+git merge-base --is-ancestor "$ref" HEAD || die "$branch does not have upstream's $ref merged (was the merge aborted?): merge it again, then --continue"
 
 # The fork's checks (FORK.md): the types, the tests of what the fork's layer touches and the build, at the lowest
 # priority. Not the whole suite with its browser tests: GitHub's Check workflow runs that. The one exception to
