@@ -841,3 +841,12 @@ and application payloads remain uninspected, matching the legacy profile's expli
 this is not TLS interception or a claim to stop encrypted application-level domain fronting. Round 2 found no
 remaining findings against that declared TCP/TLS destination contract. Typecheck passed. Provider startup/actual
 namespace/remote/core-runtime integration is still unverified and the controls stay unoffered.
+
+Gateway/TLS commit 079e65f8 passed both GitHub jobs (40991579594), including an actual native TLS client's
+ClientHello and ordered/charged tunnel EOF cases. The next boundary now has an outside-only core backend closure:
+endpoint, credential and cwd are fixed at construction, while gateway words cannot select another identity.
+Provider hook path mapping accepts only normalized absolute native-history paths for the chosen provider and
+maps them into the private captured tree; it never opens the supplied host path or copies caller chat/grant fields.
+Fresh scoped review round 1 found no findings. These functions are not yet wired to source dispatch/launches;
+permission cancellation, actor authorization at dispatch, actual containment/provider runs and product controls
+remain pending, so this does not establish a working Autopilot feature.
