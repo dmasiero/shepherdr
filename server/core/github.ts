@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { CoreSource } from './source.ts'
 import type { CoreSpace } from './model.ts'
 import { CoreGitHubPr } from './github-pr.ts'
+import { CoreGitHubMerges } from './github-merges.ts'
 
 interface WorkflowRun { headSha: string; status: string; conclusion: string | null; url: string; workflowName: string }
 interface MainWatch { id: string; checked: number; red?: string; notice?: string; error?: string }
@@ -23,10 +24,11 @@ export function mainVerdict(value: unknown, head: string) {
 /** Read-only GitHub observation through the task machine's core exec; never a worker transport. */
 export class CoreGitHub {
   readonly prs: CoreGitHubPr
+  readonly merges: CoreGitHubMerges
   private timer?: ReturnType<typeof setInterval>
   private polling?: Promise<void>
   private stopped = false
-  constructor(private source: CoreSource) { this.prs = new CoreGitHubPr(source) }
+  constructor(private source: CoreSource) { this.prs = new CoreGitHubPr(source); this.merges = new CoreGitHubMerges(source) }
   start() {
     this.stopped = false
     this.prs.start()
@@ -43,6 +45,7 @@ export class CoreGitHub {
     if (this.polling) return this.polling
     if (this.stopped || this.source.quiescing || !this.source.connected()) return Promise.resolve()
     const work = (async () => {
+      await this.merges.scan(now)
       await this.prs.scan(now)
       this.deliver()
       const spaces = this.source.spaces().filter(space => !space.home && this.source.machineConnected(space.machine) && this.wanted(space, now))

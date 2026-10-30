@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import type { PilotRepositoryContext } from './pilot-repositories.ts'
 import type { CoreFiles } from './files.ts'
 
@@ -65,6 +66,17 @@ export class CoreGit {
     if (blocks.some(lines => lines.includes(ref))) throw Error('The saved task branch is checked out elsewhere; it was left untouched')
     if (await this.branchHead(repo, branch)) await this.run(repo, ['worktree', 'add', folder, branch], 60, undefined, [folder])
     else await this.addWorktree(repo, folder, branch, base)
+  }
+  async syncBase(repo: RepoLocation, base: string, merged: string) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(base) || base.includes('..') || !/^[a-f0-9]{40,64}$/.test(merged)) throw Error('Invalid confirmed base identity')
+    const ref = `refs/shepherdr/base-sync/${createHash('sha256').update(JSON.stringify([repo.machine, repo.folder, base])).digest('hex')}`
+    await this.run(repo, ['fetch', '--no-tags', 'origin', `refs/heads/${base}:${ref}`], 90)
+    const fetched = await this.head(repo, ref)
+    if (!await this.contains(repo, fetched, merged)) throw Error('The fetched base does not contain GitHub’s confirmed merge')
+    if (await this.contains(repo, base, merged)) return
+    if (await this.run(repo, ['symbolic-ref', '--quiet', 'HEAD']) !== `refs/heads/${base}`) throw Error('The base branch is not checked out')
+    if (!await this.clean(repo)) throw Error('The base checkout has uncommitted work')
+    await this.run(repo, ['merge', '--ff-only', fetched], 60)
   }
   async findPullRequest(repo: RepoLocation, branch: string, base: string) {
     const remote = await this.remote(repo)

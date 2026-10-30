@@ -51,6 +51,10 @@ export interface CoreTask extends Task {
   model?: string
   effort?: string
   mergeCommit?: string
+  externalMerge?: boolean
+  baseSyncPending?: boolean
+  baseSyncChecked?: number
+  baseSyncError?: string
   localId?: string
   automation?: string
   pilot?: string
@@ -394,7 +398,7 @@ export class CoreTasks {
         if (done.state !== 'MERGED') throw new Refusal('GitHub has not confirmed the merge')
         const merged = done.mergeCommit?.oid
         if (!merged || !/^[a-f0-9]{40,64}$/.test(merged)) throw new Refusal('GitHub confirmed the merge but has not returned its commit yet; retry to finish recording it')
-        task.mergeCommit = merged; this.save(task)
+        task.mergeCommit = merged; task.baseSyncPending = true; this.save(task)
       } else {
         if (!await this.git.clean(repo)) throw new Refusal('The base checkout has uncommitted work')
         if (await this.git.run(repo, ['symbolic-ref', '--short', 'HEAD']) !== task.base) throw new Refusal('The base branch is not checked out')
@@ -422,6 +426,34 @@ export class CoreTasks {
       this.merging.delete(id)
       this.settled(); this.source.retry?.(task.chat)
     }
+  }
+  /** Internal GitHub observer only: GitHub's completed merge is already an action, not a new approval. */
+  async observedMerge(id: string, pr: { number: number; url: string; state: string; headRefOid: string; baseRefName: string; mergeCommit?: { oid: string } | null }) {
+    return this.change(id, async () => {
+      const task = this.get(id)
+      if (!task || !['ready', 'merging'].includes(task.workflow) || task.pr?.number !== pr.number || task.pr.url !== pr.url || pr.state !== 'MERGED' || !task.readyHead || task.readyHead !== pr.headRefOid || task.base !== pr.baseRefName) return false
+      const commit = pr.mergeCommit?.oid
+      if (!commit || !/^[a-f0-9]{40,64}$/.test(commit)) throw new Refusal('GitHub has not confirmed its merge commit')
+      task.mergeCommit = commit; task.externalMerge = true; task.baseSyncPending = true
+      task.workflow = 'merged'; task.status = 'done'; task.doneAt = Date.now(); task.outcome = 'done'; task.cleanupPending = true
+      this.save(task); await this.label(task); this.card(task, task.said || 'Merged on GitHub')
+      return true
+    })
+  }
+  async syncBase(id: string) {
+    return this.change(id, async () => {
+      const task = this.get(id)
+      if (!task || task.workflow !== 'merged' || !task.baseSyncPending || !task.mergeCommit) return
+      task.baseSyncChecked = Date.now(); this.save(task)
+      try {
+        await this.git.syncBase({ machine: task.machine, folder: task.repo }, task.base, task.mergeCommit)
+        delete task.baseSyncPending; delete task.baseSyncError; this.save(task)
+      } catch (error) {
+        const message = String((error as Error).message).slice(0, 1000)
+        if (task.baseSyncError !== message) this.source.post(task.chat, { id: `base-sync-${task.id}`, who: 'agent', text: `Merged on GitHub. The base checkout was kept and will retry syncing: ${message}`, at: Date.now() })
+        task.baseSyncError = message; this.save(task)
+      }
+    })
   }
   async drain() {
     const waiting = this.merging.size > 0 || this.changing.size > 0
@@ -575,9 +607,10 @@ export class CoreTasks {
     this.source.store.set('task-cleanup-receipt', task.chat, { launch: agent.launch, receipt: task.cleanupReceipt, seen: false, complete: false })
   }
   private async cleanupFinished(task: CoreTask) {
+    if (task.baseSyncPending) return // Landing must be confirmed locally before deciding what work remains.
     const agent = this.source.agents.get(task.chat)
     if (agent && this.source.agents.terminal(agent)?.state !== 'finished' &&
-      (this.source.status(agent) !== 'idle' || !task.cleanupReceipt || !this.source.logs.cleanupComplete(agent, task.cleanupReceipt))) return
+      (this.source.status(agent) !== 'idle' || !(task.externalMerge && this.source.logs.waiting(agent)) && (!task.cleanupReceipt || !this.source.logs.cleanupComplete(agent, task.cleanupReceipt)))) return
     if (!this.source.machineConnected(task.machine) || Date.now() - (task.cleanupChecked ?? 0) < 60000) return
     await this.change(task.id, async () => {
       task.cleanupChecked = Date.now(); this.save(task)

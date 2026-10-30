@@ -179,3 +179,20 @@ The setting is per launch, not written to the human’s Codex configuration. Man
 an incompatible managed policy must be resolved by the operator, never bypassed. See the official
 [approval/security configuration](https://learn.chatgpt.com/docs/agent-approvals-security) and pinned
 [0.163.0 schema](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/config.schema.json).
+
+## GitHub access on an agent machine
+
+The existing Git/GitHub CLI login on that machine is used through core; no
+separate worker or copied credential is installed. Private repository access,
+Git push, pull-request read/write, commit status read, and check-run read must
+be granted by its operator. In particular, a token that can open a PR can still
+lack permission to read GitHub checks. A 403 or incomplete check snapshot is
+an error, never green checks or permission to merge. PR identity/Ready promotion
+can work independently of check-read access. Published comments and merge
+observation use the same explicit repository/host identity.
+
+A confirmed GitHub merge is recorded even when performed outside Shepherdr.
+The base checkout is fetched and fast-forwarded only when it is on the expected
+branch and clean; dirty/diverged work is kept and syncing retries. Cleanup waits
+for sync and captured native completion before removing only landed clean work.
+The observer never initiates a GitHub merge or grants an approval.

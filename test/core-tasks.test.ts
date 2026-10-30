@@ -591,3 +591,36 @@ test('a PR lookup failure never creates another PR or reports Ready', () => with
   expect(tasks.get(task.id)?.pr).toBeUndefined()
   expect(tasks.get(task.id)?.workflow).toBe('working')
 }))
+
+test('observed GitHub merge requires the saved PR URL, exact Ready head and base before recording Done', () => withTask(async ({ tasks, task }) => {
+  const source = (tasks as unknown as { source: CoreSource }).source
+  const head = await tasks.git.head({ machine: task.machine, folder: task.folder })
+  task.workflow = 'ready'; task.readyHead = head; task.pr = { number: 7, url: 'https://github.test/o/r/pull/7' }
+  source.store.set('task', task.id, task)
+  const pr = { ...task.pr, state: 'MERGED', headRefOid: head, baseRefName: task.base, mergeCommit: { oid: head } }
+  for (const wrong of [{ ...pr, url: 'https://github.test/other/repo/pull/7' }, { ...pr, headRefOid: 'b'.repeat(40) }, { ...pr, baseRefName: 'other' }, { ...pr, state: 'OPEN' }]) expect(await tasks.observedMerge(task.id, wrong)).toBe(false)
+  expect(tasks.get(task.id)?.workflow).toBe('ready')
+  expect(await tasks.observedMerge(task.id, pr)).toBe(true)
+  expect(tasks.get(task.id)).toMatchObject({ workflow: 'merged', mergeCommit: head, externalMerge: true, baseSyncPending: true, cleanupPending: true })
+  expect(await tasks.observedMerge(task.id, pr)).toBe(false)
+}))
+
+test('confirmed GitHub base sync preserves dirty work and then fast-forwards only the confirmed remote base', () => withTask(async ({ tasks, task, repo, worktree, git }) => {
+  const source = (tasks as unknown as { source: CoreSource }).source, remote = join(repo, '..', 'remote.git')
+  git(repo, 'init', '--bare', remote); git(repo, 'remote', 'add', 'origin', remote)
+  git(worktree, 'push', 'origin', 'HEAD:refs/heads/main')
+  task.workflow = 'merged'; task.baseSyncPending = true; task.cleanupPending = true; task.mergeCommit = await tasks.git.head({ machine: task.machine, folder: worktree })
+  source.store.set('task', task.id, task)
+  writeFileSync(join(repo, 'unfinished.txt'), 'BASE_BYTES\n')
+  await tasks.syncBase(task.id)
+  expect(tasks.get(task.id)).toMatchObject({ baseSyncPending: true, baseSyncError: 'The base checkout has uncommitted work' })
+  await tasks.tick()
+  expect(tasks.get(task.id)?.cleanupPending).toBe(true)
+  expect(readFileSync(join(repo, 'unfinished.txt'), 'utf8')).toBe('BASE_BYTES\n')
+  expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('before\n')
+  rmSync(join(repo, 'unfinished.txt'))
+  await tasks.syncBase(task.id)
+  expect(tasks.get(task.id)?.baseSyncPending).toBeUndefined()
+  expect(tasks.get(task.id)?.baseSyncError).toBeUndefined()
+  expect(readFileSync(join(repo, 'example.txt'), 'utf8')).toBe('after\n')
+}))
