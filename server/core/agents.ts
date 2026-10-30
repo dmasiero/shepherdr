@@ -123,6 +123,7 @@ This start replaces every earlier command path and routing instruction. Your aut
       pilot: options.pilot && prepared ? { run: options.pilot.run, home: prepared.sandbox.home, captures: prepared.paths.captures, pending: true } : undefined,
     }
     this.store.set('agent', chat, record)
+    if (record.pilot) this.store.set('pilot-capture', record.launch, record)
     let argv: string[] = [kind]
     const headless = kind === 'codex' && options.readOnly
     if (kind === 'claude') {
@@ -137,7 +138,7 @@ This start replaces every earlier command path and routing instruction. Your aut
       if (headless) argv.push('exec', '--json', '--sandbox', 'read-only')
       else { argv.push('--no-daemon', '--no-alt-screen'); if (options.pilot) argv.push('--dangerously-bypass-approvals-and-sandbox') }
 
-      for (const event of (headless ? [] : EVENTS).filter(e => !['Notification', 'PostToolUseFailure'].includes(e))) {
+      for (const event of (headless || options.pilot ? [] : EVENTS).filter(e => !['Notification', 'PostToolUseFailure'].includes(e))) {
         argv.push('-c', `hooks.${event}=[{hooks=[{type="command",command=${toml(command)},timeout=${event === 'PermissionRequest' ? 3600 : 5}}]}]`)
       }
       argv.push('-c', `developer_instructions=${toml(roleWords)}`)
@@ -186,6 +187,7 @@ This start replaces every earlier command path and routing instruction. Your aut
     } catch (error) {
       if (prepared && !submitted) {
         this.mailbox.revoke(chat)
+        for (const capture of this.store.all<CoreAgent>('pilot-capture')) if (capture.pilot?.captures === prepared.paths.captures) this.store.delete('pilot-capture', capture.launch)
         if (this.get(chat)?.pilot?.captures === prepared.paths.captures) {
           if (previous) this.store.set('agent', chat, previous)
           else this.store.delete('agent', chat)

@@ -1006,3 +1006,30 @@ private state and native login copies were removed after stopping only this task
 unattended interactive Claude startup/chat, not full managed delivery, Codex interactive or UI Autopilot controls.
 Bootstrap review round 1 had no findings; generated trust scope and exclusion of host trust have GitHub regression
 coverage. Local typecheck passed. Preference-only commit 3f0424fe passed both jobs (40997706751).
+
+A real core-owned contained Claude coordinator then created scratch task PILT-1 via its inside CLI and authenticated
+core mailbox. The worker's private binding was confirmed before its coordinator (`t1s`) was stopped deliberately.
+The child (`t1t`) continued, changed only kept.txt to CONTAINED_TASK_FILE_OK, and checkpointed through checked Git
+at 7035642014bae37d9a41f71324225a4fb97121d6. It requested a fresh readonly Codex reviewer (`t1v`), received the
+native forwarded report (“No findings”) for that exact commit and replied CONTAINED_TASK_REVIEW_OK. Total measured
+traffic was 3,103,674 encrypted bytes across the run. This exercised real namespaces, provider logins, core-only
+commands/files/docs, native log projection and child-outlive-parent; no fake policy or launch callbacks were used.
+No tests ran. Every owned terminal was confirmed ended before temporary app/login copies and scratch worktrees
+were removed; no live installation or another agent changed. This is internal local-core acceptance, not UI
+Autopilot, stop/keep-workers, hard-limit exhaustion, SSH, physical phone, ready/merge, or complete parity proof.
+Native bootstrap b0e2916d passed both GitHub jobs (40998085599).
+
+Contained Codex now starts interactively without extra app command hooks and discovers its own primary captured
+JSONL from native session metadata (cli source plus exact contained cwd). A real authenticated core launch (`t1w`)
+returned INTERACTIVE_CONTAINED_CODEX_OK, with 1,423,202 encrypted bytes and no pending binding. A separate run (`t1y`)
+with a one-token advisory allowance reported 13,957 tokens after its first call, failed closed with the shared
+reported-token allowance reason, and ended itself (exit 1) before cleanup; traffic was 1,169,625 bytes. This is an
+advisory post-report stop, not a hard spending cap. Only owned disposable state/login copies were removed after
+confirmed process exit. No human services, live state or network mappings changed.
+
+Usage accounting reads the outside capture journal, includes Claude sidechains, deduplicates mirrored provider
+message IDs and durable replay, and distinguishes reset Codex capture generations. Retired sessions remain in
+private accounting until fully drained; completed captures are skipped durably. Usage parsing is independent of
+chat projection and never reads terminal screens. Regression coverage was added for GitHub only. Three scoped
+review rounds fixed omitted sidechain usage, malformed JSON handling and reset identity aliasing; the last found
+no remaining findings. Local typecheck passed; branch CI pending for this slice. UI lifecycle remains unfinished.

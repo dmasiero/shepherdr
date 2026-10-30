@@ -23,7 +23,7 @@ export class CoreLogs {
   private timer?: ReturnType<typeof setInterval>
   constructor(private readonly agents: CoreAgents, private readonly files: CoreFiles, private readonly store: CoreStore,
     private readonly changed: (chat: string) => void, private readonly error: (chat: string, message: string) => void,
-    private readonly incoming: (chat: string, message: Message) => void = () => {}) {}
+    private readonly incoming: (chat: string, message: Message) => void = () => {}, private readonly observe: (agent: CoreAgent) => Promise<void> = async () => {}) {}
   start() { if (!this.timer) this.timer = setInterval(() => void this.poll(), 500); void this.poll() }
   stop() { clearInterval(this.timer); this.timer = undefined }
   async poll() {
@@ -36,6 +36,7 @@ export class CoreLogs {
       jobs.push((async () => {
         try {
           try { await this.hook(agent) } catch (error) { this.error(agent.chat, (error as Error).message) }
+          try { await this.observe(agent) } catch (error) { this.error(agent.chat, (error as Error).message) }
           const current = this.agents.get(agent.chat) ?? agent
           if (current.transcript) await this.transcript(current)
         } catch (error) { this.error(agent.chat, (error as Error).message) }

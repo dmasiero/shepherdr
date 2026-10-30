@@ -2,14 +2,16 @@ import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Grant, MailRequest } from './mailbox.ts'
 import { CorePilotPolicy, type PilotActor } from './pilot-policy.ts'
+import { CorePilotUsage } from './pilot-usage.ts'
 import { CorePilotCommands } from './pilot-commands.ts'
 import { pilotHook } from './pilot-hook.ts'
 
 /** Private actor/lease accounting dispatch. Product launch and managed-task commands are not exposed yet. */
 export class CorePilotMail {
+  readonly usage: CorePilotUsage
   readonly commands: CorePilotCommands
   readonly policy: CorePilotPolicy
-  constructor(private source: CoreSource) { this.policy = new CorePilotPolicy(source.store); this.commands = new CorePilotCommands(source) }
+  constructor(private source: CoreSource) { this.policy = new CorePilotPolicy(source.store); this.commands = new CorePilotCommands(source); this.usage = new CorePilotUsage(source) }
   actor(agent: CoreAgent): PilotActor {
     if (!agent.pilot) throw Error('This is not a contained agent')
     const run = this.policy.get(agent.pilot.run)
