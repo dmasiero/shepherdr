@@ -74,11 +74,12 @@ export class CorePilotLifecycle {
       } finally { this.source.emit('snapshot') }
     })
   }
-  async regular(place: string, keepWorkers = false) {
+  async regular(place: string, keepWorkers = false, expectedRun?: string) {
     const space = this.source.space(place)
     if (!space) throw Error('No such coordinator space')
     const before = this.source.agents.get(place)
     const run = this.source.pilots.policy.current(place) ?? (before?.pilot ? this.source.pilots.policy.get(before.pilot.run) : undefined)
+    if (expectedRun && (run?.id !== expectedRun || before?.pilot && before.pilot.run !== expectedRun)) throw Error('A newer coordinator replaced this completion; it was not stopped')
     if (run) {
       await this.stop(run.id, keepWorkers)
       const deadline = Date.now() + 15_000
@@ -88,7 +89,8 @@ export class CorePilotLifecycle {
     if (this.busy(place)) throw Error('The coordinator is changing; try again shortly')
     return this.transition(place, async () => {
       if (this.source.quiescing) throw Error('Shepherdr is stopping')
-      const current = this.source.agents.get(place), terminal = current && this.source.agents.terminal(current)
+      const current = this.source.agents.get(place), terminal = current && this.source.agents.terminal(current), latest = this.source.pilots.policy.current(place)
+      if (expectedRun && (latest && latest.id !== expectedRun || current?.pilot && current.pilot.run !== expectedRun)) throw Error('A newer coordinator replaced this completion; it was not stopped')
       if (terminal?.state === 'live') {
         if (current!.pilot) throw Error('Contained coordinator cleanup is not confirmed')
         return
@@ -120,12 +122,13 @@ export class CorePilotLifecycle {
     }
     throw Error('Coordinator cleanup is pending; retry after core reconnects')
   }
-  stop(id: string, keepWorkers = false) {
-    const run = this.source.pilots.policy.get(id)
-    if (!run) throw Error('No such Autopilot run')
-    // Persist every stop before waiting for another transition. A default stop may tighten keep-workers.
+  revoke(id: string, keepWorkers = false) {
     const stopped = this.source.pilots.policy.stop(id, keepWorkers)
     this.denyPermissions(stopped)
+    return stopped
+  }
+  stop(id: string, keepWorkers = false) {
+    const run = this.revoke(id, keepWorkers)
     return this.transition(run.place, () => this.cleanup(id))
   }
   private records(run: CorePilotRun) {

@@ -1088,3 +1088,17 @@ Scoped review first round found no must-fix and one atomic-preference minor, now
 replacement ownership, unchanged limits, failed preparation and atomic preferences is for GitHub only.
 Restart review round 2 found no remaining findings; local typecheck passed. Failed-preparation coverage is queued
 for GitHub and does not claim a real provider failure was induced locally.
+
+Authenticated coordinator `complete "goal evidence"` now saves a durable completion intent and progress before
+revoking the run. Recovery performs owned cleanup and one explicit regular replacement; uncertain starts surface
+instead of repeating. Both the queue and mode-change boundary check exact saved run lineage, including newer
+retained-worker runs which are deliberately absent from current(). An old completion cannot stop those workers.
+
+A real contained Claude coordinator t26 invoked complete through its native tool and authenticated core mailbox.
+The app saved GOAL_EVIDENCE_OK: scratch project untouched, ended t26, recorded its run stopped and launched fresh
+normal t27. Traffic was 578,162 bytes. Both owned processes were confirmed ended before disposable state, native
+login copies and the scratch repository were removed. No live state/services/network mapping changed. This is
+internal local-core acceptance, not physical-device or SSH proof. Scoped review: two rounds; one major older-intent/
+newer-retained-worker recovery bug fixed, final round no findings. Added GitHub-only coverage for intent-first
+revocation, actor identity, durable single replacement, unconfirmed starts and retained-worker lineage. Local
+typecheck passed. Restart commit 2447b860 passed both GitHub jobs (41000687252).
