@@ -55,6 +55,15 @@ watcher and switches. Ordinary startup watches the selected home's plugins and o
 of the started application, and swaps plugin runtime/assets without restarting agents. It never follows main or
 another checkout ref. Keep the installed source/dependencies available while it runs. See [Plugins](../plugins.md).
 
+## First Codex start
+
+Codex can ask you to trust the new folder and Shepherdr's generated hooks. Open the chat's Terminal panel and
+review its native prompts. Trust only the intended folder and generated hooks, then close Codex's hooks view.
+Codex can finish its first turn while hooks await approval. If chat still shows the setup notice afterward,
+send one short message directly in Terminal; the next native hook supplies its transcript identity, and chat
+recovers the earlier replies too. Normal chat messages saved during setup remain queued until that identity
+arrives. This never bypasses native trust or infers readiness from the screen.
+
 ## Your chat name
 
 The human sender name keeps the legacy default: the first name from the main machine's global Git name,

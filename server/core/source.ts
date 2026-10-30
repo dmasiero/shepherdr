@@ -273,7 +273,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const terminal = agent && this.agents.terminal(agent)
     const status = this.status(agent)
     const messages = this.cards.messages(key, this.logs.messages(key))
-    if (agent?.kind === 'codex' && agent.state === 'starting' && !agent.transcript) messages.push({ id: `setup-${agent.launch}`, who: 'agent', text: 'Codex may ask you to trust its folder or Shepherdr’s hooks. Open Terminal to review its own prompts. Chat connects after those hooks are trusted.', at: agent.started })
+    if (agent?.kind === 'codex' && agent.state === 'starting' && !agent.transcript) messages.push({ id: `setup-${agent.launch}`, who: 'agent', text: 'Codex may ask you to trust its folder or Shepherdr’s hooks. Open Terminal to review its own prompts. After trusting, close Codex’s hooks view. If chat still waits, send a short message in Terminal once: its next native hook connects chat and recovers earlier replies.', at: agent.started })
     return { key, ...this.activities.chat(key, messages, terminal?.state === 'live' && status === 'work'), cli: CLI_NAME[agent?.kind ?? this.agentKind()], working: status === 'work',
       failed: this.store.all<PendingSend>('pending-send').filter(item => item.chat === key && item.state === 'uncertain').map(item => ({ cid: item.id, error: 'Delivery was interrupted; check the chat before sending again' })),
       finished: !!agent && terminal?.state === 'finished', agent: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort, runtime: agent?.runtime } }

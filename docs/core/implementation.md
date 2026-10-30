@@ -2020,3 +2020,18 @@ Repository creation CI 41041167625 passed its new real-filesystem regression, bu
 plugin jobs. Three older space-control fixtures failed because their fake git.head rejected an omitted ref;
 the real CoreGit.head defaults it to HEAD. Updated that fixture to accept the same default, retaining all branch
 validation and removal-race assertions. No local suite was run.
+
+Fresh Codex first-use acceptance also exposed a native trust timing edge: Codex completed its first check while
+its hooks awaited approval, so no session/transcript hook reached the app and follow-up chat stayed queued.
+After reviewing/trusting the owned folder and generated hooks in the native Terminal panel, the operator sent
+one short Terminal message. The next real hook supplied the transcript identity; the app recovered the original
+FRESH_REPO_TASK_OK reply and queued chat. Native Codex then reported ready through its current helper and finished
+SHEE-1 Done without a commit/merge, with the source file unchanged. Setup guidance now explains that explicit
+recovery step rather than promising trust alone always connects chat. No screen guessing, auto-trust or alternate
+transport was added. Native trust prompts remain an operator action on a first Codex launch.
+
+Final owned first-install cleanup confirmed SHEE-1 closed/Done with no cleanupPending, preserved source bytes,
+and successful app space removal. Core listed only finished owned t1–t4. Stopped only that private preview/core
+and its Vite process, then removed the three exact newly created scratch folders after checking their complete
+entry sets and public fixture bytes. Kept private proof state/transcripts for review. Main acceptance agents,
+waiting worktrees, live legacy and all Tailscale mappings remained untouched.
