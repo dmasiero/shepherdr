@@ -18,7 +18,9 @@ test('late hooks cannot overwrite a replacement agent or erase its confirmed ter
     store.set('agent', 'chat', first)
     // A hook file read began before terminal.run confirmed the terminal.
     store.set('agent', 'chat', { ...first, terminal: 't1' })
-    agents.hook(first, { id: 'event-one', event: 'SessionStart', at: 2, session: 'native-one' })
+    agents.hook(first, { id: 'event-one', event: 'SessionStart', at: 2, session: 'native-one', model: 'reported-model' })
+    expect(first.model).toBeUndefined()
+    expect(agents.get('chat')?.runtime).toMatchObject({ model: 'reported-model', source: 'hook', at: 2 })
     expect(agents.get('chat')).toMatchObject({ terminal: 't1', session: 'native-one', state: 'idle' })
     agents.hook(first, { id: 'new-stop', event: 'Stop', at: 20, session: 'latest', transcript: '/latest' })
     agents.hook(first, { id: 'old-start', event: 'UserPromptSubmit', at: 10, session: 'older', transcript: '/older' })

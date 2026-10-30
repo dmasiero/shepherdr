@@ -1,4 +1,4 @@
-import type { Mode } from '../../shared/types.ts'
+import type { AgentRuntime, Mode } from '../../shared/types.ts'
 
 export type AgentKind = 'claude' | 'codex'
 export interface CoreSpace {
@@ -21,6 +21,7 @@ export interface CoreAgent {
   kind: AgentKind
   model?: string
   effort?: string
+  runtime?: AgentRuntime
   terminal?: string
   pid?: number
   launch: string

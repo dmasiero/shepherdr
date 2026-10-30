@@ -239,7 +239,7 @@ export class CoreAgents {
     if (Number.isFinite(event.at) && event.at > 0 && event.at <= Date.now() + 60000) record.activityAt = Math.max(record.activityAt ?? record.started, event.at)
     if (event.session) record.session = event.session
     if (event.transcript) record.transcript = event.transcript
-    if (event.model) record.model = event.model
+    if (event.model && event.at >= (record.runtime?.at ?? 0)) record.runtime = { ...record.runtime, model: event.model, source: 'hook', at: event.at }
     if (event.event === 'SessionStart' || event.event === 'Stop' || event.event === 'SessionEnd') record.state = 'idle'
     else if (event.event === 'UserPromptSubmit' || event.event === 'PreToolUse') record.state = 'working'
     // Only authenticated mailbox dispatch owns a permission card. Re-reading an old hook after

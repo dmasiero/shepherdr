@@ -167,6 +167,10 @@ export class CoreLogs {
     this.store.set(`event:${agent.chat}`, event.id + ':' + event.kind, event)
     this.revisions.set(agent.chat, (this.revisions.get(agent.chat) ?? 0) + 1)
     if (event.kind === 'turn-end' && Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000) { const cursor = this.logs.get(agent.chat); if (cursor && cursor.path === agent.transcript) cursor.ended = true }
+    if (event.kind === 'runtime' && Number.isFinite(event.at) && event.at >= agent.started && event.at <= Date.now() + 60000 && event.at >= (agent.runtime?.at ?? 0)) {
+      agent.runtime = event.replace ? event.runtime : { ...agent.runtime, ...event.runtime }
+      this.store.set('agent', agent.chat, agent); this.changed(agent.chat)
+    }
     if (event.kind === 'session') { agent.session = event.sessionId; this.store.set('agent', agent.chat, agent) }
     if (currentObservation && (event.kind === 'turn-start' || event.kind === 'turn-end')) {
       if (!agent.permission) { agent.state = event.kind === 'turn-start' ? 'working' : 'idle'; this.store.set('agent', agent.chat, agent) }

@@ -167,3 +167,27 @@ test('task waiting requires a captured current turn end and no open turn/backgro
     await logs.poll(); expect(logs.waiting(agent)).toBe(false)
   } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
 })
+
+test('native runtime observations preserve launch policy and reject historical or retired launch updates', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'shep-log-runtime-')), store = new CoreStore(home)
+  const at = Date.now(), agent: import('../server/core/model.ts').CoreAgent = { chat: 'chat', machine: 'machine', space: 'space', role: 'task', launch: 'one', grant: 'grant', kind: 'codex', hook: join(home, 'hooks'), transcript: join(home, 'native'), state: 'idle', started: at, model: 'selected-policy', effort: 'low', activityAt: at + 20 }
+  writeFileSync(agent.hook, '')
+  const runtime = (time: number, model: string, effort?: string) => JSON.stringify({ timestamp: new Date(time).toISOString(), type: 'turn_context', payload: { model, effort } }) + '\n'
+  writeFileSync(agent.transcript!, runtime(at - 1, 'historical', 'high') + runtime(at + 1, 'reported-model', 'xhigh'))
+  store.set('agent', agent.chat, agent)
+  const agents = { all: () => [store.get('agent', agent.chat)], get: () => store.get('agent', agent.chat), hook: () => {}, bun: async () => process.execPath } as unknown as CoreAgents
+  const faults: string[] = []
+  const files = { exec: async (_machine: string, argv: string[], _cwd: string, input: Uint8Array) => { const result = Bun.spawnSync(argv, { stdin: input }); if (result.exitCode) throw Error(result.stderr.toString()); return result.stdout } } as unknown as CoreFiles
+  const logs = new CoreLogs(agents, files, store, () => {}, (_chat, fault) => faults.push(fault))
+  try {
+    await logs.poll()
+    expect(store.get('agent', 'chat')).toMatchObject({ model: 'selected-policy', effort: 'low', runtime: { model: 'reported-model', effort: 'xhigh', source: 'session', at: at + 1 } })
+    appendFileSync(agent.transcript!, runtime(at + 2, 'new-model'))
+    await logs.poll()
+    expect(store.get<import('../server/core/model.ts').CoreAgent>('agent', 'chat')?.runtime).toEqual({ model: 'new-model', source: 'session', at: at + 2 })
+    const replacement = { ...agent, launch: 'replacement', grant: 'new-grant', started: at + 100, runtime: undefined }; store.set('agent', 'chat', replacement)
+    await logs.poll()
+    expect(store.get<import('../server/core/model.ts').CoreAgent>('agent', 'chat')?.runtime).toBeUndefined()
+    expect(faults).toEqual([])
+  } finally { logs.stop(); store.close(); rmSync(home, { recursive: true, force: true }) }
+})

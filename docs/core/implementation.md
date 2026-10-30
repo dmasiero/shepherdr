@@ -1608,3 +1608,25 @@ Its contained To-do capacity failure was fixed in a94fd58b and then passed the
 rewrite workflow. Remaining full-suite failures include design-policy assertions,
 agent controls, reader fixture expectations and several existing layout fixtures;
 they are not waived as acceptance or hidden by the selected rewrite checks.
+
+### Native model/effort display, separate from launch choices (2026-10-30)
+
+The retained Claude/Codex readers already emit runtime observations; the rewrite
+was saving those events without exposing them to the unchanged composer controls.
+Hooks also incorrectly replaced selected model policy with a reported model.
+CoreAgent now keeps runtime separately. Current-launch native runtime events update
+it using their own observation timestamp, not unrelated newer activity timestamps;
+a full native snapshot clears omitted runtime fields. Hook model reports update
+only runtime. Chat exposes this to the existing Agent/Model/Effort menu. Historical
+and retired-launch observations cannot change a replacement's runtime. Previously
+stored launch fields are not guessed or rewritten.
+
+Manual before/after on unchanged native GITH-2: the same phone menu said Model Not
+reported before, then claude-opus-5-5 after rereading its real Claude transcript.
+Effort remains Not reported because this native session does not report it. Main
+Codex also reports its real gpt-6.1-sol model; its actual turn_context has no effort,
+so none is invented. No agent was restarted or sent work for this display check;
+only the isolated app restarted. Screenshots she301-native-runtime-before.png and
+she301-native-runtime-after.png captured and inspected. Fresh scoped review found
+no findings; local bun run typecheck passed. Native GitHub regressions cover policy
+separation, old runtime, replacement launches and removal of omitted effort fields.
