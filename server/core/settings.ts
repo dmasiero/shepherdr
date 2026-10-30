@@ -2,6 +2,7 @@ import type { SettingRow, SettingSection, RestartCli } from '../../shared/types.
 import { TABLE, nearest, parseCodex, type CliModels } from '../../shared/models.ts'
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
+import type { MachineLimits } from '../health.ts'
 import { validZone, OWN_ZONE } from '../live/trigger.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 
@@ -15,6 +16,15 @@ const roleRows = (role: Role, group: string): SettingRow[] => [
 ]
 // Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
 const CATALOG: SettingSection[] = [
+  { name: 'Machine', about: "When a machine starts more tasks, and when its coordinator hears that it struggles. Set one machine's own to fit its cores and memory.", rows: [
+    { group: 'Working tasks', label: 'Max tasks working at once', key: 'machine.maxTasks', value: '10', num: { min: 1, max: 200 } },
+    { group: 'Working tasks', label: 'Wait while CPU load is over', key: 'machine.startLoad', value: '1× cores', num: { min: 0.1, max: 20, step: 0.05, unit: '× cores' } },
+    { group: 'Working tasks', label: 'Wait while memory is over', key: 'machine.startMemory', value: '80%', num: { min: 1, max: 100, unit: '%' } },
+    { group: 'Tell its coordinator when', label: 'CPU load stays over (2 min)', key: 'machine.alertLoad', value: '1.5× cores', num: { min: 0.1, max: 20, step: 0.05, unit: '× cores', off: true } },
+    { group: 'Tell its coordinator when', label: 'Memory is over', key: 'machine.alertMemory', value: '90%', num: { min: 1, max: 100, unit: '%', off: true } },
+    { group: 'Tell its coordinator when', label: 'Disk is over', key: 'machine.alertDisk', value: '90%', num: { min: 1, max: 100, unit: '%', off: true } },
+    { group: 'Tell its coordinator when', label: 'core stops answering', key: 'machine.alertHerdr', value: 'on', options: ['on', 'off'] },
+  ] },
   { name: 'Time zone', about: 'The time zone of every schedule: heartbeats and automations, on every machine.', rows: [{ label: 'Time zone', key: 'time.zone', value: OWN_ZONE, text: true }] },
   { name: 'Shared browser', rows: [{ label: 'Close idle browser after', key: 'browser.idleClose', value: '10 min', num: { min: 1, max: 1440, unit: 'min', off: true } }] },
   { name: 'Private instructions', about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
@@ -57,6 +67,7 @@ export class CoreSettings {
     const row = rows.find(item => item.key === key)
     if (!row) throw new Error(`No setting ${key}`)
     this.chain(level)
+    if (key.startsWith('machine.') && level !== 'all' && !level.startsWith('m:')) throw new Error('Machine limits apply Everywhere or to a machine')
     if (key === 'time.zone' && level !== 'all') throw new Error('Time zone applies Everywhere')
     if (value !== null) {
       if (typeof value !== 'string' || value.length > (row.multiline ? 32_000 : 512)) throw new Error('Setting is too long')
@@ -71,11 +82,13 @@ export class CoreSettings {
         if (!kind) throw new Error('Choose Claude Code or Codex')
         value = names[kind]
       } else if (row.num) {
-        if (row.num.off && value === 'off') value = 'off'
+        if ((row.num.off || row.num.zero) && value === 'off') value = 'off'
         else {
-          const match = value.match(/^(\d+)(?: (\w+))?$/), number = Number(match?.[1])
-          if (!match || match[2] && ![row.num.unit, row.num.one].includes(match[2]) || number < row.num.min || number > row.num.max) throw new Error(`Choose ${row.num.min} to ${row.num.max} ${row.num.unit}${row.num.off ? ', or off' : ''}`)
-          value = `${number} ${number === 1 ? row.num.one || row.num.unit : row.num.unit}`
+          const match = value.match(/^(\d+(?:[.,]\d+)?)(.*)$/), number = Number(match?.[1]?.replace(',', '.')), unit = match?.[2]?.trim().replace(/^x(?=\s|$)/, '×')
+          const step = row.num.step ?? 1
+          if (!match || unit && ![row.num.unit, row.num.one].includes(unit) || number < row.num.min || number > row.num.max || Math.abs(Math.round(number / step) * step - number) > 1e-9) throw new Error(`Choose ${row.num.min} to ${row.num.max}${row.num.unit ? ' ' + row.num.unit : ''}${row.num.off ? ', or off' : ''}`)
+          const suffix = number === 1 ? row.num.one || row.num.unit : row.num.unit
+          value = row.num.zero && number === 0 ? 'off' : suffix ? `${number}${suffix.startsWith('×') || suffix === '%' ? '' : ' '}${suffix}` : String(number)
         }
       } else if (row.options && !key.endsWith('.effort') && !row.options.includes(value)) throw new Error('Choose one of the offered values')
       else if (key.endsWith('.effort') && value !== 'default') {
@@ -116,6 +129,10 @@ export class CoreSettings {
     } finally { this.saving = false }
     this.changed()
   }
+  machineLimits(machine: string): MachineLimits {
+    const level = `m:${machine}`, num = (key: string) => { const value = parseFloat(this.get(key, level)); return Number.isFinite(value) ? value : null }
+    return { max: num('machine.maxTasks'), startLoad: num('machine.startLoad'), startMemory: num('machine.startMemory'), alertLoad: num('machine.alertLoad'), alertMemory: num('machine.alertMemory'), alertDisk: num('machine.alertDisk'), alertHerdr: this.get('machine.alertHerdr', level) !== 'off' }
+  }
   private machine(level: string) { return level.startsWith('m:') ? level.slice(2) : this.spaces().find(item => item.id === level)?.machine }
   catalog(kind: AgentKind, level: string): CliModels {
     const machine = this.machine(level)
@@ -126,7 +143,7 @@ export class CoreSettings {
   }
   sections(): SettingSection[] {
     const levels = ['all', ...new Set(this.spaces().map(space => `m:${space.machine}`)), ...this.spaces().map(space => space.id)]
-    return levels.flatMap(level => CATALOG.filter(section => level === 'all' || section.name !== 'Time zone').map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
+    return levels.flatMap(level => CATALOG.filter(section => (level === 'all' || section.name !== 'Time zone') && (section.name !== 'Machine' || level === 'all' || level.startsWith('m:'))).map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
       const picked = this.pick(row.key, level), inherited = this.chain(level).slice(1).map(at => this.pick(row.key, at)).find(value => value.level !== 'default') ?? { value: row.value, level: 'default' }
       let dynamic = { ...row }
       let value = picked.value

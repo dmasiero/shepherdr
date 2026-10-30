@@ -116,7 +116,7 @@ export class CoreLogs {
         this.store.delete('pending-send', optimistic.id)
         return
       }
-      if (/^\s*<(?:answer|review|review-failed|go|restart|shepherdr|artifact-sent|artifact-note|artifact-comment|browser-notes|browser)\b/.test(event.text)) return
+      if (/^\s*<(?:answer|review|review-failed|go|restart|shepherdr|artifact-sent|artifact-note|artifact-comment|browser-notes|browser|health)\b/.test(event.text)) return
     }
     this.store.set(kind, event.id, { id: event.id, who: event.kind === 'user' ? 'you' : 'agent', text: event.text, at: event.at, source: event.id } satisfies SavedMessage)
   }

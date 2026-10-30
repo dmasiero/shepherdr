@@ -131,6 +131,8 @@ export interface HealthMeter {
 }
 
 export interface MachineHealth {
+  /** Underlying process service; legacy omits this. */
+  engine?: 'core'
   /** CPU, Memory, Disk, and GPU where the machine has one */
   meters: HealthMeter[]
   /** herdr answers */

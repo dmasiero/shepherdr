@@ -1,4 +1,4 @@
-import { Refusal } from './client.ts'
+import { CoreError, Refusal } from './client.ts'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
@@ -38,6 +38,9 @@ export interface CoreTask extends Task {
   mergeCommit?: string
   localId?: string
   automation?: string
+  capacity?: string
+  reservedAt?: number
+  reservedChats?: string[]
   reviewerModel?: string
   reviewerEffort?: string
 }
@@ -78,7 +81,7 @@ export class CoreTasks {
     const terminal = agent && this.source.agents.terminal(agent)
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
       : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : this.source.status(agent) === 'need' || terminal?.state === 'finished' ? 'need' : 'work'
-    return { ...task, status, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
+    return { ...task, status, sub: task.capacity ? `Waiting: ${task.capacity}` : task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: agent.kind, status: this.source.status(agent) === 'off' ? 'off' : status, age: task.age, note: task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: { title: string; brief: string; space?: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string }) {
@@ -113,20 +116,28 @@ export class CoreTasks {
         await this.source.files.exec(space.machine, ['mkdir', '-p', join(folder, '..')])
         await this.git.addWorktree({ machine: space.machine, folder: space.folder }, folder, branch, task.base!)
         await this.launchNow(task, undefined, task.model, task.effort)
-      } catch (error) { task.startError = (error as Error).message; task.workflow = 'todo'; this.save(task); throw error }
-      this.card(task, task.workflow === 'queued' ? 'Queued after ' + after.join(', ') : task.workflow === 'todo' ? 'Waiting for your go' : 'Started')
+      } catch (error) { task.startError = (error as Error).message; task.workflow = 'todo'; delete task.reservedAt; this.save(task); throw error }
+      this.card(task, task.workflow === 'queued' ? task.capacity ? 'Queued: ' + task.capacity : 'Queued after ' + after.join(', ') : task.workflow === 'todo' ? 'Waiting for your go' : 'Started')
       return task
     })
   }
   async launch(task: CoreTask, message?: string, model = task.model, effort = task.effort) { return this.change(task.id, () => this.launchNow(task, message, model, effort)) }
-  async deliver(id: string, chat: string, message: string) {
+  async deliver(id: string, chat: string, message: string, internal = false) {
     return this.change(id, async () => {
       const task = this.get(id)
       if (!task) throw new Refusal('This task was removed; nothing was sent')
       const agent = this.source.agents.get(chat)
       if (this.forChat(chat)?.id !== id) throw new Refusal('This chat does not belong to that task')
+      if (task.workflow !== 'working') {
+        const room = this.source.health?.room(task.machine, task.id)
+        if (room) { task.capacity = room; if (['todo', 'queued'].includes(task.workflow)) task.workflow = 'queued'; this.save(task); throw new CoreError('busy', 'This message is saved until its machine has room') }
+        task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), chat])]
+        if (!internal && chat === task.chat && task.workflow === 'ready') { task.workflow = 'working'; delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion }
+        if (task.workflow === 'queued' && task.capacity && !(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'
+        delete task.capacity; this.save(task)
+      }
       if (agent && this.source.agents.terminal(agent)?.state === 'live') await this.source.agents.send(chat, message)
-      else if (chat === task.chat) await this.launchNow(task, message)
+      else if (chat === task.chat) { await this.launchNow(task, message); if (this.get(task.id)?.capacity) throw new CoreError('busy', 'This task is queued until its machine has room') }
       else throw new Refusal('This reviewer has finished; request a fresh review')
     })
   }
@@ -136,6 +147,10 @@ export class CoreTasks {
     if (!space) throw new Refusal('Task space is missing')
     const prior = this.source.agents.get(task.chat)
     if (prior && this.source.agents.terminal(prior)?.state === 'live') throw new Refusal('This task agent is already running')
+    const capacity = task.workflow !== 'todo' && this.source.health?.room(task.machine, task.id)
+    if (capacity) { task.workflow = 'queued'; task.capacity = capacity; this.save(task); return }
+    if (task.capacity) { if (!(task.after ?? []).some(id => !['merged', 'closed'].includes(this.get(id)?.workflow || ''))) task.workflow = 'working'; delete task.capacity }
+    if (task.workflow !== 'todo') { task.reservedAt = Date.now(); task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]; this.save(task) }
     await this.source.browsers?.close(task.id)
     let parent = this.source.agents.get(space.id)
     if (!parent || this.source.agents.terminal(parent)?.state !== 'live') {
@@ -168,7 +183,7 @@ export class CoreTasks {
     task.readyHead = await this.git.head({ machine: task.machine, folder: task.folder })
     if (task.review.on && (!task.reviewReport || !task.reviewTurn || task.reviewHead !== task.readyHead)) throw new Refusal('Complete a fresh review of this exact commit before reporting ready')
     delete task.approvedHead
-    task.said = summary; task.facts = facts; task.workflow = 'ready'
+    task.said = summary; task.facts = facts; task.workflow = 'ready'; delete task.reservedAt
     this.save(task); await this.label(task); this.card(task, summary)
     if (task.mergePolicy === 'ask') {
       const question: Question = { id: randomUUID(), title: `Merge ${task.id}?`, kind: 'Question', choices: [{ label: 'Merge' }, { label: 'Not yet' }], to: task.chat }
@@ -306,13 +321,15 @@ export class CoreTasks {
     switch (action.type) {
       case 'pin': task.pinned = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
       case 'archive':
+        if (action.on) this.source.cancelQueued?.(task.chat)
         if (action.on && terminal?.state === 'live') await this.source.core.call('terminal.kill', { terminal: terminal.address })
         if (action.on) await this.source.browsers?.close(task.id, task.workflow === 'merged' || task.workflow === 'closed')
         task.archived = action.on ? Date.now() : undefined; this.save(task); return { ok: true }
       case 'pause':
+        this.source.cancelQueued?.(task.chat)
         if (terminal?.state === 'live') await this.source.core.call('terminal.interrupt', { terminal: terminal.address })
         await this.source.browsers?.close(task.id)
-        task.workflow = 'todo'; this.save(task); await this.label(task); return { ok: true }
+        task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return { ok: true }
       case 'restart-info': return { ok: true, info: { role: 'task', space: this.source.space(task.place)?.name, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
         onWords: agent?.kind ?? task.kind, want: this.source.settings.agent('task', task.place), working: agent?.state === 'working',
         clis: this.source.settings.clis(task.place) } }
@@ -433,12 +450,19 @@ export class CoreTasks {
             }
           }
         }
-        if (task.workflow !== 'queued' || !task.after?.every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
+        if (task.workflow !== 'queued' || !(task.after ?? []).every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
+        const room = this.source.health?.room(task.machine, task.id)
+        if (room) { if (task.capacity !== room) { task.capacity = room; this.save(task) }; continue }
         const agent = this.source.agents.get(task.chat)
-        if (!agent || agent.state !== 'idle' || agent.permission) continue
+        if (agent && (agent.state !== 'idle' || agent.permission)) continue
         await this.change(task.id, async () => {
-          task.workflow = 'working'; this.save(task); await this.label(task)
-          await this.source.agents.send(task.chat, '<go>Your dependencies are done. Begin the agreed brief now.</go>')
+          task.workflow = 'working'; delete task.capacity; this.save(task)
+          try {
+            if (agent && this.source.agents.terminal(agent)?.state === 'live') {
+              await this.label(task)
+              await this.source.agents.send(task.chat, '<go>Your dependencies are done and the machine has room. Begin the agreed brief now.</go>')
+            } else await this.launchNow(task)
+          } catch (error) { task.workflow = 'todo'; delete task.reservedAt; task.startError = (error as Error).message; this.save(task) }
         })
       }
     } finally { this.ticking = false }
@@ -480,11 +504,17 @@ export class CoreTasks {
     if (verb === 'checks') return text((await this.git.pullRequest({ machine: task.machine, folder: task.folder }, task.branch!)).statusCheckRollup)
     if (verb === 'review') return text(`Fresh reviewer started: ${await this.review(grant, id)}\nIts native final reply will be forwarded to your chat. Wait for that report before ready; do not read terminal screens as the review result.`)
     if (verb === 'merge' || verb === 'task' && sub === 'merge') return text(`${(await this.merge(grant, id)).id} is merged`)
-    if (verb === 'todo') return this.change(id, async () => { task.workflow = 'todo'; this.save(task); await this.label(task); return text(`${id} is To do`) })
-    if (verb === 'task' && sub === 'tell') return this.change(id, async () => { await this.source.agents.send(task.chat, rest.slice(1).join(' ')); return text('Sent through core') })
+    if (verb === 'todo') return this.change(id, async () => { task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return text(`${id} is To do`) })
+    if (verb === 'task' && sub === 'tell') { await this.source.act({ type: 'send', cid: randomUUID(), chat: task.chat, text: rest.slice(1).join(' ') }); return text('Saved for delivery through core') }
     if (verb === 'task' && sub === 'queue') return this.change(id, async () => {
       const after = one(parsed, 'after')
-      if (after === 'none') { task.after = []; task.workflow = 'working'; this.save(task); await this.label(task); return text('Queue cleared; follow the human’s go') }
+      if (after === 'none') {
+        task.after = []
+        const room = this.source.health?.room(task.machine, task.id)
+        if (room) { task.workflow = 'queued'; task.capacity = room; this.save(task); await this.label(task); return text('Dependencies cleared; wait for <go> when the machine has room') }
+        task.workflow = this.source.agents.get(task.chat) ? 'working' : 'queued'; task.reservedAt = Date.now(); delete task.capacity
+        this.save(task); await this.label(task); return text('Queue cleared; follow the human’s go')
+      }
       task.after = after?.split(',').filter(Boolean) ?? []; task.workflow = 'queued'; this.save(task); await this.label(task); return text('Queued')
     })
     throw new Refusal('This task command is not implemented in the current slice')

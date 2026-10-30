@@ -26,12 +26,13 @@ import { CoreActivity } from './activity.ts'
 import { CoreWorktree } from './worktree.ts'
 import { CorePlaces } from './places.ts'
 import { CoreBrowsers } from './browsers.ts'
+import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
 interface Permission { id: string; chat: string; grant: string; question: Question; expires: number; settled?: boolean; allow?: boolean }
-interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain'; quiet?: boolean }
+interface PendingSend { id: string; chat: string; text: string; launch?: string; state: 'queued' | 'sending' | 'uncertain' | 'cancelled'; quiet?: boolean }
 
 /** Product state is Shepherdr's; terminals, machine commands, files and agent children are core's. */
 export class CoreSource extends Emitter<SourceEvents> implements Source {
@@ -43,6 +44,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly mailbox: Mailbox
   readonly agents: CoreAgents
   readonly logs: CoreLogs
+  readonly health: CoreHealth
   readonly automations: CoreAutomations
   readonly browsers: CoreBrowsers
   readonly places: CorePlaces
@@ -88,6 +90,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.worktrees = new CoreWorktree(this)
     this.browsers = new CoreBrowsers(this, installation.id)
     this.automations = new CoreAutomations(this)
+    this.health = new CoreHealth(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -115,7 +118,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       agent.permission = this.openPermissions(agent)[0]?.id
       this.store.set('agent', agent.chat, agent)
     }
-    await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start()
+    await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start(); this.health.start()
     this.recovery = setInterval(() => {
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return
@@ -130,6 +133,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   }
   connected() { return this.core.current.connected }
   machineConnected(machine: string) { return this.connected() && (machine === this.local.id || this.machines.some(item => item.id === machine && item.state === 'connected')) }
+  machineIds() { return [this.local.id, ...this.machines.map(machine => machine.id)] }
   localMachineId() { return this.local.id }
   machineName(machine: string) { return machine === this.local.id ? undefined : this.machines.find(item => item.id === machine)?.name }
   registerAction(type: Action['type'], handler: (action: Action) => Promise<unknown>) { this.hooks.set(type, handler) }
@@ -201,8 +205,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
       ...this.places.present(spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
-      [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
-        ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
+      [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
+        ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks,
       settings: this.secrets.pages(this.settings.sections()),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
@@ -325,6 +329,19 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
   }
 
+  cancelQueued(chat: string) {
+    this.store.db.transaction(() => {
+      for (const item of this.store.all<PendingSend>('pending-send').filter(item => item.chat === chat && item.state === 'queued')) {
+        item.state = 'cancelled'; this.store.set('pending-send', item.id, item)
+        const message = this.store.get<Message>(`message:${chat}`, item.id)
+        if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
+        if (!item.quiet) this.post(chat, { id: `cancelled-${item.id}`, who: 'agent', text: 'Stopped before your saved message was sent.', at: Date.now() })
+      }
+    })()
+  }
+  retryPending() {
+    for (const chat of new Set(this.store.all<PendingSend>('pending-send').filter(item => item.state === 'queued').map(item => item.chat))) this.retry(chat)
+  }
   retry(chat: string) {
     if (this.quiescing) return
     queueMicrotask(() => { if (!this.quiescing) void this.flush(chat) })
@@ -346,7 +363,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
         try {
-          if (task) await this.tasks.deliver(task.id, chat, item.text)
+          if (task) await this.tasks.deliver(task.id, chat, item.text, !!item.launch)
           else if (agent && this.agents.terminal(agent)?.state === 'live') await this.agents.send(chat, item.text)
           else {
             const pick = this.settings.agent('coordinator', space.id)
@@ -504,6 +521,6 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; this.automations.stop(); await this.automations.drain(); return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
+  async drain() { this.quiescing = true; this.automations.stop(); this.health.stop(); await this.health.drain(); await this.automations.drain(); return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.health.stop(); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }

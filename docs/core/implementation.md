@@ -499,8 +499,40 @@ claim complete automation parity.
 Manual evidence: native second-core coordinator added Core schedule check using
 an RRULE and paused it. Phone Tasks showed the unchanged automation row/details.
 Run now created probe/REMO-3 in its own real worktree; native Claude returned
-AUTOMATION_TASK_OK and kept To do. Both phone screenshots were inspected. A
-scheduled once-only run, restart recovery and dark/device comparison are pending.
+AUTOMATION_TASK_OK and kept To do. Both phone screenshots were inspected. The once-only rule fired at 00:52 UTC, created probe/REMO-4 and native Claude returned SCHEDULED_TASK_OK before waiting. Both definitions/runs survived an isolated app restart. Dark/device comparison remains pending.
 Three scoped fresh reviews found two major event-loss/machine-scope issues; both
 were fixed with regressions and the third round was clear. Tests are written for
 branch CI; only typecheck and manual acceptance run on this VM.
+
+
+## Machine health and start limits (in progress)
+
+Machine CPU, available memory, disks and optional NVIDIA GPU are sampled through
+bounded, stateless core exec. Linux uses MemAvailable; macOS uses the OS free-memory
+measure and remains unverified. No machine listener or worker is installed. Pure
+legacy parsing/limits/hysteresis is shared; the UI retains its meters/settings and
+says core where the underlying service genuinely changed. Machine limits remain
+Everywhere/machine-only, with fractional core and percentage controls.
+
+Fresh starts and idle-chat resumptions check machine availability, sample freshness,
+load, memory and per-machine slots. A persisted reservation precedes transport;
+it tracks the actual main/reviewer chats so long native turns stay counted. A
+capacity-held task has no new native agent until room is available. Queued human
+messages remain saved; health refresh retries them. Ready human changes revoke
+stale merge approval, while internal merge answers retain Ready. Explicit Pause
+cancels queued unsent messages with a visible notice. New regression coverage
+checks these boundaries using real scratch Git and fake core on GitHub only.
+
+Manual isolated evidence: both cores returned real CPU/memory/disk samples through
+core exec; home chat displayed the existing health button. At max 1, probe/REMO-5
+worked on a harmless sleep while REMO-6 showed Queued with its slot reason. It
+started after the first task returned To do. Later, with both native chats already
+open, a second message to REMO-6 remained queued while REMO-5 occupied the slot.
+Final delivery, full device comparison, alert crossing/recovery, top process detail,
+actual SSH/macOS and full queue parity are still pending.
+
+Scoped fresh review (three rounds) found capacity bypasses for live/Ready agents
+and long reviewer turns, plus a hidden health-input display bug. Fixes and regression
+cases are in this slice; the final reviewer-chat fix awaits the complete rewrite's
+fresh review rather than claiming a fourth scoped round. This slice is not a full
+rewrite readiness result. No live state or service changed.
