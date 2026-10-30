@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { SUMMARY_MAX, TITLE_MAX, STATUS_MAX, slugify, type Action, type Question, type Task } from '../../shared/types.ts'
 import { CorePilotRepositories } from './pilot-repositories.ts'
+import { CoreTaskRelocation } from './task-relocation.ts'
 import { CoreGit } from './git.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
@@ -150,7 +151,8 @@ export class CoreTasks {
       if (!this.source.machineConnected(task.machine)) throw new Refusal('Wait for the task’s machine to reconnect')
       const run = caller.pilot && this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
       if (run && (run.state !== 'on' || run.place !== task.place || run.machine !== task.machine)) throw new Refusal('This run cannot start that task')
-      this.profile(task, run || undefined)
+      await this.profile(task, run || undefined)
+      if (caller.pilot) this.source.pilots.policy.actor(caller.pilot.run, this.source.pilots.actor(caller))
       const prior = this.source.agents.get(task.chat)
       if (prior && !this.source.agents.terminal(prior)) throw new Refusal('Previous task start is unconfirmed; reconnect before starting it again')
       task.after = taskDependencies(this.all(), task, task.after ?? [], machine => this.source.machineName(machine))
@@ -167,15 +169,19 @@ export class CoreTasks {
       return this.get(id)!
     })
   }
-  private profile(task: CoreTask, run?: CorePilotRun) {
+  private async profile(task: CoreTask, run?: CorePilotRun) {
     if (task.pilot !== run?.id) {
       if (task.pilot && this.source.pilots.policy.get(task.pilot)?.state !== 'stopped') throw new Refusal('Stop and finish cleaning up the previous Autopilot run first')
       // Include retired launches: replacing an agent record is never proof its process ended.
       const records = [...this.source.agents.all(), ...this.source.store.all<import('./model.ts').CoreAgent>('pilot-capture')]
         .filter(agent => agent.chat === task.chat || agent.chat === task.reviewChat || agent.chat.startsWith(`${task.id}/Reviewer`))
       if (records.some(agent => this.source.agents.terminal(agent)?.state !== 'finished')) throw new Refusal('Previous task and reviewer exits must be confirmed before changing its access profile')
-      if (run && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
-      if (run) this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.pilot === run.id && other.workflow === 'working').length)
+      if (run) {
+        const owned = this.source.pilots.policy.get(run.id)!.tasks
+        this.source.pilots.policy.claim(run.id, task.id, this.all().filter(other => other.id !== task.id && (other.pilot === run.id && other.workflow === 'working' || owned.includes(other.id) && this.busy(other.id))).length)
+      }
+      if (run && !task.pilot) { await this.source.browsers?.close(task.id); await new CoreTaskRelocation(this.source).adopt(task) }
+      if (run && this.source.pilots.policy.live(run.id).state !== 'on') throw new Refusal('This run no longer accepts adopted tasks')
       const harness = run ? run.config.harness : this.source.settings.launch('task', task.place)
       const reviewer = run ? run.config.reviewer : this.source.settings.agent('reviewer', task.place)
       task.pilot = run ? run.id : undefined
@@ -425,7 +431,7 @@ export class CoreTasks {
         const profile = owned && ['on', 'workers'].includes(owned.state) ? this.source.pilots.policy.live(owned.id) : current?.state === 'on' ? this.source.pilots.policy.live(current.id) : undefined
         if (profile && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
         if (agent) await this.finishForRestart(agent)
-        this.profile(task, profile)
+        await this.profile(task, profile)
         await this.source.browsers?.close(task.id)
         task.kind = action.kind as AgentKind || task.kind; task.model = action.model || undefined; task.effort = action.effort || undefined
         if (action.save) this.source.settings.saveAgent('task', task.place, { kind: task.kind, model: task.model, effort: task.effort })
