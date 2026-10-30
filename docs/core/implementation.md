@@ -654,3 +654,32 @@ Plugin update CI 40986360653: layout job passed; real API-2 client/server compil
 passed (4.4 seconds), as did live HTTP/WS asset publication and the staged-state/CAS regression. Seven updater
 unit cases stopped at fixture creation because its nested home used default 0755, correctly refused by prepareHome.
 The fixture now creates that directory with 0700; production privacy checks remain unchanged.
+
+## Unread, attention and search (2026-10-30)
+
+Reproduced the unread bug against the previous running preview: sending the human request changed last to
+1793324088111; the native UNREAD_BEFORE_OK reply at 1793324089788 left it stuck there. The new core-owned read
+ledger receives visible native agent messages and product cards, excludes human sends, and persists a baseline
+plus monotonic per-chat marks. Read requests cannot regress another device or pre-read future messages. Original
+current questions/permissions/secrets supply attention IDs; expired/replaced permissions and forwarded copies do
+not inflate the count. Notify uses the same inherited All / Needs me / Off controls and existing push filter.
+
+On the fixed preview, human send left last at 1793324089788; native UNREAD_AFTER_OK advanced it to 1793324135309.
+While core-demo stayed open, remote-demo became bold in the sidebar (`/tmp/she301-unread-sidebar-phone.png`).
+Opening it marked exactly that native timestamp read. These are real native replies through the second core,
+not a mocked screenshot. No physical-device push delivery is claimed.
+
+Search loaded all 11 chats but exact UNREAD_AFTER_OK initially returned nothing: the old plain-text normalizer
+removed identifier underscores. It now strips paired emphasis in a linear scan while preserving literal identifiers
+and code spans. The same exact query found the real native reply and human request afterward
+(`/tmp/she301-search-fixed-phone.png`; before `/tmp/she301-search-phone.png`). Existing search UI was retained.
+Fresh scoped review round 1 clear; round 2 with the search correction clear. Typecheck passed. New native observer,
+read/attention and identifier regressions plus existing search/unread/attention layout coverage await branch CI.
+
+Plugin updater commit 7821f2d0 passed both GitHub jobs (40986550153), including real client/server compilation and
+syntax fallback plus runtime-startup/state fallback, active voice cleanup, cancellation, and asset HTTP/WS tests.
+This remains CI evidence; automatic production builds were not invoked on this VM.
+
+Manual inspection also found a historical forwarded native permission card with active buttons after expiry in
+core-demo. The private permission answer already refuses stale authority, but that display needs correction before
+card parity is complete. It is a remaining concrete issue, not a verified feature.

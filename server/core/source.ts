@@ -31,6 +31,8 @@ import { CoreHeartbeats } from './heartbeats.ts'
 import { CoreHealth } from './health.ts'
 import { CoreAutomations } from './automations.ts'
 import { CorePlugins } from './plugins.ts'
+import { CoreUnread } from './unread.ts'
+import { clip, TITLE_MAX, BODY_MAX } from '../../shared/alerts.ts'
 import type { CorePluginUpdates } from './plugin-updates.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
@@ -57,6 +59,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
+  readonly unread: CoreUnread
   plugins: CorePlugins
   pluginUpdates?: CorePluginUpdates
   readonly secrets: CoreSecrets
@@ -74,18 +77,20 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   private sending = new Set<string>()
   private refreshing?: Promise<void>
   private discoveringHomes = new Set<string>()
+  private born = Date.now()
 
   constructor(readonly config: CoreConfig) {
     super()
     const installation = prepareHome(config.home)
     this.store = new CoreStore(config.home)
+    this.unread = new CoreUnread(this.store)
     this.local = this.store.get('meta', 'local') ?? { id: installation.id, name: hostname().split('.')[0] }
     this.core = new CoreSession(config.socket)
     this.files = new CoreFiles(this.core, machine => this.route(machine))
     this.mailbox = new Mailbox(config.home, this.core, machine => this.route(machine), (grant, request, id) => this.mail(grant, request, id))
     const changed = (chat: string) => { this.questions?.reconcile(chat); this.secrets?.reconcile(chat); this.emit('chat', chat); this.emit('snapshot'); void this.flush(chat); void this.tasks?.tick().catch(error => this.faults.set('queue', error.message)) }
     this.agents = new CoreAgents(config, installation, this.core, this.store, this.mailbox, machine => this.route(machine), changed, machine => this.machines.find(item => item.id === machine) ?? {})
-    this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
+    this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) }, (chat, message) => this.fresh(chat, message))
     this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => id === this.local.id ? this.local.name : this.machineName(id) || id, () => this.emit('snapshot'))
     this.agents.settings = this.settings
     this.places = new CorePlaces(this)
@@ -212,21 +217,21 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   snapshot(): Snapshot {
     const spaces = this.spaces()
     const asks: Record<string, string> = {}
-    for (const permission of this.store.all<Permission>('permission')) {
-      if (!permission.settled) asks[permission.chat] = permission.id
+    const attentionRequests: Record<string, string[]> = {}
+    for (const agent of this.agents.all()) {
+      const requests = [...new Set([...this.openPermissions(agent).map(item => item.id), ...this.questions.open(agent.chat).map(item => item.id), ...this.secrets.open(agent.chat).map(item => item.id)])]
+      if (requests.length) { attentionRequests[agent.chat] = requests; asks[agent.chat] = requests.at(-1)! }
+      else if (this.status(agent) === 'need') attentionRequests[agent.chat] = ['attention']
     }
-    for (const row of this.questions.open()) asks[row.chat] = row.id
-    for (const row of this.secrets.open()) asks[row.chat] = row.id
     return {
       terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
       ...this.places.present(spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
-      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks,
+      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks, attentionRequests,
       settings: this.secrets.pages([...this.settings.sections(), this.plugins.section(this.pluginUpdates?.status())]),
-      last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
-      read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
+      last: this.unread.last(), read: this.unread.read(),
     }
   }
   chatStatus(chat: string) { return this.status(this.agents.get(chat)) }
@@ -244,7 +249,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   private agentKind(): AgentKind { return this.store.get<string>('setting', 'agent') === 'codex' ? 'codex' : 'claude' }
   post(chat: string, message: Message) {
     this.logs.outgoing(chat, message)
-    this.store.set('last', chat, { chat, at: message.at ?? Date.now() }); this.emit('snapshot')
+    this.emit('snapshot')
+  }
+  private fresh(chat: string, message: Message) {
+    if (!this.unread.saw(chat, message.at) || !this.space(chat) || !message.at || message.at < this.born || message.card || message.question) return
+    this.emit('alert', { id: message.id, from: 'Shepherdr', title: clip(this.store.get<string>('name', chat) || this.space(chat)!.name, TITLE_MAX), body: clip(message.text || 'New message', BODY_MAX), go: { place: chat, focus: message.id }, message: true })
   }
   forwardQuestion(chat: string, question: Question, answer?: string, where: 'space' | 'task' = 'task') {
     const task = this.tasks.forChat(chat)
@@ -323,7 +332,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const stream = await this.core.attach(terminal.address, { data() {}, close() {} }, terminal.cols, terminal.rows)
         stream.input(Buffer.from(action.text)); stream.close(); return {}
       }
-      case 'read': this.store.set('meta', 'read', { ...this.store.get<Record<string, number>>('meta', 'read'), ...action.chats }); this.emit('snapshot'); return {}
+      case 'read': if (this.unread.mark(action.chats)) this.emit('snapshot'); return {}
       case 'rename': case 'order': case 'move': case 'section': return this.places.act(action)
       case 'react': {
         const text = this.chats.reaction(action.chat, action.message, action.emoji), id = randomUUID()

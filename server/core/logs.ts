@@ -22,7 +22,8 @@ export class CoreLogs {
   private next = 0
   private timer?: ReturnType<typeof setInterval>
   constructor(private readonly agents: CoreAgents, private readonly files: CoreFiles, private readonly store: CoreStore,
-    private readonly changed: (chat: string) => void, private readonly error: (chat: string, message: string) => void) {}
+    private readonly changed: (chat: string) => void, private readonly error: (chat: string, message: string) => void,
+    private readonly incoming: (chat: string, message: Message) => void = () => {}) {}
   start() { if (!this.timer) this.timer = setInterval(() => void this.poll(), 500); void this.poll() }
   stop() { clearInterval(this.timer); this.timer = undefined }
   async poll() {
@@ -47,7 +48,7 @@ export class CoreLogs {
   messages(chat: string): Message[] {
     return chatMessages(this.store.all<SavedMessage>(`message:${chat}`).sort((a, b) => (a.at ?? 0) - (b.at ?? 0)).map(({ source, ...message }) => message))
   }
-  outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); this.changed(chat) }
+  outgoing(chat: string, message: Message) { this.store.set(`message:${chat}`, message.id, message); if (message.who !== 'you') this.incoming(chat, message); this.changed(chat) }
 
   private async lines(chat: string, machine: string, cursor: Cursor, receive: (lines: { text: string; offset: number }[]) => void) {
     const bun = await this.agents.bun(machine)
@@ -118,6 +119,8 @@ export class CoreLogs {
       }
       if (/^\s*<(?:answer|review|review-failed|go|restart|shepherdr|artifact-sent|artifact-note|artifact-comment|browser-notes|browser|health)\b/.test(event.text)) return
     }
-    this.store.set(kind, event.id, { id: event.id, who: event.kind === 'user' ? 'you' : 'agent', text: event.text, at: event.at, source: event.id } satisfies SavedMessage)
+    const message = { id: event.id, who: event.kind === 'user' ? 'you' as const : 'agent' as const, text: event.text, at: event.at, source: event.id } satisfies SavedMessage
+    this.store.set(kind, event.id, message)
+    if (event.kind === 'agent' && chatMessages([message]).length) this.incoming(agent.chat, message)
   }
 }

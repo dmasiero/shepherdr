@@ -50,6 +50,13 @@ on:
       - 'test/layout-places.test.ts'
       - 'test/layout-sections.test.ts'
       - 'src/kernel.ts'
+      - 'src/unread.ts'
+      - 'src/attention.ts'
+      - 'shared/attention.ts'
+      - 'plugins/keyboard/**'
+      - 'test/layout-search.test.ts'
+      - 'test/layout-unread.test.ts'
+      - 'test/layout-attention.test.ts'
       - 'src/restart.tsx'
       - 'shared/alerts.ts'
       - 'test/layout-restart.test.ts'
@@ -83,7 +90,7 @@ jobs:
       - run: bun run typecheck
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-rewrite
-      - run: bun test test/core-*.test.ts test/artifacts.test.ts test/models.test.ts test/activity.test.ts test/order.test.ts test/health.test.ts test/plugins.test.ts
+      - run: bun test test/core-*.test.ts test/artifacts.test.ts test/models.test.ts test/activity.test.ts test/order.test.ts test/health.test.ts test/plugins.test.ts test/search.test.ts test/attention.test.ts
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-plugins
       - run: bun test test/live.test.ts --test-name-pattern 'triggers|automations|heartbeat'
@@ -103,6 +110,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: core-rewrite-chromium-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun x playwright-core install --only-shell chromium
-      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts test/layout-automations.test.ts test/layout-voice.test.ts test/browser.test.ts test/voice.test.ts
+      - run: bun test test/layout-restart.test.ts test/layout-keyboard.test.ts test/layout-activity.test.ts test/layout-pr-checks.test.ts test/layout-places.test.ts test/layout-sections.test.ts test/layout-automations.test.ts test/layout-voice.test.ts test/layout-search.test.ts test/layout-unread.test.ts test/layout-attention.test.ts test/browser.test.ts test/voice.test.ts
         env:
           SHEPHERDR_HOME: ${{ runner.temp }}/shepherdr-core-layout

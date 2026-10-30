@@ -21,10 +21,12 @@ test('stable hooks at EOF do not block subsequent native transcript lines', asyn
     return result.stdout
   } } as unknown as CoreFiles
   const agents = { all: () => [agent], get: () => agent, hook: () => {}, bun: async () => process.execPath } as unknown as CoreAgents
-  const logs = new CoreLogs(agents, files, store, () => {}, (_chat, fault) => faults.push(fault))
+  const incoming: string[] = []
+  const logs = new CoreLogs(agents, files, store, () => {}, (_chat, fault) => faults.push(fault), (_chat, message) => incoming.push(message.text || ''))
   try {
     await logs.poll(); appendFileSync(agent.transcript, assistant('second')); await logs.poll(); await logs.poll()
     expect(logs.messages('chat').map(message => message.text)).toEqual(['first', 'second'])
+    expect(incoming).toEqual(['first', 'second'])
     expect(faults).toEqual([])
     writeFileSync(agent.transcript, assistant('replacement')); await logs.poll()
     expect(logs.messages('chat').some(message => message.text === 'replacement')).toBe(true)

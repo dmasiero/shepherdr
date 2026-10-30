@@ -5,6 +5,7 @@ import type { CoreFiles } from './files.ts'
 import type { MachineLimits } from '../health.ts'
 import { validZone, OWN_ZONE } from '../live/trigger.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
+import { NOTIFY, NOTIFY_DEFAULT, NOTIFY_KEY } from '../../shared/alerts.ts'
 
 export type Role = 'coordinator' | 'task' | 'reviewer'
 const names = { claude: 'Claude Code', codex: 'Codex' }
@@ -16,6 +17,7 @@ const roleRows = (role: Role, group: string): SettingRow[] => [
 ]
 // Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
 const CATALOG: SettingSection[] = [
+  { name: 'Notify', about: "Which alerts a place's coordinator chat sends you. All: every new message too. Needs me: its questions and alerts. Off: none, and its row stays quiet. Tasks alert you either way. A place can set its own from its menu in the sidebar.", rows: [{ label: 'Notify', key: NOTIFY_KEY, value: NOTIFY_DEFAULT, options: [...NOTIFY] }] },
   { name: 'Machine', about: "When a machine starts more tasks, and when its coordinator hears that it struggles. Set one machine's own to fit its cores and memory.", rows: [
     { group: 'Working tasks', label: 'Max tasks working at once', key: 'machine.maxTasks', value: '10', num: { min: 1, max: 200 } },
     { group: 'Working tasks', label: 'Wait while CPU load is over', key: 'machine.startLoad', value: '1× cores', num: { min: 0.1, max: 20, step: 0.05, unit: '× cores' } },
