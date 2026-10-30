@@ -8,6 +8,9 @@ machine or space scope; the most specific scope wins. An agent requests a masked
 mailbox and adds values only to the child environment. Its output masks exact values, including values split
 across output chunks. Masking is a safety net, not permission to print secrets. `secret env NAME --file .env`
 requires an existing Git repository that ignores the target and writes an owner-only plain file. Prefer `run`.
+Remove an env file with a plain removal command that does not print its contents. Do not use a native
+read/edit/patch/delete tool that previews the file or its removed lines: that preview is outside the helper’s
+output masking and can enter the native transcript and raw terminal. Core attach remains the real terminal.
 
 ## Authority and transport
 
@@ -32,7 +35,8 @@ allowlist. They cannot read a host core socket or credential.
 Grants rotate/revoke on replacement and explicit lifecycle changes. They persist privately across an application
 restart so a still-running core agent can reconnect; server restart alone does not grant a new identity. A stopped,
 replaced or unconfirmed actor fails closed. An old agent missing its reference needs a planned restart; never repair
-it by copying a different session’s file. No plaintext values enter core docs, product snapshots or chat records.
+it by copying a different session’s file. The secret transport never writes plaintext values into core docs, product snapshots or chat records.
+This does not redact arbitrary native tool output when an agent disobeys the no-print rule.
 The vault and mailbox database belong to the selected private application home.
 
 Core is not a sandbox. Its socket allows shell/file access as the owning account, and owner-only files do not

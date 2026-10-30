@@ -1820,3 +1820,25 @@ sleep workarounds. No policy bypass, alternate wait or authentication change was
 attempted. That long-shell interruption remains unverified; the earlier native
 foreground-analysis Pause is distinct evidence. The operator selected Stop here
 and requested clean research-only completion, preserving all other work.
+
+Terminal follow-up: the same live GITH-2 native Claude process (t37/PID 308220,
+launch 3127ab0b-d576-4b04-8176-56aa78d64167, workflow To do) was attached by the
+actual phone/tablet/desktop panel. Authoritative core reads confirmed 80×69 phone,
+80×105 tablet and 80×66 desktop. Last-view detach restores the core holder's
+200×120 default; that is not a viewer resize. App-only stop/start with the desktop
+Terminal selected reconnected the live panel and restored 80×66 with the same
+PID/launch/workflow. Raw native output and returned panel were inspected; no keys
+or task/file/PR changes were sent. This proves actual resize and output reconnect,
+not delivery of uncertain input or replay safety under a deliberately lost input ack.
+
+Terminal inspection also exposed a limitation in the earlier synthetic env-file
+acceptance: the native delete tool previewed the removed file's line outside the
+helper's output masking. The disposable synthetic key had already been removed;
+no human/provider credential was used. That historical claim of no value ever
+appearing in native output is not valid for this env-cleanup step. The raw core
+terminal/transcript is not sanitized or rewritten. Public agent guidance now says
+to remove secret env files with a plain non-printing removal command, never a native
+read/edit/patch/delete preview. Docs distinguish authenticated transport masking
+from arbitrary native-tool output. The screenshot containing that synthetic line
+was discarded and is not in the proof artifact. Existing revoked synthetic fixture
+history was not selectively erased.

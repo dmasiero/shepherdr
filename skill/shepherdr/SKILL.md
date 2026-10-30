@@ -139,7 +139,9 @@ API keys, tokens and passwords are the human's secrets: use them by name, never 
   (a safety net, not leave to print it); prefer it to a file. Where a command's
   words need it, let that command's own shell read it, in single quotes:
   `shepherdr secret run API_KEY -- sh -c 'curl -H "Authorization: Bearer $API_KEY" …'`. A tool that needs a
-  file gets `secret env` (refused unless git ignores the file). Never print, echo, log, commit or write a secret
+  file gets `secret env` (refused unless git ignores the file). Clean up with a plain removal command that prints
+  no contents; never use read/edit/patch/delete tools that preview the secret file or its removed lines. Those
+  native previews are outside the command’s masking and can enter logs and the raw terminal. Never print, echo, log, commit or write a secret
   anywhere else, never put it in a command's words, a brief, an artifact or a chat, and keep `set -x` and verbose flags
   off where one goes by.
 - **Name it plainly**, as its tool expects (`OPENAI_API_KEY`). The human adds, replaces and removes them in Settings →
