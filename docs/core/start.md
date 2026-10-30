@@ -129,3 +129,8 @@ legacy routing. Development never replaces that helper. At cutover, legacy
 code is pinned to `v2.0`, all legacy writers are stopped, the verified legacy
 home is backed up and relocated, and only then is the fresh core home created.
 The detailed cutover/rollback inventory is a delivery gate, not an installer side effect.
+
+Task dependencies accept full task IDs, a bare ID on the task’s machine, or a bare number in its space.
+Use `machine-name:TASK-1` (or the stable machine ID before the colon) to select a main-machine task when its
+bare ID also exists locally on a remote machine. Names are resolved when queued; saved edges use permanent IDs.
+Unknown, ambiguous, self and circular dependencies are refused without replacing the previous queue.

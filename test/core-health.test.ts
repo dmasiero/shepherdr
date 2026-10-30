@@ -60,3 +60,14 @@ test('health events use hysteresis and persisted watch prevents repeats after re
     expect(resumed.view('box')).toMatchObject({ engine: 'core', herdr: true, max: 10 })
   } finally { resumed.stop(); await resumed.drain() }
 }))
+
+test('queueing a task retains its slot until the native turn really becomes idle', async () => fixture(async ({ source, health, tasks }) => {
+  await health.refresh()
+  source.settings.set('machine.maxTasks', '1', 'm:box')
+  const state = { value: 'working' }
+  Object.assign(source.agents, { get: () => ({ state: state.value }), terminal: () => ({ state: 'live' }) })
+  tasks.push({ id: 'DEMO-1', machine: 'box', chat: 'DEMO-1/Agent', workflow: 'queued', reservedAt: Date.now() - 120_000, reservedChats: ['DEMO-1/Agent'] } as CoreTask)
+  expect(health.room('box')).toContain('limit 1')
+  state.value = 'idle'
+  expect(health.room('box')).toBeUndefined()
+}))

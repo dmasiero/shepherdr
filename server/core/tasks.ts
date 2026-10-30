@@ -10,6 +10,7 @@ import type { Grant } from './mailbox.ts'
 import { one, parseArgs, summaryOpts } from '../live/args.ts'
 import type { LogEvent } from '../live/readers/types.ts'
 import { reserveTaskId } from './ids.ts'
+import { taskDependencies } from './dependencies.ts'
 
 export interface CoreTask extends Task {
   branch: string
@@ -100,8 +101,8 @@ export class CoreTasks {
     const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine))
     const branch = `work/${number}-${slugify(input.title).slice(0, 40)}`
     const folder = join(await this.source.agents.worktreeRoot(space.machine), space.name, branch.replaceAll('/', '-'))
-    const after = input.after ?? []
-    for (const dependency of after) if (!this.get(dependency)) throw new Refusal(`No such dependency: ${dependency}`)
+    const after = taskDependencies(this.all(), { id, place: space.id, machine: space.machine }, input.after ?? [], machine => this.source.machineName(machine))
+      .filter(id => !['merged', 'closed'].includes(this.get(id)!.workflow))
     const defaults = this.source.settings.launch('task', space.id, input.kind)
     const reviewer = this.source.settings.agent('reviewer', space.id)
     const merge = this.source.settings.get('brief.merge', space.id)
@@ -450,7 +451,7 @@ export class CoreTasks {
             }
           }
         }
-        if (task.workflow !== 'queued' || !(task.after ?? []).every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
+        if (task.archived || task.workflow !== 'queued' || !(task.after ?? []).every(id => ['merged', 'closed'].includes(this.get(id)?.workflow || ''))) continue
         const room = this.source.health?.room(task.machine, task.id)
         if (room) { if (task.capacity !== room) { task.capacity = room; this.save(task) }; continue }
         const agent = this.source.agents.get(task.chat)
@@ -487,7 +488,7 @@ export class CoreTasks {
     const task = id && this.get(id)
     if (!task) throw new Refusal('No such task or unsupported task command')
     this.assert(grant, task)
-    if (verb === 'task' && sub === 'show') return text(task)
+    if (verb === 'task' && sub === 'show') return text(this.view(task))
     if (verb === 'task' && sub === 'close') return text(await this.close(task, parsed.flags.has('force')))
     if (verb === 'status') {
       const left = one(parsed, 'left'), match = left?.match(/^(?:(\d+)h)?(?:(\d+)m)?$/)
@@ -507,15 +508,36 @@ export class CoreTasks {
     if (verb === 'todo') return this.change(id, async () => { task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return text(`${id} is To do`) })
     if (verb === 'task' && sub === 'tell') { await this.source.act({ type: 'send', cid: randomUUID(), chat: task.chat, text: rest.slice(1).join(' ') }); return text('Saved for delivery through core') }
     if (verb === 'task' && sub === 'queue') return this.change(id, async () => {
-      const after = one(parsed, 'after')
-      if (after === 'none') {
-        task.after = []
-        const room = this.source.health?.room(task.machine, task.id)
-        if (room) { task.workflow = 'queued'; task.capacity = room; this.save(task); await this.label(task); return text('Dependencies cleared; wait for <go> when the machine has room') }
-        task.workflow = this.source.agents.get(task.chat) ? 'working' : 'queued'; task.reservedAt = Date.now(); delete task.capacity
-        this.save(task); await this.label(task); return text('Queue cleared; follow the human’s go')
+      if (['merged', 'closed', 'merging'].includes(task.workflow)) throw new Refusal(`${task.id} is already ${task.workflow}; its queue cannot change`)
+      const raw = one(parsed, 'after')
+      if (!raw?.trim()) throw new Refusal('Choose --after <task IDs>, or --after none')
+      const after = taskDependencies(this.all(), task, raw === 'none' ? [] : [raw], machine => this.source.machineName(machine))
+      const open = after.filter(id => !['merged', 'closed'].includes(this.get(id)!.workflow))
+      const was = task.workflow
+      task.after = after
+      delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion
+      if (open.length) {
+        task.workflow = 'queued'; delete task.capacity
+        // A queued pause is delivered after the current native turn. Keep that
+        // still-live turn in capacity accounting until its status really becomes idle.
+        if (was === 'working') task.reservedChats = [...new Set([...(task.reservedChats ?? []), task.chat])]
+        this.save(task); await this.label(task); this.card(task, `Queued after ${open.join(', ')}`)
+        if (grant.chat !== task.chat && this.source.agents.get(task.chat)) this.source.saveAndDeliver(task.chat, `queue-${randomUUID()}`,
+          `<queue>This task now waits for ${open.join(', ')}. Pause implementation and wait for <go>.</queue>`, () => {}, true)
+        return text(`Queued after ${open.join(', ')}`)
       }
-      task.after = after?.split(',').filter(Boolean) ?? []; task.workflow = 'queued'; this.save(task); await this.label(task); return text('Queued')
+      // Clearing an already-working task's queue is a no-op for its capacity slot.
+      if (was === 'working') { this.save(task); await this.label(task); return text('No dependencies remain') }
+      const room = this.source.health?.room(task.machine, task.id)
+      const agent = this.source.agents.get(task.chat)
+      const live = agent && this.source.agents.terminal(agent)?.state === 'live'
+      task.workflow = room || !live ? 'queued' : 'working'
+      if (room) task.capacity = room; else delete task.capacity
+      if (task.workflow === 'working') task.reservedAt = Date.now()
+      this.save(task); await this.label(task)
+      if (task.workflow === 'working' && grant.chat !== task.chat) this.source.saveAndDeliver(task.chat, `go-${randomUUID()}`,
+        '<go>No dependencies remain and the machine has room. Begin the agreed brief now.</go>', () => {}, true)
+      return text(room ? 'Dependencies cleared; wait for <go> when the machine has room' : live ? 'Queue cleared; follow the human’s go' : 'Dependencies cleared; the task will start when its machine has room')
     })
     throw new Refusal('This task command is not implemented in the current slice')
   }

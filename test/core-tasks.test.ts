@@ -221,3 +221,36 @@ test('an unchanged squash-merged branch cleans up without force; a new commit re
     expect(readFileSync(join(worktree, 'later.txt'), 'utf8')).toBe('KEEP_THIS_WORK\n')
   })
 })
+
+test('queue edits reject missing/self dependencies and ended tasks without corrupting saved workflow', async () => {
+  await withTask(async ({ tasks, task, grant }) => {
+    for (const ref of ['MISSING-2', task.id]) {
+      await expect(tasks.cli(grant, ['task', 'queue', task.id, '--after', ref])).rejects.toThrow()
+      expect(tasks.get(task.id)?.workflow).toBe('working')
+      expect(tasks.get(task.id)?.after).toBeUndefined()
+    }
+    await expect(tasks.cli(grant, ['task', 'queue', task.id])).rejects.toThrow('--after')
+    await tasks.close(task, true)
+    await expect(tasks.cli(grant, ['task', 'queue', task.id, '--after', 'none'])).rejects.toThrow('already closed')
+    expect(tasks.get(task.id)?.workflow).toBe('closed')
+  })
+})
+
+test('an archived queued task never starts in the queue scheduler', async () => {
+  await withTask(async ({ tasks, task }) => {
+    // Do not need a mocked launcher: starting this record would reach absent launch fixtures and fail to todo.
+    const store = (tasks as unknown as { source: CoreSource }).source.store
+    store.set('task', task.id, { ...task, workflow: 'queued', after: [], archived: Date.now() })
+    await tasks.tick()
+    expect(tasks.get(task.id)?.workflow).toBe('queued')
+    expect(tasks.get(task.id)?.startError).toBeUndefined()
+  })
+})
+
+test('task show reports current workflow instead of its initial cached Working text', async () => {
+  await withTask(async ({ tasks, task, grant }) => {
+    await tasks.cli(grant, ['todo', task.id])
+    const shown = JSON.parse((await tasks.cli(grant, ['task', 'show', task.id])).out)
+    expect(shown).toMatchObject({ workflow: 'todo', status: 'todo', state: 'To do' })
+  })
+})

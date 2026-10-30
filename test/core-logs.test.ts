@@ -27,6 +27,10 @@ test('stable hooks at EOF do not block subsequent native transcript lines', asyn
     await logs.poll(); appendFileSync(agent.transcript, assistant('second')); await logs.poll(); await logs.poll()
     expect(logs.messages('chat').map(message => message.text)).toEqual(['first', 'second'])
     expect(incoming).toEqual(['first', 'second'])
+    const user = (text: string) => JSON.stringify({ timestamp: '2026-10-29T12:00:01Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }) + '\n'
+    appendFileSync(agent.transcript, user('<queue>Wait for DEMO-2.</queue>') + user('My actual follow-up'))
+    await logs.poll()
+    expect(logs.messages('chat').filter(message => message.who === 'you').map(message => message.text)).toEqual(['My actual follow-up'])
     expect(faults).toEqual([])
     writeFileSync(agent.transcript, assistant('replacement')); await logs.poll()
     expect(logs.messages('chat').some(message => message.text === 'replacement')).toBe(true)

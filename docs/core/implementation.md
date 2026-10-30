@@ -709,3 +709,38 @@ Unread/search CI 40987111965 passed core/logic tests; newly enabled search layou
 before initial page readiness. Their keyboard actions now wait for the composer; shorter locator deadlines expose
 any remaining selector issue before the outer timeout. Attention desktop timing is under investigation in CI;
 no local browser suite was run or represented as passed.
+
+Unread/search/card branch CI 40988084887 passed both jobs at 4ea5b662. Screen regressions now wait for initial
+message layout before keyboard actions, target whole question cards rather than text-only bubbles, and move the
+pointer/focus away before checking a desktop row badge (the unchanged hovered row gives its room to More).
+Manual keyboard Enter opened the real core-demo reaction bar. Proof artifact hf2s v8 adds real unread/search and
+stale-card before/after images; light/dark artifact checks were inspected. No physical-device claim is added.
+
+## Queue validation (2026-10-30)
+
+New queue edges resolve canonical combined-app task IDs (case-insensitive bare IDs on the owner's machine;
+space-local bare numbers; explicit combined IDs across machines; bare main IDs accepted when no local match).
+Missing, ambiguous, self and circular dependencies are refused before changing saved workflow. Iterative traversal
+handles long chains without recursive stack growth. New tasks omit already-finished dependencies. Queue edits
+reject merged/closed/merging tasks, keep native in-flight work counted until idle, tell another task agent to pause,
+and send a durable go when clearing dependencies for a live agent with room. Archived queued tasks never auto-start.
+
+Scoped review round 1 found a queue system-echo minor, fixed with the existing native hidden-input filter. Its
+capacity major was retracted after checking the actual reservedChats path, which already counts live work without
+reservedAt; the implementation additionally retains that reservation and ensures the primary chat is recorded.
+Round 2 had no critical/major, and found bare main IDs unreachable from a remote queue, now fixed with exact-ID
+fallback and regression coverage. Queue logic, native hidden-input and capacity regressions are written for GitHub.
+No local suite/build/browser test was run. Actual native scratch validation is in progress.
+
+Real native second-core coordinator ran the isolated queue check: REMO-6 after REMO-5 saved; inverse edge refused
+a circle; missing MISSING-999 refused without losing the saved edge; native final reply QUEUE_VALIDATION_OK.
+The run also exposed CLI task show returning stale initial state text despite correct workflow/UI. It now uses
+the same current task projection as list and snapshot; regression coverage added. Snapshot confirmed REMO-5 To do
+and REMO-6 Queued with after=[probe/REMO-5]. No scratch files were changed by this check.
+
+Final queue slice review round 3 found no critical/major. Its remaining minor (main/local ID collision) is fixed by
+explicit machine-name:task-ID or stable-machine-ID:task-ID resolution; canonical queue edges still store permanent
+product IDs. Bare IDs retain own-machine precedence. Added collision coverage; whole-rewrite review remains pending.
+The same native coordinator then read both tasks after the isolated app restart and returned QUEUE_STATUS_OK:
+REMO-5 To do/todo; REMO-6 Queued/queued, still after probe/REMO-5. Shared-browser phone screenshot
+`/tmp/she301-queue-validation-phone.png` inspected. This is a same-host second-core run, not actual SSH.
