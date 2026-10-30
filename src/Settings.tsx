@@ -896,9 +896,15 @@ export default function Settings() {
       setRefused((r) => ({ ...r, [at(key)]: said }))
       return
     }
-    // set at the page's level: a machine's or a space's goes to that machine
-    const r = (await act({ type: 'setting', key, value, ...((page.targets?.[key] ?? page.level) ? { place: page.targets?.[key] ?? page.level } : {}) })) as { ok?: boolean; error?: string; waiting?: boolean }
-    setRefused((x) => ({ ...x, [at(key)]: r?.ok === false ? (r.error ?? 'Refused.') : r?.waiting ? `Set once ${machineName(snap.machines, page.machine)} is back.` : '' }))
+    try {
+      // set at the page's level: a machine's or a space's goes to that machine
+      const r = (await act({ type: 'setting', key, value, ...((page.targets?.[key] ?? page.level) ? { place: page.targets?.[key] ?? page.level } : {}) })) as { ok?: boolean; error?: string; waiting?: boolean }
+      setRefused((x) => ({ ...x, [at(key)]: r?.ok === false ? (r.error ?? 'Refused.') : r?.waiting ? `Set once ${machineName(snap.machines, page.machine)} is back.` : '' }))
+    } catch (error) {
+      let message = error instanceof Error ? error.message : 'That did not save. Try again.'
+      try { const body = JSON.parse(message); if (typeof body.error === 'string') message = body.error } catch {}
+      setRefused((x) => ({ ...x, [at(key)]: message }))
+    }
   }
   const close = () => setUI({ settings: null })
   const scroller = useRef<HTMLDivElement>(null)

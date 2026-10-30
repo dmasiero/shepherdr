@@ -1732,3 +1732,19 @@ pending-newer/failed-older, unrelated history, reruns and context. Real GitHub
 observation remains unverified: this environment's configured token denies check
 reads (403); no credentials or access settings were changed. Settings rewrite CI
 41030400506 passed. Only typecheck ran locally.
+
+Settings native acceptance completed: probe/INCQ-40 ran on Codex with the selected
+she301-settings-next base, verified and removed its copied public config, closed
+its research checkout and replied NATIVE_CORE_SETTINGS_TASK_OK. Independent reads
+confirmed cleanup, unchanged source files and unchanged unrelated held-work actor
+and bytes: NATIVE_CORE_SETTINGS_COMPLETION_SOURCE_AND_HELD_WORK_PRESERVATION_OK.
+The next number advanced to 41. Trying 40 was refused durably but exposed a UI
+feedback gap: HTTP errors bypassed Settings' existing inline refusal presentation.
+Settings now catches those responses and displays the existing safe error message;
+the layout regression uses the actual HTTP 500 shape. Manual before omitted the
+message; after displays Use 41 or higher. Earlier numbers are reserved. Inspected
+phone screenshots record the native result, next number and refusal. Typecheck
+passed, no local suites. Full integration review round 3 at ed75b57e reported no
+remaining concrete critical/major findings; this subsequent small feedback fix is
+not included in that review. External/device/voice/provider-failure proof remains
+unverified; review is not acceptance evidence.

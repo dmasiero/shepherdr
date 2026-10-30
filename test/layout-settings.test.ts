@@ -127,7 +127,7 @@ describe.skipIf(!browser)('Task IDs space settings', () => {
         const action = route.request().postDataJSON()
         if (action.type !== 'setting' || !action.key.startsWith('taskIds.')) return route.continue()
         sent.push(action)
-        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'Use 100 or higher. Earlier numbers are reserved.' }) })
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Use 100 or higher. Earlier numbers are reserved.' }) })
       })
       await settings.getByRole('textbox', { name: 'Next number' }).fill('7')
       await settings.getByRole('textbox', { name: 'Next number' }).press('Tab')
