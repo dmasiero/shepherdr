@@ -24,7 +24,7 @@ async function fixture(run: (f: { source: CoreSource; monitor: CoreGitHub; space
   let rows: unknown = [row()], head = sha
   const source = { store, connected: () => true, machineConnected: () => true, space: (id: string) => id === space.id ? space : undefined, spaces: () => [space], status: () => 'idle',
     agents: { get: () => ({ chat: space.id, launch: 'launch' }), terminal: () => ({ state: 'live' }) },
-    tasks: { all: () => [{ place: space.id, base: space.base, workflow: 'merged', pr: { number: 1 }, doneAt: now }], git: {
+    tasks: { all: () => [{ place: space.id, base: 'main', workflow: 'merged', pr: { number: 1 }, doneAt: now }], git: {
       remote: async () => 'github.test/o/r', ghRun: async (_repo: unknown, args: string[]) => { calls.push(args); return head }, gh: async (_repo: unknown, args: string[]) => { calls.push(args); return rows },
     } }, automations: { record: (event: Happened) => { events.push(event); store.set('rule-proof', String(events.length), event) } },
     post: (chat: string, message: { id: string }) => store.set(`message:${chat}`, message.id, message),
@@ -109,4 +109,13 @@ test('a failed publication transaction does not swallow the red incident on retr
   await f.monitor.watchMain(f.space)
   expect(f.events).toHaveLength(1)
   expect(f.source.store.all('github-notice')).toHaveLength(1)
+}))
+
+test('main-red title filters use a known task title, never a workflow name as a task title', async () => fixture(async f => {
+  await f.monitor.watchMain(f.space)
+  expect(f.events[0].title).toBeUndefined()
+  f.setRows([row('success')]); await f.monitor.watchMain(f.space)
+  f.source.tasks.all = (() => [{ id: 'DEMO-1', name: 'Actual merged task', machine: f.space.machine, repo: f.space.folder, place: f.space.id, base: 'main', workflow: 'merged', pr: { number: 1 }, doneAt: Date.now(), mergeCommit: sha }]) as unknown as typeof f.source.tasks.all
+  f.setRows([row()]); await f.monitor.watchMain(f.space)
+  expect(f.events[1].title).toBe('Actual merged task')
 }))

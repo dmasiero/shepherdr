@@ -86,12 +86,13 @@ export class CoreGitHub {
       const text = JSON.stringify({ event: 'main-red', branch: space.base, head, failed, failedCount: verdict.failed.length }).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')
       const notice: Notice = { id: `github-main-${randomUUID()}`, place: space.id, watch: id, head, text, at: now, state: 'waiting' }
       next.notice = notice.id
+      const known = this.source.tasks.all().find(task => task.machine === space.machine && task.repo === space.folder && task.mergeCommit === head)
       this.source.store.db.transaction(() => {
         this.source.store.set('github-main', id, next)
         const card = { id: notice.id, red: space.base, text: `went red: ${failed.map(run => run.name).join(', ')}`.slice(0, 1000) }
         this.source.post(space.id, { id: notice.id, who: 'agent', card, at: now })
         if (space.mode === 'regular') this.source.store.set('github-notice', notice.id, notice)
-        this.source.automations.record({ event: 'main-red', branch: space.base, space: space.name, title: failed.map(run => run.name).join(', '), detail: text }, space.id)
+        this.source.automations.record({ event: 'main-red', branch: space.base, space: space.name, title: known?.name, detail: text }, space.id)
       })()
     } catch (error) {
       if (this.current(space)) this.source.store.set('github-main', id, { ...old, id, checked: now, error: String((error as Error).message).slice(0, 1000) })
