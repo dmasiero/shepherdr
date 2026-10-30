@@ -2,6 +2,7 @@ import type { SettingRow, SettingSection, RestartCli } from '../../shared/types.
 import { TABLE, nearest, parseCodex, type CliModels } from '../../shared/models.ts'
 import type { CoreStore } from './store.ts'
 import type { CoreFiles } from './files.ts'
+import { validZone, OWN_ZONE } from '../live/trigger.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 
 export type Role = 'coordinator' | 'task' | 'reviewer'
@@ -14,6 +15,7 @@ const roleRows = (role: Role, group: string): SettingRow[] => [
 ]
 // Only implemented controls are offered. Remaining catalog sections stay on the parity checklist until wired.
 const CATALOG: SettingSection[] = [
+  { name: 'Time zone', about: 'The time zone of every schedule: heartbeats and automations, on every machine.', rows: [{ label: 'Time zone', key: 'time.zone', value: OWN_ZONE, text: true }] },
   { name: 'Shared browser', rows: [{ label: 'Close idle browser after', key: 'browser.idleClose', value: '10 min', num: { min: 1, max: 1440, unit: 'min', off: true } }] },
   { name: 'Private instructions', about: 'Personal rules kept outside your repos. Each role follows space → machine → Everywhere; an empty value means no private rules. Adds to team rules; explicit human instructions win. New starts or restarts only. No secrets here.', rows: [
     { key: 'coordinator.instructions', label: 'Coordinators', value: '', multiline: true },
@@ -55,8 +57,11 @@ export class CoreSettings {
     const row = rows.find(item => item.key === key)
     if (!row) throw new Error(`No setting ${key}`)
     this.chain(level)
+    if (key === 'time.zone' && level !== 'all') throw new Error('Time zone applies Everywhere')
     if (value !== null) {
       if (typeof value !== 'string' || value.length > (row.multiline ? 32_000 : 512)) throw new Error('Setting is too long')
+      if (key === 'time.zone') value = value.trim()
+      if (key === 'time.zone' && !validZone(value)) throw new Error('Choose a valid time zone, such as Europe/Stockholm')
       if (key.endsWith('.model') && value !== 'default' && value) {
         const role = key.split('.')[0] as Role, kind = kindOf(this.get(`${role}.agent`, level)) ?? 'claude'
         if (this.catalog(kind, level).models.length && !this.findModel(kind, value, level)) throw new Error('Choose a model offered by this agent')
@@ -121,7 +126,7 @@ export class CoreSettings {
   }
   sections(): SettingSection[] {
     const levels = ['all', ...new Set(this.spaces().map(space => `m:${space.machine}`)), ...this.spaces().map(space => space.id)]
-    return levels.flatMap(level => CATALOG.map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
+    return levels.flatMap(level => CATALOG.filter(section => level === 'all' || section.name !== 'Time zone').map(section => ({ ...section, level, machine: this.machine(level), rows: section.rows.map(row => {
       const picked = this.pick(row.key, level), inherited = this.chain(level).slice(1).map(at => this.pick(row.key, at)).find(value => value.level !== 'default') ?? { value: row.value, level: 'default' }
       let dynamic = { ...row }
       let value = picked.value

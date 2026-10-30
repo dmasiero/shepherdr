@@ -725,9 +725,19 @@ function SpaceAutomations({ place, note }: { place: Place; note?: string }) {
  *  name */
 function AutomationDetail({ id, place, a }: { id: string; place: Place; a: Automation }) {
   const [error, setError] = useState('')
+  const pending = useRef<{ op: string; cid: string } | null>(null)
+  const sending = useRef(false)
   const run = async (op: 'run' | 'pause' | 'resume' | 'remove') => {
-    const r = (await act({ type: 'automation', place: place.id, op, name: a.name })) as { ok?: boolean; error?: string } | undefined
-    setError(r?.ok === false ? (r.error ?? 'Refused.') : '')
+    if (sending.current) return
+    if (pending.current && pending.current.op !== op) { setError('Confirm the previous action before changing this automation.'); return }
+    const command = pending.current ||= { op, cid: crypto.randomUUID() }
+    sending.current = true
+    try {
+      const r = (await act({ type: 'automation', cid: command.cid, place: place.id, op, name: a.name })) as { ok?: boolean; error?: string } | undefined
+      if (r?.ok === false) setError(r.error ?? 'Refused.')
+      else { pending.current = null; setError('') }
+    } catch { setError('The action was not confirmed. Try the same action again to check its result.') }
+    finally { sending.current = false }
   }
   return (
     <li id={id} className="pr-2 pb-2 pl-8 phone:pr-3 phone:pl-9">

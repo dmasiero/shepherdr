@@ -84,7 +84,7 @@ not evidence of a working feature.
 | Remote machines, status, files and reconnect | server/live/machines.ts; server/live/mfs.ts | Partial: same-host second-core Claude task + Codex review + approved merge completed through core only; real SSH/disconnect acceptance pending; old implementation removal pending |
 | Artifacts, versions, data, notes, actions, validation | plugins/artifacts; server/live/artifacts.ts | Partial: real second-core artifact 9788e43f published, HTML/data versions and live data-only refresh inspected; button reached native keeper; notes/delete/device parity still pending |
 | Scoped secrets and authenticated agent access | server/live/secrets.ts; server/live/secret-access.ts | Partial: second-core masked card saved synthetic key; fresh remote launch used current authenticated helper and returned REMOTE_SECRET_OK without value in chat; CI, env/set/rm and stale-scope acceptance pending |
-| Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Partial: real second-core browser frames, takeover, navigation, fit, markup crop and native BROWSER_NOTES_OK shown; app restart retained takeover. Agent-only idle cleanup, real SSH and full device parity pending |
+| Shared browser, takeover and markup | plugins/browser; server/live/browser.ts | Partial: real second-core browser frames, takeover, navigation, fit, markup crop and native BROWSER_NOTES_OK shown; app restart retained takeover. Agent-only open was detected without a viewer and one-minute expiry closed its Chrome. Real SSH and full device parity pending |
 | Voice, tool/audio bridge | plugins/voice; server/live/voice.ts | Pending |
 | Autopilot, usage controls and sandbox | plugins/autopilot; server/live/autopilot*.ts | Pending |
 | Automations, recurrence and heartbeat | server/live/automations.ts; server/live/heartbeat.ts | Pending |
@@ -463,8 +463,44 @@ navigated to its scratch artifact, fitted the page, selected Send proof, added a
 note and sent its actual crop. Native Claude returned BROWSER_NOTES_OK once and
 kept the task To do. Desktop screenshot and phone chat screenshot were inspected.
 Stopping/restarting only the isolated app preserved both browser page and takeover.
-The second core is on this host, not SSH. Actual SSH, agent-only idle expiry,
+The second core is on this host, not SSH. Actual SSH,
 lock-screen/browser-on-phone input, full device comparison and crash cleanup are
 still unverified. Fresh review: three scoped rounds; two major cleanup/idle gaps
 fixed, later rounds clear. Regression tests are written for branch CI only; no
 local suites were run. This does not complete the full rewrite acceptance gate.
+
+
+## Automation scheduling slice (2026-10-30)
+
+The existing recurrence/event model is shared through an injected persistence
+adapter, with no implicit live-home reads in core. The standalone SQLite store
+keeps definitions, last runs, time cursors and run claims. The old adapter retains
+legacy JSON behavior. The original task-list controls and schedule wording stay.
+Time zone is the same Everywhere-only control used by every schedule.
+
+Authenticated coordinators can add/edit/list/pause/resume/run/remove automations
+on their own machine. Each run creates a fresh task/worktree through CoreTasks,
+with the normal policy/review defaults and core parent lifetime behavior. Run-now
+keeps a browser command ID over a lost response; a second action waits for that
+result. Time cursor advances and the claim commits before any remote work. A crash
+reconciles an interrupted claim to its recorded task or an explicit interrupted
+result; it never silently replays task creation.
+
+Task-added/ready/merged/needs-you transitions enqueue durable run records in the
+same transaction that marks the transition seen. Concurrent events wait instead
+of being dropped while a run starts. Implicit space matches are machine-local per
+matching rule; explicit space rules cannot grant an unrelated rule that authority.
+Automation-created tasks suppress added-event recursion. Paused definitions retain
+queued events without starting them. Stop drains active creations and preserves
+queued claims. Failed/stalled/main-red/health event production is still pending
+with the corresponding task/health/GitHub monitoring work; this slice does not
+claim complete automation parity.
+
+Manual evidence: native second-core coordinator added Core schedule check using
+an RRULE and paused it. Phone Tasks showed the unchanged automation row/details.
+Run now created probe/REMO-3 in its own real worktree; native Claude returned
+AUTOMATION_TASK_OK and kept To do. Both phone screenshots were inspected. A
+scheduled once-only run, restart recovery and dark/device comparison are pending.
+Three scoped fresh reviews found two major event-loss/machine-scope issues; both
+were fixed with regressions and the third round was clear. Tests are written for
+branch CI; only typecheck and manual acceptance run on this VM.

@@ -891,7 +891,7 @@ export type Action =
   | { type: 'autopilot-run'; place: string }
   /** a project's automation: pause or go on, run now, remove. Only agents add or change one, through the command. By
       its place, so another machine's goes there */
-  | { type: 'automation'; place: string; op: 'pause' | 'resume' | 'run' | 'remove'; name: string }
+  | { type: 'automation'; cid?: string; place: string; op: 'pause' | 'resume' | 'run' | 'remove'; name: string }
   | { type: 'model'; chat: string; model: string }
   | { type: 'effort'; chat: string; effort: string }
   | { type: 'keys'; chat: string; keys: string[] }

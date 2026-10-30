@@ -37,6 +37,7 @@ export interface CoreTask extends Task {
   effort?: string
   mergeCommit?: string
   localId?: string
+  automation?: string
   reviewerModel?: string
   reviewerEffort?: string
 }
@@ -81,13 +82,18 @@ export class CoreTasks {
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
   }
   async add(grant: Grant, input: { title: string; brief: string; space?: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string }) {
-    if (!input.title.trim() || input.title.length > TITLE_MAX) throw new Refusal(`Write a title of at most ${TITLE_MAX} characters`)
-    if (!input.brief.trim()) throw new Refusal('Give the task its full brief')
     const caller = this.source.agents.get(grant.chat)
     if (caller?.role !== 'coordinator' || caller.grant !== grant.id || caller.launch !== grant.session) throw new Refusal('Only a coordinator can add a task')
     const space = input.space ? this.source.spaces().find(space => space.id === input.space || space.name === input.space && space.machine === caller.machine) : this.source.space(caller.space)
     if (!space || space.home) throw new Refusal('Choose a repository space for the task')
     if (space.machine !== caller.machine) throw new Refusal('Use the coordinator of the task’s machine')
+    return this.addInSpace(space, input)
+  }
+  /** Trusted product scheduler entry; no caller labels or mailbox data grant this authority. */
+  async addInSpace(space: CoreSpace, input: { title: string; brief: string; base?: string; after?: string[]; later?: boolean; kind?: AgentKind; model?: string; effort?: string; automation?: string }) {
+    if (!input.title.trim() || input.title.length > TITLE_MAX) throw new Refusal(`Write a title of at most ${TITLE_MAX} characters`)
+    if (!input.brief.trim()) throw new Refusal('Give the task its full brief')
+    if (!this.source.space(space.id) || space.home) throw new Refusal('Choose a repository space for the task')
     const { id, localId, number } = reserveTaskId(this.source.store, space.machine, space.prefix, this.source.machineName(space.machine))
     const branch = `work/${number}-${slugify(input.title).slice(0, 40)}`
     const folder = join(await this.source.agents.worktreeRoot(space.machine), space.name, branch.replaceAll('/', '-'))
@@ -97,7 +103,7 @@ export class CoreTasks {
     const reviewer = this.source.settings.agent('reviewer', space.id)
     const merge = this.source.settings.get('brief.merge', space.id)
     const task: CoreTask = {
-      id, localId, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
+      id, localId, automation: input.automation, name: input.title.trim(), desc: input.brief, place: space.id, machine: space.machine, folder, repo: space.folder, branch, base: input.base || space.base,
       chat: `${id}/Agent`, kind: input.kind || defaults.kind, model: input.model || defaults.model, effort: input.effort || defaults.effort, workflow: after.length ? 'queued' : input.later ? 'todo' : 'working', status: after.length ? 'queued' : input.later ? 'todo' : 'work',
       reviewerModel: reviewer.model, reviewerEffort: reviewer.effort, mergePolicy: merge === 'ask me first' ? 'ask' : merge === 'after GitHub checks' ? 'checks' : 'auto', review: { on: this.source.settings.get('brief.review', space.id) === 'on', kind: reviewer.kind, rounds: parseInt(this.source.settings.get('review.rounds', space.id)), mustFix: this.source.settings.get('review.mustFix', space.id) }, after, age: 'now', created: new Date().toISOString(), on: this.source.snapshot().host, state: 'Working',
     }

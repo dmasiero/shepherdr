@@ -26,6 +26,7 @@ import { CoreActivity } from './activity.ts'
 import { CoreWorktree } from './worktree.ts'
 import { CorePlaces } from './places.ts'
 import { CoreBrowsers } from './browsers.ts'
+import { CoreAutomations } from './automations.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
@@ -42,6 +43,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly mailbox: Mailbox
   readonly agents: CoreAgents
   readonly logs: CoreLogs
+  readonly automations: CoreAutomations
   readonly browsers: CoreBrowsers
   readonly places: CorePlaces
   readonly tasks: CoreTasks
@@ -85,6 +87,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.activities = new CoreActivity(this)
     this.worktrees = new CoreWorktree(this)
     this.browsers = new CoreBrowsers(this, installation.id)
+    this.automations = new CoreAutomations(this)
     this.core.onChange(() => { this.agents.reconcile(); this.emit('snapshot'); for (const agent of this.agents.all()) void this.flush(agent.chat) })
     this.core.onDocument(event => { void this.mailbox.event(String(event.params.data?.name ?? ''), event.params.machine).catch(error => this.faults.set('mailbox', error.message)) })
     this.core.onResync(() => { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)) })
@@ -112,7 +115,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       agent.permission = this.openPermissions(agent)[0]?.id
       this.store.set('agent', agent.chat, agent)
     }
-    await this.core.start(); await this.refresh(); this.logs.start()
+    await this.core.start(); await this.refresh(); this.logs.start(); this.automations.start()
     this.recovery = setInterval(() => {
       if (this.connected()) { void this.refresh().then(() => this.mailbox.resync()).catch(error => this.faults.set('core', error.message)); void this.tasks.tick().catch(error => this.faults.set('queue', error.message)); return }
       if (this.recovering || this.core.current.error?.includes('requires core')) return
@@ -200,7 +203,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
-      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: {}, asks,
+      tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: this.automations.view(), asks,
       settings: this.secrets.pages(this.settings.sections()),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
       read: this.store.get<Record<string, number>>('meta', 'read') ?? {},
@@ -277,6 +280,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         this.permissions.get(permission.id)?.({ allow }); this.permissions.delete(permission.id)
         return { answered: true }
       }
+      case 'automation': return this.automations.act(action)
       case 'browser-notes': return this.browsers.notes(action)
       case 'artifact-send': case 'artifact-note': case 'artifact-say': case 'artifact-delete': return this.artifacts.act(action)
       case 'secret': case 'secret-saved': return this.secrets.act(action)
@@ -388,6 +392,8 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   review ID | pr ID | checks ID
   ready ID --summary TEXT [--facts TEXT]
   merge ID (requires the human's exact-commit card approval)
+  automation add NAME --task TITLE --brief TEXT --when "FREQ=MINUTELY;INTERVAL=30" | --on EVENTS [--space NAME]
+  automation edit|list|pause|resume|run|remove NAME
   todo ID | task close ID
   artifact new FILE --title TITLE | update ID [FILE] [--data JSON] | check FILE | show ID | list | remove ID
   secret list | secret ask NAME --why TEXT [--force]
@@ -402,6 +408,7 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
         if (!grant.actions.includes('artifact')) throw new Error('This session has no artifact permission')
         return { out: await this.artifacts.cli(agent, args, typeof (input as { cwd?: unknown }).cwd === 'string' ? (input as { cwd: string }).cwd : this.space(agent.space)!.folder), code: 0 }
       }
+      if (args[0] === 'automation') return { out: await this.automations.cli(agent, args) + '\n', code: 0 }
       if (args[0] === 'show') return { out: this.settings.describe(agent.space), code: 0 }
       if (args[0] === 'ask' || args[0] === 'plan') return { out: `Asked: ${this.questions.create(grant, args)}\n`, code: 0 }
       if (args[0] === 'space' && args[1] === 'list') return { out: JSON.stringify(this.spaces().filter(space => space.machine === agent.machine), null, 2) + '\n', code: 0 }
@@ -497,6 +504,6 @@ Use hc for starting, messaging and waiting on core child agents. Never use a web
   async artifactThumb(id: string, dark: boolean) { try { return this.artifacts.thumb(id, dark) } catch { return null } }
   async upload(chat: string, name: string, data: Uint8Array) { return this.chats.upload(chat, name, data) }
   async attachment(chat: string, path: string) { return this.chats.attachment(chat, path) }
-  async drain() { this.quiescing = true; return this.tasks.drain() }
-  stop() { clearInterval(this.recovery); this.logs.stop(); this.browsers.stop(); this.core.stop() }
+  async drain() { this.quiescing = true; this.automations.stop(); await this.automations.drain(); return this.tasks.drain() }
+  stop() { clearInterval(this.recovery); this.automations.stop(); this.logs.stop(); this.browsers.stop(); this.core.stop() }
 }
