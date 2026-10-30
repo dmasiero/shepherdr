@@ -171,7 +171,7 @@ function RowSteps({ chat, what, id, ids, live }: { chat: string; what: 'turn' | 
   if ('error' in d) return <p className={quiet}>{d.error}</p>
   if (!('steps' in d)) return null
   const steps = d.steps.filter((s) => ids.includes(s.id))
-  if (!steps.length) return <p className={quiet}>It is no longer in its log.</p>
+  if (!steps.length) return <p className={quiet}>{d.catchingUp ? 'Loading the rest of this log…' : d.warning || 'It is no longer in its log.'}</p>
   return (
     <ul role="list" className="flex flex-col gap-2">
       {steps.map((s) => (
@@ -225,8 +225,12 @@ function AllRows({ chat, what, id, live, fallback }: { chat: string; what: 'turn
   if (d && 'output' in d) return <Output chat={chat} id={id} job live={live} />
   const rows = d && 'steps' in d ? rowsOf(d.steps) : fallback
   if (!rows) return <p className={clsx(quiet, 'px-1.5 py-0.5')}>Loading…</p>
-  if (!rows.length) return <p className={clsx(quiet, 'px-1.5 py-0.5')}>No steps yet.</p>
-  return <Rows rows={rows} chat={chat} what={what} id={id} live={live} />
+  const detail = d && 'steps' in d ? d : undefined
+  return <>
+    {detail?.warning ? <p className={clsx(quiet, 'px-1.5 py-0.5')}>{detail.warning}</p> : null}
+    {rows.length ? <Rows rows={rows} chat={chat} what={what} id={id} live={live} /> : detail?.catchingUp ? null : <p className={clsx(quiet, 'px-1.5 py-0.5')}>No steps yet.</p>}
+    {detail?.catchingUp ? <p className={clsx(quiet, 'px-1.5 py-0.5')}>Loading the rest of this log…</p> : null}
+  </>
 }
 
 /** the background work: each piece, what it does now and how long it has run; a tap opens its own steps or output */

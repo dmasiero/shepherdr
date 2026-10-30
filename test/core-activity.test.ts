@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CoreSource } from '../server/core/source.ts'
@@ -46,6 +46,19 @@ test('native activity renders before its reply and reads only a recorded output 
     source.store.set(`event:${chat}`, 'job', { kind: 'job', id: 'job', at: 6, job: 'agent', title: 'Check example', log: child })
     expect(await source.activity({ chat, what: 'job', id: 'job' })).toMatchObject({ steps: [{ id: 'child-step', output: true }] })
     expect(await source.activity({ chat, what: 'output', id: 'child-step' })).toMatchObject({ output: 'CHILD_NATIVE_OK' })
+    const history = join(root, 'large-child.jsonl')
+    const padding = JSON.stringify({ type: 'progress', padding: 'x'.repeat(5 * 1024 * 1024) }) + '\n'
+    const childStep = (id: string) => [
+      { uuid: id, type: 'assistant', timestamp: '2026-10-29T12:00:02Z', message: { id, role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command: 'printf CHILD_LARGE_OK' } }] } },
+      { uuid: id + '-result', type: 'user', timestamp: '2026-10-29T12:00:03Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'CHILD_LARGE_OK' }] } },
+    ].map(line => JSON.stringify(line)).join('\n') + '\n'
+    writeFileSync(history, padding + childStep('large-step'))
+    source.store.set(`event:${chat}`, 'large-job', { kind: 'job', id: 'large-job', at: 7, job: 'agent', title: 'Large child', log: history })
+    expect(await source.activity({ chat, what: 'job', id: 'large-job' })).toMatchObject({ steps: [], catchingUp: true })
+    expect(await source.activity({ chat, what: 'job', id: 'large-job' })).toMatchObject({ steps: [{ id: 'large-step', output: true }] })
+    expect(await source.activity({ chat, what: 'output', id: 'large-step' })).toMatchObject({ output: 'CHILD_LARGE_OK' })
+    appendFileSync(history, childStep('appended-step'))
+    expect(await source.activity({ chat, what: 'job', id: 'large-job' })).toMatchObject({ steps: [{ id: 'large-step' }, { id: 'appended-step' }] })
     const large = join(root, 'shell.output')
     writeFileSync(large, 'x'.repeat(300000) + '\ndone\n')
     source.store.set(`event:${chat}`, 'shell-job', { kind: 'job', id: 'shell-job', at: 7, job: 'shell', title: 'Example', output: large })

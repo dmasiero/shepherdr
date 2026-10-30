@@ -393,3 +393,21 @@ Sidebar CI 40978265737 passed layouts but exposed a new fixture expecting an
 uppercase spaced space name to succeed, contrary to the existing slug rule.
 The regression now sends the lowercase hyphenated name the UI actually sends;
 production behavior already correctly refused the invalid name.
+
+Child activity slice: native child histories now share incremental byte reads,
+with a per-job serialized cursor, reset-on-replacement reader and bounded cache
+of 200 step summaries. Other native text is not retained in this cache; output
+links keep original byte offsets. Very long displayed fields say shortened.
+The existing quiet sheet text names incomplete catch-up and oversized records.
+Two scoped review rounds: unbounded raw-event cache major fixed; second found
+none remaining. Authored CI coverage includes >4 MiB history, appended steps,
+original output links, 10,000-step cache bounds and loading/warning layout.
+Typecheck passed. Manual phone opened the real second-core Claude child's read,
+failed initial wait and later background wait; read output showed
+REMOTE_UPLOAD_CONTENT_OK after an isolated server restart
+(she301-native-child-output.png). Its native completion notice explicitly says
+it is still waiting on its own background work, so Shepherdr retains that job;
+we do not infer completion from elapsed time or the agent's commentary.
+Actual >4 MiB child history remains unverified manually. Sidebar follow-up CI
+40978356162 passed. Branch CI now also includes existing order, places and
+section regressions. Proof hf2s updated to v4; light/dark checker images inspected.

@@ -1,6 +1,10 @@
 import { activityOf, cutOutput, lineOf, outputFromLine, shown, type JobRec, type StepRec } from '../activity.ts'
 import type { ActivityAnswer, ActivityAsk, Message } from '../../shared/types.ts'
-import type { LogEvent } from '../live/readers/types.ts'
+import { CoreNativeFile } from './native-file.ts'
+import { CoreChildSteps } from './child-steps.ts'
+import { ClaudeReader } from '../live/readers/claude.ts'
+import { CodexReader } from '../live/readers/codex.ts'
+import type { LogEvent, Reader } from '../live/readers/types.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind } from './model.ts'
 
@@ -8,6 +12,7 @@ import type { AgentKind } from './model.ts'
 export class CoreActivity {
   private resolved = new Map<string, string>()
   private jobSteps = new Map<string, { chat: string; steps: StepRec[] }>()
+  private children = new Map<string, { file: CoreNativeFile; reader: Reader; projection: CoreChildSteps; warning?: string; running?: Promise<ActivityAnswer> }>()
   constructor(private source: CoreSource) {}
   private events(chat: string) { return this.source.store.all<LogEvent>(`event:${chat}`) }
   private state(chat: string) { return activityOf(this.events(chat)) }
@@ -70,23 +75,45 @@ export class CoreActivity {
     return path || undefined
   }
   private async job(chat: string, machine: string, job: JobRec, kind: AgentKind): Promise<ActivityAnswer> {
-    // Whole-file size bounds are explicit: never silently parse a tail as a complete log.
-    const { text } = await this.read(machine, job.log!, undefined, true)
-    const { ClaudeReader } = await import('../live/readers/claude.ts')
-    const { CodexReader } = await import('../live/readers/codex.ts')
-    const reader = kind === 'codex' ? new CodexReader() : new ClaudeReader(true)
-    let offset = 0
-    const lines = text.split('\n').map(text => { const at = offset; offset += Buffer.byteLength(text) + 1; return { text, offset: at } })
-    const state = activityOf(reader.parse(lines, job.log!))
-    const steps = [...state.turns, ...(state.open ? [state.open] : [])].flatMap(turn => turn.steps)
-    this.jobSteps.set(`${chat}:${job.id}`, { chat, steps })
-    while (this.jobSteps.size > 40) this.jobSteps.delete(this.jobSteps.keys().next().value!)
-    return { steps: steps.slice(-200).map(shown), more: Math.max(0, steps.length - 200) || undefined }
+    const key = `${chat}:${job.id}`
+    let child = this.children.get(key)
+    if (!child || child.file.path !== job.log || child.reader.cli !== kind) {
+      child = { file: new CoreNativeFile(job.log!), reader: kind === 'codex' ? new CodexReader() : new ClaudeReader(true), projection: new CoreChildSteps() }
+      this.children.set(key, child)
+    }
+    if (child.running) return child.running
+    const current = child
+    current.running = (async () => {
+      const bun = await this.source.agents.bun(machine)
+      let more = false
+      for (let count = 0; count < 4; count++) {
+        const batch = await current.file.read(this.source.files, machine, bun, () => {
+          current.reader.reset?.(job.log!); current.projection.reset(); current.warning = undefined
+        })
+        if (batch.oversized) current.warning = 'A native log record exceeds the 64 MiB display limit and was skipped.'
+        for (const event of current.reader.parse(batch.lines, job.log!)) current.projection.apply(event)
+        more = batch.more
+        if (!more) break
+      }
+      const steps = [...current.projection.steps.values()]
+      this.jobSteps.set(key, { chat, steps })
+      while (this.jobSteps.size > 40) this.jobSteps.delete(this.jobSteps.keys().next().value!)
+      // Keep the cursor with its output links. A later opening resumes at EOF.
+      while (this.children.size > 40) {
+        const old = [...this.children].find(([id, value]) => id !== key && !value.running)
+        if (!old) break
+        this.children.delete(old[0])
+      }
+      return { steps: steps.slice(-200).map(shown), more: current.projection.omitted || undefined,
+        catchingUp: more || undefined, warning: current.warning }
+    })()
+    try { return await current.running } finally { current.running = undefined }
   }
-  private async read(machine: string, path: string, offset?: number, full = false) {
+
+  private async read(machine: string, path: string, offset?: number) {
     const bun = await this.source.agents.bun(machine)
-    const script = `const f=require('node:fs'),x=JSON.parse(await Bun.stdin.text());const fd=f.openSync(x.path,'r');try{const s=f.fstatSync(fd);if(!s.isFile())throw Error('No such native output');if(x.full&&s.size>4194304)throw Error('This native job log exceeds the 4 MiB display limit');const from=x.full?0:x.offset===undefined?Math.max(0,s.size-262144):x.offset;if(!Number.isSafeInteger(from)||from<0)throw Error('Invalid native output offset');const b=Buffer.alloc(Math.min(x.full?4194304:x.offset===undefined?262144:4194304,Math.max(0,s.size-from)));let n=0;while(n<b.length){const got=f.readSync(fd,b,n,b.length-n,from+n);if(!got)break;n+=got}let text=b.subarray(0,n).toString('utf8');if(x.full){}else if(x.offset!==undefined){const end=text.indexOf('\\n');if(end<0&&from+n<s.size)throw Error('Native output line exceeds the display limit');if(end>=0)text=text.slice(0,end)}else if(from){const end=text.indexOf('\\n');text=end<0?'':text.slice(end+1)}process.stdout.write(JSON.stringify({data:Buffer.from(text).toString('base64'),cut:!x.full&&x.offset===undefined&&from>0}))}finally{f.closeSync(fd)}`
-    const result = JSON.parse((await this.source.files.exec(machine, [bun, '-e', script], undefined, Buffer.from(JSON.stringify({ path, offset, full })))).toString('utf8')) as { data: string; cut: boolean }
+    const script = `const f=require('node:fs'),x=JSON.parse(await Bun.stdin.text());const fd=f.openSync(x.path,'r');try{const s=f.fstatSync(fd);if(!s.isFile())throw Error('No such native output');const from=x.offset===undefined?Math.max(0,s.size-262144):x.offset;if(!Number.isSafeInteger(from)||from<0)throw Error('Invalid native output offset');const b=Buffer.alloc(Math.min(x.offset===undefined?262144:4194304,Math.max(0,s.size-from)));let n=0;while(n<b.length){const got=f.readSync(fd,b,n,b.length-n,from+n);if(!got)break;n+=got}let text=b.subarray(0,n).toString('utf8');if(x.offset!==undefined){const end=text.indexOf('\\n');if(end<0&&from+n<s.size)throw Error('Native output line exceeds the display limit');if(end>=0)text=text.slice(0,end)}else if(from){const end=text.indexOf('\\n');text=end<0?'':text.slice(end+1)}process.stdout.write(JSON.stringify({data:Buffer.from(text).toString('base64'),cut:x.offset===undefined&&from>0}))}finally{f.closeSync(fd)}`
+    const result = JSON.parse((await this.source.files.exec(machine, [bun, '-e', script], undefined, Buffer.from(JSON.stringify({ path, offset })))).toString('utf8')) as { data: string; cut: boolean }
     return { text: Buffer.from(result.data, 'base64').toString('utf8'), cut: result.cut }
   }
 }

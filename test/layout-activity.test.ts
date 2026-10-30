@@ -112,3 +112,17 @@ describe.skipIf(!browser)('activity', () => {
     await page.close()
   }, 30_000)
 })
+
+describe.skipIf(!browser)('activity log catch-up', () => {
+  test('the background job sheet shows incomplete history honestly', async () => {
+    const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+    await page.route('**/api/activity?*', route => route.fulfill({ json: { steps: [], catchingUp: true, warning: 'A native log record exceeds the 64 MiB display limit and was skipped.' } }))
+    await page.goto(HP202)
+    await page.locator('button[data-jobs]').tap()
+    await page.getByRole('button', { name: /Review the mute fix/ }).tap()
+    await page.getByText('Loading the rest of this log…').waitFor()
+    await page.getByText('A native log record exceeds the 64 MiB display limit and was skipped.').waitFor()
+    expect(await page.getByText('No steps yet.').count()).toBe(0)
+    await page.close()
+  })
+})

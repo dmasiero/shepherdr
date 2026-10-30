@@ -496,7 +496,7 @@ export interface ActivityAsk {
   id: string
 }
 
-export type ActivityAnswer = { steps: Step[]; more?: number } | { output: string; cut?: boolean } | { error: string }
+export type ActivityAnswer = { steps: Step[]; more?: number; catchingUp?: boolean; warning?: string } | { output: string; cut?: boolean } | { error: string }
 
 /** A reply's quote of the message it answers */
 export interface ReplyQuote {
