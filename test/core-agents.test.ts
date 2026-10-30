@@ -76,8 +76,9 @@ test('ordinary replacement preserves both private launch identities for later de
   const home = mkdtempSync(join(tmpdir(), 'shep-ordinary-history-')), store = new CoreStore(home)
   try {
     const terminals = new Map<string, import('../server/core/protocol.ts').CoreTerminal>()
-    let count = 0
-    const core = { current: { terminals }, call: async (_method: string, input: { labels: Record<string, string> }) => {
+    let count = 0, launchWords: string[] = []
+    const core = { current: { terminals }, call: async (_method: string, input: { labels: Record<string, string>; argv: string[] }) => {
+      launchWords = input.argv
       const address = `t${++count}`, terminal = { address, labels: input.labels, pid: count * 10, state: 'live', created_ms: count } as import('../server/core/protocol.ts').CoreTerminal
       terminals.set(address, terminal); return terminal
     } } as unknown as CoreSession
@@ -86,7 +87,11 @@ test('ordinary replacement preserves both private launch identities for later de
     const space = { id: 'space', name: 'Example', machine: 'machine', folder: '/unused', base: 'main', prefix: 'EX', mode: 'regular' as const, added: 1 }
     const first = await agents.launch(space, 'EX-1/Agent', 'codex', 'Wait', { role: 'task', task: 'EX-1' })
     terminals.get(first.terminal!)!.state = 'finished'
-    const second = await agents.launch(space, first.chat, 'codex', 'Wait', { role: 'task', task: 'EX-1' })
+    first.session = 'native-session'; store.set('agent', first.chat, first)
+    const second = await agents.launch(space, first.chat, 'codex', 'Wait', { role: 'task', task: 'EX-1', resume: true })
+    expect(launchWords.at(-1)).toContain(`Your current owning authenticated command is ${second.command}`)
+    expect(launchWords.at(-1)).toContain('replaces every helper path in earlier conversation history')
+    expect(launchWords.at(-1)).not.toContain('credential.json')
     expect(first.launch).not.toBe(second.launch)
     expect(store.get('agent-launch', first.launch)).toMatchObject({ terminal: 't1', pid: 10, role: 'task' })
     expect(store.get('agent-launch', second.launch)).toMatchObject({ terminal: 't2', pid: 20, role: 'task' })

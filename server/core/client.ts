@@ -13,7 +13,9 @@ export class Refusal extends Error {
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 type Stream = { data(bytes: Buffer): void; close(reason: unknown): void }
-export type CoreEndpoint = string | { binary: string; session?: string; socket?: string }
+export const CORE_ENVIRONMENT = ['XDG_RUNTIME_DIR', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME'] as const
+export type CoreEnvironment = Partial<Record<typeof CORE_ENVIRONMENT[number], string | null>>
+export type CoreEndpoint = string | { binary: string; session?: string; socket?: string; environment?: CoreEnvironment }
 const REQUIRED = ['terminal.run', 'terminal.list', 'terminal.get', 'terminal.label', 'terminal.attach', 'terminal.send', 'terminal.wait', 'events.subscribe', 'doc.get', 'doc.set', 'file.read', 'machine.exec']
 
 /** One local Unix socket. No shell, SSH bridge, screen parsing, or retry of uncertain writes. */
@@ -50,6 +52,12 @@ export class CoreClient {
     if (typeof endpoint === 'string') return this.open(endpoint)
     const env = { ...process.env }
     delete env.HC_SOCKET; delete env.HC_TERMINAL_ID; delete env.HC_CORE_ID
+    for (const key of CORE_ENVIRONMENT) if (endpoint.environment && Object.hasOwn(endpoint.environment, key)) {
+      const value = endpoint.environment[key]
+      if (value === null) delete env[key]
+      else if (typeof value === 'string' && value.length <= 4096 && !value.includes('\0')) env[key] = value
+      else throw new CoreError('incompatible', 'Invalid core endpoint environment')
+    }
     if (endpoint.socket) env.HC_SOCKET = endpoint.socket
     if (endpoint.session) env.HC_SESSION = endpoint.session
     else delete env.HC_SESSION

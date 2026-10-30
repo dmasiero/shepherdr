@@ -18,7 +18,7 @@ const NO_REPLY = Symbol('no reply')
 
 
 async function fixture(run: (client: CoreClient, wire: { send(channel: number, body: string | Buffer, kind?: number): void }) => Promise<void>,
-  respond: (call: Call, socket: Socket) => unknown = () => ({}), command = false) {
+  respond: (call: Call, socket: Socket) => unknown = () => ({}), command: boolean | { environment: import('../server/core/client.ts').CoreEnvironment; inherited: Record<string, string | undefined> } = false) {
   const directory = mkdtempSync(join(tmpdir(), 'shep-core-'))
   const path = join(directory, 'core.sock')
   const sockets = new Set<Socket>()
@@ -57,8 +57,12 @@ async function fixture(run: (client: CoreClient, wire: { send(channel: number, b
   try {
     if (command) {
       const binary = join(directory, 'hc')
-      writeFileSync(binary, `#!${process.execPath}\nimport{connect}from'node:net';const s=connect(${JSON.stringify(path)});process.stdin.pipe(s);s.pipe(process.stdout);s.on('close',()=>process.exit());`, { mode: 0o700 })
-      client = await CoreClient.endpoint({ binary, session: 'remote' })
+      writeFileSync(binary, `#!${process.execPath}\n${typeof command === 'object' ? `for(const [k,v]of Object.entries(${JSON.stringify(command.environment)})){if((process.env[k]??null)!==v)process.exit(91)}` : ''}\nimport{connect}from'node:net';const s=connect(${JSON.stringify(path)});process.stdin.pipe(s);s.pipe(process.stdout);s.on('close',()=>process.exit());`, { mode: 0o700 })
+      const old = typeof command === 'object' ? Object.fromEntries(Object.keys(command.inherited).map(key => [key, process.env[key]])) : {}
+      try {
+        if (typeof command === 'object') for (const [key, value] of Object.entries(command.inherited)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+        client = await CoreClient.endpoint({ binary, session: 'remote', ...(typeof command === 'object' ? { environment: command.environment } : {}) })
+      } finally { for (const [key, value] of Object.entries(old)) { if (value === undefined) delete process.env[key]; else process.env[key] = value } }
     } else client = await CoreClient.open(path)
     await run(client, { send: (channel, body, kind) => peer.write(frame(channel, body, kind)) })
   } finally {
@@ -144,4 +148,10 @@ test('finished events retain process identity for confirmed cleanup, unlike a lo
       expect(session.current.terminals.get('t1')?.pid).toBeNull()
     } finally { session.stop() }
   }, () => ({ channel: 2, seq: 0, terminals: [terminal] }))
+})
+
+test('remote connect preserves its verified core homes when a tool shell changes or adds XDG variables', async () => {
+  await fixture(async client => {
+    await expect(client.call('server.status')).resolves.toEqual({})
+  }, () => ({}), { environment: { XDG_RUNTIME_DIR: '/private/core-runtime', XDG_STATE_HOME: '/private/core-state', XDG_CONFIG_HOME: null }, inherited: { XDG_RUNTIME_DIR: '/other/runtime', XDG_STATE_HOME: undefined, XDG_CONFIG_HOME: '/other/config' } })
 })

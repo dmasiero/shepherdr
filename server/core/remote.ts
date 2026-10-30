@@ -3,9 +3,9 @@ import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { CORE_VERSION } from './protocol.ts'
 import type { CoreFiles } from './files.ts'
-import type { CoreEndpoint } from './client.ts'
+import { CORE_ENVIRONMENT, type CoreEnvironment, type CoreEndpoint } from './client.ts'
 
-export interface RemoteRuntime { root: string; home: string; bun: string; hc: string; path: string; session?: string; socket?: string; endpoint: CoreEndpoint; browser: string }
+export interface RemoteRuntime { root: string; home: string; bun: string; hc: string; path: string; session?: string; socket?: string; environment?: CoreEnvironment; endpoint: CoreEndpoint; browser: string }
 const PARTS = ['helper/core-worktree-includes.ts', 'helper/core-worktree-move.ts', 'helper/core-cli.ts', 'helper/core-hook.ts', 'helper/core-review.ts', 'helper/core-secret.ts', 'helper/core-browser.ts', 'helper/core-browser-session.ts', 'server/browser-pick.ts', 'shared/browser.ts', 'server/core/browser-protocol.ts', 'server/core/home.ts', 'server/core/client.ts', 'server/core/protocol.ts', 'server/core/envelope.ts', 'server/core/mailbox.ts', 'server/core/request.ts']
 PARTS.push(...['artifact', 'inventory', 'native', 'path', 'ssh', 'git', 'backend', 'bootstrap', 'capture', 'cli', 'gateway', 'home', 'hook', 'launch', 'proxy', 'records', 'runtime', 'sandbox', 'tls'].map(name => `helper/core-pilot-${name}.ts`))
 const quote = (text: string) => `'${text.replace(/'/g, `'"'"'`)}'`
@@ -32,7 +32,7 @@ export class CoreRemotes {
     const profile = this.profile(machine)
     if (profile.version !== CORE_VERSION) throw new Error(`This machine must run core ${CORE_VERSION}; no binary or service was changed`)
     const bun = await this.bun(machine)
-    const metadata = JSON.parse((await this.files.exec(machine, [bun, '-e', `const o=require('node:os'),f=require('node:fs');const hc=Bun.which('hc');if(!hc)throw Error('hc is missing from this core environment');const v=Bun.spawnSync([hc,'--version']);if(v.exitCode)throw Error('hc version failed');console.log(JSON.stringify({home:f.realpathSync(o.homedir()),bun:process.execPath,hc,path:process.env.PATH||'',version:v.stdout.toString().trim(),session:process.env.HC_SESSION,socket:process.env.HC_SOCKET,platform:process.platform,arch:process.arch,musl:process.platform==='linux'&&(()=>{const p=Bun.spawnSync(['ldd','--version']);return /musl/i.test(p.stdout.toString()+p.stderr.toString())})()}))`])).toString('utf8')) as { home: string; bun: string; hc: string; path: string; version: string; session?: string; socket?: string; platform: string; arch: string; musl: boolean }
+    const metadata = JSON.parse((await this.files.exec(machine, [bun, '-e', `const o=require('node:os'),f=require('node:fs');const hc=Bun.which('hc');if(!hc)throw Error('hc is missing from this core environment');const v=Bun.spawnSync([hc,'--version']);if(v.exitCode)throw Error('hc version failed');console.log(JSON.stringify({home:f.realpathSync(o.homedir()),bun:process.execPath,hc,path:process.env.PATH||'',version:v.stdout.toString().trim(),session:process.env.HC_SESSION,socket:process.env.HC_SOCKET,environment:Object.fromEntries(${JSON.stringify(CORE_ENVIRONMENT)}.map(k=>[k,process.env[k]??null])),platform:process.platform,arch:process.arch,musl:process.platform==='linux'&&(()=>{const p=Bun.spawnSync(['ldd','--version']);return /musl/i.test(p.stdout.toString()+p.stderr.toString())})()}))`])).toString('utf8')) as { home: string; bun: string; hc: string; path: string; version: string; session?: string; socket?: string; environment?: CoreEnvironment; platform: string; arch: string; musl: boolean }
     if (!metadata.version.endsWith(` ${CORE_VERSION}`) && metadata.version !== CORE_VERSION) throw new Error(`Remote hc must be pinned to ${CORE_VERSION}; nothing was installed`)
     const source = join(import.meta.dir, '../..')
     const parts = Object.fromEntries(PARTS.map(path => [path, readFileSync(join(source, path), 'utf8')]))
@@ -62,7 +62,7 @@ export class CoreRemotes {
     await this.files.exec(machine, [metadata.bun, '-e', script], undefined, Buffer.from(JSON.stringify({ root, parts })))
     await this.binary(machine, metadata.bun, root, join(root, 'vendor/agent-browser/bin', binaryName), browserBytes, browserHash)
     const session = profile.session ?? metadata.session
-    const endpoint = { binary: metadata.hc, session, socket: metadata.socket }
+    const endpoint = { binary: metadata.hc, session, socket: metadata.socket, environment: metadata.environment }
     const check = `const {CoreClient}=await import(${JSON.stringify(join(root, 'server/core/client.ts'))});const c=await CoreClient.endpoint(${JSON.stringify(endpoint)});try{const s=await c.call('server.status');if(s.core.id!==${JSON.stringify(machine)})throw Error('Remote helper reached a different core identity');console.log('identity verified')}finally{c.close()}`
     await this.files.exec(machine, [metadata.bun, '-e', check])
     return { ...metadata, root, session, endpoint, browser: join(root, 'bin/agent-browser') }

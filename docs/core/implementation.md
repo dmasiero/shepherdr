@@ -1572,3 +1572,39 @@ findings. After restarting only the isolated preview, INCL-1 started without
 changing the machine limit or REMO-15 launch/workflow/PID/held file. CI regression
 covers waiting, active work, reviewer work and recent reservations. Local
 bun run typecheck passed; no local suites or full build ran.
+
+### Verified core environment survives native tool shells (2026-10-30)
+
+The actual INCL-1 native Codex run exposed a connection regression: hc reported
+that core listened under the isolated XDG runtime but the tool shell looked under
+/run/user/1000. Approving execution outside the ordinary sandbox did not repair
+that environment. No socket/config/authentication setting was changed.
+
+Remote provisioning now captures only the three documented core home variables
+(XDG_RUNTIME_DIR, XDG_STATE_HOME, XDG_CONFIG_HOME) from core exec. Protected
+per-launch endpoints restore those values before hc connect; explicit null removes
+a foreign inherited value. Native launch/tool environment also preserves present
+values. Core identity/version checks remain required. A resumed native turn now
+explicitly states its current public helper command, since the resumed Codex used
+a historical immutable helper path despite refreshed developer instructions. No
+credential value or credential pathname is added to that turn.
+
+Reproduced failure then actual recovery: restarted only this isolated fixture's
+Codex, approved its own new hooks, and answered the native permission card on the
+phone-width app. Current helper done INCL-1 completed through core; native marker
+NATIVE_CORE_INCLUDE_SEED_AND_COMPLETION_OK arrived. Independent read-only checks
+confirmed workflow closed/outcome done, no pending copy/cleanup, checkout removed,
+all three source fixture byte strings unchanged, and REMO-15's held bytes, workflow,
+launch and PID unchanged. Marker:
+NATIVE_CORE_INCLUDE_SEED_COMPLETION_AND_SOURCE_HELD_WORK_PRESERVATION_OK.
+Screenshots she301-includes-done-phone*.png captured and inspected. This is a
+same-host remote-core run, not external vm-ssa acceptance. The earlier helper
+failure above is resolved for this fixture. Endpoint and resumed-routing scopes
+received fresh reviews with no findings. Local bun run typecheck passed; no local
+suite/build was run. GitHub 41026721786 passed the preceding capacity fix.
+
+The broader branch Check 41026368007 passed types/build but failed all test shards.
+Its contained To-do capacity failure was fixed in a94fd58b and then passed the
+rewrite workflow. Remaining full-suite failures include design-policy assertions,
+agent controls, reader fixture expectations and several existing layout fixtures;
+they are not waived as acceptance or hidden by the selected rewrite checks.

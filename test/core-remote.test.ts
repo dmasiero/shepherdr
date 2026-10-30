@@ -11,7 +11,7 @@ test('remote helpers are immutable private files and launch credentials cannot f
   const files = { exec: async (_machine: string, argv: string[], _cwd?: string, input?: Uint8Array) => {
     if (argv[0] === 'rm') { const result = Bun.spawnSync(argv); if(result.exitCode) throw Error(result.stderr.toString()); return result.stdout }
     if (argv[0] === 'sh') return Buffer.from(process.execPath)
-    if (argv[2].startsWith("const o=require")) return Buffer.from(JSON.stringify({ home, bun: process.execPath, hc: '/core/hc', path: '/core', version: 'hc 0.1.14', session: 'isolated', platform: process.platform, arch: process.arch, musl: false }))
+    if (argv[2].startsWith("const o=require")) return Buffer.from(JSON.stringify({ home, bun: process.execPath, hc: '/core/hc', path: '/core', version: 'hc 0.1.14', session: 'isolated', environment: { XDG_RUNTIME_DIR: '/private/runtime', XDG_STATE_HOME: '/private/state', XDG_CONFIG_HOME: null }, platform: process.platform, arch: process.arch, musl: false }))
     if (argv[2].startsWith('const {CoreClient}')) return Buffer.from('identity verified')
     const result = Bun.spawnSync(argv, { stdin: input ?? 'ignore' })
     if (result.exitCode) throw new Error(result.stderr.toString())
@@ -20,7 +20,7 @@ test('remote helpers are immutable private files and launch credentials cannot f
   const remotes = new CoreRemotes(files, 'installation', () => ({ version: '0.1.14' }))
   try {
     const runtime = await remotes.prepare('machine')
-    expect(runtime.endpoint).toEqual({ binary: '/core/hc', session: 'isolated', socket: undefined })
+    expect(runtime.endpoint).toEqual({ binary: '/core/hc', session: 'isolated', socket: undefined, environment: { XDG_RUNTIME_DIR: '/private/runtime', XDG_STATE_HOME: '/private/state', XDG_CONFIG_HOME: null } })
     expect(statSync(runtime.root).mode & 0o077).toBe(0)
     expect(statSync(join(runtime.root, 'bin/shepherdr')).mode & 0o777).toBe(0o700)
     expect((await remotes.prepare('machine')).root).toBe(runtime.root)

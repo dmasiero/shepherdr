@@ -101,7 +101,8 @@ export class CoreAgents {
     const path = `${join(root, 'bin')}:${binary.includes('/') ? dirname(binary) + ':' : ''}${remote?.path ?? process.env.PATH ?? ''}`
     const browserSession = sessionForBrowser(chat)
     const browserRoot = remote ? join(dirname(remote.root), 'browser') : join(this.config.home, 'browser')
-    const shellEnv = { AGENT_BROWSER_NAMESPACE: browserNamespace(this.installation.id), AGENT_BROWSER_SESSION: browserSession, AGENT_BROWSER_PROFILE: join(browserRoot, browserSession), SHEPHERDR_COMMAND: join(root, 'bin/shepherdr'), SHEPHERDR_BACKEND: 'core', SHEPHERDR_CORE_CREDENTIAL: credential, SHEPHERDR_HOME: remote?.root ?? this.config.home,
+    const coreEnvironment = remote?.environment ?? Object.fromEntries(['XDG_RUNTIME_DIR', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME'].map(key => [key, process.env[key] ?? null]))
+    const shellEnv = { ...Object.fromEntries(Object.entries(coreEnvironment).filter((entry): entry is [string, string] => typeof entry[1] === 'string')), AGENT_BROWSER_NAMESPACE: browserNamespace(this.installation.id), AGENT_BROWSER_SESSION: browserSession, AGENT_BROWSER_PROFILE: join(browserRoot, browserSession), SHEPHERDR_COMMAND: join(root, 'bin/shepherdr'), SHEPHERDR_BACKEND: 'core', SHEPHERDR_CORE_CREDENTIAL: credential, SHEPHERDR_HOME: remote?.root ?? this.config.home,
       SHEPHERDR_PORT: remote ? '' : String(this.config.port), PATH: path, HC_SESSION: remote ? remote.session ?? 'default' : this.config.session, HC_SOCKET: remote ? remote.socket ?? '' : this.config.socket }
     const command = options.pilot ? '/run/shepherdr/bun /run/shepherdr/core-pilot-hook.ts' : `${quote(remote?.bun ?? process.execPath)} ${quote(join(root, 'helper/core-hook.ts'))}`
     const settings = join(directory, `${grant.id}.settings.json`)
@@ -160,7 +161,9 @@ export class CoreAgents {
     }
     // A native CLI can defer SessionStart until its first turn. An explicit, harmless restart turn
     // gives hooks a real readiness signal; no quiet-screen heuristic is used.
-    argv.push('--', prompt || '<restart>Shepherdr restarted this coordinator. Read your role and wait for the human. Do not use tools or start work. Reply only <no-reply>Waiting for the human</no-reply>.</restart>')
+    const turn = prompt || '<restart>Shepherdr restarted this coordinator. Read your role and wait for the human. Do not use tools or start work. Reply only <no-reply>Waiting for the human</no-reply>.</restart>'
+    const routing = record.session ? `<restart>This is a new Shepherdr launch. Your current owning authenticated command is ${record.command}. It replaces every helper path in earlier conversation history. Preserve the current SHEPHERDR_CORE_CREDENTIAL environment reference without reading or printing it; never borrow an earlier launch credential. Continue the existing task only.</restart>\n\n` : ''
+    argv.push('--', routing + turn)
     if (options.pilot && prepared) {
       const file = join(directory, `${grant.id}.pilot-launch.json`)
       await privateFile(file, JSON.stringify({ ...prepared, credential, args: argv.slice(1), hosts: options.pilot.hosts, deadline: options.pilot.deadline } satisfies PilotLaunch))
