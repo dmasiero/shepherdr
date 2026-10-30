@@ -59,7 +59,7 @@ export function SectionDialogs() {
     return <NameDialog key={`new:${o.make}`} snap={snap} kind="new" machine={o.make || undefined} />
   }
   const m = snap.machines?.find((x) => x.id === o.rename)
-  if (m) return <NameDialog key={m.id} snap={snap} kind="machine" id={m.id} own={m.machine} name={m.name} emoji={m.emoji} />
+  if (m) return <NameDialog key={m.id} snap={snap} kind="machine" id={m.id} own={m.ownName ?? m.machine} name={m.name} emoji={m.emoji} />
   const s = snap.sections?.find((x) => x.id === o.rename)
   return s ? <NameDialog key={s.id} snap={snap} kind="section" id={s.id} name={s.name} emoji={s.emoji} machine={s.machine} /> : null
 }

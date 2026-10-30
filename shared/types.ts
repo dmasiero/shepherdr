@@ -96,6 +96,8 @@ export interface Section {
 }
 
 export interface Machine {
+  /** Core native display name, before a Shepherdr-only rename. */
+  ownName?: string
   /** m:<its key>: what its spaces' order and its fold are kept under */
   id: string
   /** its key: herdr's label for it */

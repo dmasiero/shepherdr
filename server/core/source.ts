@@ -24,6 +24,7 @@ import { CoreArtifacts } from './artifacts.ts'
 import { CoreChat } from './chat.ts'
 import { CoreActivity } from './activity.ts'
 import { CoreWorktree } from './worktree.ts'
+import { CorePlaces } from './places.ts'
 import type { ActivityAsk, WorktreeAsk } from '../../shared/types.ts'
 
 interface Machine { id: string; name: string; state: string; host?: string; version?: string; session?: string | null }
@@ -40,6 +41,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
   readonly mailbox: Mailbox
   readonly agents: CoreAgents
   readonly logs: CoreLogs
+  readonly places: CorePlaces
   readonly tasks: CoreTasks
   readonly questions: CoreQuestions
   readonly settings: CoreSettings
@@ -72,6 +74,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.logs = new CoreLogs(this.agents, this.files, this.store, changed, (chat, message) => { this.faults.set(chat, message) })
     this.settings = new CoreSettings(this.store, this.files, () => this.spaces(), id => id === this.local.id ? this.local.name : this.machineName(id) || id, () => this.emit('snapshot'))
     this.agents.settings = this.settings
+    this.places = new CorePlaces(this)
     this.tasks = new CoreTasks(this)
     this.questions = new CoreQuestions(this)
     this.secrets = new CoreSecrets(this)
@@ -190,10 +193,10 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     for (const row of this.secrets.open()) asks[row.chat] = row.id
     return {
       terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
-      places: spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
+      ...this.places.present(spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
-      machines: [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
-        ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))],
+      [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, status: this.connected() ? 'idle' : 'off' },
+        ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),
       tasks: this.tasks.all().map(task => this.tasks.view(task)), artifacts: this.artifacts.list(), automations: {}, asks,
       settings: this.secrets.pages(this.settings.sections()),
       last: Object.fromEntries(this.store.all<{ chat: string; at: number }>('last').map(item => [item.chat, item.at])),
@@ -284,7 +287,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         stream.input(Buffer.from(action.text)); stream.close(); return {}
       }
       case 'read': this.store.set('meta', 'read', { ...this.store.get<Record<string, number>>('meta', 'read'), ...action.chats }); this.emit('snapshot'); return {}
-      case 'rename': this.store.set('name', action.id, action.name); this.emit('snapshot'); return {}
+      case 'rename': case 'order': case 'move': case 'section': return this.places.act(action)
       case 'react': {
         const text = this.chats.reaction(action.chat, action.message, action.emoji), id = randomUUID()
         this.store.db.transaction(() => {

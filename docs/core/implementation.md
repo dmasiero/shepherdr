@@ -376,3 +376,16 @@ cover those cases, UTF-8 boundaries, regular EOF, large sparse files and slot
 fairness. Manual second-core native reply NATIVE_READER_OK appeared after an
 isolated preview restart (she301-native-reader-phone.png); real >64 MiB native
 agent history acceptance remains unverified. Lifecycle CI 40977676240 passed.
+
+Sidebar organization slice: the same shared ordering/section rules now persist
+in core-backed product SQLite metadata. Sections, pinned spaces, machine/space
+order, moves, renames and emoji use the existing UI. Names never change native
+core machine identity or repository paths; machine rename reset shows its native
+display name rather than its immutable UUID. Section mutations use own-key maps.
+Scoped fresh review found no critical/major/minor findings. Typecheck passed;
+authored core regressions cover ordering restoration, scoping, duplicate names,
+pinning, native-name reset and invalid inherited object keys. Manual phone UI
+created Core proof, moved remote-demo into it and retained the section/move after
+isolated server restart; rename to Core evidence succeeded. Screenshot
+she301-sidebar-section-phone.png. Drag gesture and full legacy device comparison
+remain unverified. Native main-log CI 40978065938 passed.
