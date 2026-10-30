@@ -157,6 +157,7 @@ export class CorePilotPolicy {
     if (!Array.isArray(args) || args.length > 256 || args.some(word => typeof word !== 'string' || word.length > 65536)) throw new Refusal('Invalid command words')
     const [command, op] = args
     if (['help', 'show', 'models', 'progress'].includes(command)) return run
+    if (command === 'mode' && op === 'regular' && actor.role === 'coordinator' && run.state === 'on') return run
     if (command === 'heartbeat' && !op || command === 'complete' && actor.role === 'coordinator' || command === 'checkpoint' && actor.role === 'task') return run
     if (command === 'secret' && ['list', 'ask', 'run', 'env'].includes(op)) return run // Secret names are separately checked against the run snapshot.
     if (command === 'task' && ['list', 'show', 'chat'].includes(op)) return run

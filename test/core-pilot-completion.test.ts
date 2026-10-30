@@ -111,3 +111,34 @@ test('confirmed retry clears its temporary return error while preserving a disti
   expect(f.source.store.get<{ error?: string }>('pilot-completion', f.run.id)?.error).toBeUndefined()
   expect(f.source.pilots.policy.get(f.run.id)?.error).toBe('Original shared limit')
 }))
+
+test('coordinator failure-stop saves a durable reason without claiming goal completion and recovers offline', () => fixture(async f => {
+  expect(() => f.source.pilots.completion.stop({ ...f.agent, role: 'task' }, 'failure')).toThrow('coordinator')
+  expect(() => f.source.pilots.completion.stop({ ...f.agent, launch: 'forged' }, 'failure')).toThrow('belong')
+  expect(() => f.source.pilots.completion.stop(f.agent, ' ')).toThrow('--why')
+  expect(f.source.pilots.completion.stop(f.agent, 'Repeated checks failed; human needed')).toContain('Stop requested')
+  expect(f.starts()).toBe(0)
+  expect(f.source.pilots.policy.get(f.run.id)).toMatchObject({ state: 'stopping', last: { reason: 'Stopped by coordinator', outcome: 'Repeated checks failed; human needed' } })
+  expect(f.source.store.get('pilot-progress', f.run.id)).toMatchObject({ text: 'Stopped: Repeated checks failed; human needed' })
+  expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ state: 'pending', keepWorkers: false, reason: 'Repeated checks failed; human needed' })
+  expect(f.source.store.get<Record<string, unknown>>('pilot-completion', f.run.id)?.evidence).toBeUndefined()
+  f.source.machineConnected = () => false
+  await new CorePilotCompletion(f.source).tick()
+  expect(f.starts()).toBe(0)
+  f.source.machineConnected = () => true
+  await new CorePilotCompletion(f.source).tick()
+  await new CorePilotCompletion(f.source).tick()
+  expect(f.starts()).toBe(1)
+  expect(f.source.pilots.policy.get(f.run.id)?.state).toBe('stopped')
+}))
+
+
+test('failure-stop preserves saved next steps independently of its reason across durable return', () => fixture(async f => {
+  f.source.store.set('pilot-progress', f.run.id, { text: 'Failure inspected. Next: human checks credentials.', at: 1 })
+  f.source.pilots.completion.stop(f.agent, 'Repeated failures')
+  expect(f.source.store.get('pilot-progress', f.run.id)).toMatchObject({ text: 'Failure inspected. Next: human checks credentials.', at: 1 })
+  expect(f.source.store.get('pilot-completion', f.run.id)).toMatchObject({ reason: 'Repeated failures' })
+  await new CorePilotCompletion(f.source).tick()
+  expect(f.starts()).toBe(1)
+  expect(f.source.store.get('pilot-progress', f.run.id)).toMatchObject({ text: 'Failure inspected. Next: human checks credentials.' })
+}))

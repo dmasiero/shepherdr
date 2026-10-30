@@ -23,7 +23,7 @@ export class CorePilotCommands {
     const run = this.run(agent)
     this.source.pilots.policy.command(run.id, this.source.pilots.actor(agent), words)
     const text = (value: unknown) => ({ out: (typeof value === 'string' ? value : JSON.stringify(value, null, 2)) + '\n', code: 0 })
-    if (command === 'help') return text('Contained Shepherdr: show, models, heartbeat, progress [TEXT], complete EVIDENCE, task add/list/show/chat/start/tell/queue/stop/pause/pin/unpin/archive/unarchive/close/delete, status, checkpoint MESSAGE, review, ready, pr, checks, merge, ask, plan, alert, secret list/ask/run/env, artifact new/update/check/list/show/remove. Every action stays inside this run’s profile; changing earlier tasks requires explicit task start.')
+    if (command === 'help') return text('Contained Shepherdr: show, models, heartbeat, progress [TEXT], complete EVIDENCE, mode regular --why REASON, task add/list/show/chat/start/tell/queue/stop/pause/pin/unpin/archive/unarchive/close/delete, status, checkpoint MESSAGE, review, ready, pr, checks, merge, ask, plan, alert, secret list/ask/run/env, artifact new/update/check/list/show/remove. Every action stays inside this run’s profile; changing earlier tasks requires explicit task start.')
     if (command === 'show') return text(this.source.settings.describe(agent.space))
     if (command === 'models') return text(this.source.settings.clis(agent.space))
     if (command === 'heartbeat') return text(this.source.heartbeats.cli(agent, ['heartbeat']))
@@ -39,6 +39,10 @@ export class CorePilotCommands {
     if (command === 'complete') {
       if (words.length !== 2) throw new Refusal('Use shepherdr complete "goal evidence"')
       return text(this.source.pilots.completion.request(agent, words[1]))
+    }
+    if (command === 'mode') {
+      if (words.length !== 2 || op !== 'regular' || parsed.flags.size || Object.keys(parsed.opts).some(key => key !== 'why')) throw new Refusal('Use mode regular --why "reason" for your own run')
+      return text(this.source.pilots.completion.stop(agent, one(parsed, 'why') || ''))
     }
     if (command === 'secret') {
       if (agent.role === 'reviewer') throw new Refusal('Reviewers cannot use secrets')

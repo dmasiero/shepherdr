@@ -203,3 +203,24 @@ test('contained coordinator controls only owned tasks and archived lists remain 
     expect(f.source.tasks.get('EX-1')?.archived).toBeUndefined()
   } finally { f.close() }
 })
+
+test('contained mode-off is only the private current coordinator’s own run and refuses broad controls', async () => {
+  const f = fixture()
+  try {
+    await expect(f.cli('mode', 'autopilot', '--why', 'No')).rejects.toThrow('needs the human')
+    await expect(f.cli('mode', 'other-space', 'regular', '--why', 'No')).rejects.toThrow('needs the human')
+    await expect(f.cli('mode', 'regular', '--keep-workers', '--why', 'No')).rejects.toThrow('Use mode')
+    await expect(f.cli('mode', 'regular')).rejects.toThrow('--why')
+    const grant = f.source.mailbox.issue(f.task.chat, 'worker-launch', 'machine', ['cli', 'pilot'])
+    const worker: CoreAgent = { ...f.agent, chat: grant.chat, grant: grant.id, launch: grant.session, role: 'task' }
+    f.source.store.set('agent', worker.chat, worker)
+    f.source.pilots.policy.bind(f.run.id, { chat: worker.chat, launch: worker.launch, role: 'task', task: f.task.id })
+    await expect(f.source.pilots.commands.cli(worker, grant, ['mode', 'regular', '--why', 'No'])).rejects.toThrow('needs the human')
+    const other = f.source.pilots.policy.begin('other', 'machine', f.run.config)
+    expect((await f.cli('mode', 'regular', '--why', 'Repeated failures')).out).toContain('Stop requested')
+    expect(f.source.pilots.policy.get(f.run.id)?.state).toBe('stopping')
+    expect(f.source.pilots.policy.get(other.id)?.state).toBe('starting')
+    expect(f.source.tasks.get(f.task.id)?.folder).toBe('/repo/work')
+    await expect(f.cli('mode', 'regular', '--why', 'Repeat')).rejects.toThrow('stopped')
+  } finally { f.close() }
+})

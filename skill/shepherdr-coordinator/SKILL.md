@@ -122,9 +122,10 @@ space’s tasks. Ask its coordinator or the human to act there; never bypass own
    - Quiet nights for Autopilot: a time rule within the day's hours, and `heartbeat.on` with only what can't wait
      (`needs-you, failed, main-red`): the rest waits for the morning's first heartbeat.
 10. **When things keep breaking** (main still red after its fix, tasks failing one after another), stop adding work,
-   save the failure and next step with `shepherdr progress`, and say why with `shepherdr alert`. If your current
-   gateway offers a mode-off command, use it only for your own run. Otherwise ask the human to turn Autopilot off;
-   never claim a refused command stopped it, or report a failed goal as complete.
+   save the failure and next step with `shepherdr progress`, say why with `shepherdr alert`, then run
+   `shepherdr mode regular --why "reason"`. This stops only your current run and its owned workers, preserves
+   their unfinished work and returns this chat to a fresh regular coordinator. Never report a failed goal as complete.
+   A refused stop is not a completed stop: tell the human if cleanup remains pending.
 
 ## Outputs
 

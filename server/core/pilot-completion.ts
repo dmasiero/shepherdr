@@ -7,7 +7,7 @@ export class CorePilotCompletion {
   private active?: Promise<void>
   constructor(private source: CoreSource) {}
   busy(place: string) { return this.source.store.all<Completion>('pilot-completion').some(intent => intent.place === place && ['pending', 'changing'].includes(intent.state)) }
-  queueReturn(id: string, keepWorkers = false, reason = 'Autopilot off') {
+  queueReturn(id: string, keepWorkers = false, reason = 'Autopilot off', report?: string) {
     const run = this.source.pilots.policy.get(id)
     if (!run) throw Error('No such Autopilot run')
     const previous = this.source.store.get<Completion>('pilot-completion', id)
@@ -15,6 +15,11 @@ export class CorePilotCompletion {
       : { run: id, place: run.place, launch: this.source.agents.get(run.place)?.launch || '', at: Date.now(), reason, cause: run.error, keepWorkers, state: 'pending' }
     this.source.store.db.transaction(() => {
       this.source.store.set('pilot-completion', id, intent)
+      if (report !== undefined) {
+        if (!this.source.store.get<{ text: string }>('pilot-progress', id)?.text) this.source.store.set('pilot-progress', id, { text: `Stopped: ${report}`, at: intent.at })
+        run.last = { at: intent.at, reason: 'Stopped by coordinator', outcome: report.slice(0, 160), ended: intent.at }
+        this.source.store.set('pilot-run', id, run)
+      }
       this.source.pilots.lifecycle.revoke(id, !!intent.keepWorkers)
     })()
     this.source.emit('snapshot')
@@ -34,6 +39,15 @@ export class CorePilotCompletion {
     })()
     this.source.emit('snapshot')
     return 'Goal evidence saved. Autopilot is stopping; this chat will return to a regular coordinator.'
+  }
+  stop(agent: CoreAgent, reason: string) {
+    if (agent.role !== 'coordinator' || !agent.pilot) throw Error('Only this run’s coordinator can stop it')
+    const run = this.source.pilots.policy.actor(agent.pilot.run, this.source.pilots.actor(agent))
+    if (typeof reason !== 'string' || !reason.trim() || Buffer.byteLength(reason) > 20000) throw Error('Use mode regular --why "reason"; keep it under 20 KiB')
+    const why = reason.trim()
+    // Reuse the durable return intent, preserving cleanup/restart recovery and never claiming goal success.
+    this.queueReturn(run.id, false, why, why)
+    return 'Stop requested. Autopilot is stopping its owned workers; this chat will return to a regular coordinator.'
   }
   tick() {
     if (this.active || this.source.quiescing) return this.active ?? Promise.resolve()

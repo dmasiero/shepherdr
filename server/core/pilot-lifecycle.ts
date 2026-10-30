@@ -104,8 +104,9 @@ export class CorePilotLifecycle {
       if (current && !terminal) throw Error('Coordinator cleanup is not confirmed; reconnect core')
       const pick = this.source.settings.agent('coordinator', place)
       const progress = run && this.source.store.get<{ text: string }>('pilot-progress', run.id)?.text
+      const reason = run && this.source.store.get<{ reason?: string }>('pilot-completion', run.id)?.reason
       await this.source.agents.launch(space, place, pick.kind,
-        `<mode>Autopilot is off. Fresh regular coordinator, same chat. Do only what the human asks. Do not act on old wakes or checklist items. Saved progress: ${progress || '(none)'}\nRecent chat:\n${this.recent(place)}\nReply only <no-reply>regular coordinator ready</no-reply>.</mode>`, pick)
+        `<mode>Autopilot is off. Fresh regular coordinator, same chat. Do only what the human asks. Do not act on old wakes or checklist items. Stop reason: ${reason || 'Autopilot off'}. Saved progress: ${progress || '(none)'}\nRecent chat:\n${this.recent(place)}\nReply only <no-reply>regular coordinator ready</no-reply>.</mode>`, pick)
       this.source.heartbeats.model.switched(place, false)
       const id = `mode:${run?.id || Date.now()}:off`; this.source.post(place, { id, who: 'agent', card: modeCard(id, 'regular'), at: Date.now() })
       this.source.retry(place)
