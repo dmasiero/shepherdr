@@ -79,7 +79,9 @@ export class CoreGitea {
   private async prsOf(branch: string): Promise<RawPr[]> {
     const open = (await this.list<RawPr>(`${this.root}/pulls?state=open`)).filter(pr => this.branchOf(pr) === branch)
     if (open.length) return open
-    return (await this.list<RawPr>(`${this.root}/pulls?state=closed&sort=recentupdate`, 4, true)).filter(pr => this.branchOf(pr) === branch)
+    // Read by last update (a task's merged one is among them), then newest first by number, as gh pr view picks: an
+    // older pull request edited since never hides its follow-up.
+    return (await this.list<RawPr>(`${this.root}/pulls?state=closed&sort=recentupdate`, 4, true)).filter(pr => this.branchOf(pr) === branch).sort((a, b) => b.number - a.number)
   }
   /** where a closed pull request's head stood when it closed: refs/pull/<n>/head, which Gitea moves only while open */
   private async closedHead(pr: RawPr): Promise<RawPr> {

@@ -219,6 +219,11 @@ test('merge finds an unrecorded merged pull request with work since: its follow-
   const merged = await tasks.merge(grant, task.id)
   expect(merged).toMatchObject({ workflow: 'merged', pr: { number: 2 } })
   expect(merged.mergeCommit).toBe(tea.read().prs[1].mergeCommit!)
+
+  // The first pull request edited afterwards (listed first by last update) is still not the branch's newest.
+  const gitea = tea.read()
+  tea.write({ ...gitea, prs: [gitea.prs[1], gitea.prs[0]] })
+  expect(await tasks.git.pullRequest({ machine: task.machine, folder: worktree }, task.branch, false)).toMatchObject({ number: 2, state: 'MERGED' })
 }))
 
 test('merge finds an unrecorded merged pull request with nothing new since: that merge was the task’s', async () => withGitea(async (world) => {
