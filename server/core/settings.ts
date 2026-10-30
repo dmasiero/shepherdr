@@ -135,7 +135,17 @@ export class CoreSettings {
     const words = this.get(`${role}.instructions`, level)
     return `Private instruction snapshot for this start. This replaces earlier snapshots, including when empty. Explicit human instructions and the brief win over private rules; follow repository/team AGENTS.md, CLAUDE.md and REVIEW.md too. If private and team rules conflict, explain and ask. Never copy private instructions into git, briefs, reports or GitHub. No secrets here.\nPrivate instructions for ${role}:\n${words || '(none)'}\n`
   }
-  saveAgent(role: Role, level: string, input: { kind: string; model?: string; effort?: string }) {
+  checkedAgent(level: string, input: { kind: string; model?: string; effort?: string }) {
+    const kind = kindOf(input.kind)
+    if (!kind) throw Error('Choose Claude Code or Codex')
+    const catalog = this.catalog(kind, level), raw = input.model
+    const model = !raw || raw === 'default' ? undefined : this.findModel(kind, raw, level)?.id ?? (!catalog.models.length ? raw : undefined)
+    if (raw && raw !== 'default' && !model) throw Error('Choose a model offered by this agent')
+    const effort = input.effort === 'default' ? undefined : input.effort
+    if (effort && !(catalog.models.find(item => item.id === model)?.efforts ?? catalog.efforts).includes(effort)) throw Error('This agent does not offer that effort')
+    return { kind, model, effort }
+  }
+  saveAgent(role: Role | 'autopilot', level: string, input: { kind: string; model?: string; effort?: string }) {
     this.saving = true
     try {
       this.store.db.transaction(() => {

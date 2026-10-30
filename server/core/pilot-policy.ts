@@ -69,6 +69,20 @@ export class CorePilotPolicy {
     if (run.state !== 'starting' || actor.role !== 'coordinator' || actor.chat !== run.place || actor.task || !actor.launch) throw new Refusal('This run is not waiting for that coordinator')
     run.actors = [{ ...actor }]; run.state = 'on'; return this.save(run)
   }
+  detachCoordinator(id: string) {
+    const run = this.live(id)
+    if (run.state !== 'on') throw new Refusal('Only an active Autopilot coordinator can restart')
+    run.actors = run.actors.filter(actor => actor.role !== 'coordinator')
+    run.error = 'Coordinator restart in progress; workers remain contained'
+    return this.save(run)
+  }
+  replaceCoordinator(id: string, actor: PilotActor, harness: PilotHarness) {
+    const run = this.live(id)
+    if (run.state !== 'on' || actor.role !== 'coordinator' || actor.chat !== run.place || actor.task || !actor.launch) throw new Refusal('This run is not waiting for that coordinator')
+    run.config = configuration({ ...run.config, harness })
+    run.actors = [...run.actors.filter(old => old.role !== 'coordinator'), { ...actor }]
+    delete run.error; return this.save(run)
+  }
   claim(id: string, task: string, active: number, now = Date.now()) {
     const run = this.require(id)
     this.check(run, now)

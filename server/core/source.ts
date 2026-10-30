@@ -383,10 +383,18 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       case 'restart-info': {
         const agent = this.agents.get(action.chat)
         return { ok: true, info: { role: 'coordinator', space: this.space(action.chat)?.name, on: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
-          onWords: agent?.kind ?? this.agentKind(), want: this.settings.agent('coordinator', action.chat), clis: this.settings.clis(action.chat), working: agent?.state === 'working' } }
+          onWords: agent?.kind ?? this.agentKind(), want: this.settings.agent(this.space(action.chat)?.mode === 'autopilot' ? 'autopilot' : 'coordinator', action.chat), clis: this.settings.clis(action.chat), working: agent?.state === 'working' } }
       }
       case 'restart': {
-        if (this.agents.get(action.chat)?.pilot || this.space(action.chat)?.mode === 'autopilot') throw new Error('Change Autopilot mode before replacing this contained coordinator')
+        if (this.space(action.chat)?.mode === 'autopilot') {
+          const agent = this.agents.get(action.chat), kind = action.kind || agent?.kind
+          if (kind !== 'claude' && kind !== 'codex') throw Error('Choose Claude Code or Codex')
+          const choice = this.settings.checkedAgent(action.chat, { kind, model: action.model, effort: action.effort })
+          await this.pilots.lifecycle.restart(action.chat, choice)
+          if (action.save) this.settings.saveAgent('autopilot', action.chat, choice)
+          return {}
+        }
+        if (this.agents.get(action.chat)?.pilot) throw new Error('Finish changing Autopilot mode before replacing this coordinator')
         const space = this.space(action.chat)
         if (!space) throw new Error('No such coordinator')
         const agent = this.agents.get(action.chat)

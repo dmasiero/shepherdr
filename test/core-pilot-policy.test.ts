@@ -90,3 +90,18 @@ test('repeated stop cannot weaken cleanup, revive stopped actors or recover a fa
   expect(policy.stop(next.id, true).state).toBe('failed')
   expect(() => policy.actor(next.id, coordinator, 103)).toThrow('broker lost')
 }))
+
+test('coordinator replacement revokes only its actor and retains worker identity and cumulative limits', () => fixture(policy => {
+  const run = policy.begin('space', 'machine', config)
+  policy.activate(run.id, coordinator); policy.claim(run.id, worker.task!, 0); policy.bind(run.id, worker)
+  policy.traffic(run.id, coordinator, 100); policy.usage(run.id, 'native-message', 10)
+  policy.detachCoordinator(run.id)
+  expect(() => policy.actor(run.id, coordinator)).toThrow('belong')
+  expect(policy.actor(run.id, worker).state).toBe('on')
+  const next = { ...coordinator, launch: 'coord-2' }
+  policy.replaceCoordinator(run.id, next, { kind: 'codex' })
+  expect(policy.actor(run.id, next)).toMatchObject({ started: run.started, traffic: 100, used: 10, config: { harness: { kind: 'codex' } } })
+  expect(policy.actor(run.id, worker).tasks).toEqual([worker.task!])
+  policy.stop(run.id)
+  expect(() => policy.replaceCoordinator(run.id, { ...next, launch: 'coord-3' }, { kind: 'claude' })).toThrow()
+}))

@@ -19,7 +19,7 @@ function setup(store: CoreStore) {
   for (const record of records) store.set('pilot-capture', record.launch, record)
   const terminals = new Map(records.map(record => [record.launch, { address: record.launch, state: 'live', pid: record.pid }]))
   const denied: string[] = [], killed: string[] = [], space = { id: 'space', mode: 'autopilot' }, on = { connected: true }
-  const source = { store, pilots: { policy }, agents: { all: () => [records[0], records[1]], terminal: (agent: CoreAgent) => terminals.get(agent.launch) }, machineConnected: () => on.connected,
+  const source = { store, pilots: { policy }, agents: { get: (chat: string) => records.find(agent => agent.chat === chat), all: () => [records[0], records[1]], terminal: (agent: CoreAgent) => terminals.get(agent.launch) }, machineConnected: () => on.connected,
     denyPermissions: (agent: CoreAgent) => { denied.push(agent.launch) }, core: { call: async (_: string, input: { terminal: string }) => { killed.push(input.terminal) } }, space: () => space, emit() {} } as unknown as CoreSource
   return { source, policy, run, records, terminals, killed, denied, space, on, lifecycle: new CorePilotLifecycle(source) }
 }
@@ -70,4 +70,20 @@ test('an interrupted start is failed and cleaned up after app reconstruction, ne
   await new CorePilotLifecycle(f.source).tick()
   expect(f.policy.get(next.id)).toMatchObject({ state: 'stopped', error: expect.stringContaining('start was interrupted') })
   expect(f.space.mode).toBe('regular')
+}))
+
+test('a failed coordinator replacement keeps workers and cumulative limits instead of failing their run', () => fixture(async f => {
+  const worker = { chat: f.records[1].chat, launch: f.records[1].launch, role: 'task' as const, task: 'TASK-1' }
+  f.policy.claim(f.run.id, worker.task, 0); f.policy.bind(f.run.id, worker)
+  f.policy.traffic(f.run.id, worker, 100)
+  f.terminals.get('coord')!.state = 'finished'
+  // The explicit replacement reaches runtime preparation but fails before creating another holder.
+  Object.assign(f.source, { logs: { messages: () => [] }, heartbeats: { read: () => '# Do nothing' } })
+  f.source.agents.launch = async () => { throw Error('Runtime preparation unavailable') }
+  await expect(f.lifecycle.restart('space')).rejects.toThrow('Runtime preparation unavailable')
+  expect(f.policy.get(f.run.id)).toMatchObject({ state: 'on', traffic: 100, error: expect.stringContaining('Workers remain contained') })
+  expect(f.policy.actor(f.run.id, worker).state).toBe('on')
+  expect(() => f.policy.actor(f.run.id, { chat: 'space', launch: 'coord', role: 'coordinator' })).toThrow('belong')
+  expect(f.terminals.get('worker')?.state).toBe('live')
+  expect(f.killed).toEqual([])
 }))

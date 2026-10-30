@@ -116,3 +116,13 @@ test('Autopilot access and limits snapshot scoped choices without widening norma
   expect(page.rows.find(row => row.key === 'heartbeat.on')?.trigger?.presets.map(preset => preset.label)).toEqual(['All news', 'None: it waits'])
   expect(page.rows.find(row => row.key === 'autopilot.model')?.options?.[0]).toBe('inherit')
 }))
+
+test('Autopilot restart choices validate before effects and save atomically', () => fixture(settings => {
+  const level = 'p:box:one'
+  expect(() => settings.checkedAgent(level, { kind: 'codex', model: 'not-a-model' })).toThrow()
+  expect(settings.get('autopilot.agent', level)).toBe('inherit')
+  settings.saveAgent('autopilot', level, { kind: 'codex', model: 'gpt-6.1-sol', effort: 'high' })
+  expect(settings.agent('autopilot', level)).toMatchObject({ kind: 'codex', model: 'gpt-6.1-sol', effort: 'high' })
+  expect(() => settings.saveAgent('autopilot', level, { kind: 'claude', model: 'invalid', effort: 'wrong' })).toThrow()
+  expect(settings.agent('autopilot', level).kind).toBe('codex')
+}))

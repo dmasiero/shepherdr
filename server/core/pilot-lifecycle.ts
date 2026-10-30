@@ -1,9 +1,9 @@
 import type { CoreSource } from './source.ts'
-import type { CoreAgent } from './model.ts'
+import type { CoreAgent, CoreSpace } from './model.ts'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { modeCard } from '../../shared/types.ts'
-import type { CorePilotConfig, CorePilotRun } from './pilot-policy.ts'
+import type { CorePilotConfig, CorePilotRun, PilotHarness } from './pilot-policy.ts'
 
 /** Stop authority first; process cleanup is retried from private launch records after reconnect/restart. */
 export class CorePilotLifecycle {
@@ -24,25 +24,52 @@ export class CorePilotLifecycle {
     const old = this.source.agents.get(place)
     if (old && !this.source.agents.terminal(old)) throw Error('The previous coordinator start is unconfirmed; reconnect before replacing it')
     const run = this.source.pilots.policy.begin(place, space.machine, config)
-    config = run.config
     space.mode = 'autopilot'; this.source.store.set('space', place, space); this.source.emit('snapshot')
     return this.transition(place, async () => {
       try {
         if (old) await this.finish(old)
         if (this.source.quiescing || this.source.pilots.policy.get(run.id)?.state !== 'starting') throw Error('Autopilot start was stopped')
-        const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-coordinator/SKILL.md'), 'utf8')
-        const recent = this.recent(place)
-        const previous = this.source.pilots.policy.all().findLast(item => item.place === place && item.id !== run.id)
-        const progress = previous && this.source.store.get<{ text: string }>('pilot-progress', previous.id)?.text
-        const agent = await this.source.agents.launch(space, place, config.harness.kind,
-          `<mode>Fresh Autopilot coordinator. Same chat. Read the heartbeat checklist, inspect this space and act within your approved profile. Save progress and next step with shepherdr progress.\nSaved progress: ${progress || '(none)'}\nRecent chat:\n${recent}\nHeartbeat checklist:\n${this.source.heartbeats.read(space)}</mode>`,
-          { ...config.harness, instructions: `${role}\nYou are isolated. Use the launch-provisioned shepherdr command for managed tasks, messages and reviews. No core socket or unrestricted fallback exists here. Git metadata is read-only; workers checkpoint through shepherdr checkpoint. Settings are a snapshot for this run.`,
-            pilot: { run: run.id, hosts: config.hosts, deadline: config.runtime ? run.started + config.runtime : undefined, repo: space.folder } })
+        const agent = await this.launchCoordinator(space, run)
         this.source.pilots.policy.activate(run.id, { chat: agent.chat, launch: agent.launch, role: 'coordinator' })
         this.source.heartbeats.model.switched(place, true)
         const id = `mode:${run.id}:on`; this.source.post(place, { id, who: 'agent', card: modeCard(id, 'autopilot'), at: Date.now() })
       } catch (error) {
         this.source.pilots.policy.fail(run.id, (error as Error).message)
+        throw error
+      } finally { this.source.emit('snapshot') }
+    })
+  }
+  private async launchCoordinator(space: CoreSpace, run: CorePilotRun, harness = run.config.harness) {
+    const place = space.id
+    const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-coordinator/SKILL.md'), 'utf8')
+    const recent = this.recent(place)
+    const previous = this.source.pilots.policy.all().findLast(item => item.place === place && item.id !== run.id)
+    const progress = this.source.store.get<{ text: string }>('pilot-progress', run.id)?.text ?? (previous && this.source.store.get<{ text: string }>('pilot-progress', previous.id)?.text)
+    const agent = await this.source.agents.launch(space, place, harness.kind,
+      `<mode>Fresh Autopilot coordinator. Same chat. Read the heartbeat checklist, inspect this space and act within your approved profile. Save progress and next step with shepherdr progress.\nSaved progress: ${progress || '(none)'}\nRecent chat (history only; do not repeat earlier requests):\n${recent}\nHeartbeat checklist:\n${this.source.heartbeats.read(space)}</mode>`,
+      { ...harness, instructions: `${role}\nYou are isolated. Use the launch-provisioned shepherdr command for managed tasks, messages and reviews. No core socket or unrestricted fallback exists here. Git metadata is read-only; workers checkpoint through shepherdr checkpoint. Settings are a snapshot for this run.`,
+        pilot: { run: run.id, hosts: run.config.hosts, deadline: run.config.runtime ? run.started + run.config.runtime : undefined, repo: space.folder } })
+    return agent
+  }
+  restart(place: string, harness?: PilotHarness) {
+    if (this.busy(place)) throw Error('The coordinator is changing; try again shortly')
+    const space = this.source.space(place), run = this.source.pilots.policy.current(place), old = this.source.agents.get(place)
+    if (!space || !run || run.state !== 'on' || old?.pilot?.run !== run.id) throw Error('No active contained coordinator to restart')
+    const pick = harness ?? run.config.harness
+    if (!['claude', 'codex'].includes(pick.kind) || [pick.model, pick.effort].some(value => value !== undefined && (typeof value !== 'string' || value.length > 512))) throw Error('Choose Claude Code or Codex and its model/effort')
+    this.source.pilots.policy.detachCoordinator(run.id)
+    this.source.denyPermissions(old, 'Coordinator restarted; ask again in the new session')
+    return this.transition(place, async () => {
+      try {
+        await this.finish(old)
+        if (this.source.quiescing) throw Error('Shepherdr is stopping')
+        this.source.pilots.policy.live(run.id)
+        const agent = await this.launchCoordinator(space, this.source.pilots.policy.get(run.id)!, pick)
+        this.source.pilots.policy.replaceCoordinator(run.id, { chat: place, launch: agent.launch, role: 'coordinator' }, pick)
+      } catch (error) {
+        // Existing workers keep their original run, private bindings, deadline and shared allowances.
+        const current = this.source.pilots.policy.get(run.id)!
+        if (current.state === 'on') { current.error = `Coordinator restart interrupted: ${(error as Error).message}. Workers remain contained; retry restart.`; this.source.store.set('pilot-run', run.id, current) }
         throw error
       } finally { this.source.emit('snapshot') }
     })

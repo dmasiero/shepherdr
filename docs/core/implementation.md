@@ -1070,3 +1070,21 @@ Scoped review: three rounds, startup-crash major and empty-checklist/inherited-m
 must-fix findings. Regression coverage includes durable wakes, no duplicate uncertain delivery, own-turn completion,
 empty checklist, follow-up news, inherited Codex models and interrupted startup. Only typecheck ran locally and passed.
 Lifecycle stop commit 16f57a92 passed both GitHub jobs (40999607762).
+
+The phone switch-off check completed: old contained t21 ended, a fresh normal coordinator t22/PID 1002208 started
+with no pilot binding, and the existing off card/menu appeared. The scratch repository stayed clean. Autopilot
+mode/settings/wake commit c2c7ab53 passed both GitHub jobs (41000321920). Proof artifact hf2s v12 includes phone
+screenshots and the real lifecycle evidence; its light/dark checks were inspected.
+
+Contained coordinator Restart now revokes only its old coordinator actor/cards, keeps worker bindings, elapsed
+run time and cumulative allowances, and binds a fresh contained coordinator in the same run. A preparation/start
+failure leaves workers contained and records a retryable coordinator error. Restart choices validate before effects;
+saved Autopilot preferences commit atomically only after successful launch. Recent chat is history, not a new request.
+A real native run created child t24/PID 1049667, replaced coordinator t23 with t25 and confirmed the unchanged live
+child/private run, then received CONTAINED_RESTART_COORD_OK. Traffic was 1,540,197 bytes after replacement and
+1,554,112 after subsequent keep-workers and full stop; all owned processes ended before private state/login copies
+and scratch worktrees were removed. This is an actual internal local-core check, not SSH or physical-device proof.
+Scoped review first round found no must-fix and one atomic-preference minor, now fixed. Regression coverage for
+replacement ownership, unchanged limits, failed preparation and atomic preferences is for GitHub only.
+Restart review round 2 found no remaining findings; local typecheck passed. Failed-preparation coverage is queued
+for GitHub and does not claim a real provider failure was induced locally.
