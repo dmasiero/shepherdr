@@ -1,3 +1,4 @@
+import { findCoreSpace } from '../server/core/space-names.ts'
 import { expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -155,4 +156,17 @@ test('real core snapshots expose repository and ID pages; UI edits preserve exis
   pages = f.source.snapshot().settings!.filter(page => page.level === f.space.id)
   expect(pages.find(page => page.name === 'Task IDs')?.rows.map(row => row.value)).toEqual(['NEW', '40'])
   expect(f.source.tasks.get(existing.id)?.id).toBe('DEMO-1')
+}))
+
+
+test('home retains its familiar display name, canonical key, both aliases and explicit renames', () => fixture(async f => {
+  const home = f.source.space(f.caller.space)!
+  expect(home.name).toBe('~') // Existing rewrite records need no mutation.
+  expect(f.source.snapshot().places.find(place => place.id === home.id)?.name).toBe('home')
+  for (const alias of ['home', '~', home.id]) expect(findCoreSpace(f.source, home.machine, alias)?.id).toBe(home.id)
+  f.source.store.set('name', home.id, 'My home')
+  expect(f.source.snapshot().places.find(place => place.id === home.id)?.name).toBe('My home')
+  expect(findCoreSpace(f.source, home.machine, 'My home')?.id).toBe(home.id)
+  expect(f.source.places.names(home.machine)).toContain('home')
+  expect(f.source.space(home.id)?.name).toBe('~')
 }))

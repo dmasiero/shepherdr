@@ -1,3 +1,4 @@
+import { coreSpaceName } from './space-names.ts'
 import { repositorySection } from '../common/space-settings.ts'
 import { taskIdsSection } from '../common/task-ids.ts'
 import { automaticTaskPrefix, setTaskIdSetting, taskSequence } from './id-settings.ts'
@@ -201,7 +202,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     const homeId = `p:${this.local.id}:~`
     if (!this.space(homeId)) {
       const folder = (await this.files.exec(this.local.id, ['sh', '-c', 'printf %s "$HOME"'])).toString('utf8')
-      this.store.set('space', homeId, { id: homeId, name: '~', home: true, machine: this.local.id, folder, base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+      this.store.set('space', homeId, { id: homeId, name: 'home', home: true, machine: this.local.id, folder, base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
     }
     for (const machine of this.machines.filter(item => item.state === 'connected')) {
       const id = `p:${machine.id}:~`
@@ -210,7 +211,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       // A disconnected remote must never delay or fail the local application startup.
       void this.files.exec(machine.id, ['sh', '-c', 'printf %s "$HOME"']).then(bytes => {
         if (!this.machines.some(item => item.id === machine.id)) return
-        this.store.set('space', id, { id, name: '~', home: true, machine: machine.id, folder: bytes.toString('utf8'), base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
+        this.store.set('space', id, { id, name: 'home', home: true, machine: machine.id, folder: bytes.toString('utf8'), base: 'main', prefix: 'TASK', mode: 'regular', added: Date.now() } satisfies CoreSpace)
         this.faults.delete(`machine:${machine.id}`); this.emit('snapshot')
       }).catch(error => {
         machine.state = 'unreachable'; this.faults.set(`machine:${machine.id}`, error.message); this.emit('snapshot')
@@ -250,7 +251,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     }
     return {
       terminalTransport: 'core', name: 'Shepherdr', host: this.local.name, user: this.store.get<string>('setting', 'user') || 'You',
-      ...this.places.present(spaces.map(space => ({ id: space.id, name: this.store.get<string>('name', space.id) || space.name, machine: space.machine, home: space.home,
+      ...this.places.present(spaces.map(space => ({ id: space.id, name: coreSpaceName(this, space), machine: space.machine, home: space.home,
         level: space.home ? space.machine === this.local.id ? 0 : 1 : 2, status: this.machineConnected(space.machine) ? this.status(this.agents.get(space.id)) : 'off', mode: space.mode, chat: space.id })),
       [{ id: `m:${this.local.id}`, machine: this.local.id, name: this.local.name, health: this.health.view(this.local.id), status: this.connected() ? 'idle' : 'off' },
         ...this.machines.map(machine => ({ id: `m:${machine.id}`, machine: machine.id, name: machine.name, health: this.health.view(machine.id), status: machine.state === 'connected' ? 'idle' as const : 'off' as const }))]),

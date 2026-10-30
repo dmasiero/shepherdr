@@ -7,7 +7,7 @@ import { wrapPage } from '../frame.ts'
 import { one, parseArgs } from '../common/args.ts'
 import { browserNamespace } from './browser-id.ts'
 import { Refusal } from './client.ts'
-import { findCoreSpace } from './space-names.ts'
+import { coreSpaceName, findCoreSpace } from './space-names.ts'
 import type { CoreSource } from './source.ts'
 import type { CoreAgent } from './model.ts'
 import type { Action, Artifact } from '../../shared/types.ts'
@@ -45,7 +45,8 @@ export class CoreArtifacts {
   private name(chat: string) {
     const task = this.source.tasks.forChat(chat)
     if (task) return `${task.id} ${chat.slice(chat.lastIndexOf('/') + 1).toLowerCase()}`
-    return this.source.store.get<string>('name', chat) || this.source.space(chat)?.name || 'Coordinator'
+    const space = this.source.space(chat)
+    return space ? coreSpaceName(this.source, space) : 'Coordinator'
   }
   list(): Artifact[] {
     return this.source.store.all<Record>('core-artifact').map(artifact => ({ id: artifact.id, title: artifact.title, place: artifact.place, at: artifact.at,
@@ -169,7 +170,7 @@ export class CoreArtifacts {
     const artifact: Record = previous ?? { id: newId, title: titleCase(title!), place: space?.id || agent.space, at: Date.now(), versions: [] }
     if (title) artifact.title = titleCase(title)
     const old = artifact.versions.at(-1), n = (old?.n ?? 0) + 1
-    const by = agent.role === 'task' ? `${this.source.tasks.forChat(agent.chat)?.id || agent.chat} agent` : this.source.space(agent.space)?.name || 'Coordinator'
+    const by = agent.role === 'task' ? `${this.source.tasks.forChat(agent.chat)?.id || agent.chat} agent` : (this.source.space(agent.space) ? coreSpaceName(this.source, this.source.space(agent.space)!) : 'Coordinator')
     const version: Version = { n, at: Date.now(), by, chat: agent.chat, note: one(parsed, 'note'), html: input.html ? n : old!.html, data: input.hasData ? n : old?.data, ...(!input.html ? { what: input.hasData ? 'data' as const : 'title' as const } : {}) }
     this.source.store.db.transaction(() => {
       this.source.store.set('artifact-id', artifact.id, artifact.id)

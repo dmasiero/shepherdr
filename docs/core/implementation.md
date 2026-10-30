@@ -1878,3 +1878,12 @@ unchanged. The legacy Task.on presentation field also names the CLI rather than
 incorrectly naming the main host. Regressions verify public names and internal kind
 separation. Only typecheck ran locally, followed by an isolated app restart for
 manual before/after screenshots; all native processes and work are preserved.
+
+The preserved legacy default home label is home, not the rewrite's internal ~ key.
+Fresh core homes now store home; existing isolated rewrite records named ~ display
+home without rewriting records or identities. Explicit saved display names still
+win. Both home/~ aliases select the same home, and those aliases stay reserved
+against ambiguous new repository names. Sidebar, CLI space listing and new artifact
+keeper/author labels share the presentation helper. CI regression covers old-record
+read-only presentation, canonical identity, aliases and explicit rename. Typecheck
+passed; no legacy state import/mutation or native-agent replacement.

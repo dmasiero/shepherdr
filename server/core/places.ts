@@ -2,7 +2,7 @@ import { asEmoji, NAME_MAX, nameProblem, type Action, type Machine, type Place }
 import { deleteSection, moveSpace, newSection, PINNED, renameSection, sectionProblem, setOrder, sortPlaces, type PlaceOrder, type SectionDefs } from '../../shared/order.ts'
 import { one, parseArgs } from '../common/args.ts'
 import { Refusal } from './client.ts'
-import { findCoreSpace } from './space-names.ts'
+import { coreSpaceName, findCoreSpace } from './space-names.ts'
 import { CoreTaskProcesses } from './task-processes.ts'
 import type { CoreAgent } from './model.ts'
 import type { CoreSource } from './source.ts'
@@ -14,7 +14,7 @@ export class CorePlaces {
   removing(place: string) { return this.removals.has(place) }
   names(machine: string, except?: string) {
     return this.source.store.all<import('./model.ts').CoreSpace>('space').filter(space => space.machine === machine && space.id !== except)
-      .flatMap(space => [space.name, this.source.store.get<string>('name', space.id)]).filter((name): name is string => !!name)
+      .flatMap(space => [space.name, coreSpaceName(this.source, space), ...(space.home ? ['~', 'home'] : [])]).filter((name): name is string => !!name)
   }
   private idle(place: string) {
     const active = this.source.tasks.all().filter(task => task.place === place && (this.source.tasks.busy(task.id) || new CoreTaskProcesses(this.source).runningChildren(task) || task.workflow === 'working' || task.workflow === 'merging' ||
@@ -45,7 +45,7 @@ export class CorePlaces {
       if (!found) throw new Refusal('Choose a space on your machine')
       return found
     }
-    if (op === 'list') return JSON.stringify(spaces.map(space => ({ ...space, name: this.source.store.get<string>('name', space.id) || space.name })), null, 2)
+    if (op === 'list') return JSON.stringify(spaces.map(space => ({ ...space, name: coreSpaceName(this.source, space) })), null, 2)
     if (agent.role !== 'coordinator' || agent.pilot) throw new Refusal('Only a regular coordinator manages spaces, when the human asks')
     if (op === 'add') {
       if (words.length !== 1 || parsed.flags.size || Object.keys(parsed.opts).some(key => key !== 'name')) throw new Refusal('Use space add PATH [--name NAME]')
