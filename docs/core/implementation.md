@@ -995,3 +995,14 @@ still require resolution before unattended readiness. These were diagnostic read
 terminal, never screen-derived chat or status. Failed probes stopped and removed only their own temporary state.
 Preference-copy review round 1 had no findings. New whitelist regression is for GitHub only; typecheck passed.
 Health-fixture correction 30edd436 passed both GitHub jobs (40997411145), including contained command/task checks.
+
+Native bootstrap now grants trust only to the app-selected contained cwd after sandbox mount validation and
+sets Claude 2.1.314's recognized native consent preference in private control/settings. Codex uses its documented
+projects.<path>.trust_level entry. This does not import host project trust or change normal agents; the app's
+explicit isolated access profile remains enforced outside the native CLI. No Codex hook-trust bypass was added.
+A new actual contained interactive Claude coordinator (`t1p`) returned `INTERACTIVE_CONTAINED_CLAUDE_OK` through
+native hooks/captured JSONL with no manual startup clicks, pending=false, 364,719 accounted encrypted bytes. Its
+private state and native login copies were removed after stopping only this task's owned probe. This proves
+unattended interactive Claude startup/chat, not full managed delivery, Codex interactive or UI Autopilot controls.
+Bootstrap review round 1 had no findings; generated trust scope and exclusion of host trust have GitHub regression
+coverage. Local typecheck passed. Preference-only commit 3f0424fe passed both jobs (40997706751).

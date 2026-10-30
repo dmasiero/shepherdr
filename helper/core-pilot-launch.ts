@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { lstatSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { preparePilotHome, type PilotHome } from './core-pilot-home.ts'
+import { pilotNativeWorkspace } from './core-pilot-native.ts'
 import { pilotSandboxArgs, type PilotSandbox } from './core-pilot-sandbox.ts'
 import { pilotCoreBackend } from './core-pilot-backend.ts'
 import { runPilotRuntime } from './core-pilot-runtime.ts'
@@ -46,6 +47,7 @@ export function preparePilotLaunch(input: PilotPrepare): PilotPrepared {
     const sandbox: PilotSandbox = { cwd: input.cwd, repo: input.repo, home: realpathSync(homedir()), state: home.state, control: home.control, binary: realpathSync(binary), bun: realpathSync(process.execPath), kind: input.kind, writable: input.writable,
       privateRoots: [...input.privateRoots, ...protectedRoots, home.root] }
     pilotSandboxArgs(sandbox) // Refuse unsafe mounts before the app records or launches this runtime.
+    pilotNativeWorkspace(home, input.cwd, input.kind)
     const { root, state, control, captures, gateway } = home
     return { paths: { root, state, control, captures, gateway }, sandbox, bwrap: realpathSync(bwrap) }
   } catch (error) { home.discard(); throw error }
