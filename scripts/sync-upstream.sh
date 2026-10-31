@@ -85,7 +85,7 @@ git merge-base --is-ancestor "$ref" HEAD || die "$branch does not have upstream'
 # priority. Not the whole suite with its browser tests: GitHub's Check workflow runs that. The one exception to
 # AGENTS.md's no-tests rule (FORK.md). Each fork change adds its own tests here. Not test/core-pilot-git.test.ts yet:
 # its SSH test fails on NixOS, whose /etc/ssh/ssh_config is a hard-linked store file that the check refuses (FORK.md).
-tests="test/core-voice.test.ts test/core-gitea.test.ts test/core-tasks.test.ts test/core-github.test.ts test/core-git.test.ts test/core-github-pr.test.ts test/core-github-merges.test.ts test/core-worktree.test.ts test/core-operator.test.ts"
+tests="test/core-voice.test.ts test/core-gitea.test.ts test/core-tasks.test.ts test/core-github.test.ts test/core-git.test.ts test/core-github-pr.test.ts test/core-github-merges.test.ts test/core-worktree.test.ts test/core-operator.test.ts test/core-operator-tasks.test.ts"
 say "running the fork's checks (bun install, bun run typecheck, bun test <the layer's tests>, bun run build)"
 log="$st.check.log"
 check() {

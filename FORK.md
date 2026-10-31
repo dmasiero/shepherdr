@@ -52,14 +52,15 @@ newest commits (`git diff v2.1.0 2.1` before the first one).
 | `server/core/follow-up.ts` | A Gitea pull request merged already at an earlier commit: the follow-up pull request. |
 | `docs/gitea.md` | What Gitea support does and needs. |
 | `test/core-gitea.test.ts`, `test/fake-tea.ts` | Its tests, with tea faked as a Gitea kept in a JSON file and a bare repo. |
+| `server/core/operator-tasks.ts` | Task commands for scripts: `task add`, `list`, `show` and `tell` on the private operator socket. |
+| `helper/operator-tasks.ts` | Their client side: a brief or message moved to stdin. |
+| `test/core-operator-tasks.test.ts` | Their tests. |
 
 Planned, each its own change that adds its row here, its `fork:` comments in upstream's files and its tests to the
 sync's check list:
 
 - **Voice calls start without a first_message override**: ElevenLabs closes a call whose agent doesn't allow that
   override (2.0 had the same fix).
-- **Task commands for scripts**: `shepherdr task add/list/tell` from scripts outside an agent session, for the
-  dispatchers that make tasks.
 - **Git over SSH on NixOS**: 2.1's checked Git (`helper/core-pilot-ssh.ts`) refuses an SSH configuration file with
   more than one hard link, and NixOS's `/etc/ssh/ssh_config` is a store file that the store hard-links. Until that is
   fixed, `test/core-pilot-git.test.ts` fails here and stays out of the sync's check list.
@@ -81,6 +82,36 @@ keeps upstream's calls as they are. Its hooks:
 - `server/core/github.ts`: a Gitea space's base is not watched for going red (GitHub's Actions only).
 - `server/core/worktree.ts`: the task panel's pull request comes from `gitea.ts` for a Gitea task.
 - `helper/core-pilot-git.ts`: the contained repository runner runs `tea` too.
+
+**Task commands for scripts**: on 2.0, Doug's dispatchers (Chatwoot, Graylog, spam review, through dotfiles'
+`shepherdr_board.py`) add tasks and message them with `shepherdr task add/list/tell` from outside any agent. 2.1's
+command refuses those outside an agent session. The fork lets trusted scripts on the main machine run them through
+the operator socket upstream already has for `secret set/rm`: a Unix socket in the private home (`~/.shepherdr`,
+mode 0700), itself 0600 and owned by you, so only your own user on this machine reaches it. Nothing listens on the
+network and no web route or agent mailbox gains these commands. The fence is that user, as it is for `secret set`:
+agents' shells run as you too, and one that drops its session's environment reaches the socket like any script
+(the command refuses inside an agent session, but that is a courtesy, not a guard). They could already change
+`~/.shepherdr` as you. Contained runs (Autopilot) get a home of their own in their sandbox
+(`helper/core-pilot-sandbox.ts`) and never see it.
+
+```sh
+shepherdr task add "<title>" --space ops [--after OPS-1] [--later] [--set merge="ask me first"] --brief "<brief>"   # or < brief.md
+shepherdr task list [--json] [--archived] [--space ops]       # --json: [{id, title, status, state, space, archived?}]
+shepherdr task show OPS-12 [--json]                           # with its pull request, when it has one
+shepherdr task tell OPS-12 "<message>"                        # or < message.txt
+```
+
+They speak 2.0's words where the dispatchers read them: `task add` answers `Added OPS-12: <title>. ...`, `--json`
+rows carry `id`, `title`, `status` (`done` once merged or closed) and `archived`, and an unknown task is `No task
+OPS-12 ...`. Only the main machine's repository spaces and their tasks; `tell` refuses a Done or archived task (a
+message would start it again), so a script adds a new one. A brief or message travels on stdin, past the socket's
+limits on command words (16 of 256 characters), at most 64 KiB; the command moves 2.0's `--brief TEXT` and `tell ID
+TEXT` there itself. A task command may take up to 100 s (adding one makes its worktree and starts its agent). Every
+other task command stays an agent's. Its hooks:
+
+- `bin/shepherdr`: `task add|list|show|tell` go to `helper/core-operator.ts`, as `secret set|rm` do.
+- `helper/core-operator.ts`: `taskStdin` (`helper/operator-tasks.ts`) before the request.
+- `server/core/operator.ts`: a task command goes to `operator-tasks.ts`, with its longer deadline.
 
 ## Syncing with upstream
 

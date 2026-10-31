@@ -2,15 +2,17 @@ import { createServer, createConnection } from 'node:net'
 import { chmodSync, lstatSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import type { CoreSource } from './source.ts'
+import { isOperatorTask, operatorTask } from './operator-tasks.ts' // fork: task commands for scripts
 
 const LIMIT = 512 * 1024
+const TASK_DEADLINE = 100_000 // fork: task commands (operator-tasks.ts)
 export interface OperatorResult { out: string; code: number }
 /** OS-owned socket in the private installation home. No web route or caller-selected agent identity. */
 export async function startOperator(source: CoreSource, boot: string) {
   const path = join(source.config.home, `operator.${boot.slice(0, 8)}.sock`)
   if (Buffer.byteLength(path) > 100) throw new Error('Home path is too long for its private operator socket')
   const server = createServer({ allowHalfOpen: true }, socket => {
-    const deadline = setTimeout(() => socket.destroy(), 5000)
+    let deadline = setTimeout(() => socket.destroy(), 5000)
     socket.on('close', () => clearTimeout(deadline))
     let size = 0
     const chunks: Buffer[] = []
@@ -25,7 +27,11 @@ export async function startOperator(source: CoreSource, boot: string) {
         if (!input || typeof input !== 'object') throw new Error('Invalid private operator request')
         if (!Array.isArray(input.args) || input.args.length > 16 || input.args.some(word => typeof word !== 'string' || word.length > 256) ||
           input.stdin !== undefined && (typeof input.stdin !== 'string' || Buffer.byteLength(input.stdin) > 64 * 1024)) throw new Error('Invalid private operator request')
-        result = { out: await source.secrets.operator(input.args, input.stdin as string | undefined), code: 0 }
+        const args = input.args as string[], stdin = input.stdin as string | undefined
+        // fork: adding a task makes its worktree and starts its agent, longer than a secret's 5 s.
+        if (isOperatorTask(args)) { clearTimeout(deadline); deadline = setTimeout(() => socket.destroy(), TASK_DEADLINE) }
+        // fork: task add/list/show/tell for scripts (operator-tasks.ts); everything else is upstream's secret set/rm.
+        result = { out: isOperatorTask(args) ? await operatorTask(source, args, stdin) : await source.secrets.operator(args, stdin), code: 0 }
       } catch (error) { result = { out: (error as Error).message + '\n', code: 1 } }
       socket.end(JSON.stringify(result))
     })
@@ -49,7 +55,7 @@ export async function operatorRequest(home: string, path: string, args: string[]
   if (Buffer.byteLength(body) > LIMIT) throw new Error('Operator request is too large')
   return new Promise((resolve, reject) => {
     const socket = createConnection(path), chunks: Buffer[] = []; let size = 0
-    socket.setTimeout(10_000, () => socket.destroy(new Error('The operator command timed out; inspect the named setting before retrying')))
+    socket.setTimeout(isOperatorTask(args) ? TASK_DEADLINE + 5000 : 10_000, () => socket.destroy(new Error('The operator command timed out; inspect the named setting before retrying')))
     socket.on('error', reject)
     socket.on('connect', () => socket.end(body))
     socket.on('data', data => { const chunk = Buffer.from(data); size += chunk.length; if (size > LIMIT) socket.destroy(new Error('Operator reply is too large')); else chunks.push(chunk) })

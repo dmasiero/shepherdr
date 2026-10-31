@@ -3,17 +3,19 @@ import { resolve } from 'node:path'
 import { defaultHome, inspectHome } from '../server/core/home.ts'
 import { runRecord } from '../server/core/launcher.ts'
 import { operatorRequest } from '../server/core/operator.ts'
+import { taskStdin } from './operator-tasks.ts' // fork: task commands for scripts
 
 try {
   if (process.env.SHEPHERDR_CORE_CREDENTIAL || process.env.SHEPHERDR_BACKEND === 'core') throw new Error('Agents must use their authenticated core mailbox')
-  const args = process.argv.slice(2)
+  let args = process.argv.slice(2) // fork: let, for taskStdin
+  let stdin: string | undefined // fork: declared before taskStdin
+  if (args[0] === 'task') [args, stdin] = await taskStdin(args) // fork: a brief or message goes on stdin, before --home is read
   let home = defaultHome()
   const index = args.indexOf('--home')
   if (index >= 0) { if (!args[index + 1]) throw new Error('Give --home PATH'); home = resolve(args[index + 1]!); args.splice(index, 2) }
   if (typeof inspectHome(home) !== 'object') throw new Error('No core installation here. Use the correct --home; legacy state was left untouched.')
   const record = runRecord(home)
   if (!record?.operator) throw new Error('The core server is not running with a private operator socket. Check shepherdr status.')
-  let stdin: string | undefined
   if (args[0] === 'secret' && args[1] === 'set') {
     if (process.stdin.isTTY) throw new Error('Give the value on stdin: secret set NAME < file')
     const chunks: Buffer[] = []; let size = 0
