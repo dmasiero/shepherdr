@@ -88,7 +88,11 @@ keeps upstream's calls as they are. Its hooks:
 command refuses those outside an agent session. The fork lets trusted scripts on the main machine run them through
 the operator socket upstream already has for `secret set/rm`: a Unix socket in the private home (`~/.shepherdr`,
 mode 0700), itself 0600 and owned by you, so only your own user on this machine reaches it. Nothing listens on the
-network and no web route or agent mailbox gains these commands.
+network and no web route or agent mailbox gains these commands. The fence is that user, as it is for `secret set`:
+agents' shells run as you too, and one that drops its session's environment reaches the socket like any script
+(the command refuses inside an agent session, but that is a courtesy, not a guard). They could already change
+`~/.shepherdr` as you. Contained runs (Autopilot) get a home of their own in their sandbox
+(`helper/core-pilot-sandbox.ts`) and never see it.
 
 ```sh
 shepherdr task add "<title>" --space ops [--after OPS-1] [--later] [--set merge="ask me first"] --brief "<brief>"   # or < brief.md
