@@ -152,12 +152,19 @@ describe('one design across the screen', () => {
     // the ⋯ menu answers the arrows and Escape, and the button's ring is round and only for the keyboard
     expect(ui).toMatch(/export function Menu\([\s\S]*?'ArrowDown'[\s\S]*?'Escape'/)
     expect(source['src/App.tsx']).toMatch(/aria-haspopup="menu"[\s\S]*?'rounded-full!'/)
-    expect(css).toMatch(/:focus-visible \{\s*outline: 2px solid var\(--focus\)/)
+    expect(css).toMatch(/:focus-visible \{\s*outline: none;\s*\}\s*:where\(\[data-keys="focus"\]\) :focus-visible \{\s*outline: 2px solid var\(--focus\)/)
     expect(css).not.toMatch(/:focus \{/)
     // a mode's meaning is a few words beside it, not a second line
     const modes = [...readFileSync(join(root, 'shared/types.ts'), 'utf8').matchAll(/\['\w+', '\w+', '([^']+)'\]/g)].map((m) => m[1])
     expect(modes.length).toBe(2)
     for (const m of modes) expect(m.length).toBeLessThanOrEqual(22)
+  })
+  test('every focus ring of a row or button is the keyboard\'s: it carries keys:, or a click would show it after any key', () => {
+    const all = [...new Set([...files, ...readdirSync(join(root, 'plugins'), { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.tsx')).map((f) => join('plugins', f))])]
+    const bare = all.filter((f) => /(?<![\w:-])(?:has-|group-)?focus-visible:(?:after:)?shadow-\[[^\]]*--(?:color-)?focus/.test(readFileSync(join(root, f), 'utf8')))
+    expect(bare).toEqual([])
+    expect(source['src/ui.tsx']).toContain("kb && 'cursor:shadow-[inset_0_0_0_1.5px_var(--focus)]'")
+    expect(source['plugins/terminal/client.tsx']).not.toContain('outline-focus')
   })
   test("the agent's name shows only when someone else asks", () => {
     const chat = source['plugins/chat/client.tsx']

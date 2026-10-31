@@ -328,7 +328,7 @@ describe.skipIf(!browser)("a place's Autopilot", () => {
     await page.getByRole('menuitem', { name: 'File or photo' }).waitFor()
     expect(await page.getByRole('combobox', { name: 'Model' }).count()).toBe(0)
     expect(await page.getByRole('group', { name: 'Mode', exact: true }).count()).toBe(0)
-    expect(await page.locator('[data-agent-controls] [role=menuitem]').count()).toBe(3)
+    expect(await page.locator('[data-agent-controls] [role=menuitem]').count()).toBe(4)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.close()
   }, 30_000)
@@ -811,8 +811,13 @@ describe.skipIf(!browser)('removing a space', () => {
       await page.keyboard.press('Escape')
       await ask.waitFor({ state: 'detached' })
       expect(await more.evaluate((b) => b === document.activeElement)).toBe(true)
-      // its ring shows as the keyboard was used last, and goes at the press of a pointer
+      // no ring for that: it was the mouse's menu. It shows once the keyboard moves the focus back to it, and goes at
+      // the press of a pointer
       const ring = () => more.evaluate((b) => getComputedStyle(b).boxShadow)
+      expect(await ring()).toBe('none')
+      await page.keyboard.press('Tab')
+      await page.keyboard.press('Shift+Tab')
+      expect(await more.evaluate((b) => b === document.activeElement)).toBe(true)
       expect(await ring()).not.toBe('none')
       await page.evaluate(() => dispatchEvent(new PointerEvent('pointerdown')))
       expect(await ring()).toBe('none')

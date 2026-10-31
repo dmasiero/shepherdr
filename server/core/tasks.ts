@@ -12,6 +12,7 @@ import { taskOptions, validateTaskSettings } from './task-options.ts'
 import { CLI_NAME, kindOf } from './settings.ts'
 import { CoreForgeGit } from './forge.ts' // fork: GitHub or Gitea pull requests (forge.ts)
 import { mergedEarlier, newPrText, pushLease } from './follow-up.ts' // fork: Gitea follow-up pull requests
+import { pickSpeed } from '../common/restart.ts'
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import type { CorePilotRun } from './pilot-policy.ts'
@@ -29,6 +30,8 @@ export interface CoreTaskInput {
 }
 
 export interface CoreTask extends Task {
+  /** the speed its agent was restarted on, normal or fast; none: the CLI's own */
+  speed?: string
   branch: string
   base: string
   machine: string
@@ -81,6 +84,10 @@ export interface CoreTask extends Task {
   kept?: string[]
 }
 
+const REVIEW_LINE = 'Waiting for review'
+const REVIEW_QUIET = 20 * 60000 // As long as a task may stay quiet before its stalled news.
+const REVIEW_RELAY = 2 * 60000 // A finished reviewer's report reaches the agent within a few polls.
+
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
 export class CoreTasks {
   readonly git: CoreForgeGit
@@ -118,8 +125,9 @@ export class CoreTasks {
     const terminal = agent && this.source.agents.terminal(agent), nativeStatus = agent && this.source.status(agent)
     const waiting = agent && nativeStatus === 'idle' && this.source.logs?.waiting?.(agent)
     const provider = task.workflow === 'working' && agent && this.source.providerRetries?.get(agent)
+    const review = waiting && !provider && this.reviewRunning(task) && !this.lastWordsAsk(task)
     const status = task.startError ? 'need' : task.workflow === 'merged' || task.workflow === 'closed' ? 'done' : task.workflow === 'ready' ? 'ready' : task.workflow === 'merging' ? 'merging'
-      : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : nativeStatus === 'need' || waiting && !provider || terminal?.state === 'finished' ? 'need' : 'work'
+      : task.workflow === 'queued' ? 'queued' : task.workflow === 'todo' || !agent ? 'todo' : nativeStatus === 'need' || waiting && !provider && !review || terminal?.state === 'finished' ? 'need' : 'work'
     const retryLine = provider ? `${provider.reason}${provider.due ? ` · retry in ${Math.max(1, Math.ceil((provider.due - Date.now()) / 60000))}m` : provider.over ? '' : ' · retrying'}` : undefined
     const created = Date.parse(task.created)
     const observed = this.source.store.get<{ status: string; at?: number }>('automation-seen', task.id)
@@ -127,8 +135,24 @@ export class CoreTasks {
     const when = task.archived ?? (status === 'done' ? task.doneAt ?? changed : status === 'todo' ? created : changed)
     const taskAge = Number.isFinite(when) && when > 0 ? age(when) : task.age
     const agentAge = agent?.started && Number.isFinite(agent.started) ? age(agent.started) : taskAge
-    return { ...task, age: taskAge, on: CLI_NAME[agent?.kind ?? task.kind], status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: CLI_NAME[agent.kind], status: nativeStatus === 'off' ? 'off' : status, age: agentAge, note: retryLine || task.report?.msg || '' } : undefined,
+    const reviewLine = review && status === 'work' ? REVIEW_LINE : undefined
+    return { ...task, ...(reviewLine ? { waitsFor: 'review' as const, report: task.report && { ...task.report, msg: reviewLine } } : {}), age: taskAge, on: CLI_NAME[agent?.kind ?? task.kind], status, sub: task.capacity ? `Waiting: ${task.capacity}` : retryLine || reviewLine || task.sub, browser: agent?.browser ? { ready: this.source.machineConnected?.(task.machine) ?? true, hint: this.source.machineConnected?.(task.machine) === false ? 'This machine is reconnecting' : undefined } : { ready: false, hint: 'Start or restart the task agent to provision its shared browser' }, agent: agent ? { chat: task.chat, role: 'Agent', cli: CLI_NAME[agent.kind], status: nativeStatus === 'off' ? 'off' : status, age: agentAge, note: retryLine || reviewLine || task.report?.msg || '' } : undefined,
       state: status === 'done' ? task.workflow === 'closed' ? 'Done' : 'Merged' : status === 'ready' ? 'Ready' : status === 'need' ? 'Needs you' : status === 'queued' ? 'Queued' : status === 'todo' ? 'To do' : status === 'merging' ? 'Merging' : 'Working' }
+  }
+  /** A question put in plain words still needs the human, whatever else the agent waits for. */
+  private lastWordsAsk(task: CoreTask) {
+    const last = this.source.logs.messages(task.chat).findLast(message => message.text)
+    return last?.who === 'agent' && /\?(?=[\s*_`"')\]]|$)/.test(last.text!)
+  }
+  /** Its recorded reviewer is at work, or its report is on the way. A reviewer that asks, dies, stalls or ends without a report reaching the agent is no wait. */
+  private reviewRunning(task: CoreTask, now = Date.now()) {
+    const reviewer = task.workflow === 'working' && task.reviewChat ? this.source.agents.get(task.reviewChat) : undefined
+    if (!reviewer) return false
+    const terminal = this.source.agents.terminal(reviewer), status = this.source.status(reviewer)
+    const life = Math.max(reviewer.started ?? 0, reviewer.activityAt ?? 0, terminal?.status_ms ?? 0)
+    const reported = !!task.reviewTurn || task.reviewFailure === reviewer.launch
+    if (reported ? (this.source.agents.get(task.chat)?.activityAt ?? 0) > life : status === 'need') return false
+    return now - life < (!reported && terminal?.state === 'live' && status === 'work' ? REVIEW_QUIET : REVIEW_RELAY)
   }
   async add(grant: Grant, input: CoreTaskInput) {
     const caller = this.source.agents.get(grant.chat)
@@ -361,7 +385,7 @@ export class CoreTasks {
     const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. ${pilot ? 'Your Git metadata is read-only: use shepherdr checkpoint MESSAGE to commit, and shepherdr review TASK for a fresh managed reviewer. Use the product broker for managed agents and messages; no core socket or outside helper is available.' : 'Use hc for child agents, messages and waits.'} Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
     const words = await this.git.words({ machine: task.machine, folder: task.repo }) // fork: Gitea's words in a Gitea space
     const prompt = `${task.desc}\n\n${wait}\n\n${words(`Settings:\n- Agent: ${task.kind}${task.model ? `, model ${task.model}` : ''}${task.effort ? `, effort ${task.effort}` : ''}\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}${task.reviewerModel ? `, model ${task.reviewerModel}` : ''}${task.reviewerEffort ? `, effort ${task.reviewerEffort}` : ''}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${Object.keys(task.overrides ?? {}).length ? `Set by the coordinator for this task: ${Object.entries(task.overrides!).map(([key, value]) => `${key}=${value}`).join(', ')}\n` : ''}`)}${message ? `\n<go>${message}</go>` : ''}`
-    const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
+    const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, speed: task.speed, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
     if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
     const takeover = task.providerTakeover
@@ -603,7 +627,7 @@ export class CoreTasks {
         if (terminal?.state === 'live') await this.source.core.call('terminal.interrupt', { terminal: terminal.address })
         await this.source.browsers?.close(task.id)
         task.workflow = 'todo'; delete task.reservedAt; this.save(task); await this.label(task); return { ok: true }
-      case 'restart-info': return { ok: true, info: { role: 'task', space: this.source.space(task.place)?.name, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
+      case 'restart-info': return { ok: true, info: { role: 'task', space: this.source.space(task.place)?.name, on: { kind: agent?.kind ?? task.kind, model: agent?.model, effort: agent?.effort, speed: agent?.speed }, onKnown: !!agent,
         onWords: agent?.kind ?? task.kind, want: this.source.settings.agent('task', task.place), working: agent?.state === 'working',
         clis: this.source.settings.clis(task.place) } }
       case 'restart':
@@ -614,10 +638,11 @@ export class CoreTasks {
         const profile = owned && ['on', 'workers'].includes(owned.state) ? this.source.pilots.policy.live(owned.id) : current?.state === 'on' ? this.source.pilots.policy.live(current.id) : undefined
         if (profile && !task.pilot) throw new Refusal('This task needs its worktree moved out of legacy helper storage before contained adoption')
         const choice = this.source.settings.checkedAgent(task.place, { kind: action.kind || task.kind, model: action.model, effort: action.effort })
+        const speed = pickSpeed(action.speed, task.speed)
         if (agent) await this.finishForRestart(agent)
         await this.profile(task, profile)
         await this.source.browsers?.close(task.id)
-        task.kind = choice.kind; task.model = choice.model; task.effort = choice.effort
+        task.kind = choice.kind; task.model = choice.model; task.effort = choice.effort; task.speed = speed
         delete task.startError; this.save(task)
         await this.launchNow(task, task.workflow === 'working' ? 'Continue your agreed task. Preserve existing work.' : undefined, task.model, task.effort)
         if (action.save && !this.get(task.id)?.capacity) this.source.settings.saveAgent('task', task.place, choice)

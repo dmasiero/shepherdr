@@ -204,6 +204,8 @@ export interface Task {
   place: string
   /** second line in lists */
   sub?: string
+  /** still Working, its turn over: what Shepherdr itself knows it waits for */
+  waitsFor?: 'review'
   age: string
   /** when a Done task finished (ms): the Done group shows newest first */
   doneAt?: number
@@ -372,10 +374,11 @@ export interface Message {
   artifact?: ArtifactPost
   question?: Question
   reactions?: Reaction[]
-  /** waits to go in: the agent shows a menu or permission prompt, or is still starting (a busy one takes it at once) */
+  /** really held: the agent shows a menu or permission prompt, is still starting, or is out of reach (a busy one takes
+   *  it at once, so an ordinary message never has this) */
   waiting?: boolean
-  /** why it waits: a menu is up (typed text could pick an option), the agent is starting, or a CLI command waits for the
-   *  turn to end */
+  /** why it waits: a menu is up (typed text could pick an option), the agent is starting, a CLI command waits for the
+   *  turn to end, or nothing here: its machine is out of reach */
   waitsFor?: 'menu' | 'start' | 'turn'
   /** an attached file: each one is a message of its own, right after the text it came with */
   file?: { name: string; path: string }
@@ -596,7 +599,7 @@ export interface Chat {
   /** what this CLI lets the + menu change; only what it supports is listed */
   controls?: ChatControls
   /** Recorded launch values, never inferred from Settings. Missing values are CLI defaults, not observed telemetry. */
-  agent?: { kind: string; model?: string; modelLabel?: string; effort?: string; runtime?: AgentRuntime }
+  agent?: { kind: string; model?: string; modelLabel?: string; effort?: string; speed?: string; runtime?: AgentRuntime }
   /** Settings for its role now say something else than what its agent runs on: a calm hint offers a restart */
   restart?: RestartHint
 }
@@ -616,6 +619,8 @@ export interface RestartCli {
   efforts?: string[]
   defaultModel?: string
   defaultEffort?: string
+  /** the speeds it can start on: normal, fast */
+  speeds?: string[]
 }
 
 /** what the restart sheet shows: what its agent runs on now and what Settings say for its role (what it restarts with
@@ -626,6 +631,10 @@ export interface AgentRuntime {
   modelLabel?: string
   effort?: string
   effortUnsupported?: boolean
+  /** its record says it set no effort: the model's own default runs */
+  effortDefault?: boolean
+  /** normal, fast or ultrafast; another word as the CLI logged it */
+  speed?: string
   source: 'session' | 'hook'
   at: number
 }
@@ -634,7 +643,7 @@ export interface RestartInfo {
   role: 'task' | 'coordinator'
   /** its space, whose Settings a save changes */
   space?: string
-  on: { kind: string; model?: string; effort?: string }
+  on: { kind: string; model?: string; effort?: string; speed?: string }
   /** False if no launch record exists; on is then only a proposed starting configuration. */
   onKnown?: boolean
   onWords: string
@@ -915,7 +924,8 @@ export type Action =
   | { type: 'restart-info'; chat: string }
   /** start a coordinator or a task's agent again on this CLI, model and effort (none: the CLI's own; no kind: all as
       Settings say for its role); save: as its space's Settings for its role too */
-  | { type: 'restart'; chat: string; kind?: string; model?: string; effort?: string; save?: boolean }
+  /** speed: normal or fast, '' for the CLI's own; left out keeps what it was started on. It lasts as long as this chat, and save leaves it out of Settings. */
+  | { type: 'restart'; chat: string; kind?: string; model?: string; effort?: string; speed?: string; save?: boolean }
   /** mark a task done with nothing merged (shepherdr task close); refused (held) while it holds unmerged work, unless force */
   | { type: 'close'; chat: string; force?: boolean }
   /** delete a task: its agent, herdr space, worktree, branch, chat and record; refused while it holds work, unless force */
