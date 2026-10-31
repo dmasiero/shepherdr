@@ -60,11 +60,11 @@ async function execute(argv: string[], cwd: string, env: Record<string, string |
   } finally { clearTimeout(timer); if (exceeded || timedOut) kill() }
 }
 export interface PilotGitCommand {
-  repo: string; cwd: string; args: string[]; writableRoots: string[]; tool?: 'git' | 'gh'; stdin?: string; timeout?: number; literal?: boolean; host?: string
+  repo: string; cwd: string; args: string[]; writableRoots: string[]; tool?: 'git' | 'gh' | 'tea'; stdin?: string; timeout?: number; literal?: boolean; host?: string
 }
 
 export async function pilotGitCommand(input: PilotGitCommand) {
-  if (!input || !['git', 'gh'].includes(input.tool ?? 'git') || !Array.isArray(input.args) || input.args.length > 512 || !input.args.length || input.args.some(word => typeof word !== 'string' || word.includes('\0')) || input.args[0].startsWith('-') || !Array.isArray(input.writableRoots) || input.writableRoots.length > 8192 || input.writableRoots.some(root => typeof root !== 'string' || !isAbsolute(root) || resolve(root) === '/') || input.stdin !== undefined && (typeof input.stdin !== 'string' || Buffer.byteLength(input.stdin) > 1024 * 1024)) throw Error('Invalid checked repository command')
+  if (!input || !['git', 'gh', 'tea'].includes(input.tool ?? 'git') || !Array.isArray(input.args) || input.args.length > 512 || !input.args.length || input.args.some(word => typeof word !== 'string' || word.includes('\0')) || input.args[0].startsWith('-') || !Array.isArray(input.writableRoots) || input.writableRoots.length > 8192 || input.writableRoots.some(root => typeof root !== 'string' || !isAbsolute(root) || resolve(root) === '/') || input.stdin !== undefined && (typeof input.stdin !== 'string' || Buffer.byteLength(input.stdin) > 1024 * 1024)) throw Error('Invalid checked repository command')
   if (input.literal !== undefined && typeof input.literal !== 'boolean' || input.host !== undefined && (typeof input.host !== 'string' || !/^[a-zA-Z0-9.-]{1,253}$/.test(input.host))) throw Error('Invalid repository command environment')
   if (input.timeout !== undefined && (!Number.isSafeInteger(input.timeout) || input.timeout < 1 || input.timeout > 600_000)) throw Error('Invalid checked repository timeout')
   const repo = realpathSync(input.repo), cwd = realpathSync(input.cwd)
@@ -80,6 +80,7 @@ export async function pilotGitCommand(input: PilotGitCommand) {
     return path
   }
   const git = program('git')!, gh = program('gh', input.tool === 'gh'), env = environment()
+  const tea = input.tool === 'tea' ? program('tea') : undefined // fork: Gitea's command line (server/core/forge.ts)
   env.PATH = (env.PATH || '').split(':').filter(path => isAbsolute(path) && !mutable(pilotConfigPath(path))).join(':')
   const dot = join(cwd, '.git')
   const gitDir = lstatSync(dot).isDirectory() ? realpathSync(dot) : realpathSync(resolve(cwd, readFileSync(dot, 'utf8').trim().slice('gitdir: '.length)))
@@ -149,7 +150,9 @@ export async function pilotGitCommand(input: PilotGitCommand) {
     const pairs = options.filter((_, n) => n % 2).map(value => { const split = value.indexOf('='); return [value.slice(0, split), value.slice(split + 1)] })
     const guarded = { ...env, GIT_SSH_COMMAND: ssh, GIT_CONFIG_COUNT: String(pairs.length) } as Record<string, string | undefined>
     for (let n = 0; n < pairs.length; n++) { guarded[`GIT_CONFIG_KEY_${n}`] = pairs[n][0]; guarded[`GIT_CONFIG_VALUE_${n}`] = pairs[n][1] }
-    const result = await execute(input.tool === 'gh' ? [gh!, ...input.args] : [git, '--no-pager', ...options, ...input.args], cwd, guarded, 8 * 1024 * 1024, input.timeout ?? 30_000, input.stdin)
+    const result = await execute(tea ? [tea, ...input.args] : input.tool === 'gh' ? [gh!, ...input.args] : [git, '--no-pager', ...options, ...input.args], cwd, tea ? { ...guarded, NO_COLOR: '1' } : guarded, 8 * 1024 * 1024, input.timeout ?? 30_000, input.stdin)
+    // fork: tea api -i writes Gitea's HTTP status to stderr; it is read with the answer (server/core/tea.ts)
+    if (tea) { if (result.code !== 0) throw Error(Buffer.concat([result.stderr, result.stdout]).toString('utf8').slice(0, 4000) || `tea exited ${result.code}`); return Buffer.concat([result.stderr, result.stdout]) }
     if (result.code !== 0) throw Error(result.stderr.toString('utf8').slice(0, 4000) || `Repository command exited ${result.code}`)
     return result.stdout
   } finally { rmSync(sshRoot, { recursive: true, force: true }) }

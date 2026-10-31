@@ -13,6 +13,12 @@ export class CoreWorktree {
     const task = this.source.tasks.get(ask.task)
     if (!task) throw new Error('No such task')
     const read = async () => {
+      // fork: a Gitea task's pull request for the panel, read through tea (gitea.ts); GitHub's by the helper, as upstream
+      if (ask.what === 'pr') {
+        let gitea: Awaited<ReturnType<typeof this.source.tasks.git.gitea>>
+        try { gitea = await this.source.tasks.git.gitea?.({ machine: task.machine, folder: task.folder }) } catch (error) { return { pr: null, why: (error as Error).message } }
+        if (gitea) return task.branch ? gitea.panel(task.branch).catch(() => ({ pr: null, why: 'Couldn’t ask Gitea about it.' })) : { pr: null, why: 'No branch yet.' }
+      }
       const bun = await this.source.agents.bun(task.machine)
       const context = new CorePilotRepositories(this.source.store).context({ machine: task.machine, folder: task.folder })
       const runtime = context ? await this.source.agents.browserRuntime(task.machine) : undefined

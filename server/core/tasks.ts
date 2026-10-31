@@ -10,7 +10,8 @@ import { CoreTaskRelocation } from './task-relocation.ts'
 import { CoreTaskProcesses } from './task-processes.ts'
 import { taskOptions, validateTaskSettings } from './task-options.ts'
 import { CLI_NAME, kindOf } from './settings.ts'
-import { CoreGit } from './git.ts'
+import { CoreForgeGit } from './forge.ts' // fork: GitHub or Gitea pull requests (forge.ts)
+import { mergedEarlier, newPrText, pushLease } from './follow-up.ts' // fork: Gitea follow-up pull requests
 import type { CoreSource } from './source.ts'
 import type { AgentKind, CoreSpace } from './model.ts'
 import type { CorePilotRun } from './pilot-policy.ts'
@@ -82,12 +83,12 @@ export interface CoreTask extends Task {
 
 /** Workflow is explicit persisted metadata, mirrored to core labels. It is never inferred from process exit. */
 export class CoreTasks {
-  readonly git: CoreGit
+  readonly git: CoreForgeGit
   private ticking = false
   private merging = new Set<string>()
   private changing = new Set<string>()
   private drains = new Set<() => void>()
-  constructor(private readonly source: CoreSource) { this.git = new CoreGit(source.files, (repo, additional) => new CorePilotRepositories(source.store).context(repo, additional), machine => source.agents.browserRuntime(machine)) }
+  constructor(private readonly source: CoreSource) { this.git = new CoreForgeGit(source.files, (repo, additional) => new CorePilotRepositories(source.store).context(repo, additional), machine => source.agents.browserRuntime(machine)) }
   /** Internal product transaction gate; callbacks never come from network input. */
   async change<T>(id: string, perform: () => Promise<T>): Promise<T> {
     if (this.source.quiescing) throw new Refusal('Shepherdr is stopping; retry after it restarts')
@@ -358,7 +359,8 @@ export class CoreTasks {
       : task.workflow === 'ready' ? 'This task is already Ready. Preserve the work and wait for the human. Do not begin implementation or merge.' : ''
     const role = readFileSync(join(import.meta.dir, '../../skill/shepherdr-agent/SKILL.md'), 'utf8')
     const instructions = `${role}\n\nYou are ${task.id} in standalone Shepherdr on core. Use the launch-provisioned authenticated shepherdr command. ${pilot ? 'Your Git metadata is read-only: use shepherdr checkpoint MESSAGE to commit, and shepherdr review TASK for a fresh managed reviewer. Use the product broker for managed agents and messages; no core socket or outside helper is available.' : 'Use hc for child agents, messages and waits.'} Do not use legacy helpers, SSH workers, a web URL or screen scraping. Your branch is ${task.branch}; stay in this worktree.\n`
-    const prompt = `${task.desc}\n\n${wait}\n\nSettings:\n- Agent: ${task.kind}${task.model ? `, model ${task.model}` : ''}${task.effort ? `, effort ${task.effort}` : ''}\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}${task.reviewerModel ? `, model ${task.reviewerModel}` : ''}${task.reviewerEffort ? `, effort ${task.reviewerEffort}` : ''}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${Object.keys(task.overrides ?? {}).length ? `Set by the coordinator for this task: ${Object.entries(task.overrides!).map(([key, value]) => `${key}=${value}`).join(', ')}\n` : ''}${message ? `\n<go>${message}</go>` : ''}`
+    const words = await this.git.words({ machine: task.machine, folder: task.repo }) // fork: Gitea's words in a Gitea space
+    const prompt = `${task.desc}\n\n${wait}\n\n${words(`Settings:\n- Agent: ${task.kind}${task.model ? `, model ${task.model}` : ''}${task.effort ? `, effort ${task.effort}` : ''}\n- Review: ${task.review.on ? 'on' : 'off'}\n- Reviewer: ${task.review.kind}${task.reviewerModel ? `, model ${task.reviewerModel}` : ''}${task.reviewerEffort ? `, effort ${task.reviewerEffort}` : ''}\n- Must fix: ${task.review.mustFix}\n- Review rounds: ${task.review.rounds}\n- Merge: ${task.mergePolicy === 'ask' ? 'ask the human first' : task.mergePolicy === 'checks' ? 'after GitHub checks' : 'on its own'}\n${Object.keys(task.overrides ?? {}).length ? `Set by the coordinator for this task: ${Object.entries(task.overrides!).map(([key, value]) => `${key}=${value}`).join(', ')}\n` : ''}`)}${message ? `\n<go>${message}</go>` : ''}`
     const launched = await this.source.agents.launch(space, task.chat, task.kind, prompt, { role: 'task', parent, folder: task.folder, task: task.id, instructions, model, effort, resume: !pilot && !prior?.pilot, pilot: pilot ? { run: pilot.id, hosts: pilot.config.hosts, deadline: pilot.config.runtime ? pilot.started + pilot.config.runtime : undefined, repo: task.repo } : undefined })
     if (pilot) this.source.pilots.policy.bind(pilot.id, { chat: launched.chat, launch: launched.launch, role: 'task', task: task.id })
     await this.label(task)
@@ -384,7 +386,9 @@ export class CoreTasks {
     const id = randomUUID()
     this.source.post(task.place, { id, who: 'agent', card: { id, task: task.id, status: this.view(task).status, text }, at: Date.now() })
   }
-  async ready(grant: Grant, id: string, summary: string, facts?: string) { return this.change(id, () => this.readyNow(grant, id, summary, facts)) }
+  // fork: ready, merge and pr refuse in the words of the task's forge, Gitea's in a Gitea space (forge.ts)
+  private forgeSaid = (id: string) => (error: unknown) => { const task = this.get(id); throw task && error instanceof Error ? this.git.saidError({ machine: task.machine, folder: task.folder }, error) : error }
+  async ready(grant: Grant, id: string, summary: string, facts?: string) { return this.change(id, () => this.readyNow(grant, id, summary, facts)).catch(this.forgeSaid(id)) }
   private async readyNow(grant: Grant, id: string, summary: string, facts?: string) {
     const task = this.get(id)
     if (!task) throw new Refusal('No such task')
@@ -406,8 +410,9 @@ export class CoreTasks {
       if (!remote) throw new Refusal('The saved pull request no longer has its GitHub origin')
       const pr = await this.git.pullRequest(location, task.branch, false)
       if (pr.number !== task.pr.number || pr.headRefOid !== task.readyHead || pr.baseRefName !== task.base || pr.state !== 'OPEN') throw new Refusal('Push this exact commit to its open pull request before reporting ready')
-      await this.git.ghRun(location, ['pr', 'edit', String(pr.number), '--repo', remote, '--body-file', '-'], 60, `${summary.trim()}${facts ? '\n\nFacts: ' + facts : ''}`)
-      if (pr.isDraft) await this.git.ghRun(location, ['pr', 'ready', String(pr.number), '--repo', remote])
+      // fork: through the repo's forge (forge.ts): on GitHub, upstream's gh pr edit and gh pr ready
+      await this.git.editPr(location, remote, pr.number, `${summary.trim()}${facts ? '\n\nFacts: ' + facts : ''}`)
+      if (pr.isDraft) await this.git.readyPr(location, remote, pr.number)
     }
     delete task.approvedHead
     task.said = summary; task.facts = facts; task.workflow = 'ready'; task.readyAt = Date.now(); delete task.reservedAt
@@ -444,7 +449,8 @@ export class CoreTasks {
     this.save(task)
     return true
   }
-  async merge(grant: Grant, id: string) {
+  async merge(grant: Grant, id: string) { return this.mergeNow(grant, id).catch(this.forgeSaid(id)) } // fork: forge words
+  private async mergeNow(grant: Grant, id: string) {
     if (this.source.quiescing) throw new Refusal('Shepherdr is stopping; retry after it restarts')
     const task = this.get(id)
     if (!task) throw new Refusal('No such task')
@@ -463,12 +469,19 @@ export class CoreTasks {
       if (task.mergePolicy === 'checks' && !remote) throw new Refusal('This merge requires verified GitHub checks; the repository has no GitHub remote')
       if (remote) {
         const pr = await this.git.pullRequest(worktree, task.branch!)
-        if (pr.headRefOid !== head || pr.baseRefName !== task.base) throw new Refusal('The pull request head or base differs from the approved task')
+        // fork: a Gitea pull request merged already at an earlier commit (follow-up.ts): work since goes in a follow-up
+        // pull request and the merge stops there; with none, that merge was the task's
+        const earlier = await mergedEarlier(this.git, task, pr, head, remote)
+        if (earlier?.opened) {
+          task.pr = earlier.opened; task.pushedHead = earlier.pushed; delete task.readyHead; delete task.approvedHead; delete task.mergeQuestion; this.save(task)
+          throw new Refusal(earlier.said)
+        }
+        if (pr.headRefOid !== head && !earlier?.landed || pr.baseRefName !== task.base) throw new Refusal('The pull request head or base differs from the approved task')
         if (pr.state !== 'MERGED') {
           if (task.mergePolicy === 'checks' && !pr.statusCheckRollup.length) throw new Refusal('No GitHub checks have reported for this commit')
           if (pr.statusCheckRollup.some(check => !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion || check.state || 'PENDING'))) throw new Refusal('GitHub checks are not green')
           task.workflow = 'merging'; this.save(task); await this.label(task)
-          await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'merge', String(pr.number), '--squash', '--match-head-commit', head, '--repo', remote], 90)
+          await this.git.mergePr({ machine: task.machine, folder: task.folder }, remote, pr.number, head) // fork: forge.ts
         }
         const done = await this.git.pullRequest(worktree, task.branch!)
         if (done.state !== 'MERGED') throw new Refusal('GitHub has not confirmed the merge')
@@ -512,7 +525,7 @@ export class CoreTasks {
       if (!commit || !/^[a-f0-9]{40,64}$/.test(commit)) throw new Refusal('GitHub has not confirmed its merge commit')
       task.mergeCommit = commit; task.externalMerge = true; task.baseSyncPending = true
       task.workflow = 'merged'; task.status = 'done'; task.doneAt = Date.now(); task.outcome = 'done'; task.cleanupPending = true
-      this.save(task); await this.label(task); this.card(task, task.said || 'Merged on GitHub')
+      this.save(task); await this.label(task); this.card(task, task.said || this.git.said({ machine: task.machine, folder: task.folder }, 'Merged on GitHub')) // fork: forge words
       return true
     })
   }
@@ -526,7 +539,7 @@ export class CoreTasks {
         delete task.baseSyncPending; delete task.baseSyncError; this.save(task)
       } catch (error) {
         const message = String((error as Error).message).slice(0, 1000)
-        if (task.baseSyncError !== message) this.source.post(task.chat, { id: `base-sync-${task.id}`, who: 'agent', text: `Merged on GitHub. The base checkout was kept and will retry syncing: ${message}`, at: Date.now() })
+        if (task.baseSyncError !== message) this.source.post(task.chat, { id: `base-sync-${task.id}`, who: 'agent', text: `${this.git.said({ machine: task.machine, folder: task.folder }, 'Merged on GitHub')}. The base checkout was kept and will retry syncing: ${message}`, at: Date.now() })
         task.baseSyncError = message; this.save(task)
       }
     })
@@ -536,7 +549,7 @@ export class CoreTasks {
     if (waiting) await new Promise<void>(resolve => this.drains.add(resolve))
     return waiting
   }
-  async pr(grant: Grant, id: string) { return this.change(id, () => this.prNow(grant, id)) }
+  async pr(grant: Grant, id: string) { return this.change(id, () => this.prNow(grant, id)).catch(this.forgeSaid(id)) } // fork: forge words
   private async prNow(grant: Grant, id: string) {
     const task = this.get(id)
     if (!task) throw new Refusal('No such task')
@@ -544,10 +557,13 @@ export class CoreTasks {
     const repo = { machine: task.machine, folder: task.folder }
     const remote = await this.git.remote(repo)
     if (!remote) throw new Refusal('This task has no GitHub origin')
-    task.pushedHead = await this.git.pushTaskBranch(repo, task.branch, task.pushedHead); this.save(task)
+    // fork: after a merge on Gitea, its branch may be where the merge left it, or deleted (follow-up.ts)
+    task.pushedHead = await this.git.pushTaskBranch(repo, task.branch, await pushLease(this.git, task)); this.save(task)
     let pr = await this.git.findPullRequest(repo, task.branch, task.base)
     if (!pr) {
-      await this.git.ghRun({ machine: task.machine, folder: task.folder }, ['pr', 'create', '--repo', remote, '--draft', '--base', task.base!, '--head', task.branch!, '--title', `${task.id}: ${task.name}`, '--body-file', '-'], 60, task.said || task.desc || task.name)
+      // fork: through the repo's forge (forge.ts); a Gitea task whose last pull request merged opens a follow-up
+      const opened = await newPrText(this.git, task)
+      await this.git.createPr({ machine: task.machine, folder: task.folder }, remote, { base: task.base!, branch: task.branch!, title: opened.title, body: opened.body })
       pr = await this.git.pullRequest(repo, task.branch!, false)
     }
     task.pr = { number: pr.number, url: pr.url }; this.save(task)

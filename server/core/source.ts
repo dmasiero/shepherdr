@@ -115,6 +115,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     this.agents.settings = this.settings
     this.places = new CorePlaces(this)
     this.tasks = new CoreTasks(this)
+    this.agents.forgeWords = repo => this.tasks.git.words(repo) // fork: Gitea's words in a Gitea space (forge.ts)
     this.news = new CoreTaskNews(this)
     this.pilots = new CorePilotMail(this)
     this.questions = new CoreQuestions(this)
