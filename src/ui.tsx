@@ -25,7 +25,8 @@ export {
   ArrowUpIcon as UpIcon,
   ArrowUturnLeftIcon as ReplyIcon,
   BellIcon,
-  BoltIcon as EffortIcon,
+  BoltIcon as SpeedIcon,
+  SignalIcon as EffortIcon,
   BookmarkIcon as PinTaskIcon,
   BookmarkSlashIcon as UnpinIcon,
   Bars3BottomLeftIcon as SelectIcon,
@@ -857,9 +858,9 @@ export function MenuItem({ className, children, icon, hint, ...p }: Btn & { icon
 export function rowClass(sel?: boolean, kb?: boolean, dense?: boolean) {
   return clsx(
     dense ? 'min-h-7 text-[0.9375rem]/5 phone:text-base/6' : 'min-h-8',
-    'press relative flex cursor-pointer items-center gap-2 rounded-row px-2 text-fg hover:bg-hover focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] focus-visible:outline-none coarse:min-h-11 phone:min-h-12 phone:px-3',
+    'press relative flex cursor-pointer items-center gap-2 rounded-row px-2 text-fg hover:bg-hover keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] focus-visible:outline-none coarse:min-h-11 phone:min-h-12 phone:px-3',
     sel && 'bg-sel hover:bg-sel',
-    kb && 'shadow-[inset_0_0_0_1.5px_var(--focus)]',
+    kb && 'cursor:shadow-[inset_0_0_0_1.5px_var(--focus)]',
   )
 }
 
@@ -1098,7 +1099,7 @@ export function FootButton({ className, children, ...p }: Btn) {
     <button
       type="button"
       className={clsx(
-        'press flex min-h-8 items-center gap-2 rounded-row px-2 text-left text-fg2 hover:bg-hover hover:text-fg focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] focus-visible:outline-none coarse:min-h-11 coarse:text-fg phone:min-h-12 phone:text-fg phone:gap-3 phone:px-3',
+        'press flex min-h-8 items-center gap-2 rounded-row px-2 text-left text-fg2 hover:bg-hover hover:text-fg keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] focus-visible:outline-none coarse:min-h-11 coarse:text-fg phone:min-h-12 phone:text-fg phone:gap-3 phone:px-3',
         className,
       )}
       {...p}

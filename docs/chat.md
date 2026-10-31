@@ -7,11 +7,12 @@ Every agent, coordinator or task agent, gets the same chat.
   under the message, with Retry and Remove; it is still there after a reload.
 - Write to a busy agent any time: it goes in at once and steers the agent mid-turn (Claude Code, Codex and pi take it
   at their next step). It waits only while the agent shows a menu or permission prompt, where typed text could pick an
-  option (the bubble says so, and it goes in once the prompt is answered), or while the agent is still starting.
-  Commands like /compact or a model change wait for the turn to end.
+  option (the bubble says so, and it goes in once the prompt is answered), or while the agent is still starting or
+  its machine is out of reach; only then does the bubble carry a note. Commands like /compact or a model change wait
+  for the turn to end.
 - Startup trust and MCP approval prompts appear as choice cards, even before the first message. The card keeps the
   CLI's screen text and offers Open terminal if it cannot read the choices. Answers are checked before messages go
-  in. Only task worktrees Shepherdr creates are pre-trusted in Claude Code and Codex; a space you picked still asks.
+  in. Outside Isolated workspaces Shepherdr pre-trusts nothing, and Codex asks in any new Git repository, even on a machine set to bypass; its task worktrees share their repository's answer.
 - A slash command you type (`/clear`, `/new`, `/compact`, `/model sonnet`, a custom one) goes into the agent's CLI as
   you typed it, once its turn is over, and the CLI runs it. The chat shows it as you typed it, and what the CLI printed
   as its answer. After `/clear` or `/new` a quiet New session line starts the new session, whose log the chat reads
@@ -57,7 +58,9 @@ Every agent, coordinator or task agent, gets the same chat.
   (open or shut, width and tab remembered on the device); on a phone or tablet the same items in the task header's ⋯,
   each a full-screen sheet that Back closes (on a desktop its ⋯ lists them too). Every chat's ⋯, a task's or a
   coordinator's, starts with **Search in this chat**. All of it is read only. Terminal is the agent's live herdr terminal: click
-  it and every key goes in, Esc too; `Ctrl+`` ` opens it and goes back to the chat. Files lists the worktree (tracked
+  it and every key goes in, Esc too; `Ctrl+`` ` opens it and goes back to the chat. It is drawn at the terminal's own
+  size, whoever watches: opening a view never resizes the agent, a phone and a desktop see the same screen, a narrow
+  view pans sideways and a pinch (or `Ctrl` and the wheel) zooms. Files lists the worktree (tracked
   files and new ones git doesn't ignore), finds one by name and shows it highlighted. Diff shows what the task changed
   against where it left main, committed or not: its files as a tree with lines added and taken out, and each file's
   unified diff. Pull request shows the task's PR on GitHub (state, checks, a link), asked of `gh` on the remote's own

@@ -27,6 +27,7 @@ import { CoreQuestions } from './questions.ts'
 import { terminalBridge } from './terminal.ts'
 import { CoreError } from './client.ts'
 import { CLI_NAME, CoreSettings } from './settings.ts'
+import { pickSpeed } from '../common/restart.ts'
 import { CoreSecrets } from './secrets.ts'
 import { CoreProviderRetries } from './provider-retries.ts'
 import { CoreArtifacts } from './artifacts.ts'
@@ -221,7 +222,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         machine.state = 'unreachable'; this.faults.set(`machine:${machine.id}`, error.message); this.emit('snapshot')
       }).finally(() => this.discoveringHomes.delete(machine.id))
     }
-    this.agents.reconcile(); this.emit('snapshot')
+    this.agents.reconcile(); this.emit('snapshot'); this.retryPending()
     this.settings.probe(this.local.id)
     for (const machine of this.machines.filter(item => item.state === 'connected')) this.settings.probe(machine.id)
   }
@@ -273,11 +274,31 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
     if (!agent && !this.space(key) && !this.tasks.forChat(key)) return undefined
     const terminal = agent && this.agents.terminal(agent)
     const status = this.status(agent)
-    const messages = this.cards.messages(key, this.logs.messages(key))
+    const saved = this.cards.messages(key, this.logs.messages(key))
+    // Saved as waiting until delivered; the chat says so only while something really keeps it out.
+    const hold = saved.some(message => message.waiting) ? this.hold(key) : undefined
+    const messages = saved.map(message => message.waiting ? { ...message, waiting: !!hold, waitsFor: hold?.waitsFor } : message)
     if (agent?.kind === 'codex' && agent.state === 'starting' && !agent.transcript) messages.push({ id: `setup-${agent.launch}`, who: 'agent', text: 'Codex may ask you to trust its folder or Shepherdr’s hooks. Open Terminal to review its own prompts. After trusting, close Codex’s hooks view. If chat still waits, send a short message in Terminal once: its next native hook connects chat and recovers earlier replies.', at: agent.started })
     return { key, ...this.activities.chat(key, messages, terminal?.state === 'live' && status === 'work'), cli: CLI_NAME[agent?.kind ?? this.agentKind()], working: status === 'work',
       failed: this.store.all<PendingSend>('pending-send').filter(item => item.chat === key && item.state === 'uncertain').map(item => ({ cid: item.id, error: 'Delivery was interrupted; check the chat before sending again' })),
-      finished: !!agent && terminal?.state === 'finished', agent: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort, runtime: agent?.runtime } }
+      finished: !!agent && terminal?.state === 'finished', agent: this.agentWords(agent) }
+  }
+  /** what it was asked to run on and what its records say runs, with the names the catalog knows */
+  private agentWords(agent?: CoreAgent): NonNullable<Chat['agent']> {
+    const kind = agent?.kind ?? this.agentKind(), runtime = agent?.runtime
+    // a hook may report a model with its context size: claude-opus-5-5[1m]
+    const label = (model?: string) => (model ? this.settings.findModel(kind, model, agent?.space ?? '')?.label : undefined)
+    const modelLabel = label(agent?.model), runtimeLabel = label(runtime?.model?.replace(/\[.*\]$/, ''))
+    return { kind, model: agent?.model, ...(modelLabel ? { modelLabel } : {}), effort: agent?.effort, speed: agent?.speed, runtime: runtime && runtimeLabel ? { ...runtime, modelLabel: runtimeLabel } : runtime }
+  }
+  /** What keeps a message out of this chat's agent now; {} is a machine out of reach. A working agent keeps nothing out: it takes it at once. */
+  private hold(chat: string): { waitsFor?: Message['waitsFor'] } | undefined {
+    const task = this.tasks.forChat(chat), space = this.space(chat) || task && this.space(task.place), agent = this.agents.get(chat)
+    if (!space || !this.machineConnected(agent?.machine ?? space.machine)) return {}
+    const terminal = agent && this.agents.terminal(agent)
+    if (agent && (this.openPermissions(agent).length || terminal?.status?.state === 'blocked')) return { waitsFor: 'menu' }
+    if (this.pilots.lifecycle.busy(space.id) || this.pilots.completion.busy(space.id) || task?.capacity) return { waitsFor: 'start' }
+    if (!agent || agent.state === 'starting' || terminal?.state !== 'live') return { waitsFor: 'start' }
   }
   private agentKind(): AgentKind { return this.store.get<string>('setting', 'agent') === 'codex' ? 'codex' : 'claude' }
   post(chat: string, message: Message) {
@@ -340,10 +361,11 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
             const id = action.cid || randomUUID()
             this.store.db.transaction(() => {
               this.store.set('pending-send', id, { id, chat: action.chat, text, state: 'queued' } satisfies PendingSend)
-              this.post(action.chat, { id, cid: action.cid, who: 'you', text, at: Date.now(), waiting: true, waitsFor: 'start' })
+              this.post(action.chat, { id, cid: action.cid, who: 'you', text, at: Date.now(), waiting: true })
             })()
             await this.flush(action.chat)
-            return { ok: true, waiting: !!this.store.get('pending-send', id) }
+            const hold = this.store.get<Message>(`message:${action.chat}`, id)?.waiting ? this.hold(action.chat) : undefined
+            return { ok: true, waiting: !!hold, waitsFor: hold?.waitsFor }
           }
           if (!task) return prepare()
           const result = await this.tasks.change(task.id, prepare)
@@ -420,7 +442,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
       }
       case 'restart-info': {
         const agent = this.agents.get(action.chat)
-        return { ok: true, info: { role: 'coordinator', space: this.space(action.chat)?.name, on: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort }, onKnown: !!agent,
+        return { ok: true, info: { role: 'coordinator', space: this.space(action.chat)?.name, on: { kind: agent?.kind ?? this.agentKind(), model: agent?.model, effort: agent?.effort, speed: agent?.speed }, onKnown: !!agent,
           onWords: agent?.kind ?? this.agentKind(), want: this.settings.agent(this.space(action.chat)?.mode === 'autopilot' ? 'autopilot' : 'coordinator', action.chat), clis: this.settings.clis(action.chat), working: agent?.state === 'working' } }
       }
       case 'restart': {
@@ -428,7 +450,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           const agent = this.agents.get(action.chat), kind = action.kind || agent?.kind
           if (kind !== 'claude' && kind !== 'codex') throw Error('Choose Claude Code or Codex')
           const choice = this.settings.checkedAgent(action.chat, { kind, model: action.model, effort: action.effort })
-          await this.pilots.lifecycle.restart(action.chat, choice)
+          await this.pilots.lifecycle.restart(action.chat, { ...choice, speed: pickSpeed(action.speed, agent?.speed) })
           if (action.save) this.settings.saveAgent('autopilot', action.chat, choice)
           return {}
         }
@@ -438,7 +460,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         const agent = this.agents.get(action.chat)
         const kind = action.kind || agent?.kind || this.agentKind()
         if (kind !== 'claude' && kind !== 'codex') throw new Error('Choose Claude Code or Codex')
-        await this.pilots.lifecycle.regularRestart(space.id, { kind, model: action.model, effort: action.effort }, action.save)
+        await this.pilots.lifecycle.regularRestart(space.id, { kind, model: action.model, effort: action.effort, speed: pickSpeed(action.speed, agent?.speed) }, action.save)
         return {}
       }
       default: throw new Error(`This rewrite slice has not implemented ${action.type} yet; see the parity checklist`)
@@ -478,6 +500,7 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
         if (this.pilots.lifecycle.busy(space.id) || this.pilots.completion.busy(space.id)) return
         if (task && this.tasks.busy(task.id)) return
         const agent = this.agents.get(chat)
+        if (this.machines.some(machine => machine.id === (agent?.machine ?? space.machine) && machine.state !== 'connected')) return // Held until refresh sees it back.
         if (item.launch && (agent?.launch !== item.launch || this.agents.terminal(agent)?.state !== 'live')) { item.state = 'uncertain'; this.store.set('pending-send', item.id, item); this.deliveryNotice(item, true); continue }
         if (agent && (agent.state === 'starting' || this.openPermissions(agent).length)) return
         item.state = 'sending'; this.store.set('pending-send', item.id, item)
@@ -488,14 +511,14 @@ export class CoreSource extends Emitter<SourceEvents> implements Source {
           else {
             if (space.mode === 'autopilot' || agent?.pilot) throw new Error('This contained coordinator has stopped; change mode or explicitly restart its contained run before sending')
             const pick = this.settings.agent('coordinator', space.id)
-            await this.agents.launch(space, chat, agent?.kind ?? pick.kind, item.text, agent ? { model: agent.model, effort: agent.effort, resume: true } : { ...pick, resume: true })
+            await this.agents.launch(space, chat, agent?.kind ?? pick.kind, item.text, agent ? { model: agent.model, effort: agent.effort, speed: agent.speed, resume: true } : { ...pick, resume: true })
           }
           progressed = true
           const message = this.store.get<Message>(`message:${chat}`, item.id)
-          if (message) this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined })
+          if (message) { this.store.set(`message:${chat}`, item.id, { ...message, waiting: false, waitsFor: undefined }); this.emit('chat', chat) }
         } catch (error) {
           if (error instanceof CoreError && ['blocked', 'status_mismatch', 'busy'].includes(error.kind)) {
-            item.state = 'queued'; this.store.set('pending-send', item.id, item); return
+            item.state = 'queued'; this.store.set('pending-send', item.id, item); this.emit('chat', chat); return
           }
           item.state = 'uncertain'; this.store.set('pending-send', item.id, item)
           if (item.launch) this.deliveryNotice(item, true)
