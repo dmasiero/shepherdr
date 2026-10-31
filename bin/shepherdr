@@ -16,10 +16,12 @@ if [ -n "$SHEPHERDR_CORE_CREDENTIAL" ] || [ "$SHEPHERDR_BACKEND" = core ]; then
 fi
 case "$1:$2" in
   secret:set|secret:rm|secret:remove) exec bun "$here/helper/core-operator.ts" "$@" ;;
+  # fork: task commands for scripts on this machine, through the same private operator socket (FORK.md)
+  task:add|task:list|task:show|task:tell) exec bun "$here/helper/core-operator.ts" "$@" ;;
 esac
 case "$1" in
   help|--help|"")
-    printf '%s\n' 'shepherdr start | stop | status [--home PATH]' 'shepherdr secret set NAME [--machine | --space NAME] < file' 'shepherdr secret rm NAME [--machine | --space NAME]' 'Agent commands use the owning launch-provisioned helper and core mailbox.'
+    printf '%s\n' 'shepherdr start | stop | status [--home PATH]' 'shepherdr secret set NAME [--machine | --space NAME] < file' 'shepherdr secret rm NAME [--machine | --space NAME]' 'shepherdr task add TITLE --space NAME [--brief TEXT | < brief] | task list [--json] [--archived] | task show ID [--json] | task tell ID [TEXT | < message]' 'Agent commands use the owning launch-provisioned helper and core mailbox.'
     exit 0 ;;
 esac
 printf '%s\n' 'This standalone command has no legacy HTTP routing. Use the owning authenticated agent helper, or open the app. Use hc for core terminals and agents.' >&2

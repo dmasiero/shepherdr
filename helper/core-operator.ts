@@ -3,10 +3,11 @@ import { resolve } from 'node:path'
 import { defaultHome, inspectHome } from '../server/core/home.ts'
 import { runRecord } from '../server/core/launcher.ts'
 import { operatorRequest } from '../server/core/operator.ts'
+import { taskStdin } from './operator-tasks.ts' // fork: task commands for scripts
 
 try {
   if (process.env.SHEPHERDR_CORE_CREDENTIAL || process.env.SHEPHERDR_BACKEND === 'core') throw new Error('Agents must use their authenticated core mailbox')
-  const args = process.argv.slice(2)
+  let args = process.argv.slice(2) // fork: let, for taskStdin below
   let home = defaultHome()
   const index = args.indexOf('--home')
   if (index >= 0) { if (!args[index + 1]) throw new Error('Give --home PATH'); home = resolve(args[index + 1]!); args.splice(index, 2) }
@@ -20,6 +21,7 @@ try {
     for await (const chunk of process.stdin) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > 64 * 1024) throw new Error('Keep a secret under 64 KiB'); chunks.push(bytes) }
     stdin = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))
   }
+  if (args[0] === 'task') [args, stdin] = await taskStdin(args) // fork: a brief or message goes on stdin
   const result = await operatorRequest(home, record.operator, args, stdin)
   process.stdout.write(result.out); process.exitCode = result.code
 } catch (error) { console.error((error as Error).message); process.exitCode = 1 }
