@@ -337,7 +337,9 @@ export const WEB = { title: "Shepherdr on the web", link: "Link", copy: "Copy", 
 export const webState = (off, loaded, w) => (off ? "Off. Turn it on under Window › Add-ons." : !loaded ? "Reading…"
   : !w ? "Shepherdr's service isn't running here." : w.serve?.moving ? SERVE.moving(w.serve.moving)
   : w.serve?.host && !w.serve.reachable ? SERVE.unreachable(w.serve.host) : w.why ? w.why
-  : w.serve?.host ? SERVE.elsewhere(w.serve.host) : "On, private to your tailnet.");
+  : w.serve?.host ? SERVE.elsewhere(w.serve.host)
+  // fork: proxy mode (service/proxy.ts)
+  : w.via === "proxy" ? "On, through this machine's reverse proxy: it decides who gets in." : "On, private to your tailnet.");
 
 // ---- the rows' choices -----------------------------------------------------------------------------------------
 export const MERGE = [["ask", "On Accept"], ["checks", "After checks pass"], ["auto", "Right away"]];

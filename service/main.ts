@@ -5,15 +5,18 @@
 //   bun service/main.ts            run it (systemd and launchd run exactly this)
 //   SHEPHERDR_PORT=7788            the port on 127.0.0.1
 //   SHEPHERDR_WEB=on|off           serve the web app and share it on the tailnet (default on)
+//   SHEPHERDR_PROXY_ORIGINS=…      fork: a reverse proxy here serves it instead of tailscale serve (service/proxy.ts)
 // Serve from (service/host.ts): one machine serves the web app and holds the shared data; on the others the service
 // reads and writes it there, keeps their settings in step (service/sync.ts) and doesn't share /shepherdr.
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, rmSync } from "node:fs";
 import { join, normalize } from "node:path";
+import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
 import { DATA, SOCK, TOKEN, PORT, HOME, ensureData } from "./paths.ts";
 import { holdLock } from "./lock.ts";
 import { gate, localCaller, type Gate } from "./auth.ts";
-import { trustedPeer } from "./peer.ts";
+import { trustedPeer, peerUid } from "./peer.ts";
+import { proxyFrom, proxyOrigin, proxyLink, type Proxy } from "./proxy.ts";
 import { whoami, share, served, unshare, restoreShare, type Me } from "./tailscale.ts";
 import { qrFile } from "./qr.ts";
 import { Hub } from "./hub.ts";
@@ -104,8 +107,17 @@ await Promise.race([host.start(), Bun.sleep(10_000)]);
 const store = new Store(hub, host);
 new Sync(hub, host).start();
 let me: Me | null = await whoami();
-const g: Gate = { owner: me?.login ?? null, dns: me?.dns ?? null, port: PORT, token };
-const live = new Live(hub, store, () => me, VERSION);
+// fork: proxy mode (service/proxy.ts); a bad setting stops the service rather than fall back to something else
+let proxy: Proxy | null = null;
+try { proxy = proxyFrom(); } catch (err) { console.error((err as Error).message); process.exit(1); }
+const g: Gate = { owner: me?.login ?? null, dns: me?.dns ?? null, port: PORT, token, proxy };
+// the web app's own link: the proxy's, or this machine's tailnet name
+const ownLink = () => (proxy ? proxyLink(proxy) : me ? `https://${me.dns}/shepherdr/` : null);
+// this machine's name: its tailnet one; without Tailscale, its host name in proxy mode (the web app sends it back as
+// the machine to act on, compared with this)
+const here = () => me?.host ?? (proxy ? hostname().split(".")[0] : "this machine");
+const hereName = () => (me?.host ?? (proxy ? here() : null));
+const live = new Live(hub, store, here, hereName, VERSION, ownLink);
 const compat = new Compat();
 const model = new Model(hub, live);
 live.chats = new Chats(hub);
@@ -113,7 +125,7 @@ live.compat = compat;
 compat.reader = (a) => live.chats?.reader(a) ?? null;
 // the chat scrolled to its top: the page before (as the window's loadEarlier)
 (compat as any).earlier = (a: string) => live.chats?.earlier(a);
-const push = new Push(() => (me ? `https://${me.dns}` : "https://herdr.dev"));
+const push = new Push(() => (proxy ? proxy.origins[0] : me ? `https://${me.dns}` : "https://herdr.dev"));
 // only the machine that serves the web app sends push alerts (its pages subscribed there): never two of one alert
 const pushSend = push.send.bind(push);
 push.send = ((a: any) => (host.serving() ? pushSend(a) : Promise.resolve())) as typeof push.send;
@@ -196,7 +208,7 @@ const readDefaults = async () => {
   } catch {}
 };
 // Settings › Web: what the service last said of the web app (tailnet() below), its QR code as a picture
-let webNow: { on: boolean; link: string | null; why: string | null; qr: string | null; serve?: any } | null = null;
+let webNow: { on: boolean; link: string | null; why: string | null; qr: string | null; serve?: any; via?: string } | null = null;
 // Settings › Secrets, as the window's: each kept secret with where it is, and each agent's waiting ask with its name and
 // its narrowest scope (its space, else its machine), which Give it fills in
 function secretsPage(spaces: any[]) {
@@ -268,8 +280,8 @@ compat.shared = { value: (k) => model.value(k), set: (k, v) => store.set(k, v) }
 store.on(() => model.rebuild());
 void store.load().catch(() => {});
 const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live.setSnapshot(alertNewAnd(compat.snapshot({
-  host: me?.host ?? "this machine", user: me?.name ?? "You", spaces: b.spaces, sections: b.sections, rows: b.rows, artifacts: artifacts.list, automations: b.automations,
-  settings: [...settings.sections(webNow ?? (me ? `https://${me.dns}/shepherdr/` : null), b.spaces.map((s: any) => ({ id: s.id, name: s.name, machine: s.machine ?? null })), b.machines, me?.host ?? "this machine",
+  host: here(), user: me?.name ?? "You", spaces: b.spaces, sections: b.sections, rows: b.rows, artifacts: artifacts.list, automations: b.automations,
+  settings: [...settings.sections(webNow ?? ownLink(), b.spaces.map((s: any) => ({ id: s.id, name: s.name, machine: s.machine ?? null })), b.machines, here(),
     // Settings › Autopilot (Everywhere's and each space's own), while its add-on is on
     offList().includes("autopilot") ? null : { everywhere: model.pilotEverywhere, trigger: (id) => model.pilotKnown(id)?.trigger }),
     // Secrets, as the window's page (Everywhere's and each space's own): every kept secret and where, and the agents
@@ -278,7 +290,7 @@ const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live
       secrets: secretNames.filter((x) => (s.id === "all" ? !x.space : x.space === s.id)) })),
     windowSection((k) => model.value(k))], off: offList(), offPlugins: offPlugins(),
   // every machine the window's sidebar lists: one not connected reads "Offline" (or "Connecting…") under its header
-  machines: [{ name: me?.host ?? "this machine", here: true, state: "connected" }, ...b.known.map((m) => ({ name: m.name, here: false, state: m.state }))],
+  machines: [{ name: here(), here: true, state: "connected" }, ...b.known.map((m) => ({ name: m.name, here: false, state: m.state }))],
 })));
 // a task that moved on (accepted, done) changes its news lines in its Assistant's chat, whose conversation may not move:
 // open chats are told again (compat.chat reads the rows the snapshot just took)
@@ -312,12 +324,14 @@ async function tailnet() {
   g.owner = me?.login ?? null;
   g.dns = me?.dns ?? null;
   const on = webOn(), serving = host.serving();
-  const own = me ? `https://${me.dns}/shepherdr/` : null;
+  const own = ownLink();
   host.link = own;
   // another machine serves it: its link (the window's Settings › Web shows it and its QR code); this one isn't shared
   const link = serving ? own : host.hostLink();
-  let why: string | null = me || !serving ? null : "Tailscale isn't running here";
-  if (me && on && serving) {
+  let why: string | null = own || !serving ? null : "Tailscale isn't running here";
+  if (proxy) {
+    // fork: the proxy serves it; tailscale serve is left as it is
+  } else if (me && on && serving) {
     const s = await served(me.dns);
     if (s.funnel) { why = "Funnel is on for this machine: the web app stays off until it's off"; g.owner = null; }
     else why = await share(me.dns, PORT);
@@ -331,11 +345,12 @@ async function tailnet() {
   let qr: string | null = null;
   try { if (link && on && !why) qr = qrFile(existsSync(join(APP_DATA, "..")) ? APP_DATA : DATA, link); } catch {}
   const serve = serveNow();
-  writeFileSync(join(DATA, "web.json"), JSON.stringify({ on, link, qr, why, serve, at: Date.now() }) + "\n");
+  const via = proxy ? "proxy" : "tailnet";
+  writeFileSync(join(DATA, "web.json"), JSON.stringify({ on, link, qr, why, serve, via, at: Date.now() }) + "\n");
   let picture: string | null = null;
   try { if (qr) picture = `data:image/svg+xml;base64,${Buffer.from(readFileSync(qr)).toString("base64")}`; } catch {}
   const was = JSON.stringify(webNow);
-  webNow = { on, link, why, qr: picture, serve };
+  webNow = { on, link, why, qr: picture, serve, via };
   if (JSON.stringify(webNow) !== was) model.rebuild();
   if (why) console.error(why);
 }
@@ -551,15 +566,18 @@ const server = Bun.serve<{ who: string }>({
       // the other machines this service ticks (Serve from: the host the ones with no service of their own)
       ticks: jobs.on ? host.tickOn() : [] });
     // the Web add-on switched off: nothing for the tailnet (this machine's own callers still get the API)
-    if (req.headers.has("tailscale-user-login") && !webOn()) return new Response("Shepherdr's web app is off (Shepherdr settings › Window › Add-ons).", { status: 404 });
+    const viaTailnet = req.headers.has("tailscale-user-login");
+    const viaWeb = viaTailnet || proxyOrigin(req, proxy) !== null; // fork: or the proxy
+    if (viaWeb && !webOn()) return new Response("Shepherdr's web app is off (Shepherdr settings › Window › Add-ons).", { status: 404 });
     // another machine serves it now (Serve from): a page that still comes here goes there
-    if (req.headers.has("tailscale-user-login") && !host.serving()) {
+    if (viaWeb && !host.serving()) {
       const there = host.hostLink();
       return there ? Response.redirect(there, 302) : new Response("Shepherdr's web app is served from another machine now.", { status: 404 });
     }
     const socket = path === "/api/ws" || path === "/api/terminal" || path === "/api/browser" || path === "/api/voice";
-    const viaTailnet = req.headers.has("tailscale-user-login");
-    const pass = gate(req, g, socket, viaTailnet && trustedPeer(srv.requestIP(req)?.port, PORT));
+    const peer = srv.requestIP(req)?.port;
+    const pass = gate(req, g, socket, viaTailnet ? trustedPeer(peer, PORT)
+      : viaWeb && (proxy!.uid === null || (!!peer && peerUid(peer, PORT) === proxy!.uid)));
     if (!pass.ok) return new Response(pass.why, { status: pass.status });
     if (path === "/api/browser") {
       // a task's browser (2.1's Browser panel): this machine's tasks
@@ -580,7 +598,7 @@ const server = Bun.serve<{ who: string }>({
       return srv.upgrade(req, { data: { who: pass.who, voice: { key, addr } } as any }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
     if (socket) return srv.upgrade(req, { data: { who: pass.who } }) ? undefined : new Response("upgrade failed", { status: 400 });
-    if (path === "/api/me") return json({ login: pass.who, via: pass.via, machine: me?.host ?? null, link: me ? `https://${me.dns}/shepherdr/` : null, version: VERSION, off: offPlugins() });
+    if (path === "/api/me") return json({ login: pass.who, via: pass.via, machine: hereName(), link: ownLink(), version: VERSION, off: offPlugins() });
     if (path === "/api/state" && req.method === "GET") return json(store.doc.version ? store.doc : await store.load());
     if (path === "/api/state" && req.method === "POST") {
       const body = await req.json().catch(() => null);
@@ -652,20 +670,20 @@ const server = Bun.serve<{ who: string }>({
       return json(await reachOf(machine));
     }
     if (path === "/api/folders") {
-      const m = url.searchParams.get("machine"), machine = !m || m === me?.host ? null : m;
+      const m = url.searchParams.get("machine"), machine = !m || m === hereName() ? null : m;
       const home = (await exec(hub, ["sh", "-c", 'printf %s "$HOME"'], machine).catch(() => ({ stdout: "" }))).stdout;
       try { return json(await folders(hub, machine, url.searchParams.get("path") ?? "~", home)); } catch (err) { return json({ error: (err as Error).message }, 400); }
     }
     if (path === "/api/newspace") {
       // New space on a machine: its home, recent folders and where the field starts (the shown space's folder)
-      const m = url.searchParams.get("machine"), machine = !m || m === me?.host ? null : m;
+      const m = url.searchParams.get("machine"), machine = !m || m === hereName() ? null : m;
       const sp = compat.spaceOf(url.searchParams.get("place") ?? "");
       try { return json(await newSpaceInfo(hub, machine, sp && (sp.machine ?? null) === machine ? sp.folder : null)); } catch (err) { return json({ error: (err as Error).message }, 400); }
     }
     if (path === "/api/spaces" && req.method === "POST") {
       const b = await req.json().catch(() => null);
       try {
-        const machine = !b?.machine || b.machine === me?.host ? null : String(b.machine);
+        const machine = !b?.machine || b.machine === hereName() ? null : String(b.machine);
         const icon = typeof b?.icon === "string" && b.icon ? b.icon.slice(0, 16) : null;
         const place = await newSpace(hub, { machine, path: String(b?.path ?? ""), makeRepo: !!b?.makeRepo, icon, store: compat.shared! });
         // the page opens it once the sidebar has it: in the snapshot before the answer, not at the next 10 s read
@@ -749,7 +767,7 @@ const server = Bun.serve<{ who: string }>({
   },
 });
 
-console.log(`Shepherdr ${VERSION} on http://127.0.0.1:${server.port} (data ${DATA})${me && webOn() ? `, https://${me.dns}/shepherdr/` : ""}`);
+console.log(`Shepherdr ${VERSION} on http://127.0.0.1:${server.port} (data ${DATA})${ownLink() && webOn() ? `, ${ownLink()}` : ""}`);
 
 // the port is ours now: say where and this start's id (only this user can read it)
 writeFileSync(SERVICE_FILE, JSON.stringify({ port: server.port, id: SERVICE_ID, pid: process.pid, version: VERSION }) + "\n", { mode: 0o600 });
