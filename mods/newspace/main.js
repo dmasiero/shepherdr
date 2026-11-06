@@ -35,6 +35,7 @@ import { spaces, inRender } from "./live.js";
 import { dialogFooter, button, TEXT, RADIUS } from "./ui.js";
 import { NEWSPACE as K, readShepherdr, shepherdrFor, LOCAL_MACHINE, autoCoordinator, recentFolders, homeOf } from "./coordinator.js";
 import * as N from "./core/newspace.js";
+import { KEY_HOLDER, holdKeys, releaseKeys } from "./keyholder.js"; // fork
 
 // The suggestions' width (the field's: the dialog's 460 less its padding, the icon, Browse… and the gaps).
 const LIST_W = 290;
@@ -56,6 +57,10 @@ const tilde = (p) => N.tilde(p, HOME);
 const base = (p) => N.base(p, HOME);
 const pathOf = (text) => N.pathOf(text, HOME);
 const { scratch, parent, NEW_REPO, SUBFOLDERS, WORDS: W } = N;
+// fork: the keyboard holder (shared "keyboard.holder", keyholder.js) while the dialog is open. Herdr still counts the
+// pane under it as focused, and an Assistant chat there takes the keyboard back into its box on a redraw unless
+// someone else holds it (mods/chat draw()): without this, focus jumped out of the dialog whenever that chat redrew.
+const KEYS = "newspace";
 
 export default class NewSpace extends View {
   init(_props, cx) {
@@ -84,7 +89,9 @@ export default class NewSpace extends View {
       this.text = v; this.listOpen = true; this.browse = null; this.hi = -1; this.error = ""; this.check(cx); cx.notify();
     });
     this.input.on("submit", (_e, cx) => this.enter(cx));
-    this.input.on("focus", (_e, cx) => { this.focused = true; cx.notify(); });
+    this.input.on("focus", (_e, cx) => { this.focused = true; holdKeys(KEYS, { dialog: true }); cx.notify(); }); // fork: holdKeys
+    this.keysBefore = shared(KEY_HOLDER); // fork: given back on close
+    holdKeys(KEYS, { dialog: true }); // fork
     this.input.on("blur", (_e, cx) => { this.focused = false; cx.notify(); });
     this.input.focus();
     cx.timer.after(300, () => this.input.focus());
@@ -210,7 +217,9 @@ export default class NewSpace extends View {
     return p && typeof this.exists.get(p) === "boolean" ? p : null;
   }
 
+  // Also Herdr's own call when the overlay goes (a click beside it).
   close() {
+    releaseKeys(KEYS, this.keysBefore); // fork
     closeOverlay(props().overlay);
   }
 

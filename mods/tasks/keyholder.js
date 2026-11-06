@@ -7,10 +7,20 @@ import { shared, setShared } from "herdr";
 export const KEY_HOLDER = "keyboard.holder";
 
 // A press or focus in `who`: it holds the keyboard now (written only when that changes).
-export function holdKeys(who) {
-  if (!who || shared(KEY_HOLDER)?.who === who) return;
-  setShared(KEY_HOLDER, { who, at: Date.now() });
+// fork: { dialog: true } for a dialog over the panes (the New space one), which no chat takes the keyboard back from.
+export function holdKeys(who, { dialog = false } = {}) {
+  if (!who || (shared(KEY_HOLDER)?.who === who && Boolean(shared(KEY_HOLDER)?.dialog) === dialog)) return;
+  setShared(KEY_HOLDER, { who, at: Date.now(), ...(dialog ? { dialog: true } : {}) });
+}
+
+// fork: `who` gave the keyboard back (a dialog closing, from its close()): back to `before`, who held it when the
+// dialog opened (null: no one, so the chat under it may take it again).
+export function releaseKeys(who, before = null) {
+  if (who && shared(KEY_HOLDER)?.who === who) setShared(KEY_HOLDER, before?.who && before.who !== who ? before : null);
 }
 
 // Whether someone else than `mine` took the keyboard last.
 export const keysElsewhere = (holder, mine) => Boolean(holder?.who && holder.who !== mine);
+
+// fork: whether a dialog over the panes holds the keyboard (holdKeys with dialog).
+export const keysInDialog = (holder) => Boolean(holder?.who && holder.dialog);
