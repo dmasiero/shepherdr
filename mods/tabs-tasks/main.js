@@ -48,13 +48,18 @@ export default class Tabs extends View {
     // Ctrl+Shift+W comes here so a coordinator with live workers asks first, like its x.
     // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
     // cx use instead of staying in memory.
+    // fork: the command wakes the wait itself (woke) instead of being raced each wait. A race added a listener to
+    // the same pending nextCommand every 5 s, kept until a command came: thousands over hours (SHEP-9).
     cx.spawn(async (cx) => {
-      let cmd = null;
+      let cmd = null, got = undefined, failed = null, woke = null;
       for (;;) {
-        cmd ??= nextCommand();
-        const c = await Promise.race([cmd, cx.sleep(5000)]);
+        cmd ??= nextCommand().then((c) => { got = c; cmd = null; woke?.(); }, (e) => { failed = e; woke?.(); });
+        if (got === undefined && !failed) await new Promise((resolve, reject) => { woke = resolve; cx.sleep(5000).then(resolve, reject); });
+        woke = null;
+        if (failed) throw failed;
+        const c = got;
+        got = undefined;
         if (c === undefined) continue;
-        cmd = null;
         const tab = spaces().find(s => s.active)?.tabs.find(t => t.active);
         if (c === "close" && tab) closeTab(tab.id);
         // F2 / Shift+F2 (keys.json): our Rename dialogs for the shown tab and space.
