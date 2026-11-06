@@ -14,6 +14,7 @@ Four changes. Everything else is upstream's; `git diff upstream/main 3.x` shows 
 | File | What |
 | --- | --- |
 | `FORK.md` | This page. |
+| `test/test_herdr_artifact_readonly.py`; hook in `mods/artifacts/bin/herdr-artifact` (its `shutil.copyfile`s) | Read-only install: with Shepherdr's files read-only (a Nix store), `herdr-artifact publish` failed with `PermissionError` while staging, since `copy2` kept the read-only mode and the check then rewrote the staged recipe view. Its copies now take only the content ([upstream #749](https://github.com/eliasstravik/shepherdr/issues/749)). |
 | `service/proxy.ts`, `service/proxy.test.ts`; hooks in `service/auth.ts`, `service/main.ts`, `service/live.ts`, `service/settings.ts`, `core/settings.js` (and its copies in the mods) | Proxy mode, below: a reverse proxy on this machine instead of Tailscale. |
 | `web/src/noSpaces.test.ts`; hooks in `web/src/App.tsx`, `web/src/kernel.ts` | No spaces: with the last space closed the web app shows "No spaces yet" and New space instead of a blank page ([upstream #747](https://github.com/eliasstravik/shepherdr/issues/747)). |
 | `service/chat-foreground.test.ts`; hook in `service/chats.ts` (`withForeground`) | Local chats: herdr-core 0.1.18's live list has no foreground for this machine's terminals, so the web chat couldn't find a local agent's log (by its pid) and said "Can't find this conversation". The service now asks `hc get` for local live terminals too, not only other machines'. |
