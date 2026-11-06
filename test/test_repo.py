@@ -112,6 +112,23 @@ class Repo(unittest.TestCase):
                                     found.append(f"{os.path.relpath(p, ROOT)}:{n}: .tooltip(")
         self.assertFalse(found, "hover tooltips (use aria-label, or show the words):\n" + "\n".join(found))
 
+    def test_no_nix_store_paths(self):
+        """No tracked file holds a whole Nix store path (SHEP-10): Nix scans a fetched source for store hashes,
+        and one that names a path on the building machine fails renix's fetchFromGitHub. Tests build theirs."""
+        import subprocess
+        files = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+        bad = re.compile(rb"/nix/store/[0-9a-z]{32}-")
+        found = []
+        for rel in filter(None, files.decode().split("\0")):
+            p = J(rel)
+            if not os.path.isfile(p):
+                continue
+            with open(p, "rb") as f:
+                for n, line in enumerate(f, 1):
+                    if bad.search(line):
+                        found.append(f"{rel}:{n}")
+        self.assertFalse(found, "literal Nix store paths (build them at runtime):\n" + "\n".join(found))
+
     def test_no_leftovers(self):
         for p in text_files():
             name = os.path.basename(p)
