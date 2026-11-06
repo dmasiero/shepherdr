@@ -41,7 +41,7 @@ import { AskCards, linkCtl } from "./cards.js";
 import * as strips from "./strips.js";
 import { button, red, green, amber, H, RADIUS, TEXT, toast, toastWho, plainError } from "./ui.js";
 import { openViewer, noteChatArea } from "./artview.js";
-import { KEY_HOLDER, holdKeys, keysElsewhere } from "./keyholder.js";
+import { KEY_HOLDER, holdKeys, keysElsewhere, keysInDialog } from "./keyholder.js"; // fork: keysInDialog
 import { SecretCards } from "./secret-card.js";
 import * as secrets from "./secrets.js";
 import { taskDot, ownProgress } from "./dot.js";
@@ -4001,12 +4001,15 @@ export default class Chat extends View {
     // The box also comes back after a notice (opening, restarting): it gets the keyboard then too.
     const showsBox = Boolean(this.addr) && this.phase === "ready";
     // Focus moves only outside render: from a timer callback right after it.
-    if (paneFocused && showsBox && (!this.wasFocused || !this.hadBox)) { cx.timer.after(0, () => this.box.focus()); cx.timer.after(600, () => this.box.focus()); }
+    // fork: never while a dialog over the panes holds the keyboard (the New space one, keysInDialog): Herdr still counts
+    // this pane as focused under it, so each redraw (a message, the agent restarting) took the keyboard out of it.
+    const dialog = keysInDialog(shared(KEY_HOLDER));
+    if (!dialog && paneFocused && showsBox && (!this.wasFocused || !this.hadBox)) { cx.timer.after(0, () => this.box.focus()); cx.timer.after(600, () => this.box.focus()); }
     // The pane focused again (a command, a click on its header) can leave the box without the
     // keyboard: give it back, unless the person just pressed something inside the chat.
     // Not while the keyboard is somewhere else in the window that isn't a pane (#633): a task's chat, the list or its
     // search in the Tasks panel (shared "keyboard.holder", keyHolder()); Herdr still counts this pane as focused then.
-    else if (paneFocused && showsBox && !this.call && this.focused === false && Date.now() - (this.press?.at ?? 0) > 1500
+    else if (!dialog && paneFocused && showsBox && !this.call && this.focused === false && Date.now() - (this.press?.at ?? 0) > 1500
       && !keysElsewhere(shared(KEY_HOLDER), this.areaKey())
       && Date.now() - (this.refocusAt ?? 0) > 1000) {
       this.refocusAt = Date.now();
