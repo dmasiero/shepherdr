@@ -31,11 +31,12 @@ function readerFor(io: any, addr: string) {
   return new ChatReader(io, m ? `${m}/log` : "log").fixed(path.join("|"), kind || "claude");
 }
 
-/** Another machine's terminal as the live list has it lacks its foreground program (the log is found by its pid):
- *  hc get has it, asked at most every 10 s per terminal. */
+/** A live terminal as the live list has it may lack its foreground program (the log is found by its pid): another
+ *  machine's always, and with herdr-core 0.1.18 this machine's too. hc get has it, asked at most every 10 s per terminal.
+ *  fork: local terminals too (upstream fills only other machines'), else a local agent's chat can't find its log. */
 const fg = new Map<string, { at: number; foreground: any }>();
-async function withForeground(addr: string, t: any) {
-  if (!t || t.foreground?.pid || !addr.includes("/") || t.state !== "live") return t;
+export async function withForeground(addr: string, t: any) {
+  if (!t || t.foreground?.pid || t.state !== "live") return t;
   let c = fg.get(addr);
   if (!c || Date.now() - c.at > 10_000) {
     let foreground = null;
