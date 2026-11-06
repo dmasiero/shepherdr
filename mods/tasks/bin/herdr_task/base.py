@@ -44,6 +44,28 @@ def sync_held():
         return None
 
 
+# fork: a script sent to another machine (the sync, herdr-task's, herdr-artifact's and herdr-secret's
+# own copies there) gets a first line that machine can run. A Nix package's patchShebangs turns
+# `#!/usr/bin/env python3` and `#!/bin/sh` into Nix store paths, which another machine lacks.
+# herdr-artifact and herdr-secret carry this function verbatim (they stand alone); test_repo keeps
+# their copies equal to this one.
+def portable_script(data):
+    """data with a first line naming its interpreter by a Nix store path given a portable one back:
+    `#!/bin/sh` for sh, else `#!/usr/bin/env <its name>` (python3.x as python3). Anything else
+    comes back as it is."""
+    if not data.startswith(b"#!/nix/store/"):
+        return data
+    end = data.find(b"\n")
+    words = (data[2:] if end < 0 else data[2:end]).split()
+    name, rest = words[0].rsplit(b"/", 1)[-1], words[1:]
+    if name == b"env" and rest:
+        name, rest = rest[0], rest[1:]
+    if name.startswith(b"python3"):
+        name = b"python3"
+    line = b"#!/bin/sh" if name == b"sh" and not rest else b"#!/usr/bin/env " + b" ".join([name, *rest])
+    return line + (b"" if end < 0 else data[end:])
+
+
 # Shepherdr's add-ons (lib/addons.json): one the person switched off in Shepherdr settings >
 # Window is in Everywhere's "off" (~/.herdr/shepherdr.json, or HERDR_TASK_SETTINGS), and its
 # background work here stops (autopilot, browsers, the sync to other machines).
@@ -136,7 +158,7 @@ def bundle():
     """This herdr-task as one runnable file (a zipapp), the same bytes for the same code."""
     if zipfile.is_zipfile(ENTRY):
         with open(ENTRY, "rb") as f:
-            return f.read()
+            return portable_script(f.read())  # fork: its first line runs on another machine
     with open(ENTRY, "rb") as f:
         entry = f.read()
     buf = io.BytesIO()

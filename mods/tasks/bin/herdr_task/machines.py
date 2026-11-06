@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 
-from .base import addon_off, sync_held, bundle, ENTRY, Fail, guard, HOME, hc_json, now, PACKAGE, run, STORE
+from .base import addon_off, sync_held, bundle, ENTRY, Fail, guard, HOME, hc_json, now, PACKAGE, portable_script, run, STORE
 from .news import news_send, send_or_hold, typing
 
 
@@ -94,6 +94,7 @@ def manifest():
     files = []
 
     def add(rel, data, mode, sources, protect=False, test=None):
+        data = portable_script(data)  # fork: a Nix install's scripts name interpreters only it has
         sha = hashlib.sha256(data).hexdigest()
         rec = stamp.get(rel) or {}
         # Installed here by a sync (this machine is someone's remote): its source's time is the
@@ -186,9 +187,15 @@ for f in x["files"]:
         tmp = p + ".herdr-new"
         try:
             os.makedirs(os.path.dirname(p), exist_ok=True)
+            data = base64.b64decode(f["data"])
             with open(tmp, "wb") as w:
-                w.write(base64.b64decode(f["data"]))
+                w.write(data)
             os.chmod(tmp, f["mode"])
+            # fork: a script whose interpreter isn't here (a Nix store path from a Nix install) never runs
+            # here: refused, not installed (its test below runs it with python3 itself, past its first line).
+            first = data.split(b"\n", 1)[0]
+            if first.startswith(b"#!") and first[2:].split() and not os.access(first[2:].split()[0].decode(errors="replace"), os.X_OK):
+                raise RuntimeError("its interpreter isn't here: " + first[2:].decode(errors="replace").strip())
             if f.get("test"):
                 t = subprocess.run([sys.executable, tmp] + f["test"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
                 if t.returncode != 0:
