@@ -1012,8 +1012,11 @@ function agentName(address) {
 // ({ path, kind }: an ended agent's own log), note (why one never started waits), at }.
 const hasThread = (n) => Boolean(n && typeof n === "object") && (n.id === "tasks-thread" || (n.children ?? []).some(hasThread));
 const threads = () => hasThread(layout());
+// fork: left on Terminal, the body would show the last task's terminal under this one's header: its chat (SHEP-8).
+const bodyOf = (n) => (!n || typeof n !== "object" ? null : n.id === "tasks-thread-body" ? n : (n.children ?? []).map(bodyOf).find(Boolean) ?? null);
 function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
   setShared("tasks.thread", { terminal, task, title, key, log, note, at: Date.now() });
+  if (bodyOf(layout())?.active === "tasks-thread-term") run("layout.select", { stack: "tasks-thread-body", child: "tasks-thread-chat" }); // fork: SHEP-8
   run("layout.select", { stack: "tasks", child: "tasks-thread" });
 }
 

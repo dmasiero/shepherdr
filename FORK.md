@@ -9,7 +9,7 @@ the Herdr window plus the service and its web app at https://board.masiero.inter
 
 ## The layer
 
-Seven changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
+Eight changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
 
 | File | What |
 | --- | --- |
@@ -21,6 +21,7 @@ Seven changes. Everything else is upstream's; `git diff upstream/main 3.x` shows
 | `core/keyholder.test.js`; hooks in `lib/keyholder.js` (and its copies), `lib/COPIES`, `mods/newspace/main.js`, `mods/chat/main.js` (`draw()`) | New space dialog focus: Herdr still counts the pane under a dialog as focused, so the Assistant chat there took the keyboard back into its box on a redraw (a message arriving, its agent restarting), at random moments. The dialog now holds the keyboard (shared "keyboard.holder", as a dialog) while open and gives it back on close, and the chat takes nothing back while a dialog holds it. |
 | `lib/emoji-grid.js` (and its copies), `core/emoji-grid.test.js`; hooks in `lib/COPIES`, `mods/chat-react/main.js`, `mods/spaces-chat/icon.js` | Emoji pickers: the Rename dialog's icon picker (and the chat's reaction picker, its source) worked out which emoji was clicked from the press's `local_position`, which in the window often wasn't from the list's left edge: the click did nothing or picked one about two to the right. Press zones over the list, one per column, now say which column by GPUI's own hit test. |
 | `core/parked-sweep.test.js`; hooks in `lib/live.js` (`chatPaneOf`, `paneKey`, `chatKey`), `lib/parked.js`, `lib/coordinator.js`, `lib/unread.js`, `lib/inbox.js` (and their copies), `mods/chat/main.js` | Two windows, one machine's spaces: an agent behind a chat carries `herdr.chat=<pane>` as the window that started it spells the pane (`p…` on the pane's own machine, `m3oracle/p…` in another machine's window). With a window on each machine, each window's sweep of parked agents read the other's spelling as a gone pane and ended its Assistants within 10 s, so a Mac's new spaces kept losing their Assistant and asking to be closed. A chat pane is now matched by its machine and bare id however the label spells it. |
+| `mods/chat/termblock.js`, `core/termblock.test.js`; hooks in `mods/chat/panel.js` (`renderHead`), `mods/tasks/main.js` (`openThread`) | Task Terminal: the task view's terminal is one layout block that keeps the last terminal it showed, and a task opened from the Tasks list kept the view on Terminal, so it showed the previous task's agent under the new task's header (SHEP-7 showing TIC-2's). A task now opens on its chat, and the header goes back to the chat whenever the block shows anything but the task's own live agent. |
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment.
 
