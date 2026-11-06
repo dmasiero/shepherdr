@@ -57,6 +57,8 @@ done
 # The pinned version: two versions on one session keep restarting its daemon. Asked once per
 # binary (its path and change time), then kept.
 bin=${HERDR_BROWSER_BIN:-$(command -v agent-browser)}
+# fork: a path that isn't there (a Nix install's own, carried to another machine): the one on PATH
+[ -n "$bin" ] && [ ! -x "$bin" ] && bin=$(command -v agent-browser)
 if [ -z "$bin" ]; then
   echo "herdr-browser: agent-browser isn't installed here. Install it: npm i -g agent-browser@$PIN, then agent-browser install (Chrome)." >&2
   exit 127
