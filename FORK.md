@@ -9,12 +9,13 @@ the Herdr window plus the service and its web app at https://board.masiero.inter
 
 ## The layer
 
-One change. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
+Two changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
 
 | File | What |
 | --- | --- |
 | `FORK.md` | This page. |
 | `service/proxy.ts`, `service/proxy.test.ts`; hooks in `service/auth.ts`, `service/main.ts`, `service/live.ts`, `service/settings.ts`, `core/settings.js` (and its copies in the mods) | Proxy mode, below: a reverse proxy on this machine instead of Tailscale. |
+| `web/src/noSpaces.test.ts`; hooks in `web/src/App.tsx`, `web/src/kernel.ts` | No spaces: with the last space closed the web app shows "No spaces yet" and New space instead of a blank page ([upstream #747](https://github.com/eliasstravik/shepherdr/issues/747)). |
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment.
 

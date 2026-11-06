@@ -510,7 +510,7 @@ export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
   // another task (or none) closes the sheet and the menu the last one had open
   if (p.task !== undefined && p.task !== state.ui.task) p = { sheet: null, taskMenu: false, ...p }
   // a link to a place the screen doesn't list (All machines with a single machine) goes to the top
-  if (p.place !== undefined && state.snap) p.place = placeOf(state.snap, p.place).id
+  if (p.place !== undefined && state.snap) p.place = placeOf(state.snap, p.place)?.id ?? p.place // fork: none with no spaces (#747)
   // following, another place puts back its own chips: what was edited stayed with the place it was edited at
   if (p.place !== undefined && p.place !== state.ui.place && !p.lists && !state.ui.lists.pinned && state.ui.lists.at) p = { ...p, lists: { pinned: false, chips: [], at: null } }
   // split, a place picked (the sidebar, search, a key) opens in the focused pane
@@ -1028,6 +1028,7 @@ function awaited(snap: Snapshot, id: string): Place | undefined {
   return { id, name: home ? 'home' : m[2], machine: label, ...(home ? { home: true } : {}), level: home ? 1 : 2, status: 'idle', mode: 'regular', chat: id, connecting: true }
 }
 
+/** fork: undefined when there are no spaces at all (the last one closed, upstream #747): callers that can run then guard */
 export function placeOf(snap: Snapshot, id: string) {
   const shown = shownPlaces(snap)
   return shown.find((p) => p.id === id) ?? awaited(snap, id) ?? shown.find((p) => p.id === placeIdOf(snap, id)) ?? shown.find((p) => p.id === home(snap)) ?? shown[0]
@@ -1232,13 +1233,13 @@ export function chatName(snap: Snapshot, key: string) {
     return `${id} ${role.toLowerCase()}`
   }
   // a coordinator keeps its own name, even one the screen doesn't list (All machines with a single machine)
-  return (snap.places.find((p) => p.chat === key) ?? placeOf(snap, key)).name
+  return (snap.places.find((p) => p.chat === key) ?? placeOf(snap, key))?.name ?? key // fork: no spaces (#747)
 }
 
 export function visibleChats(ui: UI, snap: Snapshot): string[] {
   // a space's other agent tab shown as its chat (3.0's Chat | Terminal) takes the place of its Assistant's chat
   const tabChat = ui.term?.startsWith('t:') && ui.tabView?.[ui.term] === 'chat' ? ui.term : null
-  const place = tabChat ?? placeOf(snap, ui.place).chat
+  const place = tabChat ?? placeOf(snap, ui.place)?.chat // fork: no spaces (#747)
   const ag = agentChat(ui, snap)?.chat
   const subs = ui.subs ?? []
   // a phone shows one chat (with a task open, its place's chat waits under it as it last was, unseen)
@@ -1523,7 +1524,7 @@ export function placeOfPane(snap: Snapshot, p: Pane): string | null {
 
 /** the chat a pane shows, if any */
 export function paneChat(snap: Snapshot, p: Pane): string | null {
-  if (p.kind === 'place') return placeOf(snap, p.id).chat
+  if (p.kind === 'place') return placeOf(snap, p.id)?.chat ?? null // fork: no spaces (#747)
   if (p.kind === 'task') return taskOf(snap, p.id)?.agent?.chat ?? null
   return null
 }
@@ -1531,7 +1532,7 @@ export function paneChat(snap: Snapshot, p: Pane): string | null {
 /** the chat the keys work on (/, T, A, E): the focused pane's, else the open task's, else the place's */
 export function keysChat(ui: UI, snap: Snapshot): string {
   const p = panesHere(ui)[ui.split.pane]
-  return (p && paneChat(snap, p)) ?? agentChat(ui, snap)?.chat ?? placeOf(snap, ui.place).chat
+  return (p && paneChat(snap, p)) ?? agentChat(ui, snap)?.chat ?? placeOf(snap, ui.place)?.chat ?? '' // fork: no spaces (#747)
 }
 
 /** the patch that puts the panes at `v`, the place following the focused one */

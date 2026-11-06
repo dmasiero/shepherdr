@@ -333,6 +333,19 @@ function PlaceColumn({ place, pane }: { place: Place; pane?: number }) {
   )
 }
 
+/** fork: no spaces at all (the last one closed, upstream #747): a calm word and New space where the space's chat
+ *  would be */
+function NoSpaces() {
+  return (
+    <div data-no-spaces className="grid min-h-0 flex-1 place-items-center px-6">
+      <div className="flex flex-col items-center gap-3 text-center text-fg2">
+        <span>No spaces yet</span>
+        <Primary onClick={() => setUI({ adding: true, drawer: false, menu: false, plus: null, search: false })}>New space</Primary>
+      </div>
+    </div>
+  )
+}
+
 /** a pane header's quiet line: the folder, which gives way from its start so its own name stays ("…/dev/shepherdr") */
 function PaneWhere({ where }: { where: string }) {
   return (
@@ -569,6 +582,19 @@ function Middle({ snap }: { snap: Snapshot }) {
   const task = useStore((s) => (taskInMiddle(s.ui, s.snap) ? taskOf(snap, s.ui.task) : null))
   const panes = useUI(panesHere)
   const TabBar = registry.views.tabBar
+  // fork: no spaces (#747): the header keeps the way to the places, the rest is the empty state
+  if (!place)
+    return (
+      <ChatColumn>
+        <section data-drawer-from className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <Head>
+            <MenuButton />
+            <PlacesToggle when="closed" />
+          </Head>
+          <NoSpaces />
+        </section>
+      </ChatColumn>
+    )
   return (
     <ChatColumn>
       {/* 3.0's tab bar over it: the shown space's tabs, its + and the side panels' buttons */}
@@ -768,7 +794,8 @@ function WideLayout({ snap }: { snap: Snapshot }) {
   const docked = useStore((s) => placesDocked(s.ui, s.snap))
   // the open task whose side panel has a column here
   const panel = useUI((u) => (panelHere(u, snap) ? u.task : null))
-  const shut = useUI((u) => !!u.sideShut)
+  // fork: with no spaces there are no lists to show (#747)
+  const shut = useUI((u) => !!u.sideShut || !placeOf(snap, u.place))
   // a task opened (a toast, Jump, a card) shows the panel it opens in again, as the window's
   const opened = useUI((u) => u.task)
   useEffect(() => {
@@ -841,6 +868,15 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
   const Artifacts = registry.views.artifacts
+  // fork: no spaces (#747): the drawer's button, the empty state and the drawer
+  if (!place)
+    return (
+      <div data-drawer-from className="relative flex min-h-0 flex-1 flex-col">
+        <PhoneTop left={<MenuButton />} name="Spaces" />
+        <NoSpaces />
+        <Drawer />
+      </div>
+    )
   return (
     <div data-drawer-from className="relative flex min-h-0 flex-1 flex-col">
       <PhoneTop
