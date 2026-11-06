@@ -6,7 +6,7 @@
 // Edit lib/parked.js, never a mod's copy, then run bin/sync-shared.
 
 import { focused, shared, machines, run, exec, hc, appHome } from "herdr";
-import { panes, terminals, spaces } from "./live.js";
+import { panes, terminals, spaces, paneKey, chatKey } from "./live.js"; // fork: paneKey, chatKey (SHEP-7)
 
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 const STATES = ["working", "blocked", "done", "idle"];
@@ -14,14 +14,14 @@ const STATES = ["working", "blocked", "done", "idle"];
 // Shaped like agents()'s entries; `pane` is the chat pane.
 export function chatAgents() {
   const seen = shared("chat.seen") ?? {};
-  const chats = new Map(panes().filter((p) => p.mod === "chat").map((p) => [p.pane, p]));
+  const chats = new Map(panes().filter((p) => p.mod === "chat").map((p) => [paneKey(p.pane), p])); // fork: by machine and bare id
   const own = new Set(panes().map((p) => p.terminal).filter(Boolean));
   const where = new Map(spaces().flatMap((s) => s.tabs.map((t) => [t.id, { s, t }])));
   const now = focused()?.pane;
   const out = [];
   for (const k of terminals()) {
-    const pane = k.labels?.["herdr.chat"];
-    const p = pane && chats.get(pane);
+    const p = chats.get(chatKey(k)); // fork: however the label spells the pane
+    const pane = p?.pane;
     if (!p || k.state !== "live" || own.has(k.address)) continue;
     const e = { terminal: k.address };
     let status = STATES.includes(k.status) ? k.status : "idle";
@@ -71,10 +71,10 @@ async function keepOn(address) {
 }
 export function sweep() {
   const ready = new Set(machines().filter((m) => m.layout === "ready").map((m) => m.name ?? ""));
-  const have = new Set(panes().map((p) => p.pane));
+  const have = new Set(panes().map((p) => paneKey(p.pane))); // fork: by machine and bare id
   const own = new Set(panes().map((p) => p.terminal).filter(Boolean));
   for (const k of terminals()) {
-    const chat = k.labels?.["herdr.chat"];
+    const chat = chatKey(k); // fork: however the label spells the pane
     if (!chat || k.state !== "live") { kept.delete(k.address); continue; }
     const machine = k.address.includes("/") ? k.address.split("/")[0] : "";
     if (!ready.has(machine) || have.has(chat) || own.has(k.address)) {

@@ -25,7 +25,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Scrollbar, VirtualListScrollHandle, TextView, v_virtual_list, InputState, Input } from "gpui-base";
 import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines, layout } from "herdr";
-import { agents, panes, terminals, spaces, inRender } from "./live.js";
+import { agents, panes, terminals, spaces, inRender, chatPaneOf } from "./live.js"; // fork: chatPaneOf (SHEP-7)
 import * as fs from "fs/promises";
 import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
@@ -1528,7 +1528,7 @@ export default class Chat extends View {
   slotPane() {
     const rec = this.slotRec();
     if (rec?.pane && panes().some((p) => p.pane === rec.pane)) return rec.pane;
-    const taken = new Set(terminals().filter((k) => k.state === "live").map((k) => k.labels?.["herdr.chat"]).filter(Boolean));
+    const ps = panes(), taken = new Set(terminals().filter((k) => k.state === "live").map((k) => chatPaneOf(k, ps)).filter(Boolean)); // fork: however the label spells the pane
     const tab = rec?.tab ?? focused()?.tab;
     const free = panes().filter((p) => p.mod === "chat" && p.tab === tab && !taken.has(p.pane));
     return free.length === 1 ? free[0].pane : null;
@@ -3981,7 +3981,8 @@ export default class Chat extends View {
     if (!this.addr && this.role) return this.slotPane();
     // A thread's pane is the one its opener recorded for this worker (openThread()).
     if (this.thread) return threadOf(this.addr);
-    const c = terminals().find((x) => x.address === this.addr)?.labels?.["herdr.chat"] ?? null;
+    const k = terminals().find((x) => x.address === this.addr);
+    const c = k?.labels?.["herdr.chat"] ? chatPaneOf(k) ?? k.labels["herdr.chat"] : null; // fork: this window's spelling of the pane
     if (c && panes().some((p) => p.pane === c && p.mod === "chat")) this.lastPane = c;
     return c || (this.swapping ? this.lastPane : null);
   }
@@ -4065,7 +4066,7 @@ export default class Chat extends View {
       // A worker runs as its coordinator's hc child, with no space of its own: its parent's chat
       // takes it; one whose parent shows no chat goes to the coordinator of the space asked.
       const parent = terminals().find((k) => k.address === tq.terminal)?.parent ?? null;
-      const pc = parent && terminals().find((k) => k.address === parent)?.labels?.["herdr.chat"];
+      const pc = parent && chatPaneOf(terminals().find((k) => k.address === parent)); // fork: however the label spells the pane
       const parentChat = Boolean(pc) && panes().some((p) => p.pane === pc && p.mod === "chat");
       if (parent === this.addr || (!parentChat && (!tq.space || tq.space === space))) {
         this.threadReqAt = tq.at;
