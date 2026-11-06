@@ -8,6 +8,7 @@
 
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, VirtualListScrollHandle, v_virtual_list, Scrollbar } from "gpui-base";
+import { columnZones, pressedCell } from "./emoji-grid.js"; // fork: which emoji a press was on
 import { theme, props, closeOverlay, setShared, appHome, readTextFile } from "herdr";
 import { PICK } from "./rename.js";
 
@@ -26,7 +27,7 @@ export class IconPicker {
   init(cx) {
     this.p = props() ?? {};
     this.range = null;
-    this.pressX = null;
+    this.col = null; // fork: the column of the last press in the list (emoji-grid.js columnZones)
     this.scroll = VirtualListScrollHandle.new();
     this.search = InputState.new({ placeholder: "Search all emoji" });
     this.search.on("change", (_e, cx) => { this.scroll.scroll_to_item(0, "top"); cx.notify(); });
@@ -100,7 +101,6 @@ export class IconPicker {
         .child(Input.new(this.search).flex_1().text_size(12.8).text_color(t.foreground)))
       // Sections.
       .child(v_flex().id("emoji-list-area").relative().flex_1().min_h(0).px(PAD)
-        .on_mouse_down("left", (e) => { this.pressX = e.local_position?.x ?? null; })
         .child(v_virtual_list("emoji-list", rows.length, sizes, (i) => rows[i].key, (range) => {
           this.range = range;
           return rows.slice(range.start, range.end).map((r) => {
@@ -113,13 +113,13 @@ export class IconPicker {
           });
         })
           .track_scroll(this.scroll).size_full()
-          // Rows take no handlers: the press's place says which emoji.
+          // fork: rows take no handlers: the press zones over the list (emoji-grid.js) say which column.
           .on_item_click((key) => {
-            const r = this.rows().find((x) => x.key === key);
-            if (r?.kind !== "row" || this.pressX === null) return;
-            const x = r.list[Math.floor((this.pressX - PAD) / CELL)];
+            const x = pressedCell(this.rows().find((r) => r.key === key), this.col);
+            this.col = null;
             if (x) this.pick(x.e);
           }))
+        .child(columnZones(PER, CELL, PAD, (col) => { this.col = col; }))
         .child(Scrollbar.vertical("emoji-list").absolute().inset_0()))
       // Back to the plain "#", a section's folder, or a machine's server / monitor.
       .child(h_flex().h(40).flex_none().px(PAD).items_center().border_t(1).border_color(t.border)

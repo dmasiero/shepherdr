@@ -19,6 +19,7 @@ unread.js: chat spaces-chat
 agent.js: chat newspace shepherdr-settings
 settings.js: chat newspace shepherdr-settings
 dot.js: chat jump tasks
+emoji-grid.js: chat-react spaces-chat  # fork: which emoji a press in a picker was on
 core/tasklists.js: jump tasks
 core/chat-log.js: chat
 core/chat-view.js: chat
