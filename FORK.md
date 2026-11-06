@@ -9,7 +9,7 @@ the Herdr window plus the service and its web app at https://board.masiero.inter
 
 ## The layer
 
-Ten changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
+Nine changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
 
 | File | What |
 | --- | --- |
