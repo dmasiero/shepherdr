@@ -30,6 +30,7 @@ import { button, segmented, TEXT, RADIUS, toast, plainError } from "./ui.js";
 import { on as addonOn } from "./addons.js";
 import { artifactCli } from "./artview.js";
 import { GREP, publishedIds, taskArtifacts } from "./core/task-artifacts.js";
+import { wrongTerminal } from "./termblock.js"; // fork: SHEP-8
 
 // The task header's shared left edge, and task ids in the Tasks list's monospace (mods/tasks).
 const EDGE = 12, ID_FONT = "JetBrains Mono";
@@ -350,7 +351,8 @@ export class PanelHost {
     const live = k?.state === "live";
     const term = terminalShown();
     // The worker ended (or none shows) while its terminal was up: back to its chat, which stays to read.
-    if (term && !live && !this.busy) cx.timer.after(0, () => showWorkerChat());
+    // fork: also when the block still shows another task's terminal (opened on Terminal from the list): SHEP-8
+    if (term && wrongTerminal(layout(), addr, live) && !this.busy) cx.timer.after(0, () => showWorkerChat());
     // The chat's own way to the terminal (requestWorkerTerminal()).
     const rq = shared("tasks.thread.termreq");
     if (rq && rq.at !== this.termReqAt && rq.terminal === addr && live && Date.now() - rq.at < 5000) {
