@@ -253,6 +253,8 @@ export default class Chat extends View {
     this.pinned = true;
     this.width = 600;
     this.heights = new Map();
+    // fork: each on-screen row's height as the list draws it, ahead of the measurer's (SHEP-11).
+    this.drawn = new Map();
     // When each row's height was first measured: kept measuring a few seconds after (measurer).
     this.measuredAt = new Map();
     this.heightsFor = 0;
@@ -467,7 +469,7 @@ export default class Chat extends View {
     cx.timer.every(1500, (cx) => {
       if (!this.blank) return;
       this.blank = false;
-      this.heights.clear(); this.measuredAt.clear(); this.measureGen++;
+      this.heights.clear(); this.drawn.clear(); this.measuredAt.clear(); this.measureGen++; // fork: drawn (SHEP-11)
       this.anchor = null; this.pinned = true; this.stick = true;
       cx.notify();
     });
@@ -4157,11 +4159,12 @@ export default class Chat extends View {
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
     if (below !== this.below) { this.below = below; if (this.pinned) this.stick = true; }
-    if (Math.abs(this.heightsFor - this.width) > 1) { this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.measureGen++; }
+    if (Math.abs(this.heightsFor - this.width) > 1) { this.heights.clear(); this.drawn.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.measureGen++; } // fork: drawn (SHEP-11)
     const keys = rows.map((x) => this.key(x));
     // Every size a real number of pixels: one NaN, zero or runaway height leaves the list blank.
     const sizes = rows.map((x, i) => {
-      const h = this.heights.get(keys[i]) ?? this.guess(x);
+      // fork: a row on screen goes by its drawn height (drawnSize(), SHEP-11)
+      const h = this.drawn.get(keys[i]) ?? this.heights.get(keys[i]) ?? this.guess(x);
       return Number.isFinite(h) && h > 0 ? Math.min(h, 40000) : 60;
     });
     this.follow_bottom(rows);
@@ -4207,7 +4210,10 @@ export default class Chat extends View {
               // Ids carry the width's generation, as the measurer's do: a reply's words keep the
               // width they were first laid out at, so after a resize (a restart's first narrow
               // frames) they'd stay narrow and tall, spilling under the next row.
-              .child(this.row(x, t, `v${this.measureGen}-`))
+              // fork: the row in a box of its own height, which reports it (drawnSize(), SHEP-11)
+              .child(div().id(`d${this.measureGen}-${keys[range.start + j]}`).absolute().top(0).left(0).right(0)
+                .on_size_change((size, cx) => this.drawnSize(keys[range.start + j], size.height, cx))
+                .child(this.row(x, t, `v${this.measureGen}-`)))
               .when(Boolean(flash), (el) => el.child(div().id(`flash-${x.id}`).absolute().inset_0().rounded(10).bg(t.accent + "26")
                 .opacity(this.flash.on ? 1 : 0).transition("opacity", { duration: 1100, easing: "ease-out" })));
           });
@@ -4249,6 +4255,18 @@ export default class Chat extends View {
       .child(div().flex_none().h(12));
   }
 
+  // fork (SHEP-11): a row's height as the list draws it. The measurer's offscreen copy came out
+  // taller than the drawn row, more the longer the message (Doug's chat: up to ~57 px), which left
+  // blank space under long replies. The drawn box sits on its own (absolute), so its height is
+  // the row's own, never the slot the list gives it.
+  drawnSize(key, h, cx) {
+    if (!(h > 0) || this.drawn.get(key) === h) return;
+    this.drawn.set(key, h);
+    if (this.pinned) this.stick = true;
+    if (this.anchor && Date.now() < this.anchor.until) this.reanchor = true;
+    cx.notify();
+  }
+
   // Rows not measured yet, drawn once out of sight at the list's width; their heights go to
   // the list, which then places every row exactly. Those near what is shown go first.
   measurer(rows, keys, t) {
@@ -4260,9 +4278,10 @@ export default class Chat extends View {
     // long message first measures as one line), so a height is never taken once and kept.
     const now = Date.now();
     const lo = Math.max(0, (this.range?.start ?? rows.length) - 2), hi = Math.min(rows.length, (this.range?.end ?? 0) + 2);
-    const fresh = rows.map((_, i) => i).filter((i) => !this.heights.has(keys[i]))
+    // fork: not rows already sized where drawn (SHEP-11)
+    const fresh = rows.map((_, i) => i).filter((i) => !this.heights.has(keys[i]) && !this.drawn.has(keys[i]))
       .sort((a, b) => Math.abs(a - near) - Math.abs(b - near)).slice(0, 30);
-    const again = rows.map((_, i) => i).filter((i) => this.heights.has(keys[i]) && ((i >= lo && i < hi) || now - (this.measuredAt.get(keys[i]) ?? 0) < 4000));
+    const again = rows.map((_, i) => i).filter((i) => this.heights.has(keys[i]) && !this.drawn.has(keys[i]) && ((i >= lo && i < hi) || now - (this.measuredAt.get(keys[i]) ?? 0) < 4000));
     const order = [...new Set([...fresh, ...again])].slice(0, 60);
     return div().absolute().top(0).left(0).w(this.width).h(0).overflow_hidden().opacity(0)
       .child(v_flex().w_full().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
