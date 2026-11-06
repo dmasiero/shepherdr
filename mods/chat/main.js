@@ -61,6 +61,7 @@ import { ScreenWatch, screenStrips, openCard, cardsOf, starting, cliOf } from ".
 import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
 import { on as addonOn } from "./addons.js";
+import { zoomOf, listHeight } from "./zoom.js"; // fork: SHEP-13
 
 // Messages a page of history holds: the newest page first, earlier ones as the person scrolls up.
 const PAGE = 200;
@@ -4157,6 +4158,8 @@ export default class Chat extends View {
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
     if (below !== this.below) { this.below = below; if (this.pinned) this.stick = true; }
+    // fork: heights are at one zoom (zoom.js): another zoom measures them again (SHEP-13).
+    if (this.heightsZoom !== zoomOf(settings())) { this.heightsZoom = zoomOf(settings()); this.heightsFor = -1; }
     if (Math.abs(this.heightsFor - this.width) > 1) { this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.measureGen++; }
     const keys = rows.map((x) => this.key(x));
     // Every size a real number of pixels: one NaN, zero or runaway height leaves the list blank.
@@ -4268,8 +4271,10 @@ export default class Chat extends View {
       .child(v_flex().w_full().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
         .on_size_change((size, cx) => {
           if (!this.measuredAt.has(keys[i])) this.measuredAt.set(keys[i], Date.now());
-          if (this.heights.get(keys[i]) === size.height) return;
-          this.heights.set(keys[i], size.height);
+          // fork: reported at the person's zoom, the list's sizes are at zoom 1 (zoom.js, SHEP-13)
+          const h = listHeight(size.height, zoomOf(settings()));
+          if (this.heights.get(keys[i]) === h) return;
+          this.heights.set(keys[i], h);
           if (this.pinned) this.stick = true;
           if (this.anchor && Date.now() < this.anchor.until) this.reanchor = true;
           cx.notify();
