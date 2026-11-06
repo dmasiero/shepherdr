@@ -19,8 +19,11 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, J("mods", "tasks", "bin"))
 from herdr_task import base, machines  # noqa: E402
 
-NIX_PY = b"#!/nix/store/vf4l8s2s5w20kac0m9pap4y8g6wahv0m-shepherdr-3.1.14/libexec/shepherdr/python3\n"
-NIX_SH = b"#!/nix/store/hc49zakwkkyp9zlyl80b71jhxkpn4hsx-bash-5.3p9/bin/sh\n"
+# Built here, never written out whole: a real store path in the source makes Nix refuse the fetched tree
+# (renix's fetchFromGitHub), and this all-zero hash matches no real path (test_repo's test_no_nix_store_paths).
+FAKE_HASH = b"0" * 32
+NIX_PY = b"#!/nix/store/" + FAKE_HASH + b"-shepherdr-3.1.14/libexec/shepherdr/python3\n"
+NIX_SH = b"#!/nix/store/" + FAKE_HASH + b"-bash-5.3p9/bin/sh\n"
 
 
 def function_source(path, name):
