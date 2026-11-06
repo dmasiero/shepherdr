@@ -24,7 +24,8 @@ NIX_SH = b"#!/nix/store/hc49zakwkkyp9zlyl80b71jhxkpn4hsx-bash-5.3p9/bin/sh\n"
 
 
 def function_source(path, name):
-    text = open(path).read()
+    with open(path) as f:
+        text = f.read()
     for node in ast.parse(text).body:
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return ast.get_source_segment(text, node)
@@ -54,7 +55,8 @@ class PortableScript(unittest.TestCase):
     def test_herdr_secret_and_herdr_artifact_send_portable_bytes(self):
         for path, needle in ((J("bin", "herdr-secret"), "body = portable_script(f.read())"),
                              (J("mods", "artifacts", "bin", "herdr-artifact"), "body = portable_script(f.read())")):
-            self.assertIn(needle, open(path).read(), path)
+            with open(path) as f:
+                self.assertIn(needle, f.read(), path)
 
 
 class Sync(unittest.TestCase):
