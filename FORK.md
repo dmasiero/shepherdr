@@ -9,13 +9,14 @@ the Herdr window plus the service and its web app at https://board.masiero.inter
 
 ## The layer
 
-Two changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
+Three changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
 
 | File | What |
 | --- | --- |
 | `FORK.md` | This page. |
 | `service/proxy.ts`, `service/proxy.test.ts`; hooks in `service/auth.ts`, `service/main.ts`, `service/live.ts`, `service/settings.ts`, `core/settings.js` (and its copies in the mods) | Proxy mode, below: a reverse proxy on this machine instead of Tailscale. |
 | `web/src/noSpaces.test.ts`; hooks in `web/src/App.tsx`, `web/src/kernel.ts` | No spaces: with the last space closed the web app shows "No spaces yet" and New space instead of a blank page ([upstream #747](https://github.com/eliasstravik/shepherdr/issues/747)). |
+| `service/chat-foreground.test.ts`; hook in `service/chats.ts` (`withForeground`) | Local chats: herdr-core 0.1.18's live list has no foreground for this machine's terminals, so the web chat couldn't find a local agent's log (by its pid) and said "Can't find this conversation". The service now asks `hc get` for local live terminals too, not only other machines'. |
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment.
 
