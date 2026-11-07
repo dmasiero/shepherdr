@@ -14,3 +14,9 @@ export function zoomOf(settings) {
 export function listHeight(reported, zoom) {
   return reported / (Number.isFinite(zoom) && zoom > 0 ? zoom : 1);
 }
+
+// fork (SHEP-17): a pointer position or a width Herdr reported (pixels at its zoom) at zoom 1, where the mod lays its
+// column out. The fold's Show more compared a press at zoom 1.7 with a column edge worked out at zoom 1 and missed.
+export function atZoom1(px, zoom) {
+  return px / (Number.isFinite(zoom) && zoom > 0 ? zoom : 1);
+}

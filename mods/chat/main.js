@@ -61,7 +61,7 @@ import { ScreenWatch, screenStrips, openCard, cardsOf, starting, cliOf } from ".
 import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
 import { on as addonOn } from "./addons.js";
-import { zoomOf, listHeight } from "./zoom.js"; // fork: SHEP-13
+import { zoomOf, listHeight, atZoom1 } from "./zoom.js"; // fork: SHEP-13, SHEP-17
 
 // Messages a page of history holds: the newest page first, earlier ones as the person scrolls up.
 const PAGE = 200;
@@ -1827,7 +1827,9 @@ export default class Chat extends View {
   mentioned(text) {
     const t = String(text ?? "");
     // Every message asks on every render: kept per text until the task list changes (HERD-94).
-    if (this.mentionsOf !== this.tasks) { this.mentionsOf = this.tasks; this.mentions = new Map(); }
+    // fork: a task's chat whose agent had ended before it opened never loads its tasks (locate() stops before
+    // loadTasks()), so this.tasks and this.mentionsOf were both undefined, no Map was made and .get threw (SHEP-17).
+    if (!this.mentions || this.mentionsOf !== this.tasks) { this.mentionsOf = this.tasks; this.mentions = new Map(); }
     const known = this.mentions.get(t);
     if (known) return known;
     // core/send.js: the same matching as the web app's
@@ -1978,9 +1980,10 @@ export default class Chat extends View {
   // ---- message actions ----------------------------------------------------------------------
 
   // The column's left and right edges in the pane, for the action buttons under messages.
-  edges() {
-    const outer = Math.min(this.width, COLUMN + 36);
-    const left = (this.width - outer) / 2 + 18;
+  // fork: `width` defaults to the measured one; the fold's press gives it at zoom 1 (SHEP-17).
+  edges(width = this.width) {
+    const outer = Math.min(width, COLUMN + 36);
+    const left = (width - outer) / 2 + 18;
     return { left, right: left + outer - 36 };
   }
 
@@ -3253,7 +3256,11 @@ export default class Chat extends View {
     else if (row.kind === "brief") { if (this.opened.has(key)) this.opened.delete(key); else this.opened.add(key); }
     else if (row.kind === "fold") {
       // Only on its words (as rowBare() draws them: the column's edge, the bubble's padding in).
-      const off = (this.press?.x ?? -1) - this.edges().left - 12;
+      // fork: the press and the pane's width come at Herdr's zoom, the column is laid out at zoom 1 (COLUMN, the
+      // padding): at Doug's zoom 1.7 the press landed 140 px or more left of the words and Show more never opened
+      // (SHEP-17). Both go to zoom 1 first (zoom.js atZoom1).
+      const z = zoomOf(settings());
+      const off = atZoom1(this.press?.x ?? -1, z) - this.edges(atZoom1(this.width, z)).left - 12;
       if (off >= -4 && off <= 100) this.toggleFold(row, rows);
     }
     else if (row.kind === "replyref") {
