@@ -52,7 +52,7 @@ beforeAll(async () => {
   ({ LOG, records } = await import("../../mods/chat/core/chat-log.js"));
 });
 
-const cx = { notify: noop, spawn: noop, timer: { every: noop, after: noop }, focus_handle: () => ({}), bind_keys: noop, sleep: () => new Promise(noop), stop_propagation: noop };
+const cx = { notify: noop, spawn: noop, timer: { every: noop, after: noop }, focus_handle: () => ({ focus: noop }), bind_keys: noop, sleep: () => new Promise(noop), stop_propagation: noop };
 const dir = mkdtempSync(join(tmpdir(), "chat-window-"));
 const at = (s) => new Date(Date.UTC(2026, 10, 7, 13, 0, s)).toISOString();
 // Lines as Claude Code writes them: the reader matches on their keys' order (LOG).
@@ -144,6 +144,153 @@ for (const [z, width] of [[1.7, 1130], [1.7, 2000], [1, 700]]) {
     v.press = { x: (left1 + 12 + 400) * z, y: 10, at: Date.now() };
     v.clickRow(fold.id, rows, cx, rows.map(() => 30));
     expect(v.rows().find((r) => r.kind === "fold").open).toBe(true);
+    zoom = 1.7;
+  });
+}
+
+// ---- SHEP-18: every press in the chat at Herdr's zoom ----------------------------------------------------------------
+// Herdr reports a press (local_position), the pane's size and each measured control's width in pixels at its zoom,
+// while the column is laid out at zoom 1. Each test sizes the pane and measures the controls through the mod's own
+// handlers, as Herdr would report them, then presses where the control is drawn (worked out at zoom 1, here, from the
+// layout: the column centred, at most 760 wide plus 18 each side; a card's border and padding 13 in), times the zoom.
+
+// The handler an element registered, by its id.
+function handler(tree, id, name) {
+  const node = all(tree).find((m) => m.calls.some((c) => c[0] === "id" && c[1] === id));
+  return node?.calls.find((c) => c[0] === name)?.[1];
+}
+// The pane at `width` px as Herdr reports it (the root's on_size_change).
+function sizeTo(v, width) {
+  handler(draw(v), "chat", "on_size_change")({ width, height: 900 }, cx);
+}
+// Each card control measured as drawn (strips.measure()'s on_size_change), `w1(ctl)` px wide at zoom 1, reported at
+// the zoom; the Accept the same.
+const w1 = (label) => String(label).length * 7 + 20;
+function measure(v, ctls, z) {
+  const tree = draw(v);
+  for (const c of ctls) handler(tree, `mwb-${c.id}`, "on_size_change")?.({ width: w1(c.label) * z, height: 24 * z }, cx);
+  handler(tree, "mw-accept", "on_size_change")?.({ width: 66 * z, height: 20 * z }, cx);
+}
+// The column's edges at zoom 1 (rowBare()'s col(): centred, max_w 760 + 36, px 18).
+function column(width, z) {
+  const p = width / z, outer = Math.min(p, 760 + 36), left = (p - outer) / 2 + 18;
+  return { left, right: left + outer - 36 };
+}
+const press = (v, x1, z) => { v.press = { x: x1 * z, y: 10, at: Date.now() }; };
+const cardRows = (v) => v.rows().filter((r) => r.kind === "cardstrip");
+
+// MASI-1's card: three questions, one Submit on the last step.
+const ASK = { tool_name: "AskUserQuestion", tool_input: { questions: [
+  { header: "Success =", question: "What counts as success?", multiSelect: false, options: [{ label: "Inbox zero (Recommended)", description: "Every mail sorted" }, { label: "A daily digest", description: "" }] },
+  { header: "Gmail tool", question: "Which Gmail tool?", multiSelect: false, options: [{ label: "The Gmail MCP", description: "" }, { label: "gog", description: "" }] },
+  { header: "November", question: "Start in November?", multiSelect: false, options: [{ label: "Yes", description: "" }, { label: "No", description: "" }] },
+] } };
+
+for (const [z, width] of [[1.7, 1130], [1.7, 2000], [1, 1130], [1, 700]]) {
+  test(`a three-question card: pills, Next, options and Submit at zoom ${z}, ${width} px wide (MASI-1, SHEP-18)`, async () => {
+    zoom = z;
+    const { words } = await import("../../mods/chat/core/asks.js");
+    const v = thread(logOf(`ask-${z}-${width}`, [user("Plan it.", 1), said("A few questions first.", 2)]), { width: 600 });
+    v.tasks = [];
+    const ask = { id: "t6j.1730984400.4242", req: ASK, words: words(ASK) };
+    v.asks = [ask];
+    const replies = [];
+    v.reply = (a, text) => { replies.push({ a, text }); v.asks = v.asks.filter((x) => x !== a); };
+    sizeTo(v, width);
+    const { left, right } = column(width, z);
+    const inner = { left: left + 13, right: right - 13 };
+    const strip = (key) => cardRows(v).find((r) => r.s.key === key);
+    const click = (r) => { const rows = v.rows(); v.clickRow(r.id, rows, cx, rows.map(() => 30)); };
+    const step = () => v.cards.state(ask).step;
+    const measureAll = () => measure(v, cardRows(v).flatMap((r) => [...(r.s.ctls ?? []), ...(r.s.links ?? [])]), z);
+    measureAll();
+
+    // A step pill (align start, 4 apart): "November", the third.
+    const pills = strip("steps").s.ctls;
+    const pillAt = (i) => inner.left + pills.slice(0, i).reduce((a, c) => a + w1(c.label) + 4, 0) + w1(pills[i].label) / 2;
+    press(v, pillAt(2), z); click(strip("steps"));
+    expect(step()).toBe(2);
+    press(v, pillAt(0), z); click(strip("steps"));
+    expect(step()).toBe(0);
+    // Next (align end) on the first step.
+    measureAll();
+    const next = strip("next0");
+    press(v, inner.right - w1(next.s.ctls[0].label) / 2, z); click(next);
+    expect(step()).toBe(1);
+    press(v, pillAt(0), z); click(strip("steps"));
+    expect(step()).toBe(0);
+    // An option, anywhere along its row: picked, and the card moves on.
+    for (const [i, k] of [[0, 0], [1, 1], [2, 0]]) {
+      press(v, inner.left + 40, z); click(strip(`q${i}-${k}`));
+      expect([...v.cards.state(ask).picks[i]]).toEqual([k]);
+    }
+    expect(step()).toBe(3);
+    measureAll();
+    const submit = strip("submit");
+    expect(submit.s.ctls[0].disabled).toBe(false);
+    // Beside Submit (the card's left side): nothing.
+    press(v, inner.left + 20, z); click(submit);
+    expect(replies.length).toBe(0);
+    // On Submit (right-aligned): the answers go.
+    press(v, inner.right - w1("Submit") / 2, z); click(submit);
+    expect(replies.length).toBe(1);
+    const sent = JSON.parse(replies[0].text).hookSpecificOutput.decision.updatedInput.answers;
+    expect(sent).toEqual({ "What counts as success?": "Inbox zero", "Which Gmail tool?": "gog", "Start in November?": "Yes" });
+    zoom = 1.7;
+  });
+}
+
+for (const [z, width] of [[1.7, 1130], [1, 700]]) {
+  test(`an action band, a Ready line's Accept and task chips at zoom ${z}, ${width} px wide (SHEP-18)`, () => {
+    zoom = z;
+    const v = thread(logOf(`band-${z}-${width}`, [user("Write it up.", 1), said("Here it is.", 2)]), { width: 600 });
+    v.tasks = [];
+    sizeTo(v, width);
+    measure(v, [], z);
+    const { left, right } = column(width, z);
+    const rows = v.rows();
+    const clickAt = (r, x1) => { press(v, x1, z); v.clickRow(r.id, [...rows, r], cx, rows.map(() => 30)); };
+
+    // Bands: drawn inside the column, and a press on each button runs it.
+    const acted = [];
+    v.act = (_bar, what) => acted.push(what);
+    const bands = rows.filter((r) => r.kind === "band");
+    expect(bands.length).toBeGreaterThanOrEqual(2);
+    for (const b of bands) {
+      const parts = v.barLayout(b.bar).parts.filter((p) => p.what !== "time" && !p.what.startsWith("pill:"));
+      expect(parts.length).toBeGreaterThan(0);
+      for (const p of parts) {
+        expect(p.x).toBeGreaterThanOrEqual(left - 0.5);
+        expect(p.x + p.w).toBeLessThanOrEqual(right + 0.5);
+        acted.length = 0;
+        clickAt(b, p.x + p.w / 2);
+        expect(acted).toEqual([p.what]);
+      }
+    }
+    // Under a user's message the band is at the column's right; an agent's at its left.
+    const user1 = bands.find((b) => b.bar.side === "user"), agent1 = bands.find((b) => b.bar.side !== "user");
+    const lay = (b) => v.barLayout(b.bar);
+    expect(lay(user1).x + lay(user1).w).toBeCloseTo(right, 3);
+    expect(lay(agent1).x).toBeCloseTo(left, 3);
+
+    // A Ready line's Accept: at the line's right end (col(…, 12, 0), then px 6), 66 px wide at zoom 1.
+    const accepted = [], opened = [];
+    v.acceptTask = (row) => accepted.push(row.ref);
+    v.openTask = (id) => opened.push(id);
+    const p1 = width / z, end = (p1 + Math.min(p1, 760 + 24) - 24) / 2 - 6;
+    const news = { kind: "tasknews", id: "tn:1", ref: "MASI-1", taskId: 1, accept: true };
+    clickAt(news, end - 30);
+    expect(accepted).toEqual(["MASI-1"]);
+    clickAt(news, end - 200);
+    expect(accepted).toEqual(["MASI-1"]);
+    expect(opened).toEqual([1]);
+
+    // Task chips: right-aligned at the column's right, 170 wide, 6 apart.
+    opened.length = 0;
+    const chips = { kind: "chips", id: "ch:1", tasks: [{ id: 7 }, { id: 8 }] };
+    clickAt(chips, right - 85);
+    clickAt(chips, right - 170 - 6 - 85);
+    expect(opened).toEqual([8, 7]);
     zoom = 1.7;
   });
 }
