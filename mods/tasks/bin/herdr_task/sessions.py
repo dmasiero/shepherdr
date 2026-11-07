@@ -65,6 +65,9 @@ def refresh_sessions(s, task, live):
         a = next((a for a in task["agents"] if a["address"] == k["address"]), None)
         if not pid or not a or not agent_running(k):
             continue
+        # fork: (SHEP-16) marked ended while its agent still runs here: it isn't stopped.
+        if k.get("state") == "live" and a.pop("ended", None):
+            s.dirty = True
         sid, log = session_of(pid)
         if sid and (a.get("session"), a.get("log")) != (sid, log):
             a["session"], a["log"] = sid, log
