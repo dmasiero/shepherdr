@@ -1980,8 +1980,8 @@ export default class Chat extends View {
   // ---- message actions ----------------------------------------------------------------------
 
   // The column's left and right edges in the pane, for the action buttons under messages.
-  // fork: `width` defaults to the measured one; the fold's press gives it at zoom 1 (SHEP-17).
-  edges(width = this.width) {
+  // fork: at zoom 1, where the column is laid out: the pane's width as Herdr reports it is at its zoom (SHEP-18).
+  edges(width = this.pointer().width) {
     const outer = Math.min(width, COLUMN + 36);
     const left = (width - outer) / 2 + 18;
     return { left, right: left + outer - 36 };
@@ -2012,14 +2012,26 @@ export default class Chat extends View {
     return { x: x0, w: at, parts };
   }
 
+  // fork (SHEP-18): every press test in one frame. Herdr reports the press (local_position), the pane's size and
+  // each measured control's width (on_size_change) in pixels at its zoom (settings.json "zoom"), while the column,
+  // its padding and the bands are laid out at zoom 1: at Doug's zoom 1.7 a question card's right-aligned Submit
+  // was looked for about 145 px left of where it is drawn and never sent. { x: the press, width: the pane's, widths: get(id)
+  // of cardW, z }, all at zoom 1 (zoom.js atZoom1).
+  pointer() {
+    const z = zoomOf(settings()), x = this.press?.x;
+    return { z, x: Number.isFinite(x) ? atZoom1(x, z) : undefined, width: atZoom1(this.width, z),
+      widths: { get: (id) => { const w = this.cardW.get(id); return w === undefined ? undefined : atZoom1(w, z); } } };
+  }
+
   // Which part of a band the press was on (rows take no handlers of their own): the band is a
   // row of its own, so the list names it exactly; across, barLayout()'s places. The time
   // isn't a button.
   hitBar(row) {
-    const x = this.press?.x;
+    const { x, z } = this.pointer(); // fork: at zoom 1 (SHEP-18)
     if (row.kind !== "band" || x === undefined || Date.now() - (this.press?.at ?? 0) > 3000) return null;
     const p = this.barLayout(row.bar).parts.find((p) => p.what !== "time" && x >= p.x && x <= p.x + p.w);
-    if (p) this.hitLeft = p.x;
+    // fork: the picker's anchor goes with the press as Herdr gave it (openReactions()), so back at the zoom (SHEP-18).
+    if (p) this.hitLeft = p.x * z;
     return p?.what ?? null;
   }
 
@@ -3239,16 +3251,20 @@ export default class Chat extends View {
     else if (row.kind === "tasknews") {
       // Accept's place on a Ready line: the line's right end, its padding in (as row() draws it:
       // col(…, 12, 0), then px 6).
-      const inner = Math.min(this.width, COLUMN + 24) - 24;
-      const off = (this.width + inner) / 2 - 6 - (this.press?.x ?? -1);
-      if (row.accept && off >= -2 && off <= (this.cardW.get("accept") ?? ACCEPT) + 2) this.acceptTask(row, cx);
+      // fork: press, width and Accept's measured width at zoom 1 (SHEP-18).
+      const at = this.pointer();
+      const inner = Math.min(at.width, COLUMN + 24) - 24;
+      const off = (at.width + inner) / 2 - 6 - (at.x ?? -1);
+      if (row.accept && off >= -2 && off <= (at.widths.get("accept") ?? ACCEPT) + 2) this.acceptTask(row, cx);
       // Needs you with its card open just under it: the card takes the keys.
       else if (row.asks) { const a = (this.wasks ?? []).find((w) => w.ref === row.ref && !w.secret); if (a) this.workerCards.pressed(a); }
       else this.openTask(row.taskId, row.task);
     }
     else if (row.kind === "cardstrip") {
       // Which of the strip's controls the press was on (rows take no handlers: strips.js hit()).
-      const c = strips.hit(row.s, this.press?.x, strips.innerOf(this.edges()), this.cardW);
+      // fork: at zoom 1, the controls' measured widths too: Submit and Next sit at the card's right (SHEP-18).
+      const at = this.pointer();
+      const c = strips.hit(row.s, at.x, strips.innerOf(this.edges()), at.widths);
       if (row.ask) row.owner?.pressed(row.ask);
       if (c?.kind === "input") (c.state ?? null)?.focus();
       else c?.fn?.(cx);
@@ -3258,9 +3274,8 @@ export default class Chat extends View {
       // Only on its words (as rowBare() draws them: the column's edge, the bubble's padding in).
       // fork: the press and the pane's width come at Herdr's zoom, the column is laid out at zoom 1 (COLUMN, the
       // padding): at Doug's zoom 1.7 the press landed 140 px or more left of the words and Show more never opened
-      // (SHEP-17). Both go to zoom 1 first (zoom.js atZoom1).
-      const z = zoomOf(settings());
-      const off = atZoom1(this.press?.x ?? -1, z) - this.edges(atZoom1(this.width, z)).left - 12;
+      // (SHEP-17). Both go to zoom 1 first (pointer(), edges(): SHEP-18).
+      const off = (this.pointer().x ?? -1) - this.edges().left - 12;
       if (off >= -4 && off <= 100) this.toggleFold(row, rows);
     }
     else if (row.kind === "replyref") {
@@ -3269,14 +3284,14 @@ export default class Chat extends View {
       cx.timer.after(80, (cx) => { if (this.flash) { this.flash.on = false; cx.notify(); } });
       cx.timer.after(1400, (cx) => { this.flash = null; cx.notify(); });
     } else if (row.kind === "chips") {
-      const off = this.edges().right - (this.press?.x ?? -1);
+      const off = this.edges().right - (this.pointer().x ?? -1); // fork: at zoom 1 (SHEP-18)
       const j = Math.floor(off / (TASK + TASK_GAP));
       const k = row.tasks[row.tasks.length - 1 - j];
       if (off >= 0 && off % (TASK + TASK_GAP) <= TASK && k) this.openTask(k.id);
     }
     else if (row.kind === "imgs") {
       // Right-aligned thumbnails: which one the press was on (rows take no handlers of their own).
-      const x = this.press?.x;
+      const x = this.pointer().x; // fork: at zoom 1 (SHEP-18)
       const off = x === undefined ? -1 : this.edges().right - x;
       const boxes = this.fitThumbs(row.paths).boxes;
       for (let i = boxes.length - 1, edge = 0; i >= 0 && off >= 0; edge += boxes[i].w + THUMB_GAP, i--)
