@@ -1084,6 +1084,126 @@ class OwnBackgroundWork(unittest.TestCase):
         self.assertEqual((v["status"], v["own_work"]), ("working", True))
 
 
+class WrappedLaunchStaysAlive(unittest.TestCase):
+    """SHEP-16: a worker launched low (systemd-run scope -> sh herdr-low -> env -> fish -ic '<agent>; exec fish -i')
+    showed "Needs you · Agent stopped" and sent a failed news line while its agent worked: fish -ic keeps the agent
+    as its child in fish's own process group, so hc's foreground stays the shell for the whole run. The agent
+    counts as stopped only once the shell has left its -c command (exec fish -i) or the terminal is gone. hc is
+    mocked with records shaped as a throwaway hc core reported them for this launch."""
+
+    LOW = 'echo 500 > /proc/self/oom_score_adj 2>/dev/null; exec nice -n 10 "$@"'
+    FISH = "/run/current-system/sw/bin/fish"
+    ARGV = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--expand-environment=no", "--unit=herdr-x-1-abc",
+            "--", "sh", "-c", LOW, "herdr-low", "env", "HERDR_BROWSER_TASK=f#3", FISH, "-ic", "claude --settings '{}'; exec fish -i"]
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.agents as agents
+        import herdr_task.automations as au
+        import herdr_task.news as news
+        import herdr_task.output as output
+        import herdr_task.sessions as sessions
+        self.agents, self.au, self.news, self.output, self.sessions, self.mock = agents, au, news, output, sessions, mock
+
+    def rec(self, phase):
+        """hc get's record of the terminal: starting (no foreground yet), the first wrapper (sh herdr-low, which
+        execs on at once), the agent at work under fish -ic, the agent exited (fish -i), the terminal gone."""
+        fg = {"starting": None, "wrapper": {"name": "sh", "argv": ["sh", "-c", self.LOW, "herdr-low", "env"], "pid": 500},
+              "working": {"name": "fish", "argv": [self.FISH, "-ic", "claude --settings '{}'; exec fish -i"], "pid": 500},
+              "exited": {"name": "fish", "argv": ["fish", "-i"], "pid": 500}, "gone": None}[phase]
+        k = {"address": "t5y", "argv": self.ARGV, "agent": "systemd-run", "state": "finished" if phase == "gone" else "live",
+             "status": {"app": "claude-code", "state": "working" if phase == "working" else "done"},
+             "labels": {"herdr.task": "f#3", "herdr.agent": "claude"}}
+        return dict(k, foreground=fg) if fg else k
+
+    def track(self, phases):
+        """Runs cmd_track over hc records, one per 5 s round: what it recorded as the agent's end (ms) or None."""
+        task = {"id": 3, "title": "Fix", "state": "running", "agents": [{"address": "t5y", "agent": "claude", "at": 1_000}]}
+        clock = [1.0]
+        seq = iter(phases)
+
+        def sleep(n):
+            clock[0] += n
+        s = Store([task])
+        with self.mock.patch.object(self.au, "hc_json", lambda *a: self.rec(next(seq))), \
+                self.mock.patch.object(self.au, "Store", lambda loc: s), self.mock.patch.object(self.au, "locate", lambda f: {"folder": f}), \
+                self.mock.patch.object(self.au, "session_of", lambda pid: ("sid-1", "/log.jsonl")), \
+                self.mock.patch.object(self.au, "now", lambda: int(clock[0] * 1000)), \
+                self.mock.patch.object(self.au.time, "time", lambda: clock[0]), self.mock.patch.object(self.au.time, "sleep", sleep):
+            class A:
+                id, address, folder = "3", "t5y", "/f"
+            try:
+                self.au.cmd_track(A())
+            except StopIteration:  # still watching when the records ran out: never ended
+                pass
+        return task["agents"][0].get("ended"), task["agents"][0].get("session")
+
+    def test_agent_running_judges_the_wrapped_launch(self):
+        running = self.agents.agent_running
+        self.assertTrue(running(self.rec("wrapper")))   # still starting: the wrapper execs on
+        self.assertTrue(running(self.rec("working")))   # fish -ic with the agent its child
+        self.assertFalse(running(self.rec("exited")))   # fish -i: the agent is gone
+        self.assertTrue(running({"foreground": {"name": "claude", "argv": ["claude"]}}))   # bash -ic: the agent's own group
+        self.assertFalse(running({"foreground": {"name": "bash", "argv": ["bash", "-i"]}}))
+        self.assertFalse(running({"foreground": {"name": "zsh", "argv": ["-zsh"]}}))
+        for argv in (["bash", "-lic", "x"], ["zsh", "-c", "x"], ["fish", "--command=x"], ["pwsh", "-NoProfile", "-Command", "x"]):
+            self.assertTrue(self.agents.launching(argv), argv)
+        for argv in (["fish", "-i"], ["bash", "--login"], ["sh", "script.sh", "-c"], ["fish"]):
+            self.assertFalse(self.agents.launching(argv), argv)
+
+    def test_first_process_exits_at_once_and_the_terminal_stays_live(self):
+        # 10 minutes of work under fish -ic after the wrapper's moment: never ended, its session recorded.
+        ended, session = self.track(["starting", "wrapper"] + ["working"] * 120)
+        self.assertIsNone(ended)
+        self.assertEqual(session, "sid-1")
+
+    def test_a_real_exit_still_ends_it(self):
+        # The agent exits: fish execs fish -i. Ended a minute on, dated when the shell was first seen.
+        ended, _ = self.track(["starting", "wrapper"] + ["working"] * 20 + ["exited"] * 20)
+        self.assertEqual(ended, int((1.0 + 22 * 5) * 1000))
+        # The terminal is gone: ended at once.
+        ended, _ = self.track(["starting", "wrapper", "working", "working", "gone"])
+        self.assertEqual(ended, int((1.0 + 4 * 5) * 1000))
+
+    def news_of(self, task, live):
+        class S:
+            write, loc, prefix, slug = False, {"folder": "/f"}, "X", "f"
+            key = lambda self, t: "f#3"
+            ref = lambda self, t: "X-3"
+        o = self.output
+        with self.mock.patch.multiple(o, waiting_for=lambda s, t: [], waiting_ext=lambda t: [], subagents=lambda key: [],
+                                      progress_clock=lambda *a: None, last_words=lambda t: "Done.", own_line=lambda *a: None), \
+                self.mock.patch.object(self.agents, "own_work", lambda *a: False):
+            v, event, _ = self.news.news_state(S(), task, live)
+        return v["status"], v["needs"], event
+
+    def test_no_stopped_status_or_failed_news_while_it_works(self):
+        long_ago = self.agents.now() - 3600_000
+        task = {"id": 3, "title": "Fix", "state": "running", "started": long_ago,
+                "agents": [{"address": "t5y", "agent": "claude", "at": long_ago, "ended": long_ago + 105}]}
+        # at work, and idle at its prompt after its turn (TIC-3): never stopped, never failed
+        self.assertEqual(self.news_of(task, [self.rec("working")])[0], "working")
+        idle = dict(self.rec("working"), status={"app": "claude-code", "state": "done"})
+        self.assertEqual(self.news_of(task, [idle]), ("needs", "reply", "needs-you"))
+        # its agent exited, or its terminal is gone: stopped, and the failed news line
+        self.assertEqual(self.news_of(task, [self.rec("exited")]), ("needs", "stopped", "failed"))
+        self.assertEqual(self.news_of(task, []), ("needs", "stopped", "failed"))
+
+    def test_a_wrongly_ended_agent_recovers(self):
+        """A task marked ended while its agent still runs (TIC-3) heals on the next pass that sees it."""
+        task = {"id": 3, "title": "Fix", "state": "running", "agents": [{"address": "t5y", "at": 1_000, "ended": 1_105}]}
+        s = Store([task])
+        with self.mock.patch.object(self.sessions, "detail", lambda k: k), \
+                self.mock.patch.object(self.sessions, "session_of", lambda pid: ("sid-1", "/log.jsonl")):
+            self.sessions.refresh_sessions(s, task, [self.rec("exited")])
+            self.assertEqual(task["agents"][0].get("ended"), 1_105)   # really gone: stays ended
+            self.sessions.refresh_sessions(s, task, [self.rec("working")])
+        self.assertNotIn("ended", task["agents"][0])
+        self.assertEqual(task["agents"][0]["session"], "sid-1")
+        self.assertTrue(s.dirty)
+
+
 class WorkersOwnHelpers(OwnBackgroundWork):
     """SHEP-54: a worker runs its review as an hc child (herdr.task, herdr.role=reviewer, its
     terminal the parent). Never one of the task's agents (no second worker, nothing it says counts as

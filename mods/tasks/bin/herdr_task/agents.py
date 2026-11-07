@@ -56,8 +56,26 @@ def detail(k):
 def agent_running(k):
     fg = (k.get("foreground") or {}).get("name") or ""
     if fg:
-        return os.path.basename(fg) not in SHELLS
+        # fork: (SHEP-16) a shell still running its -c launch command (in_shell()) is the agent at work.
+        return os.path.basename(fg) not in SHELLS or launching((k.get("foreground") or {}).get("argv"))
     return bool(k.get("agent")) and k.get("agent") not in SHELLS
+
+
+# fork: (SHEP-16) fish -ic keeps the agent as its child in its own process group, so the terminal's
+# foreground stays the shell for the agent's whole run (bash -ic gives the agent a group of its own).
+# While the shell runs its -c launch command the agent runs; once it exits the shell execs `fish -i`.
+def launching(argv):
+    """A shell's argv that runs a command (-c, -ic, -lic, --command), not an interactive shell."""
+    for a in (argv or [])[1:]:
+        if a == "--command" or a.startswith("--command=") or a.lower() == "-command":
+            return True
+        if a.startswith("--"):
+            continue
+        if not a.startswith("-"):
+            return False
+        if "c" in a[1:]:
+            return True
+    return False
 
 
 def status_of(task, live):

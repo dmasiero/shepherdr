@@ -385,7 +385,8 @@ def retry_pass(report):
                 for k in mine:
                     if (k.get("labels") or {}).get("herdr.role") == "reviewer" or not agent_running(k) or held_ask(k["address"]):
                         continue
-                    if not agent_log(t, k["address"]):
+                    # fork: (SHEP-16) and one marked ended while it still runs (refresh_sessions() clears it)
+                    if not agent_log(t, k["address"]) or any(a.get("ended") for a in t["agents"] if a["address"] == k["address"]):
                         refresh_sessions(s, t, [k])
                     log = agent_log(t, k["address"])
                     # Blocked waits for the person, unless its log ends on what only the backup gets past.
