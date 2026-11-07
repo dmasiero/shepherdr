@@ -769,7 +769,8 @@ function SectionHeading({ g, snap, at, sort, className }: { g: Group; snap: Snap
       data-section={s.id}
       data-machine={at === 'inner' ? `m:${s.machine}` : undefined}
       data-drop={s.id}
-      className={clsx(dropHeading, at === 'inner' && 'pl-5 phone:pl-6', className, menu.open && 'bg-hover')}
+      // fork: dragged, it lifts above the rest with its spaces (SHEP-14)
+      className={clsx(dropHeading, dragged, at === 'inner' && 'pl-5 phone:pl-6', className, menu.open && 'bg-hover')}
       // fork: dragged among its machine's sections, its spaces along (SHEP-14); a finger held on it opens its menu first
       onPointerDown={pinned ? undefined : (e) => press(e, { id: s.id, siblings: sort?.ids ?? [s.id], level: 'section', drop: (ids) => sort && reorder(sort.under, ids), hold: menu.hold, lift: menu.close, release: menu.release })}
       onContextMenu={pinned ? undefined : (e) => (dragging() ? e.preventDefault() : menu.press.onContextMenu(e))}
