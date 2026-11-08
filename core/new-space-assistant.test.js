@@ -19,6 +19,7 @@ test("Nix's .claude-wrapped is Claude Code, before its session reports itself", 
   expect(progName("fish")).toBe("fish");
   expect(kindOf(t7z)).toBe("claude");
   expect(cliOf(t7z)).toBe("claude");
+  expect(cliOf({ ...t7z, agent: "sh" })).toBe("claude");   // hc's name for a template's launch (sh -c '…; exec claude')
   expect(starting(t7z)).toBe(true);
   expect(kindOf({ ...t7z, foreground: { name: "fish" } })).toBe(null);
   expect(starting({ ...t7z, status: { state: "idle", app: "claude-code" } })).toBe(false);
