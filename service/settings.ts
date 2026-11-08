@@ -149,6 +149,7 @@ export class Settings {
   private homes: Record<string, any> | null = null;
 
   /** Web, as the window's page: the web app's state, then its link (Copy) and its QR code to open it on a phone. */
+  // fork: proxy mode. `via`: how the web app is reached ("proxy" or "tailnet"), for its state line (core/settings.js).
   private web(w: { on: boolean; link: string | null; why: string | null; qr?: string | null; serve?: Serve; via?: string }): SettingSection {
     const rows: SettingRow[] = [{ label: WEB.title, key: "", value: "", hint: webState(!w.on, true, w), fixed: true }];
     // Serve from (core/host.js): the machine serving it now, and every connected one to move it to

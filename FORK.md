@@ -9,11 +9,12 @@ the Herdr window plus the service and its web app at https://board.masiero.inter
 
 ## The layer
 
-Fifteen changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
+Sixteen changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
 
 | File | What |
 | --- | --- |
 | `FORK.md` | This page. |
+| `flake.nix`, `flake.lock`, `scripts/sync-upstream.sh`, `scripts/fork_layer.py`, `test/test_sync_upstream.py` | Upstream comes in by itself: `renix full` runs the sync script in the dev shell and merges its pull request (below, "Syncing with upstream"). The dev shell has what the script and its checks need (Bun pinned at the Check workflow's 1.4.2, Node, Python, git, gh, jq); `scripts/fork_layer.py` reads this table for the layer's tests and checks that every hook below still has its `fork:` comment. |
 | `test/test_herdr_artifact_readonly.py`; hook in `mods/artifacts/bin/herdr-artifact` (its `shutil.copyfile`s) | Read-only install: with Shepherdr's files read-only (a Nix store), `herdr-artifact publish` failed with `PermissionError` while staging, since `copy2` kept the read-only mode and the check then rewrote the staged recipe view. Its copies now take only the content ([upstream #749](https://github.com/eliasstravik/shepherdr/issues/749)). |
 | `service/proxy.ts`, `service/proxy.test.ts`; hooks in `service/auth.ts`, `service/main.ts`, `service/live.ts`, `service/settings.ts`, `core/settings.js` (and its copies in the mods) | Proxy mode, below: a reverse proxy on this machine instead of Tailscale. |
 | `web/src/noSpaces.test.ts`; hooks in `web/src/App.tsx`, `web/src/kernel.ts` | No spaces: with the last space closed the web app shows "No spaces yet" and New space instead of a blank page ([upstream #747](https://github.com/eliasstravik/shepherdr/issues/747)). |
@@ -55,15 +56,54 @@ run agents on this machine as you: the proxy (its source filter, a login in fron
 
 ## Syncing with upstream
 
+`renix full` (on nextgate) does it, once renix's `pkgs/forks.nix` names this script (`syncScript`): when `3.x` is
+behind upstream's `main` it runs `scripts/sync-upstream.sh` in the dev shell from its clone of the fork, and merges
+the pull request the script opens. The script merges upstream's main into a `sync/upstream-<version>` branch made from
+`origin/3.x`, in a worktree of its own, runs the fork's checks at the lowest priority and opens the sync pull request
+to `3.x`:
+
+- the layer is intact: every file the table above names is there, and every upstream file it hooks into still has a
+  `fork:` comment (`python3 scripts/fork_layer.py check`);
+- `bun install --frozen-lockfile`, `bun web/build-plugins.ts`, `bun run typecheck`, `bin/sync-shared --check`;
+- `python3 -m unittest discover -s test` (the repo's rules, the installer, herdr-task, the layer's Python tests);
+- `bun test` on each of the layer's own test files, one at a time (`python3 scripts/fork_layer.py tests`: every
+  `*.test.*` the table names; Bun's module mocks would clash in one run).
+
+Not the whole Bun suite and the build: GitHub's Check workflow runs those, on pull requests to `main` only; on `3.x`
+by hand: `gh workflow run check.yml --repo dmasiero/shepherdr --ref 3.x`.
+
+A conflict stops it with exit 3, a failed check with exit 4 (its log: `<worktree's git dir>/sync-upstream.check.log`).
+renix's agent then resolves the conflicts (below) or commits a fix in the worktree, and renix runs the script again
+with `--continue`, which commits the merge, checks again and opens the pull request. `--continue` always merges the
+upstream commit the first run saved (`<worktree's git dir>/sync-upstream`), even if upstream moved on since. A sync
+left unfinished is picked up by the next `renix full`.
+
 Upstream comes in by merge, never by rebase or squash: the line is published, and a merge keeps upstream's commits as
-they are, so the next sync only sees what is new.
+they are, so the next sync only sees what is new. A sync pull request is merged with **Create a merge commit**.
+
+By hand, the fallback (the same script, or the plain steps):
 
 ```sh
+nix develop --command sh scripts/sync-upstream.sh             # or --no-pr: check, then push and open nothing
+# after resolving conflicts or fixing the check in the worktree it names:
+nix develop --command sh scripts/sync-upstream.sh --continue --dir <worktree>
+
+# without the script:
 git fetch upstream
 git switch -c sync/upstream-<version> origin/3.x
-git merge upstream/main          # a conflict is almost always a `fork:` hook line: keep upstream's change, put the hook back
-bun install --frozen-lockfile && bun run typecheck && bun test service
+git merge upstream/main          # conflicts: below
+bun install --frozen-lockfile && bun run typecheck && python3 scripts/fork_layer.py check
 gh pr create --base 3.x          # merge it with "Create a merge commit"
 ```
 
-`renix full` shows how far `3.x` is behind upstream and offers to merge an open `sync/upstream-*` pull request.
+A new piece of the layer needs a row in the table above: the sync checks that its files are there, runs the Bun tests
+it names and checks its hooks' `fork:` comments. A Bun the Check workflow moves to: raise the dev shell's with
+`nix flake lock --override-input nixpkgs github:NixOS/nixpkgs/<a nixos-unstable rev with it>`.
+
+### Conflicts
+
+A conflict is almost always in one of the layer's hook lines: take upstream's version of the file and put the fork's
+change back on top, with its `fork:` comment (the table says what the fork changes in each file and why). Stage the
+result and don't commit the merge: the script does, on `--continue`. Where upstream now does what a hook did, drop
+the hook and say so in the table. A shared module's copies (`lib/COPIES`): resolve `lib/<file>`, then
+`python3 bin/sync-shared` writes the copies.

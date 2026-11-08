@@ -22,6 +22,7 @@ export class Live {
   compat: Compat | null = null;
   private snap: string | null = null;
 
+  // fork: proxy mode. The machine's name and the web link come from main.ts (Tailscale's, or the proxy's), not from Tailscale here.
   constructor(private hub: Hub, private store: Store, private here: () => string, private hereName: () => string | null, private version: string, private link: () => string | null) {
     hub.on((e) => {
       if (e.type === "reset") { void this.machines(); this.agents(); }
