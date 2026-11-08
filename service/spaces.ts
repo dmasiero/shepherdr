@@ -12,6 +12,7 @@ import { exec } from "./model.ts";
 import * as NS from "../core/newspace.js";
 import * as SP from "../core/spaces.js";
 import { cleanCommand } from "../core/clean-env.js";
+import { trustArgv } from "../core/claude-trust.js"; // fork: SHEP-28
 
 export const withWindow = () => existsSync(join(process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app"), "mods", "spaces-chat"));
 
@@ -79,6 +80,14 @@ export async function execTemplate(hub: Hub, name: string, machine: string | nul
   return { name: one, words: src.slice(head[0].length).trim(), done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null) };
 }
 
+/** fork: Claude Code trusts the folder picked for a space, on its machine (core/claude-trust.js), so the space's
+ *  Assistant starts without the trust screen (SHEP-28). What it did ("set", "trusted", …), null when it couldn't run. */
+export async function trustFolder(hub: Hub, machine: string | null, folder: string | null | undefined) {
+  if (!folder) return null;
+  const r = await exec(hub, trustArgv(folder), machine).catch(() => null);
+  return r ? r.stdout.trim() || null : null;
+}
+
 /** The web's id for the space the window made: Herdr already answers another machine's as "<machine>/<id>" (its
  *  ids are qualified, as its tabs'); kept as it is, never "<machine>/<machine>/<id>" (SHEP-56: the page then waited
  *  for a space that never came). */
@@ -108,6 +117,7 @@ export async function newSpace(hub: Hub, opts: { machine: string | null; path: s
     top = abs;
   }
   const name = (opts.name || NS.placeName(abs, top, home)).slice(0, 80);
+  await trustFolder(hub, machine, abs); // fork: SHEP-28
   const iconOf = (id: string) => (opts.icon ? opts.store.set("spaces-chat", SP.withIcon(opts.store.value("spaces-chat"), id, opts.icon)) : null);
   if (withWindow()) {
     const r = await run(["herdr-app", "do", "space.new", "--folder", abs, ...(opts.unnamed ? [] : ["--name", name]), ...(machine ? ["--machine", machine] : [])]);

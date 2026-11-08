@@ -22,6 +22,7 @@ import { openKeybinds } from '@plugins/keyboard/client.tsx'
 import { DiffView, FilesView } from '@plugins/worktree/client.tsx'
 import type { Place, PlaceTab, Snapshot, Task, TabState } from '@shared/types.ts'
 import * as CF from '@core/confirm.js'
+import { closeOf, NOTHING } from './close.ts' // fork: SHEP-28
 import * as MNc from '@core/menus.js'
 import * as APc from '@core/autopilot.js'
 
@@ -699,6 +700,8 @@ function PhoneTabItems({ place }: { place: Place }) {
 /** Closes a tab, as the window's: an Assistant with workers running asks what becomes of them; a space's last tab
  *  closes the space, so it asks as Close… does */
 async function closeTab(snap: Snapshot, place: Place, tab: BarTab) {
+  // fork: an Assistant that isn't open closes nothing, never the space (close.ts, SHEP-28)
+  if (closeOf(barTabs(snap, place), tab, { tab: !!place.assistantTab?.id, live: !!place.assistantTab?.live }) === 'none') return toast(NOTHING)
   const many = barTabs(snap, place).filter((t) => !t.assistant || assistantOpen(place)).length > 1
   try {
     if (tab.assistant && place.assistantTab?.live) {

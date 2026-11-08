@@ -9,6 +9,8 @@
 // A card: { id, addr, cli, words, choices: [{ label, description? }], at (the cursor's choice), all (screenText),
 // seen (sameScreen), state: "open" | "answered" | "closed", how, opened, changed }.
 
+import { progName } from "./chat-reader.js"; // fork: SHEP-28
+
 // ---- reading a screen ------------------------------------------------------------------------
 
 const MARKER = /^(\s*[❯›▶►➤→>]\s+)(.*)$/u;
@@ -123,7 +125,8 @@ export const CLI = { claude: "Claude Code", codex: "Codex" };
 
 // Which CLI a terminal runs: { claude | codex } from its report or its program, else null.
 export function cliOf(k) {
-  const a = String(k?.status?.app ?? k?.agent ?? k?.foreground?.name ?? "");
+  // fork: a Nix wrapper's ".claude-wrapped" is Claude Code (SHEP-28, core/chat-reader.js progName)
+  const a = String(k?.status?.app ?? k?.agent ?? (k?.foreground?.name ? progName(k.foreground.name) : ""));
   return /^claude/.test(a) ? "claude" : /^codex/.test(a) ? "codex" : null;
 }
 

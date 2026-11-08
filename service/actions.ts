@@ -7,6 +7,8 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { sendBody, steerNow, messageBody, refusal, reactionLine, mentionedIn, taskTag } from "../core/send.js";
 import { kindOf } from "../core/chat-reader.js";
+import * as SCa from "../core/screens.js"; // fork: SHEP-28
+const { starting } = SCa as any;
 import { WORDS } from "../core/chat-view.js";
 import * as AGa from "../core/agents.js";
 import { answerCodex } from "./codex-ask.ts";
@@ -16,20 +18,22 @@ const { READ, withMove, withSection, withoutSection, withSectionName, withIcon, 
 import type { Compat } from "./compat.ts";
 import { worktreeAct } from "./worktrees.ts";
 import { noteFailed, once } from "./send-once.ts";
-import { execTemplate } from "./spaces.ts";
+import { execTemplate, trustFolder } from "./spaces.ts"; // fork: trustFolder (SHEP-28)
 import * as MA from "../core/machine-add.js";
 import { exec } from "./model.ts";
 import { closeSaved, renameSaved, orderSaved, withoutSpace, splitId } from "./saved-spaces.ts";
 
 const APP = process.env.HERDR_APP_HOME || join(homedir(), ".config", "herdr-app");
 // The window's own space log (lib/spacelog.js): a space the service closed or renamed with no window is traced there too
-function logSpace(action: string, id: string, name: string | null, extra: Record<string, unknown> = {}) {
+function logSpace(action: string, id: string, name: string | null, extra: Record<string, unknown> = {}, by = "web, no window (service/saved-spaces.ts)") { // fork: by (SHEP-28)
   try {
     const dir = join(APP, "data", "backups");
     mkdirSync(dir, { recursive: true });
-    appendFileSync(join(dir, "space-log.jsonl"), JSON.stringify({ at: new Date().toISOString(), machine: splitId(id).machine, space: id, name, action, ...extra, by: "web, no window (service/saved-spaces.ts)" }) + "\n");
+    appendFileSync(join(dir, "space-log.jsonl"), JSON.stringify({ at: new Date().toISOString(), machine: splitId(id).machine, space: id, name, action, ...extra, by }) + "\n");
   } catch {}
 }
+/** fork: where logSpace writes (its tests read it: the app home is the one this module was first loaded with, SHEP-28) */
+export const spaceLogFile = () => join(APP, "data", "backups", "space-log.jsonl");
 const ATTACH = join(process.env.HERDR_APP_HOME || join(homedir(), ".config", "herdr-app"), "data", "chat-attach");
 /** files in one message at most (the page says so before it sends: web/plugins/chat/client.tsx) */
 export const MAX_FILES = 50;
@@ -61,6 +65,16 @@ async function sendNow(hub: Hub, b: any, compat: Compat, again = false) {
     return landed;
   }));
   const body = [messageBody({ text, quote: typeof b.quote === "string" ? b.quote.slice(0, 2000) : null, tags: typeof b.tags === "string" ? b.tags : "" }), ...files].filter(Boolean).join("\n\n");
+  // fork: an agent still starting (its CLI's own start screen, such as trust this folder, or its first message not
+  // handed over yet) takes nothing typed: Enter there picks a choice ("No, exit" ended a new space's Assistant,
+  // SHEP-28), or the words go in before its instructions. Held, and sent once it has started.
+  if (stillStarting(a, t)) {
+    const cid = typeof b.cid === "string" ? b.cid.slice(0, 80) : undefined;
+    const note = () => { if (cid) compat.noteSend?.(a, { cid, text, files: sent, at: Date.now() }); };
+    held.push({ addr: a, kind: kindOf(t) ?? "", body, hub, cid, note, start: true });
+    drain();
+    return { ok: true, waiting: true, waitsFor: "start" };
+  }
   // held on purpose (Ctrl+Enter, a long press): it goes once the agent stops working
   const st = (hub.terminals.get(a) as any)?.status?.state;
   if (b.hold && (st === "working" || st === "blocked")) {
@@ -82,7 +96,7 @@ async function sendNow(hub: Hub, b: any, compat: Compat, again = false) {
 }
 
 // Messages held until their agent is free, sent in order, each once.
-const held: { addr: string; kind: string; body: string; hub: Hub; cid?: string; now?: boolean; note?: () => void }[] = [];
+const held: { addr: string; kind: string; body: string; hub: Hub; cid?: string; now?: boolean; note?: () => void; start?: boolean }[] = []; // fork: start (SHEP-28)
 let draining: ReturnType<typeof setInterval> | null = null, busy = false;
 function drain() {
   draining ??= setInterval(async () => {
@@ -94,6 +108,7 @@ function drain() {
         const st = (m.hub.terminals.get(m.addr) as any)?.status?.state;
         const alive = m.hub.terminals.get(m.addr)?.state === "live";
         if (alive && !m.now && (st === "working" || st === "blocked")) continue;
+        if (alive && m.start && stillStarting(m.addr, m.hub.terminals.get(m.addr))) continue; // fork: SHEP-28
         const i = held.indexOf(m);
         if (i < 0) continue;
         held.splice(i, 1);
@@ -129,15 +144,27 @@ function startWhenBack() {
 
 // An Assistant whose CLI showed a screen of its own (trust this folder) before hc could hand it its first message: the
 // template's words and the task go once it is idle past that screen, as the window's chat does (mods/chat follow()).
+// fork: noted in `firsts` meanwhile, so what the person sends then waits for it (stillStarting, SHEP-28).
+const firsts = new Set<string>();
 function firstWhenIdle(hub: Hub, addr: string, text: string) {
   const until = Date.now() + 15 * 60_000;
+  firsts.add(addr);
   const timer = setInterval(async () => {
     const t: any = hub.terminals.get(addr);
-    if (!t || t.state !== "live" || (t.turn ?? 0) > 0 || Date.now() > until) return clearInterval(timer);
+    if (!t || t.state !== "live" || (t.turn ?? 0) > 0 || Date.now() > until) { firsts.delete(addr); return clearInterval(timer); }
     if (t.status?.state !== "idle") return;
     clearInterval(timer);
-    await hub.send(addr, text);
+    await hub.send(addr, text).finally(() => firsts.delete(addr));
   }, 2000);
+}
+
+// fork: whether an agent can't take a message yet (SHEP-28): its first message is still to go (firstWhenIdle), or its
+// CLI hasn't started its session (core/screens.js starting: no status, no turn), for its first half hour (a CLI that
+// never reports one isn't held for good).
+const START_HOLD = 30 * 60_000;
+export function stillStarting(addr: string, t: any) {
+  if (firsts.has(addr)) return true;
+  return !!t && starting(t) && Date.now() - (t.created_ms ?? 0) < START_HOLD;
 }
 
 async function run(cmd: string[]) {
@@ -488,7 +515,11 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
       for (const t of hub.terminals.values()) if (t.labels?.["herdr.coordinator.space"] === mine.id && (t.address.includes("/") ? t.address.split("/")[0] : null) === (mine.machine ?? null)) await hc(["kill", t.address]);
       return { ok: true };
     }
+    const named = compat.spaceOf?.(b.place)?.name ?? null; // fork: SHEP-28
     const r = await run(["herdr-app", "do", "space.close", "--id", b.place, "--confirmed", "true"]);
+    // fork: a space the person closed from the web is in the space log with the window too (SHEP-28: pool.fan's
+    // close left no trace there)
+    if (r.code === 0) logSpace("close", b.place, named, {}, "web: Close space (service/actions.ts, the window closed it)");
     if (r.code !== 0) {
       const gone = await closeSaved(hub, b.place);
       if (!gone) throw new Error("That space isn't here any more.");
@@ -552,6 +583,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
       ? ["--label", `herdr.chat=${rec.pane}`, "--label", `herdr.chat.slot=${slot}`, "--label", `herdr.chat.origin=slot:${slot}`, "--label", "herdr.role=coordinator",
         "--label", `herdr.coordinator.space=${bare}`, ...(rec.tab ? ["--label", `herdr.coordinator.tab=${String(rec.tab).split("/").pop()}`] : [])]
       : ["--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${bare}`, "--label", `herdr.space=${bare}`];
+    await trustFolder(hub, sp.machine ?? null, sp.folder); // fork: never the trust screen (SHEP-28)
     const tpl = await execTemplate(hub, "assistant", sp.machine ?? null);
     const r = await hc(["run", "--bg", "--json", "--no-parent", "--keep", ...(sp.machine ? ["--on", sp.machine] : []), ...(sp.folder ? ["--cwd", sp.folder] : []), ...labels, tpl.name, task]);
     tpl.done();

@@ -15,6 +15,7 @@ import { join } from "node:path";
 import type { Hub } from "./hub.ts";
 import type { Host } from "./host.ts";
 import { HOME } from "./paths.ts";
+import { kindOf } from "../core/chat-reader.js"; // fork: SHEP-28
 
 const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
 const ASKS = join(APP, "data", "chat-asks", "open");
@@ -121,7 +122,7 @@ export class Jobs {
     for (const a of new Set(this.watched())) {
       const t: any = this.hub.terminals.get(a);
       if (!t || !/^([\w.-]+\/)?[\w.-]+$/.test(a) || t.state !== "live") continue;
-      if ((t.status?.app ?? t.foreground?.name) !== "claude" && t.status?.app !== "claude-code") continue;
+      if (kindOf(t) !== "claude") continue; // fork: Nix's ".claude-wrapped" too (SHEP-28)
       if (a.includes("/")) {
         // another machine's agent: its flag there, every 8 s at most
         const [m, id] = a.split("/");
