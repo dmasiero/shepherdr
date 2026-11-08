@@ -10,7 +10,7 @@ import '@xterm/xterm/css/xterm.css'
 import { act, agentChat, definePlugin, getState, openItem, placeOf, setUI, shownItem, useStore, useUI } from '@client/kernel.ts'
 import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Small, Tab, Tabs, TermIcon } from '@client/ui.tsx'
 import type { Place, TermScreen } from '@shared/types.ts'
-import { typedDiff } from './input.ts'
+import { anyMod, modText, NO_MODS, tapMod, typedDiff, withMods, type Mods } from './input.ts'
 import { connectTerminal, streamInput } from './stream.ts'
 import { atEnd, colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, toEnd, ZOOM } from './screen.ts'
 
@@ -62,7 +62,8 @@ const css = (name: string) => getComputedStyle(document.documentElement).getProp
 /** The CLI's screen drawn by a real terminal (xterm.js), read only, at the pane's own columns: nothing wraps. The view
  *  fits the terminal, never the other way round: the agent draws for its own size whoever watches, so opening or
  *  resizing a view disturbs nobody. The font scales so the width fits; too small, it stops at MIN and the screen pans
- *  sideways. A pinch (or Ctrl and the wheel) zooms. Each new `pin` brings it to the prompt and follows it again. */
+ *  sideways. A pinch (or Ctrl and the wheel) zooms. fork: each new `pin` brings it to the prompt and follows it again
+ *  (SHEP-22). */
 function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScreen | undefined; stream?: string; pin?: number } & HTMLAttributes<HTMLDivElement>) {
   const box = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
@@ -137,7 +138,7 @@ function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScre
   useEffect(() => {
     const el = box.current
     if (!el) return
-    // a phone's keyboard coming up shortens the box: one following the newest line keeps it in view (SHEP-22)
+    // fork: a phone's keyboard coming up shortens the box: one following the newest line keeps it in view (SHEP-22)
     const ro = new ResizeObserver(() => {
       setWidth(el.clientWidth)
       bottom()
@@ -183,7 +184,7 @@ function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScre
   const bottom = () => {
     if (stuck.current && box.current) box.current.scrollTop = box.current.scrollHeight
   }
-  // a tap to type, or a key sent: to the prompt, even from reading back
+  // fork: a tap to type, or a key sent: to the prompt, even from reading back (SHEP-22)
   useEffect(() => {
     if (!pin) return
     stuck.current = true
@@ -214,7 +215,7 @@ function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScre
     const connection = connectTerminal(stream, (bytes, done) => term.write(bytes, done), () => term.reset(), (cols, rows) => {
       // in turn with what was written before it: a first paint at this size comes next
       term.write('', () => { term.reset(); term.resize(cols, rows); setStreamCols(cols) })
-    }, setStreamStatus, () => term.modes.applicationCursorKeysMode)
+    }, setStreamStatus, () => term.modes.applicationCursorKeysMode) // fork: keys as bytes by the cursor mode (SHEP-20)
     return () => { drawn.dispose(); connection.close() }
   }, [term, stream])
 
@@ -239,24 +240,36 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   const streaming = useStore((s) => s.snap?.terminalTransport === 'core')
   const input = useRef<HTMLTextAreaElement>(null)
   // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger, through the hidden box
+  // fork: any phone or tablet, in every terminal (SHEP-19)
   const { typed, touch } = inputOf(ui.device, !!panel)
   /** bumped on a tap and on each thing typed: the screen goes to the prompt, just above the keyboard */
   const [pin, setPin] = useState(0)
   const toPrompt = () => setPin((n) => n + 1)
+  // fork: the key row's sticky Ctrl and Alt (SHEP-23): engaged, they go on the next key or letter, then let go
+  const [mods, showMods] = useState(NO_MODS)
+  const modsNow = useRef(NO_MODS)
+  const setMods = (m: Mods) => showMods((modsNow.current = m))
   const keys = (keys: string[]) => {
+    if (touch && anyMod(modsNow.current)) {
+      keys = [withMods(keys[0], modsNow.current), ...keys.slice(1)]
+      setMods(NO_MODS)
+    }
     terminalInput(chatKey, { type: 'keys', keys })
     if (touch) toPrompt()
   }
-  /** the touch box: a word being composed stays in it, and `sent` is what of it already went in */
+  /** fork: the touch box (SHEP-20): a word being composed stays in it, and `sent` is what of it already went in */
   const composing = useRef(false)
   const sent = useRef('')
   const typeBox = (el: HTMLTextAreaElement) => {
     const text = typedDiff(sent.current, el.value)
-    if (text) {
-      terminalInput(chatKey, { type: 'text', text })
-      toPrompt()
-    }
-    if (composing.current) sent.current = el.value
+    // fork: with Ctrl or Alt engaged, the first new letter goes in as that combo (SHEP-23)
+    const parts = modText(text, modsNow.current)
+    for (const part of parts) terminalInput(chatKey, 'keys' in part ? { type: 'keys', ...part } : { type: 'text', ...part })
+    if (parts.length) toPrompt()
+    const modded = parts.some((part) => 'keys' in part)
+    if (modded) setMods(NO_MODS)
+    // the combo's letter is used up: a word the keyboard was composing starts afresh
+    if (composing.current && !modded) sent.current = el.value
     else el.value = sent.current = ''
   }
   useEffect(() => {
@@ -304,7 +317,8 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
             inputMode="text"
             enterKeyHint="send"
             className="pointer-events-none absolute size-px opacity-0"
-            // left to itself: a keyboard composing a word (Android's) keeps it in the box, and what changes goes in
+            // fork: left to itself (SHEP-20): a keyboard composing a word (Android's) keeps it in the box, and what
+            // changes goes in
             onCompositionStart={() => (composing.current = true)}
             onCompositionEnd={(e) => {
               composing.current = false
@@ -330,22 +344,46 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
               }
             }}
           />
-          {/* a bar of keys, as the browser's keyboard bar */}
-          <div className="flex flex-wrap gap-1.5 border-t border-line px-3 py-2">
+          {/* a bar of keys, as the browser's keyboard bar. fork: a press keeps the focus in the box, so the on-screen
+              keyboard stays up, and Ctrl and Alt stick for the next key (SHEP-23) */}
+          <div className="flex flex-wrap gap-1 border-t border-line px-3 py-2">
             {(
               [
                 ['Esc', 'esc'],
+                ['Ctrl', 'ctrl'],
+                ['Alt', 'alt'],
                 ['Tab', 'tab'],
                 ['↑', 'up'],
                 ['↓', 'down'],
                 ['Ctrl-C', 'ctrl+c'],
                 ['Enter', 'enter'],
               ] as const
-            ).map(([l, k]) => (
-              <button key={l} type="button" onClick={() => keys([k])} className="press-dim h-11 min-w-12 rounded-full bg-bubble px-3 text-[0.875rem] font-medium">
-                {l}
-              </button>
-            ))}
+            ).map(([l, k]) => {
+              const mod = k === 'ctrl' || k === 'alt' ? k : null
+              return (
+                <button
+                  key={l}
+                  type="button"
+                  aria-pressed={mod ? mods[mod] : undefined}
+                  // the press never takes the focus from the box: the keyboard stays as it was, up or down
+                  onPointerDown={(e) => e.preventDefault()}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (!mod) return keys([k])
+                    const m = tapMod(modsNow.current, mod)
+                    setMods(m)
+                    // engaged with the keyboard down: it comes up for the letter
+                    if (m[mod] && document.activeElement !== input.current) {
+                      input.current?.focus({ preventScroll: true })
+                      toPrompt()
+                    }
+                  }}
+                  className="press-dim h-11 min-w-9 flex-auto rounded-full bg-bubble px-1.5 text-[0.875rem] font-medium whitespace-nowrap aria-pressed:bg-fg aria-pressed:text-bg"
+                >
+                  {l}
+                </button>
+              )
+            })}
           </div>
         </>
       ) : null}

@@ -14,7 +14,8 @@ export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: 
     if (socket.bufferedAmount > 64 * 1024 || serial - acknowledged >= 64) { status('Terminal is catching up. Input was not sent.'); return }
     socket.send(JSON.stringify({ ...message, id: ++serial }))
   }
-  // a person's keys go in as bytes beside their text, never by terminal.keys and its wait for them to pause (input.ts)
+  // fork: a person's keys go in as bytes beside their text (SHEP-20), never by terminal.keys and its wait for them
+  // to pause (input.ts)
   const input = (message: Parameters<typeof streamInput>[1]) => {
     const bytes = message.type === 'keys' ? keyBytes(message.keys, appCursor()) : null
     send(bytes === null ? message : { type: 'text', text: bytes })
