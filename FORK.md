@@ -14,7 +14,7 @@ Eighteen changes. Everything else is upstream's; `git diff upstream/main 3.x` sh
 | File | What |
 | --- | --- |
 | `FORK.md` | This page. |
-| `flake.nix`, `flake.lock`, `scripts/sync-upstream.sh`, `scripts/fork_layer.py`, `test/test_sync_upstream.py` | Upstream comes in by itself: `renix full` runs the sync script in the dev shell and merges its pull request (below, "Syncing with upstream"). The dev shell has what the script and its checks need (Bun pinned at the Check workflow's 1.4.2, Node, Python, git, gh, jq); `scripts/fork_layer.py` reads this table for the layer's tests and checks that every hook below still has its `fork:` comment. |
+| `flake.nix`, `flake.lock`, `scripts/sync-upstream.sh`, `scripts/fork_layer.py`, `test/test_sync_upstream.py`; hook in `.github/workflows/check.yml` (`on`) | Upstream comes in by itself: `renix full` runs the sync script in the dev shell and merges its pull request (below, "Syncing with upstream"). GitHub's Check workflow runs on pull requests to `3.x` and pushes to it as well as upstream's `main` (SHEP-25), so the sync pull requests and the tasks' pull requests are checked in full. The dev shell has what the script and its checks need (Bun pinned at the Check workflow's 1.4.2, Node, Python, git, gh, jq); `scripts/fork_layer.py` reads this table for the layer's tests and checks that every hook below still has its `fork:` comment. |
 | `test/test_herdr_artifact_readonly.py`; hook in `mods/artifacts/bin/herdr-artifact` (its `shutil.copyfile`s) | Read-only install: with Shepherdr's files read-only (a Nix store), `herdr-artifact publish` failed with `PermissionError` while staging, since `copy2` kept the read-only mode and the check then rewrote the staged recipe view. Its copies now take only the content ([upstream #749](https://github.com/eliasstravik/shepherdr/issues/749)). |
 | `service/proxy.ts`, `service/proxy.test.ts`; hooks in `service/auth.ts`, `service/main.ts`, `service/live.ts`, `service/settings.ts`, `core/settings.js` (and its copies in the mods), `service/chats.test.ts`, `service/show.test.ts` (`new Live`: its arguments) | Proxy mode, below: a reverse proxy on this machine instead of Tailscale. |
 | `web/src/noSpaces.test.ts`; hooks in `web/src/App.tsx`, `web/src/kernel.ts` | No spaces: with the last space closed the web app shows "No spaces yet" and New space instead of a blank page ([upstream #747](https://github.com/eliasstravik/shepherdr/issues/747)). |
@@ -71,8 +71,10 @@ to `3.x`:
 - `bun test` on each of the layer's own test files, one at a time (`python3 scripts/fork_layer.py tests`: every
   `*.test.*` the table names; Bun's module mocks would clash in one run).
 
-Not the whole Bun suite and the build: GitHub's Check workflow runs those, on pull requests to `main` only; on `3.x`
-by hand: `gh workflow run check.yml --repo dmasiero/shepherdr --ref 3.x`.
+Not the whole Bun suite and the build: GitHub's Check workflow runs those, on the sync pull request itself (it runs on
+pull requests to `3.x` and on each merge into it); by hand on any branch: `gh workflow run check.yml --repo
+dmasiero/shepherdr --ref <branch>`. Merge a sync pull request once its Check is green: `3.x` has no branch protection,
+so GitHub doesn't stop an earlier merge.
 
 A conflict stops it with exit 3, a failed check with exit 4 (its log: `<worktree's git dir>/sync-upstream.check.log`).
 renix's agent then resolves the conflicts (below) or commits a fix in the worktree, and renix runs the script again
