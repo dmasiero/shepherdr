@@ -12,6 +12,7 @@ import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Sm
 import type { Place, TermScreen } from '@shared/types.ts'
 import { anyMod, EXTRA_KEYS, modText, NO_MODS, tapMod, typedDiff, withMods, type Mods } from './input.ts'
 import { connectTerminal, streamInput } from './stream.ts'
+import { tabTermFor } from './tab.ts'
 import { atEnd, colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, toEnd, ZOOM } from './screen.ts'
 
 const KEYMAP: Record<string, string> = {
@@ -481,7 +482,8 @@ export default definePlugin({
     reg.taskPanel.push({ id: 'terminal', order: 10, label: 'Terminal', Icon: TermIcon, View: ({ chatKey }) => <TerminalView chatKey={chatKey} panel /> })
     reg.chatBody.push({ when: (ui, key) => ui.term === key, View: TerminalView })
     // Shepherdr 3: one of the space's other tabs, in place of its chat (t:<terminal>)
-    reg.chatBody.push({ when: (ui) => !!ui.term?.startsWith('t:') && ui.tabView?.[ui.term] !== 'chat', View: ({ chatKey: _ }: { chatKey: string }) => <TerminalView chatKey={useUI((u) => u.term!)} /> })
+    // fork: only in the column of the space that owns the tab, never a task panel's chat (SHEP-27; tab.ts)
+    reg.chatBody.push({ when: (ui, key) => tabTermFor(ui.term, ui.tabView, key, getState().snap?.places ?? []), View: ({ chatKey: _ }: { chatKey: string }) => <TerminalView chatKey={useUI((u) => u.term!)} /> })
     reg.keys.push({
       order: 0,
       handle: ({ e, ui, snap }) => {
