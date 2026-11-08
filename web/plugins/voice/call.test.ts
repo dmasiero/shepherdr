@@ -129,7 +129,7 @@ test("the agent's voice plays through a real <audio> element (kept playing in th
   expect(FakeContext.last.dest.connected).toEqual([])
 })
 
-test('the lock screen shows the call; its hang up ends it, its mute and pause mute it', async () => {
+test('the lock screen shows the call; its hang up ends it, its mute toggles it', async () => {
   hungUp = 0
   mutes.length = 0
   await start()
@@ -138,10 +138,8 @@ test('the lock screen shows the call; its hang up ends it, its mute and pause mu
   expect(mediaSession.mic).toBe(true)
   handlers.hangup!()
   handlers.togglemicrophone!()
-  handlers.pause!()
-  handlers.play!()
   expect(hungUp).toBe(1)
-  expect(mutes).toEqual([true, true, false])
+  expect(mutes).toEqual([true])
   call.muteCall(true)
   expect(mediaSession.mic).toBe(false)
   call.stopCall()
@@ -244,4 +242,75 @@ test('SHEP-113: the call shows Listening, Thinking, Working (what, in plain word
   expect([call.callPhase(), call.callDoing()]).toEqual(['thinking', ''])
   ws.say({ type: 'state', state: 'listening' })
   expect(call.callPhase()).toBe('listening')
+})
+
+// SHEP-29: a headset's button toggles mute. The call screen's own mute path stands in (muteCall + its Muted state).
+const gap = () => new Promise((r) => setTimeout(r, call.PRESS_GAP_MS + 20))
+let screenMuted = false
+async function startScreen() {
+  screenMuted = false
+  const p = call.startCall('p:h1', () => undefined, undefined, undefined, undefined, { title: 'Shepherdr', hangUp: () => undefined,
+    mute: (on) => { call.muteCall(on); screenMuted = on } })
+  const ws = FakeSocket.all.at(-1)!
+  ws.open()
+  ws.say({ type: 'call', id: 'call-1' })
+  await p
+}
+const headset = (key: string) => listeners.keydown.forEach((f) => (f as unknown as (e: object) => void)({ key, repeat: false, preventDefault() {} }))
+const state = () => [screenMuted, mediaSession.mic]
+
+test('SHEP-29: presses as pause, pause, pause (an always-playing session) mute, unmute, mute', async () => {
+  await startScreen()
+  const seen = []
+  for (let i = 0; i < 3; i++) { handlers.pause!(); seen.push(state()); await gap() }
+  expect(seen).toEqual([[true, false], [false, true], [true, false]])
+  // the session stays a live call the whole time
+  expect(mediaSession.playbackState).toBe('playing')
+})
+
+test('SHEP-29: a mix of play, pause and the mic toggle is one toggle each', async () => {
+  await startScreen()
+  const seen = []
+  for (const a of ['play', 'pause', 'togglemicrophone', 'play']) { handlers[a]!(); seen.push(screenMuted); await gap() }
+  expect(seen).toEqual([true, false, true, false])
+})
+
+test('SHEP-29: one press delivered twice (Media Session, then keydown) within 300 ms counts once', async () => {
+  await startScreen()
+  handlers.pause!()
+  headset('MediaPlayPause')
+  expect(screenMuted).toBe(true)
+  await gap()
+  headset('HeadsetHook')
+  handlers.play!()
+  expect(screenMuted).toBe(false)
+})
+
+test("SHEP-29: the call screen's Mute and the headset agree", async () => {
+  await startScreen()
+  // muted on screen: the next press unmutes
+  call.muteCall(true); screenMuted = true
+  handlers.pause!()
+  expect(state()).toEqual([false, true])
+  await gap()
+  // unmuted on screen again after a press: the next press mutes
+  handlers.pause!()
+  await gap()
+  call.muteCall(false); screenMuted = false
+  handlers.play!()
+  expect(state()).toEqual([true, false])
+})
+
+test('SHEP-29: no call, no toggle: the keys and handlers do nothing', async () => {
+  await startScreen()
+  call.stopCall()
+  expect(handlers.pause).toBeNull()
+  expect(handlers.play).toBeNull()
+  headset('MediaPlayPause')
+  expect(screenMuted).toBe(false)
+  // other keys during a call are left alone
+  await startScreen()
+  headset('a')
+  headset('MediaTrackNext')
+  expect(screenMuted).toBe(false)
 })
