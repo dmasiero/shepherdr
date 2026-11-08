@@ -30,6 +30,7 @@ core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
 core/autopilot.js: pane-chat shepherdr-settings
 core/chat-reader.js: chat
 core/clean-env.js: chat
+core/claude-trust.js: chat coordinator menu-tasks new-menu-tasks newspace shepherdr-settings spaces-chat tabs-tasks tasks  # fork: Claude Code trusts a new space's folder (SHEP-28)
 core/worktree.js: task-changes task-pr
 core/recipe.js: artifacts
 core/task-artifacts.js: chat task-artifacts

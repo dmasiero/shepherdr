@@ -62,6 +62,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   HC_SESSION>)` + `terminalBridge` from `service/` (a throwaway core).
 - Autopilot wake replay: print `herdr_task.autopilot.message()` (patch `heartbeat_of`/`direction_of`), then
   `claude -p --append-system-prompt templates/assistant.md` in a scratch repo with fake herdr-task/hc on PATH.
+- Web stub, terminals: a task needs `agent: {chat, role, cli, status, running: true, age, note}` for its Terminal tab;
+  `terminalTransport: 'core'` in the snapshot makes terminals use `/api/terminal` (answer `open` with a size message,
+  then bytes).
 - Web stub: a place's `chat` is its chat key string (the chat object goes only in the watch reply). Headless screenshots
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
 - Crash recovery for real: a throwaway core, `HC_SESSION=<name> hc ...` with `HC_TERMINAL_SOCKET` and Claude's

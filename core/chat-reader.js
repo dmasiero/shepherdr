@@ -11,8 +11,14 @@ export const PAGE = 200;
 export const KEEP = 2000;
 export const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
 
+// fork: a program's name as its CLI is called. Nix installs a CLI behind a wrapper script that execs the real binary as
+// ".<name>-wrapped" (Claude Code on NixOS: ".claude-wrapped"). Before a session reports itself (its start screen:
+// trust this folder) the program's name is all there is, so the chat said "No chat for this agent" and offered no
+// card for the screen (SHEP-28).
+export const progName = (name) => String(name ?? "").replace(/^\./, "").replace(/(-wrapped)+$/, "");
+
 // The CLI a terminal runs, as the chat knows them ("claude", "codex"), else null.
-export const kindOf = (t) => KINDS[t?.status?.app] ?? KINDS[t?.foreground?.name] ?? null;
+export const kindOf = (t) => KINDS[t?.status?.app] ?? KINDS[progName(t?.foreground?.name)] ?? null; // fork: progName
 
 export class ChatReader {
   constructor(io, addr) {

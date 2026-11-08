@@ -216,7 +216,7 @@ export class Compat {
   taskLogs: { ids(path: string): string[] } | null = null;
   private spaceList: Space[] = [];
   /** A space by its id: its folder and machine. */
-  spaceOf(id: string) { const s = this.spaceList.find((x) => x.id === id); return s ? { id: s.id, folder: s.folder, machine: s.machine ?? null } : null; }
+  spaceOf(id: string) { const s = this.spaceList.find((x) => x.id === id); return s ? { id: s.id, folder: s.folder, machine: s.machine ?? null, name: (s as any).name ?? null } : null; } // fork: name (SHEP-28)
   /** Every space: its folder and machine (the worktree dialog's "open" marks). */
   allSpaces() { return this.spaceList.map((s) => ({ id: s.id as string, folder: s.folder as string, machine: (s.machine ?? null) as string | null })); }
 

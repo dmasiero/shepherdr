@@ -29,7 +29,7 @@ import { agents, panes, terminals, spaces, inRender, chatPaneOf } from "./live.j
 import * as fs from "fs/promises";
 import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
-import { ChatReader } from "./core/chat-reader.js";
+import { ChatReader, kindOf } from "./core/chat-reader.js"; // fork: kindOf (SHEP-28)
 import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
 import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
@@ -50,6 +50,7 @@ import * as slash from "./slash.js";
 import * as mentions from "./core/mentions.js";
 import * as agent from "./agent.js";
 import { cleanCommand } from "./core/clean-env.js";
+import { trustArgv } from "./core/claude-trust.js"; // fork: SHEP-28
 import * as choices from "./settings.js";
 import { Dictation, BUN_PATH, warmAudio } from "./dictate.js";
 
@@ -1074,7 +1075,7 @@ export default class Chat extends View {
     const pane = this.lastPane ?? (this.slot && this.slotRec()?.pane) ?? null;
     if (!this.thread && !this.inner && !this.swapping && !t.labels?.["herdr.chat"] && pane && !panes().some((p) => p.terminal === this.addr)
       && panes().some((p) => p.pane === pane && p.mod === "chat")) await hc(["label", this.addr, `herdr.chat=${pane}`]);
-    const kind = KINDS[t.status?.app] ?? KINDS[t.foreground?.name];
+    const kind = kindOf(t); // fork: Nix's ".claude-wrapped" too (SHEP-28)
     // Back at its shell because the session it resumed is gone: a new agent starts there.
     if (!kind) { if (!(await this.checkLost(this.addr, cx, t))) this.set("unsupported", cx); return; }
     this.t = t;
@@ -1654,6 +1655,9 @@ export default class Chat extends View {
           launch = oneOff;
         }
       }
+      // fork: an Assistant's space folder is trusted by Claude Code first, so it never stops on the trust screen
+      // (core/claude-trust.js, SHEP-28)
+      if (this.role === "coordinator" && folder) { const [c, ...a] = trustArgv(folder); await exec(c, a, on).catch(() => null); }
       const args = ["run", "--bg", "--json", "--no-parent", "--keep", ...(machine ? ["--on", machine] : []), ...(folder ? ["--cwd", folder] : []),
         "--label", `herdr.chat=${pane}`, "--label", `herdr.chat.slot=${this.slot}`, "--label", `herdr.chat.origin=slot:${this.slot}`,
         "--label", `herdr.role=${this.role}`,

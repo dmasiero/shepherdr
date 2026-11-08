@@ -9,6 +9,8 @@
 // A card: { id, addr, cli, words, choices: [{ label, description? }], at (the cursor's choice), all (screenText),
 // seen (sameScreen), state: "open" | "answered" | "closed", how, opened, changed }.
 
+import { progName } from "./chat-reader.js"; // fork: SHEP-28
+
 // ---- reading a screen ------------------------------------------------------------------------
 
 const MARKER = /^(\s*[❯›▶►➤→>]\s+)(.*)$/u;
@@ -123,8 +125,14 @@ export const CLI = { claude: "Claude Code", codex: "Codex" };
 
 // Which CLI a terminal runs: { claude | codex } from its report or its program, else null.
 export function cliOf(k) {
-  const a = String(k?.status?.app ?? k?.agent ?? k?.foreground?.name ?? "");
-  return /^claude/.test(a) ? "claude" : /^codex/.test(a) ? "codex" : null;
+  // fork: each of them in turn (a template's launch is "sh" before it execs its CLI), and a Nix wrapper's
+  // ".claude-wrapped" is Claude Code (SHEP-28, core/chat-reader.js progName)
+  for (const n of [k?.status?.app, k?.agent, progName(k?.foreground?.name)]) {
+    const a = String(n ?? "");
+    if (/^claude/.test(a)) return "claude";
+    if (/^codex/.test(a)) return "codex";
+  }
+  return null;
 }
 
 // Still before its session: live, no status reported, no turn taken. (hc ls's `status` is the report's state word,

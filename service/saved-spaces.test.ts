@@ -10,12 +10,12 @@ const APP = mkdtempSync(join(tmpdir(), "shep-saved-"));
 const BIN = join(APP, "bin"), CALLS = join(APP, "herdr-app-calls");
 mkdirSync(BIN);
 writeFileSync(join(BIN, "herdr-app"), `#!/bin/sh\necho "$*" >> "${CALLS}"\necho "herdr-app: no window is running" >&2\nexit 1\n`, { mode: 0o755 });
-let act: typeof import("./actions.ts").act;
+let act: typeof import("./actions.ts").act, spaceLogFile: typeof import("./actions.ts").spaceLogFile; // fork: spaceLogFile (SHEP-28)
 const was = process.env.HERDR_APP_HOME;
 beforeAll(async () => {
   process.env.HERDR_APP_HOME = APP;
   process.env.SHEPHERDR_HERDR_APP = join(BIN, "herdr-app");   // never a real window's, even on a machine with one
-  ({ act } = await import("./actions.ts"));
+  ({ act, spaceLogFile } = await import("./actions.ts"));
   if (was === undefined) delete process.env.HERDR_APP_HOME; else process.env.HERDR_APP_HOME = was;
 });
 afterAll(() => { delete process.env.SHEPHERDR_HERDR_APP; });
@@ -136,7 +136,8 @@ test("Close space from the web, no window: a window space on this computer close
   expect(await act(w.hub as any, { type: "space-remove", place: "spA" }, c)).toEqual({ ok: true });
   expect(ids(w.docs.here)).toEqual(["spB", "spC"]);
   expect(c.data["spaces-chat"].icons).toEqual({});
-  const log = readFileSync(join(APP, "data", "backups", "space-log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  // fork: where act() writes it: the app home actions.ts was first loaded with, whichever test file loaded it (SHEP-28)
+  const log = readFileSync(spaceLogFile(), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   expect(log.at(-1)).toMatchObject({ space: "spA", name: "Home", action: "close", machine: null });
   expect(readFileSync(CALLS, "utf8")).toContain("do space.close --id spA");   // the window was asked first
 });
