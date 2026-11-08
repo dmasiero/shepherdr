@@ -1,10 +1,12 @@
+import { keyBytes } from './input.ts'
+
 /** Only mounted visible panels own a socket. Typed input is never buffered or replayed. */
 const inputs = new Map<string, (message: { type: 'keys'; keys: string[] } | { type: 'text'; text: string }) => void>()
 export function streamInput(chat: string, message: { type: 'keys'; keys: string[] } | { type: 'text'; text: string }) {
   inputs.get(chat)?.(message)
 }
 export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: () => void) => void,
-  reset: () => void, size: (cols: number, rows: number) => void, status: (text: string) => void) {
+  reset: () => void, size: (cols: number, rows: number) => void, status: (text: string) => void, appCursor: () => boolean = () => false) {
   let disposed = false, socket: WebSocket | undefined, retry: ReturnType<typeof setTimeout> | undefined
   let attempt = 0, queued = 0, serial = 0, acknowledged = 0, painting = 0, uncertain = false
   const send = (message: object) => {
@@ -12,7 +14,11 @@ export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: 
     if (socket.bufferedAmount > 64 * 1024 || serial - acknowledged >= 64) { status('Terminal is catching up. Input was not sent.'); return }
     socket.send(JSON.stringify({ ...message, id: ++serial }))
   }
-  const input = (message: Parameters<typeof streamInput>[1]) => send(message)
+  // a person's keys go in as bytes beside their text, never by terminal.keys and its wait for them to pause (input.ts)
+  const input = (message: Parameters<typeof streamInput>[1]) => {
+    const bytes = message.type === 'keys' ? keyBytes(message.keys, appCursor()) : null
+    send(bytes === null ? message : { type: 'text', text: bytes })
+  }
   inputs.set(chat, input)
   const connect = () => {
     if (disposed) return
