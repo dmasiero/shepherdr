@@ -18,8 +18,8 @@ script=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")
 # merge: what CI's Check workflow builds on (dependencies, generated plugin list, types, the shared copies), the Python
 # tests (the repo's rules, the installer, herdr-task, the layer's own), the layer's Bun tests (the test files FORK.md's
 # table names) and the layer itself (scripts/fork_layer.py: every file it names is there, every hook keeps its `fork:`
-# comment). Not the whole Bun suite and the build: GitHub's Check workflow runs those. SHEPHERDR_SYNC_CHECK, a shell
-# command, replaces all of it (test/test_sync_upstream.py).
+# comment). Not the whole Bun suite and the build: GitHub's Check workflow runs those, on the sync pull request.
+# SHEPHERDR_SYNC_CHECK, a shell command, replaces all of it (test/test_sync_upstream.py).
 run_checks() {
   if [ -n "${SHEPHERDR_SYNC_CHECK:-}" ]; then exec sh -c "$SHEPHERDR_SYNC_CHECK"; fi
   set -x
@@ -134,7 +134,8 @@ git merge-base --is-ancestor "$ref" HEAD || die "$branch does not have upstream'
 # types, the shared copies), the Python tests (the repo's rules, the installer, herdr-task, the layer's own), the
 # layer's Bun tests (the test files FORK.md's table names) and the layer itself (scripts/fork_layer.py: every file it
 # names is there, every hook keeps its `fork:` comment). Not the whole Bun suite and the build: GitHub's Check workflow
-# runs those. SHEPHERDR_SYNC_CHECK, a shell command, replaces all of it (test/test_sync_upstream.py).
+# runs those, on the sync pull request. SHEPHERDR_SYNC_CHECK, a shell command, replaces all of it
+# (test/test_sync_upstream.py).
 log="$st.check.log"
 say "running the fork's checks at low priority (log: $log)"
 if ! nice -n 19 sh "$script" --run-checks > "$log" 2>&1; then
@@ -169,8 +170,8 @@ body="$st.pr.md"
   echo
   echo "- The layer is intact (\`scripts/fork_layer.py check\`), typecheck, \`bin/sync-shared --check\`, the Python tests and"
   echo "  the layer's Bun tests passed."
-  echo "- GitHub's Check workflow runs on pull requests to main only; on this line by hand:"
-  echo "  \`gh workflow run check.yml --repo $fork --ref $line\`."
+  echo "- GitHub's Check workflow runs on this pull request: the whole Bun suite, the build and the rest. Merge once it's"
+  echo "  green."
   echo
   echo "## The fork's layer after the merge"
   echo
