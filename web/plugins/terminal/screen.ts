@@ -59,3 +59,12 @@ export function foldShown(
 export function fitFont(width: number, cols: number, cell: number) {
   return Math.floor(((width - 2 * PAD) / (cols * cell)) * 4) / 4
 }
+
+/** How a terminal view takes typing. A desktop's task terminal: keys while its screen has the focus (typed); a
+ *  desktop's Assistant or tab terminal: every key, by the app's key handler (neither). Any phone or tablet: a tap
+ *  focuses a hidden box that brings up the on-screen keyboard, with a key row (touch). A tablet's Assistant or tab
+ *  terminal once got neither, so a tap brought up no keyboard (SHEP-19). */
+export function inputOf(device: 'phone' | 'tablet' | 'desktop', panel: boolean) {
+  const typed = panel && device === 'desktop'
+  return { typed, touch: device !== 'desktop' }
+}
