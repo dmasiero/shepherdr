@@ -25,6 +25,13 @@ class Layer(unittest.TestCase):
         self.assertTrue(all(os.path.isfile(os.path.join(ROOT, t)) for t in tests), tests)
         self.assertFalse([t for t in tests if t.endswith(".py")], "Python tests run with the whole unittest suite")
 
+    def test_the_check_workflow_runs_on_the_fork_line(self):
+        # task and sync pull requests to 3.x, and each merge into it, get GitHub's whole Check (SHEP-25)
+        workflow = read(os.path.join(ROOT, ".github", "workflows", "check.yml"))
+        self.assertIn("  pull_request:\n    branches: [main, 3.x]\n", workflow)
+        self.assertIn("  push:\n    branches: [main, 3.x]\n", workflow)
+        self.assertIn(".github/workflows/check.yml", fork_layer.table(read(os.path.join(ROOT, "FORK.md")))[1])
+
     def test_the_table_names_own_files_then_hooks(self):
         own, hooked = fork_layer.table(textwrap.dedent("""\
             ## The layer
@@ -160,6 +167,9 @@ class Sync(unittest.TestCase):
         self.assertEqual(read(os.path.join(self.wt, "fork.txt")), "the layer\n")
         self.assertNotEqual(git(self.tmp + "/origin.git", "rev-parse", "3.x"), git(self.wt, "rev-parse", "HEAD"),
                             "3.x itself is never pushed")
+        body = read(os.path.join(git(self.wt, "rev-parse", "--absolute-git-dir"), "sync-upstream.pr.md"))
+        self.assertIn("GitHub's Check workflow runs on this pull request", body)
+        self.assertNotIn("main only", body)
 
     def test_conflicts_stop_with_3_then_continue_commits_the_merge(self):
         fork = os.path.join(self.tmp, "fork")

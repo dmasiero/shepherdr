@@ -5,7 +5,7 @@ import { expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 const store = new Map();
-mock.module("herdr", () => ({ shared: (k) => store.get(k) ?? null, setShared: (k, v) => store.set(k, v) }));
+mock.module("herdr", () => ({ shared: (k) => store.get(k) ?? null, setShared: (k, v) => store.set(k, v), home: () => "/nowhere", readTextFile: async () => null }));
 const { KEY_HOLDER, holdKeys, releaseKeys, keysElsewhere, keysInDialog } = await import("../lib/keyholder.js");
 const holder = () => store.get(KEY_HOLDER) ?? null;
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");

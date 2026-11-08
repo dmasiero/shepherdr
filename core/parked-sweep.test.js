@@ -9,7 +9,7 @@ const killed = [];
 mock.module("herdr", () => ({
   agents: () => [], spaces: () => [], panes: () => win.panes, terminals: () => win.terminals,
   machines: () => [{ name: null, layout: "ready" }, { name: "m3oracle", layout: "ready" }],
-  focused: () => null, shared: () => null, setShared: () => {}, appHome: () => "/nowhere",
+  focused: () => null, shared: () => null, setShared: () => {}, appHome: () => "/nowhere", home: () => "/nowhere", readTextFile: async () => null,
   run: (name, args) => { if (name === "terminal.kill") killed.push(args.terminal); },
   exec: async () => ({ stdout: "", code: 0 }), hc: async () => ({ stdout: "{}", code: 0 }),
 }));
