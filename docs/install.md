@@ -1,6 +1,6 @@
 # Install
 
-Shepherdr 3.1.21 is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in
+Shepherdr 3.1.26 is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in
 place, never overwrites what you made yourself, and keeps a backup of anything it replaces.
 
 ## Requirements
@@ -12,7 +12,8 @@ place, never overwrites what you made yourself, and keeps a backup of anything i
   web app.
 - Optional, per add-on: `gh` (pull requests), agent-browser 0.41.1, node and Chrome (the task browser), bun,
   `pw-record` and `pw-play` for dictation and voice calls in the window on Linux (on macOS, Apple's command line
-  tools: `xcode-select --install`), an ElevenLabs key for voice calls and dictation.
+  tools: `xcode-select --install`), an ElevenLabs key for voice calls and dictation. A restricted key needs
+  "User → Read" (elevenlabs.io › Developers › API Keys) for its credits to show under Plan usage in Settings › Machines.
 
 ## Install
 

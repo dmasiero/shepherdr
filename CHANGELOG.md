@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.1.26
+
+The order you drag your spaces into now stays put.
+
+- In the web app, a space you drag to a new spot in the sidebar stays there, even one that used to snap back to the bottom. The Herdr window shows the same order.
+
+## 3.1.25
+
+Calls are easier on a phone held sideways, and you can see how much voice you have left.
+
+- In the web app, a full-screen call on a phone held sideways puts the orb on the left and the buttons on the right.
+- End hangs up at once, with no "Are you sure" step.
+- Settings → Plan usage shows your ElevenLabs credits. If your key can't read them, it says which permission to add.
+
+## 3.1.24
+
+You can ask the voice call to go full screen or step aside.
+
+- On a call, say "go full screen" or "minimize" and the voice does it itself. When it opens the full screen for you, it
+  no longer shrinks it again right after.
+
+## 3.1.23
+
+A minimized call on a phone keeps out of the way.
+
+- In the web app on a phone, a minimized voice call no longer shows a green Listening pill above the bottom bar.
+  Mute and End stay in the bar.
+
+## 3.1.22
+
+The voice call's orb is a clean circle on iPhone.
+
+- In the web app on an iPhone or iPad, the full-screen call's orb shows only its circle, with no grey square around
+  it.
+
 ## 3.1.21
 
 A voice call opens full screen, and research tasks leave your code alone.

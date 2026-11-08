@@ -1,6 +1,6 @@
 // A voice call, as the same on both sides: the window's call (mods/chat/voice.ts, the machine's microphone and
 // speaker) and the web app's (service/voice.ts, the phone's). An ElevenLabs voice agent talks with the person and
-// reads, opens and changes Shepherdr for them through four client tools (look, open, send, act), which the service
+// reads, opens and changes Shepherdr for them through four client tools (look, open, send, act) and call_view (the web call's full screen or minimized), which the service
 // answers, and, for whatever those can't do, a fifth: screen, which reads and acts on the very screen the call runs on
 // (core/screen.js; the page or the window does it) (service/voice-tools.ts; the window's call asks its machine's service).
 // SHEP-105: a call is with Shepherdr itself, not one chat: it is told, as [Update] lines, the replies and status of the
@@ -29,6 +29,7 @@ Your tools:
 - send: write in a chat as the person: any space's Assistant or a task's agent (by its name or id), or "here": the chat on screen.
 - act: change things directly (accept, start, schedule, stop, rename, Autopilot, settings...).
 - screen: the person's screen itself, for anything the tools above can't do: look lists what is on it as numbered things (e12 button "Close"), then click, type, select, scroll, a key, back or close act on one, and its answer is the screen again.
+- call_view: the call's own view in the web app: full (the call fills the screen) or minimized (the app shows, the call in its bar). "Back to the call", "maximize the call", "full screen": call_view full. "Minimize the call", "hide the call": call_view minimized. Never screen for this.
 
 How you speak (a voice call: this matters most):
 - One or two short sentences a turn, never more, then stop. Answer only what was asked: the gist, not every detail a tool gave (leave out numbers like percentages and pull requests unless asked).
@@ -38,7 +39,8 @@ How you speak (a voice call: this matters most):
 - Silence is fine. If the person says nothing, say nothing: never ask if they're there or want something. Just wait.
 - Speak the language the person speaks: English at first, theirs as soon as they speak another (switch with language_detection), back when they go back, any number of times. The exact words below are English: say them in the call's language.
 
-Moving around (switch to a space or chat, open a task, tab, panel, artifact or Settings, go back, close, scroll):
+Moving around (switch to a space or chat, open a task, tab, panel, artifact or Settings, go back, close, scroll, the call's view):
+- Opening or moving around minimizes a full-screen call by itself, so the person sees it: no call_view first.
 - Once the tool's answer says ok, reply with one word: "Opened.", "Switched.", "Closed." or "Done." Nothing else: no sentence, nothing about what is on screen, no offer.
 - Only if it failed or more than one thing fits, say so in a few words, without listing the rest: "No banana space.", or for two spaces called Home, "Two Home spaces: <machine> or <machine>?" with the machines' real names.
 - Say what is on screen only when the person asks what it shows.
@@ -76,6 +78,8 @@ const tool = (name, description, props, required = [], speech = "force") =>
 export const LOOKS = ["here", "chat", "spaces", "machines", "tasks", "task", "needs", "news", "autopilot", "automations", "settings", "secrets", "artifacts", "data"];
 export const OPENS = ["space", "task", "tasks", "needs", "artifacts", "files", "changes", "terminal", "artifact", "settings", "chat"];
 export const TABS = ["chat", "terminal", "files", "changes", "pr", "browser", "review"];
+/** the call's own view (call_view): full screen or minimized */
+export const VIEWS = ["full", "minimized"];
 export const ACTS = ["accept", "start", "schedule", "unschedule", "stop", "resume", "done", "reopen", "delete", "pin", "unpin",
   "autopilot_on", "autopilot_off", "autopilot_run", "rename_space", "remove_space", "setting", "forget_secret", "delete_artifact"];
 
@@ -113,6 +117,10 @@ export const TOOLS = [
     value: { type: "string", description: "The new value: a time for schedule, a name for rename_space, a setting's value." },
     confirmed: { type: "boolean", description: "True only after the person said yes to exactly this on the call." },
   }, ["action", "confirmed"]),
+  // SHEP-124: the call's own view, never by screen clicks (the web app's full-screen call, SHEP-118)
+  tool("call_view", "Show the call full screen (full: the call fills the person's screen) or minimize it (minimized: the app shows, the call in its bar). The web app's call only. Opening things minimizes it by itself.", {
+    view: { type: "string", enum: VIEWS, description: "full: the full-screen call. minimized: the app, with the call in its bar." },
+  }, ["view"], "auto"),
 ];
 
 /** What the agent says first: short, then it listens. */
@@ -268,6 +276,7 @@ export function toolWords(name, params = {}) {
   if (name === "send") { const to = s(p.to); return !to || to === "here" ? "sending to this chat" : `sending to ${to}`; }
   if (name === "act") return p.confirmed === true ? ACT_WORDS[p.action] ?? "making the change" : "checking";
   if (name === "screen") return p.do === "look" ? "reading the screen" : "using the screen";
+  if (name === "call_view") return p.view === "full" ? "showing the call" : "minimizing the call";
   return "working";
 }
 
@@ -411,6 +420,50 @@ async function askKey(io, name) {
   try { r = JSON.parse(String(out ?? "").trim().split("\n").pop()); } catch {}
   if (!r || typeof r.key !== "string") return null;
   return { key: r.key, agent: r.key && typeof r.agent === "string" && /^[\w-]{1,200}$/.test(r.agent) ? r.agent : "", from: name };
+}
+
+// ---- usage -------------------------------------------------------------------------------
+// SHEP-128: what is left of the person's ElevenLabs plan, under Plan usage beside Claude Code's and Codex's (the web's
+// Settings › Machines, the serving machine's block), read with the voice key: GET <API>/user/subscription. Its
+// character_count / character_limit are the plan's credits, refilled at next_character_count_reset_unix (seconds).
+// A key restricted without "User → Read" gets 401 missing_permissions: a plain hint, never an error wall.
+
+export const USAGE_PATH = "/user/subscription";
+export const USAGE_NO_ACCESS = "Give your ElevenLabs key 'User → Read' access to see usage here: elevenlabs.io › Developers › API Keys, edit the key, set User to Read.";
+
+/** ElevenLabs' answer as a plan read (core/machines.js planRows' shape): { state: "ok", plan, account, windows: [Credits] },
+ *  { state: "no-access", why: the hint }, or { state: "unknown", why }. at: when it was read (ms). */
+export function usageRead(status, body, at = Date.now()) {
+  let d = null;
+  try { d = JSON.parse(body); } catch {}
+  if (status === 401 || status === 403) {
+    const det = d?.detail;
+    if (det?.status === "missing_permissions" || /missing.{0,20}permission|user_read/i.test(String(det?.message ?? det ?? ""))) {
+      return { state: "no-access", why: USAGE_NO_ACCESS, at };
+    }
+  }
+  if (status < 200 || status >= 300) return { state: "unknown", why: sttError(status, body), at };
+  const used = Number(d?.character_count), limit = Number(d?.character_limit);
+  if (!Number.isFinite(used) || !Number.isFinite(limit)) return { state: "unknown", why: "ElevenLabs gave no usage numbers.", at };
+  const reset = Number(d?.next_character_count_reset_unix);
+  const n = (x) => Math.round(x).toLocaleString("en-US");
+  const tier = typeof d?.tier === "string" ? d.tier.replace(/_/g, " ").trim().slice(0, 40) : "";
+  return {
+    state: "ok", at,
+    ...(tier ? { plan: tier } : {}),
+    account: limit > 0 ? `${n(used)} of ${n(limit)} credits used` : `${n(used)} credits used`,
+    windows: limit > 0 ? [{ name: "Credits", used: Math.max(0, Math.min(100, (used / limit) * 100)), ...(reset > 0 ? { resets_at: reset * 1000 } : {}) }] : [],
+  };
+}
+
+/** Reads it: the plan read, or null when there is no key (voice isn't set up: nothing shows). key(): voiceKey's answer. */
+export async function readUsage(key, fetchFn = fetch, now = () => Date.now()) {
+  const k = await key();
+  if ("error" in k) return k.why === "none" ? null : { state: "unknown", why: k.error, at: now() };
+  let r;
+  try { r = await fetchFn(`${API}${USAGE_PATH}`, { redirect: "error", headers: { "xi-api-key": k.key }, signal: AbortSignal.timeout(15000) }); }
+  catch { return { state: "unknown", why: "Can't reach ElevenLabs from this machine.", at: now() }; }
+  return usageRead(r.status, await r.text().catch(() => ""), now());
 }
 
 // ---- dictation ----------------------------------------------------------------------------
