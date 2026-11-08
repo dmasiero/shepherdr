@@ -27,6 +27,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - `herdr-browser screenshot` takes an absolute path (a relative one lands in the repo). Headless agent-browser has no
   hover: restart its session with
   `--args "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"`.
+- Real taps on the dev VM: agent-browser alone has no touch; use CDP `Emulation.setTouchEmulationEnabled` +
+  `Input.dispatchTouchEvent` through herdr-browser's `get cdp-url` (touchstart, then click).
 - Claude Code may log an agent's message only as a thinking block: replay a real log through `core/chat-log.js`
   before blaming the reader.
 - A branch's web app with live data, the installed one untouched: `vite preview` of its build behind

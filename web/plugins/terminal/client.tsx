@@ -10,6 +10,7 @@ import '@xterm/xterm/css/xterm.css'
 import { act, agentChat, definePlugin, getState, openItem, placeOf, setUI, shownItem, useStore, useUI } from '@client/kernel.ts'
 import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Small, Tab, Tabs, TermIcon } from '@client/ui.tsx'
 import type { Place, TermScreen } from '@shared/types.ts'
+import { typedDiff } from './input.ts'
 import { connectTerminal, streamInput } from './stream.ts'
 import { colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, ZOOM } from './screen.ts'
 
@@ -203,7 +204,7 @@ function Screen({ screen, stream, className, ...p }: { screen: TermScreen | unde
     const connection = connectTerminal(stream, (bytes, done) => term.write(bytes, done), () => term.reset(), (cols, rows) => {
       // in turn with what was written before it: a first paint at this size comes next
       term.write('', () => { term.reset(); term.resize(cols, rows); setStreamCols(cols) })
-    }, setStreamStatus)
+    }, setStreamStatus, () => term.modes.applicationCursorKeysMode)
     return () => { drawn.dispose(); connection.close() }
   }, [term, stream])
 
@@ -230,6 +231,28 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger, through the hidden box
   const { typed, touch } = inputOf(ui.device, !!panel)
   const keys = (keys: string[]) => terminalInput(chatKey, { type: 'keys', keys })
+  /** the touch box: a word being composed stays in it, and `sent` is what of it already went in */
+  const composing = useRef(false)
+  const sent = useRef('')
+  const typeBox = (el: HTMLTextAreaElement) => {
+    const text = typedDiff(sent.current, el.value)
+    if (text) terminalInput(chatKey, { type: 'text', text })
+    if (composing.current) sent.current = el.value
+    else el.value = sent.current = ''
+  }
+  useEffect(() => {
+    const el = input.current
+    if (!el) return
+    // Backspace on an empty box changes nothing, so no input comes: Android's keyboard sends only this
+    const before = (e: InputEvent) => {
+      if (e.inputType === 'deleteContentBackward' && !el.value) {
+        e.preventDefault()
+        keys(['backspace'])
+      }
+    }
+    el.addEventListener('beforeinput', before)
+    return () => el.removeEventListener('beforeinput', before)
+  }, [touch, chatKey])
   return (
     <>
       <Screen
@@ -251,10 +274,21 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
             aria-label="Type into the terminal"
             autoCapitalize="off"
             autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            inputMode="text"
+            enterKeyHint="send"
             className="pointer-events-none absolute size-px opacity-0"
-            value=""
-            onChange={(e) => e.target.value && terminalInput(chatKey, { type: 'text', text: e.target.value })}
+            // left to itself: a keyboard composing a word (Android's) keeps it in the box, and what changes goes in
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={(e) => {
+              composing.current = false
+              typeBox(e.currentTarget)
+            }}
+            onInput={(e) => typeBox(e.currentTarget)}
             onKeyDown={(e) => {
+              // a keyboard composing a word has the key: what it does shows in the box
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return
               // a tablet's keyboard: Ctrl keys go in as on a desktop (Alt alone, or AltGr's Ctrl+Alt, types its character)
               if (e.ctrlKey && !e.altKey) {
                 const t = toKey(e.nativeEvent)
