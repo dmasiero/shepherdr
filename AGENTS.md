@@ -65,6 +65,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Web stub, terminals: a task needs `agent: {chat, role, cli, status, running: true, age, note}` for its Terminal tab;
   `terminalTransport: 'core'` in the snapshot makes terminals use `/api/terminal` (answer `open` with a size message,
   then bytes).
+- Web stub, voice calls: also upgrade `/api/voice` and send `{type:'call',id}`; to fire the call's Media Session
+  handlers, wrap `navigator.mediaSession.setActionHandler` via eval before starting the call.
 - Web stub: a place's `chat` is its chat key string (the chat object goes only in the watch reply). Headless screenshots
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
 - Claude Code trusts /tmp, so a scratch folder there never shows its trust screen: reproduce trust-screen bugs in a
