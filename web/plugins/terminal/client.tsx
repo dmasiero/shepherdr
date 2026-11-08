@@ -1,7 +1,8 @@
 // Terminal: an agent's live herdr terminal. A task's is an item of its side panel (a tab beside its chat on a desktop,
 // a sheet from the task header's ⋯ on a phone); a coordinator's flips its chat, from the Terminal row of its top-right
 // menu. Ctrl+` opens either on a desktop. Every key goes in, Esc too: in a coordinator's while it shows, in a task's
-// while its screen has the focus (a click puts it there); Ctrl+` goes back to the chat. A phone gets a key row.
+// while its screen has the focus (a click puts it there); Ctrl+` goes back to the chat. A phone or tablet gets a key
+// row, and a tap brings up its keyboard.
 import clsx from 'clsx'
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react'
 import type { Terminal } from '@xterm/xterm'
@@ -10,7 +11,7 @@ import { act, agentChat, definePlugin, getState, openItem, placeOf, setUI, shown
 import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Small, Tab, Tabs, TermIcon } from '@client/ui.tsx'
 import type { Place, TermScreen } from '@shared/types.ts'
 import { connectTerminal, streamInput } from './stream.ts'
-import { colsOf, fitFont, foldShown, frame, LINE, MAX, MIN, PAD, ZOOM } from './screen.ts'
+import { colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, ZOOM } from './screen.ts'
 
 const KEYMAP: Record<string, string> = {
   Enter: 'enter',
@@ -226,10 +227,8 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   const screen = useStore((s) => s.terms[chatKey])
   const streaming = useStore((s) => s.snap?.terminalTransport === 'core')
   const input = useRef<HTMLTextAreaElement>(null)
-  const phone = ui.device === 'phone'
   // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger, through the hidden box
-  const typed = panel && !phone && ui.device === 'desktop'
-  const touch = phone || (panel && !typed)
+  const { typed, touch } = inputOf(ui.device, !!panel)
   const keys = (keys: string[]) => terminalInput(chatKey, { type: 'keys', keys })
   return (
     <>
