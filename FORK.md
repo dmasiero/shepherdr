@@ -66,7 +66,8 @@ to `3.x`:
   `fork:` comment (`python3 scripts/fork_layer.py check`);
 - `bun install --frozen-lockfile`, `bun web/build-plugins.ts`, `bun run typecheck`, `bin/sync-shared --check`;
 - `python3 -m unittest discover -s test` (the repo's rules, the installer, herdr-task, the layer's Python tests);
-- `bun test` on the layer's own test files (`python3 scripts/fork_layer.py tests`: every `*.test.*` the table names).
+- `bun test` on each of the layer's own test files, one at a time (`python3 scripts/fork_layer.py tests`: every
+  `*.test.*` the table names; Bun's module mocks would clash in one run).
 
 Not the whole Bun suite and the build: GitHub's Check workflow runs those, on pull requests to `main` only; on `3.x`
 by hand: `gh workflow run check.yml --repo dmasiero/shepherdr --ref 3.x`.

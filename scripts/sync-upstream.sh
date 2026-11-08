@@ -29,8 +29,8 @@ run_checks() {
   bun run typecheck
   python3 bin/sync-shared --check
   python3 -m unittest discover -s test
-  # shellcheck disable=SC2046
-  bun test $(python3 scripts/fork_layer.py tests | sed 's#^#./#')
+  # one process per file: Bun's mock.module is process-wide, and the layer's tests each mock "herdr" their own way
+  for t in $(python3 scripts/fork_layer.py tests); do bun test "./$t"; done
   exit 0
 }
 # The fork's branch this script syncs and opens pull requests to.
