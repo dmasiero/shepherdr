@@ -12,7 +12,7 @@ import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Sm
 import type { Place, TermScreen } from '@shared/types.ts'
 import { typedDiff } from './input.ts'
 import { connectTerminal, streamInput } from './stream.ts'
-import { colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, ZOOM } from './screen.ts'
+import { atEnd, colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, toEnd, ZOOM } from './screen.ts'
 
 const KEYMAP: Record<string, string> = {
   Enter: 'enter',
@@ -62,8 +62,8 @@ const css = (name: string) => getComputedStyle(document.documentElement).getProp
 /** The CLI's screen drawn by a real terminal (xterm.js), read only, at the pane's own columns: nothing wraps. The view
  *  fits the terminal, never the other way round: the agent draws for its own size whoever watches, so opening or
  *  resizing a view disturbs nobody. The font scales so the width fits; too small, it stops at MIN and the screen pans
- *  sideways. A pinch (or Ctrl and the wheel) zooms. */
-function Screen({ screen, stream, className, ...p }: { screen: TermScreen | undefined; stream?: string } & HTMLAttributes<HTMLDivElement>) {
+ *  sideways. A pinch (or Ctrl and the wheel) zooms. Each new `pin` brings it to the prompt and follows it again. */
+function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScreen | undefined; stream?: string; pin?: number } & HTMLAttributes<HTMLDivElement>) {
   const box = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const [term, setTerm] = useState<Terminal | null>(null)
@@ -137,9 +137,13 @@ function Screen({ screen, stream, className, ...p }: { screen: TermScreen | unde
   useEffect(() => {
     const el = box.current
     if (!el) return
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth))
+    // a phone's keyboard coming up shortens the box: one following the newest line keeps it in view (SHEP-22)
+    const ro = new ResizeObserver(() => {
+      setWidth(el.clientWidth)
+      bottom()
+    })
     ro.observe(el)
-    const onScroll = () => (stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4)
+    const onScroll = () => (stuck.current = atEnd(el))
     el.addEventListener('scroll', onScroll, { passive: true })
     // two fingers zoom; the page itself never does
     const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
@@ -179,6 +183,12 @@ function Screen({ screen, stream, className, ...p }: { screen: TermScreen | unde
   const bottom = () => {
     if (stuck.current && box.current) box.current.scrollTop = box.current.scrollHeight
   }
+  // a tap to type, or a key sent: to the prompt, even from reading back
+  useEffect(() => {
+    if (!pin) return
+    stuck.current = true
+    toEnd(box.current, term)
+  }, [pin])
   /** a live terminal's blank rows fold away, its rows staying where it drew them, and the view follows its last line */
   const fit = (t: Terminal) => {
     const rows = t.element?.querySelectorAll<HTMLElement>('.xterm-rows > div'), drawn = t.element?.querySelector<HTMLElement>('.xterm-screen')
@@ -230,13 +240,22 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   const input = useRef<HTMLTextAreaElement>(null)
   // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger, through the hidden box
   const { typed, touch } = inputOf(ui.device, !!panel)
-  const keys = (keys: string[]) => terminalInput(chatKey, { type: 'keys', keys })
+  /** bumped on a tap and on each thing typed: the screen goes to the prompt, just above the keyboard */
+  const [pin, setPin] = useState(0)
+  const toPrompt = () => setPin((n) => n + 1)
+  const keys = (keys: string[]) => {
+    terminalInput(chatKey, { type: 'keys', keys })
+    if (touch) toPrompt()
+  }
   /** the touch box: a word being composed stays in it, and `sent` is what of it already went in */
   const composing = useRef(false)
   const sent = useRef('')
   const typeBox = (el: HTMLTextAreaElement) => {
     const text = typedDiff(sent.current, el.value)
-    if (text) terminalInput(chatKey, { type: 'text', text })
+    if (text) {
+      terminalInput(chatKey, { type: 'text', text })
+      toPrompt()
+    }
     if (composing.current) sent.current = el.value
     else el.value = sent.current = ''
   }
@@ -259,11 +278,17 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
         key={chatKey}
         screen={screen}
         stream={streaming ? chatKey : undefined}
+        pin={pin}
         role="log"
         aria-label="Terminal"
         tabIndex={typed ? 0 : undefined}
         data-term-screen={typed ? chatKey : undefined}
-        onClick={(e) => (touch ? input.current?.focus() : typed && (e.currentTarget as HTMLElement).focus())}
+        onClick={(e) => {
+          if (touch) {
+            input.current?.focus()
+            toPrompt()
+          } else if (typed) (e.currentTarget as HTMLElement).focus()
+        }}
         className={clsx(typed && 'cursor-text focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-line2')}
       />
       {touch ? (

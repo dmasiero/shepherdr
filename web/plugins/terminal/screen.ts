@@ -68,3 +68,15 @@ export function inputOf(device: 'phone' | 'tablet' | 'desktop', panel: boolean) 
   const typed = panel && device === 'desktop'
   return { typed, touch: device !== 'desktop' }
 }
+
+/** a scroll box within a few px of its end: following the newest line */
+export function atEnd(el: { scrollHeight: number; scrollTop: number; clientHeight: number }) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 4
+}
+
+/** To the prompt (SHEP-22): the terminal's own history back to its live screen, and the box around it to its end, so
+ *  the cursor line shows above a phone's keyboard. */
+export function toEnd(box: { scrollHeight: number; scrollTop: number } | null, term: { scrollToBottom(): void } | null) {
+  term?.scrollToBottom()
+  if (box) box.scrollTop = box.scrollHeight
+}
