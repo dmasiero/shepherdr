@@ -62,6 +62,19 @@ export const NO_MODS: Mods = { ctrl: false, alt: false }
 export const anyMod = (m: Mods) => m.ctrl || m.alt
 export const tapMod = (m: Mods, which: keyof Mods): Mods => ({ ...m, [which]: !m[which] })
 
+/** The phone's key row, label and key name. fork (SHEP-24): ← and → in place of Ctrl-C and Enter, the arrows together;
+ *  Ctrl-C is the sticky Ctrl then `c`, and Enter is on the phone's keyboard. */
+export const KEY_ROW = [
+  ['Esc', 'esc'],
+  ['Ctrl', 'ctrl'],
+  ['Alt', 'alt'],
+  ['Tab', 'tab'],
+  ['←', 'left'],
+  ['↑', 'up'],
+  ['↓', 'down'],
+  ['→', 'right'],
+] as const
+
 /** a key name with the engaged modifiers added: `up` with Ctrl is `ctrl+up`, the row's `ctrl+c` with Alt `ctrl+alt+c` */
 export function withMods(key: string, m: Mods) {
   const k = parseKey(key)
