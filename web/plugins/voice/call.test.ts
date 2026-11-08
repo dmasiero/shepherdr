@@ -57,11 +57,15 @@ class FakeAudio {
   static all: FakeAudio[] = []
   paused = true
   srcObject: unknown = null
+  src = ''
+  loop = false
   autoplay = false
   onpause: (() => void) | null = null
   attrs: Record<string, string> = {}
   constructor() { FakeAudio.all.push(this) }
   setAttribute(k: string, v: string) { this.attrs[k] = v }
+  removeAttribute(k: string) { if (k === 'src') this.src = ''; delete this.attrs[k] }
+  load() {}
   play() { if (playRefused) return Promise.reject(new Error('NotAllowedError')); this.paused = false; return Promise.resolve() }
   pause() { this.paused = true }
 }
@@ -327,4 +331,87 @@ test('SHEP-29: no call, no toggle: the keys and handlers do nothing', async () =
   headset('a')
   headset('MediaTrackNext')
   expect(screenMuted).toBe(false)
+})
+
+// SHEP-30: the headset's button with Shepherdr in the background (Android Chrome). Chrome's media session, which
+// Android gives the button to, comes only from a media element it counts: a looping silent WAV for the whole call.
+// A Chrome on Android stands in: no WebKit audioSession. That Android then routes a real press to it is not provable here.
+async function onAndroid(f: () => Promise<void>) {
+  const nav = globalThis.navigator as any
+  const was = nav.audioSession
+  delete nav.audioSession
+  try { await f() } finally { nav.audioSession = was }
+}
+const holds = () => FakeAudio.all.filter((a) => a.loop)
+
+test('SHEP-30: a looping silent WAV starts in the tap that starts the call, and stops at hang-up', () => onAndroid(async () => {
+  const p = call.startCall('p:h1', () => undefined, undefined, undefined, undefined, { title: 'Shepherdr', hangUp: () => undefined, mute: () => undefined })
+  // before the microphone is asked for (no await yet): still the user's tap, and its buttons are on already
+  const [el] = holds()
+  expect(el.paused).toBe(false)
+  expect(el.src).toStartWith('blob:')
+  expect(el.srcObject).toBeNull()
+  expect(el.attrs.playsinline).toBe('')
+  expect(handlers.pause).toBeFunction()
+  expect(mediaSession.playbackState).toBe('playing')
+  const ws = FakeSocket.all.at(-1)!
+  ws.open()
+  ws.say({ type: 'call', id: 'call-1' })
+  await p
+  // the voice keeps its own element
+  expect(FakeAudio.all.filter((a) => a.srcObject === FakeContext.last.dest.stream)).toHaveLength(1)
+  expect(holds()).toEqual([el])
+  call.stopCall()
+  expect(el.paused).toBe(true)
+  expect(el.src).toBe('')
+  // a new call: a new one, the old one stays stopped
+  await startScreen()
+  expect(holds()).toHaveLength(2)
+  expect(el.paused).toBe(true)
+  expect(holds()[1].paused).toBe(false)
+}))
+
+test('SHEP-30: its WAV is silent and longer than 5 s (a "content" player to Chrome, not a one-shot sound)', async () => {
+  const wav = new DataView(await call.silentWav().arrayBuffer())
+  const text = (at: number) => String.fromCharCode(...[0, 1, 2, 3].map((i) => wav.getUint8(at + i)))
+  expect([text(0), text(8), text(12), text(36)]).toEqual(['RIFF', 'WAVE', 'fmt ', 'data'])
+  const rate = wav.getUint32(24, true), bytesPerSecond = wav.getUint32(28, true), size = wav.getUint32(40, true)
+  expect(size / bytesPerSecond).toBeGreaterThan(5)
+  expect([wav.getUint16(20, true), wav.getUint16(22, true), rate, wav.getUint16(34, true)]).toEqual([1, 1, 8000, 16])
+  for (let i = 44; i < wav.byteLength; i += 2) if (wav.getInt16(i, true) !== 0) throw new Error(`not silent at ${i}`)
+})
+
+test('SHEP-30: a press in the background (the session\'s pause, then play) mutes and unmutes through press()', () => onAndroid(async () => {
+  await startScreen()
+  const [el] = holds()
+  handlers.pause!()
+  expect(state()).toEqual([true, false])
+  // Chrome's own handling would pause it: the handlers take the press instead, it plays on
+  expect(el.paused).toBe(false)
+  await gap()
+  handlers.play!()
+  expect(state()).toEqual([false, true])
+  // the same press as a keydown too (back on screen): counted once
+  await gap()
+  handlers.pause!()
+  headset('MediaPlayPause')
+  expect(screenMuted).toBe(true)
+}))
+
+test('SHEP-30: paused by something else (another app\'s sound), it plays again once the page is back; not after hang-up', () => onAndroid(async () => {
+  await startScreen()
+  const [el] = holds()
+  el.paused = true
+  doc.visibilityState = 'visible'
+  fire('visibilitychange')
+  expect(el.paused).toBe(false)
+  call.stopCall()
+  fire('visibilitychange')
+  expect(el.paused).toBe(true)
+}))
+
+test('SHEP-30: on an iPhone (WebKit audioSession) nothing extra plays: only the voice', async () => {
+  await startScreen()
+  expect(holds()).toEqual([])
+  expect(FakeAudio.all).toHaveLength(1)
 })

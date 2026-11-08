@@ -104,6 +104,46 @@ export type NavAck = { ok: boolean; why?: string; where?: Record<string, unknown
 type AudioSessionLike = { type: string; state?: string; onstatechange: ((e: Event) => void) | null }
 const audioSession = (): AudioSessionLike | null => (globalThis.navigator as unknown as { audioSession?: AudioSessionLike })?.audioSession ?? null
 
+/** fork: SHEP-30, a headset's button while Shepherdr is in the background (Android Chrome). Android gives a media
+ *  button to the app whose media session is active, and Chrome makes one (its "Voice call" notification, which takes
+ *  the button) only for a media element it counts: the voice's <audio> plays a MediaStream, which Chrome leaves out,
+ *  so a press away from the page went elsewhere. This one counts: a real file (a silent WAV, longer than Chrome's 5 s
+ *  for a "content" player), looping all call long, started in the call's tap and stopped at hang-up. Its presses come
+ *  to setLockScreen's pause/play, so press(). Not where WebKit's audioSession is (iOS: SHEP-102's call has its own
+ *  lock screen, and a second playing element there could pause the voice). */
+let hold: HTMLAudioElement | null = null
+let holdUrl: string | null = null
+export const HOLD_SECONDS = 10
+/** a mono 8 kHz 16-bit WAV of silence */
+export function silentWav(seconds = HOLD_SECONDS) {
+  const rate = 8000
+  const bytes = rate * seconds * 2
+  const v = new DataView(new ArrayBuffer(44 + bytes))
+  const tag = (at: number, s: string) => { for (let i = 0; i < 4; i++) v.setUint8(at + i, s.charCodeAt(i)) }
+  tag(0, 'RIFF'); v.setUint32(4, 36 + bytes, true); tag(8, 'WAVE')
+  tag(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true)
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true)
+  tag(36, 'data'); v.setUint32(40, bytes, true)
+  return new Blob([v.buffer], { type: 'audio/wav' })
+}
+function holdSession() {
+  dropHold()
+  if (audioSession() || typeof Audio === 'undefined' || typeof URL?.createObjectURL !== 'function') return false
+  const el = new Audio()
+  el.setAttribute('playsinline', '')
+  el.loop = true
+  el.src = holdUrl = URL.createObjectURL(silentWav())
+  hold = el
+  el.play().catch(() => undefined)
+  return true
+}
+function dropHold() {
+  if (hold) { hold.pause(); hold.removeAttribute?.('src'); hold.load?.() }
+  if (holdUrl) URL.revokeObjectURL(holdUrl)
+  hold = null
+  holdUrl = null
+}
+
 /** the call as the phone's audio session: a call (or back to the browser's own choice) */
 export function setSession(call: boolean) {
   const s = audioSession()
@@ -166,6 +206,8 @@ function wakeAudio() {
   if (!ctx) return
   if (ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => undefined)
   if (out?.paused) out.play().catch(() => undefined)
+  // fork: SHEP-30, the media session's element too (paused by another app's audio, say)
+  if (hold?.paused) hold.play().catch(() => undefined)
   // the phone ended the microphone (an interruption it never gave back): take it again
   if (mic && mic.getAudioTracks().every((t) => t.readyState === 'ended')) void takeMic()
 }
@@ -326,6 +368,9 @@ export async function startCall(chatKey: string | null, onError: (message: strin
   over = false
   // a call, to the phone: before the microphone, so its audio is set up as one from the start
   setSession(true)
+  // fork: SHEP-30, still in the tap that started the call: Chrome's media session, for the button in the background
+  // (its buttons at once, so Chrome's own pause can't stop it before the call is through)
+  if (holdSession()) setLockScreen(controls, muted)
   connect(false)
   // The microphone first, then the audio: an iPhone sets its sound up for playing only when the audio comes first,
   // and the microphone then sends silence. Its voice waits until the audio is there.
@@ -384,6 +429,7 @@ export function stopCall() {
   micIn?.disconnect()
   mic?.getTracks().forEach((t) => t.stop())
   if (out) { out.onpause = null; out.pause(); out.srcObject = null }
+  dropHold()
   ctx?.close().catch(() => undefined)
   const closing = ws
   ws = null
