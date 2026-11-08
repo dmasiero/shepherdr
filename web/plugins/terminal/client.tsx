@@ -345,7 +345,8 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
             }}
           />
           {/* a bar of keys, as the browser's keyboard bar. fork: a press keeps the focus in the box, so the on-screen
-              keyboard stays up, and Ctrl and Alt stick for the next key (SHEP-23) */}
+              keyboard stays up, and Ctrl and Alt stick for the next key (SHEP-23); its eight keys fit one line on a
+              320px phone (SHEP-24) */}
           <div className="flex flex-wrap gap-1 border-t border-line px-3 py-2">
             {KEY_ROW.map(([l, k]) => {
               const mod = k === 'ctrl' || k === 'alt' ? k : null
@@ -367,7 +368,7 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
                       toPrompt()
                     }
                   }}
-                  className="press-dim h-11 min-w-9 flex-auto rounded-full bg-bubble px-1.5 text-[0.875rem] font-medium whitespace-nowrap aria-pressed:bg-fg aria-pressed:text-bg"
+                  className="press-dim h-11 min-w-8 flex-auto rounded-full bg-bubble px-1 text-[0.875rem] font-medium whitespace-nowrap aria-pressed:bg-fg aria-pressed:text-bg"
                 >
                   {l}
                 </button>
