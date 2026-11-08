@@ -56,24 +56,38 @@ export function typedDiff(sent: string, now: string): string {
   return '\x7f'.repeat(a.length - same) + b.slice(same).join('').replace(/\r?\n/g, '\r')
 }
 
-/** The key row's sticky Ctrl and Alt (SHEP-23): a tap engages one for the next key only, a second tap lets it go. */
+/** The extra keys' sticky Ctrl and Alt (SHEP-23): a tap engages one for the next key only, a second tap lets it go. */
 export type Mods = { ctrl: boolean; alt: boolean }
 export const NO_MODS: Mods = { ctrl: false, alt: false }
 export const anyMod = (m: Mods) => m.ctrl || m.alt
 export const tapMod = (m: Mods, which: keyof Mods): Mods => ({ ...m, [which]: !m[which] })
 
-/** The phone's key row, label and key name. fork (SHEP-24): ← and → in place of Ctrl-C and Enter, the arrows together;
- *  Ctrl-C is the sticky Ctrl then `c`, and Enter is on the phone's keyboard. */
-export const KEY_ROW = [
-  ['Esc', 'esc'],
-  ['Ctrl', 'ctrl'],
-  ['Alt', 'alt'],
-  ['Tab', 'tab'],
-  ['←', 'left'],
-  ['↑', 'up'],
-  ['↓', 'down'],
-  ['→', 'right'],
-] as const
+/** One key of the phone's extra-keys bar: a key name (`key`), a character typed as text (`text`) or a sticky modifier
+ *  (`mod`), with its label and the name a screen reader says. */
+export type ExtraKey = { label: string; name: string } & ({ key: string } | { text: string } | { mod: keyof Mods })
+
+/** fork (SHEP-26): the phone's extra-keys bar, two rows of seven as Termux's, in place of SHEP-24's one-line key row.
+ *  `−` is the hyphen-minus key; Ctrl-C is the sticky Ctrl then `c`, and Enter is on the phone's keyboard. */
+export const EXTRA_KEYS: ExtraKey[][] = [
+  [
+    { label: 'ESC', name: 'Esc', key: 'esc' },
+    { label: '/', name: 'Slash', text: '/' },
+    { label: '−', name: 'Minus', text: '-' },
+    { label: 'HOME', name: 'Home', key: 'home' },
+    { label: '↑', name: 'Up', key: 'up' },
+    { label: 'END', name: 'End', key: 'end' },
+    { label: 'PGUP', name: 'Page up', key: 'pageup' },
+  ],
+  [
+    { label: 'TAB', name: 'Tab', key: 'tab' },
+    { label: 'CTRL', name: 'Ctrl', mod: 'ctrl' },
+    { label: 'ALT', name: 'Alt', mod: 'alt' },
+    { label: '←', name: 'Left', key: 'left' },
+    { label: '↓', name: 'Down', key: 'down' },
+    { label: '→', name: 'Right', key: 'right' },
+    { label: 'PGDN', name: 'Page down', key: 'pagedown' },
+  ],
+]
 
 /** a key name with the engaged modifiers added: `up` with Ctrl is `ctrl+up`, the row's `ctrl+c` with Alt `ctrl+alt+c` */
 export function withMods(key: string, m: Mods) {
