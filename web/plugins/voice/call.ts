@@ -118,11 +118,38 @@ export function setLockScreen(c: Controls | null, isMuted = false) {
   } catch { /* no metadata here */ }
   set('hangup', c ? c.hangUp : null)
   set('stop', c ? c.hangUp : null)
-  set('togglemicrophone', c ? () => c.mute(!muted) : null)
-  set('pause', c ? () => c.mute(true) : null)
-  set('play', c ? () => c.mute(false) : null)
+  // fork: SHEP-29, a headset's button toggles mute. A wired headset's press (HEADSETHOOK / PLAY_PAUSE) comes as
+  // `pause` while the session plays, else `play`; the voice's <audio> element plays all call long, so the browser
+  // always reads it as playing (whatever playbackState says) and every press came as `pause`: the first muted, no
+  // press unmuted. Each of these is now one press that flips mute, whichever the browser sends. playbackState stays
+  // 'playing' for the whole call on purpose: the audio keeps its focus and the notification stays a live call, and
+  // its own pause/play button toggles mute the same way. AirPods and EarPods send play/pause alike on iOS.
+  set('togglemicrophone', c ? press : null)
+  set('pause', c ? press : null)
+  set('play', c ? press : null)
   const m = ms as MediaSession & { setMicrophoneActive?: (on: boolean) => Promise<void> }
   if (c) m.setMicrophoneActive?.(!isMuted)?.catch?.(() => undefined)
+}
+
+/** fork: SHEP-29, one press of a headset's button, or the lock screen's mute: mute flips through the call screen's
+ *  own path (Controls.mute: the mic, setMicrophoneActive and the screen's Mute agree). The same press can come twice
+ *  (the Media Session and a keydown): a second within PRESS_GAP_MS counts as the first. */
+export const PRESS_GAP_MS = 300
+let pressedAt = -Infinity
+function press() {
+  const c = controls
+  if (!c || !on) return
+  const now = Date.now()
+  if (now - pressedAt < PRESS_GAP_MS) return
+  pressedAt = now
+  c.mute(!muted)
+}
+/** the keys a headset's button gives a page that has the focus (a fallback where the Media Session doesn't take it) */
+const HEADSET_KEYS = new Set(['MediaPlayPause', 'HeadsetHook'])
+function headsetKey(e: KeyboardEvent) {
+  if (!on || !controls || !HEADSET_KEYS.has(e?.key) || e.repeat) return
+  e.preventDefault?.()
+  press()
 }
 
 /** the call's audio, going again: after an interruption, or the page back on screen */
@@ -277,6 +304,8 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && comeBack())
   addEventListener('online', comeBack)
   addEventListener('pageshow', comeBack)
+  // fork: SHEP-29, a headset's button while the page has the focus (does nothing without a call)
+  addEventListener('keydown', headsetKey as EventListener)
 }
 
 
@@ -371,4 +400,5 @@ export function stopCall() {
   retries = 0
   controls = null
   over = false
+  pressedAt = -Infinity
 }
