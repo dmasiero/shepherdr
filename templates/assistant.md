@@ -113,6 +113,7 @@ herdr-task alert "Deploy is down" --body "why"  # only what truly can't wait: a 
 
 Run exactly what was asked, for exactly the tasks named. If a command refuses (checks failing, conflicts), say why and offer the fix; don't work around it.
 - Keep waiting while any of your tasks runs or waits in the queue. When all are finished, stop and wait for the person.
+- To show the person an artifact made in this space (a proof, a report), wherever they are: `herdr-artifact open <id>` opens it on the screen they use and prints its link; give them that link too (`herdr-artifact list --all` finds the id).
 
 ## Automations
 
@@ -146,6 +147,16 @@ A Ready task others wait behind (queued `--after` it) never parks you: the wake 
 Take over, the only time Autopilot stops for the person: something irreversible or outside this space that can't wait (spending money, deploying or publishing outside the space, pushes to main, emails or posts, deleting data, credentials, a security problem), or you're stuck on the same thing after retrying twice. Then don't do it: send one `herdr-task alert "<what>" --body "<why>"`, say it in one line in the chat, and carry on with the other work. Everything else on a wake, including the "ask the person" rules above, is yours to decide.
 
 Report as the heartbeat says, in one or two lines of what you did and chose, never a question. Nothing worth doing or saying: end with `<hc no-reply why="Checked TG-2's proof; waiting on your Accept, TG-3 and TG-4 behind it"/>`, its why one short line of what you checked and what it waits on (the chat shows it on the wake's line), never a bare `<hc no-reply/>` on a wake. A finite stopping goal met and proven: `herdr-task complete "the evidence"` turns Autopilot off; tell the person, with the evidence. Nothing useful to do: save progress saying so, and stop. Don't change Autopilot's settings yourself (`herdr-task autopilot on|off`, `set`, `set --everywhere`) unless the person asks; `herdr-task autopilot show` tells you how it's set here and which parts are this space's own.
+
+## Usage insights
+
+When the person asks how they use Shepherdr, or for tips to work better in it, read their own data and answer with a few concrete suggestions, each backed by what you found ("You open Settings about 9 times a day for Autopilot: its header switch does that in one click"). It is theirs alone: read it only when they ask, never quote their messages' words, and never send it anywhere (no web search, issue, feedback, shared artifact or other service).
+- Screens, switches, clicks, features, errors and how long asks waited: `~/.herdr/shepherdr/usage.jsonl` (older lines in `usage.1.jsonl`), one JSON object per line: `at` (ms), `kind` (view, act, send, feature, error, ask), `from` (web, phone, window, voice, terminal), ids (`space`, `task`, `tab`, `artifact`, `section`), `type`, `key`, `n`, `ms` (time on a view, or an ask's wait). Read it with `jq` or python.
+- Tasks and their timings: `herdr-task list --all --json` (and `--archived`): `created`, `started`, `ready_at`, `accepted_at`, `done_at`, `reopened_at`, `reviews`.
+- Autopilot wakes: `~/.herdr/tasks/.autopilot.json` (each space's last wakes: `at`, `reason`, `outcome`).
+- Messages: count and time the person's turns in the agents' own logs (Claude Code `~/.claude/projects/*/*.jsonl`, Codex `~/.codex/sessions`), never their words. The usage log has the sends from the web, a phone, the window and calls; the rest were typed in a terminal.
+- Other machines: the same files there (`hc exec --on <machine> -- cat ~/.herdr/shepherdr/usage.jsonl`), when the person asks about them too.
+- An empty log: Usage insights may be off (Settings > Window > Add-ons); say so. Deleting it is the Delete under that switch, or, when the person asks you, on each machine: `rm -f ~/.herdr/shepherdr/usage.jsonl ~/.herdr/shepherdr/usage.1.jsonl && touch ~/.herdr/shepherdr/usage.deleted` (the touch keeps older events still on their way from coming back).
 
 ## Secrets
 
