@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { anyMod, keyBytes, modText, NO_MODS, parseKey, tapMod, typedDiff, withMods } from './input.ts'
+import { anyMod, KEY_ROW, keyBytes, modText, NO_MODS, parseKey, tapMod, typedDiff, withMods } from './input.ts'
 
 test("a person's keys are a terminal's bytes, so they go in with their text and never wait (SHEP-20)", () => {
   expect(keyBytes(['enter'], false)).toBe('\r')
@@ -99,4 +99,15 @@ test('typed text takes the modifiers on its first new character only, the rest i
   // nothing engaged: the text as it is
   expect(modText('ls', NO_MODS)).toEqual([{ text: 'ls' }])
   expect(modText('', ctrl)).toEqual([])
+})
+
+test('the key row has ← ↑ ↓ → together in place of Ctrl-C and Enter, and the arrows take the sticky Ctrl and Alt (SHEP-24)', () => {
+  expect(KEY_ROW.map(([l]) => l)).toEqual(['Esc', 'Ctrl', 'Alt', 'Tab', '←', '↑', '↓', '→'])
+  const ctrl = { ctrl: true, alt: false }
+  expect(withMods('left', ctrl)).toBe('ctrl+left')
+  expect(withMods('right', { ctrl: false, alt: true })).toBe('alt+right')
+  expect(keyBytes(['left', 'right'], false)).toBe('\x1b[D\x1b[C')
+  expect(keyBytes([withMods('left', ctrl), withMods('right', ctrl)], false)).toBe('\x1b[1;5D\x1b[1;5C')
+  // Ctrl-C without its button: the sticky Ctrl, then c on the keyboard
+  expect(modText('c', ctrl)).toEqual([{ keys: ['ctrl+c'] }])
 })
