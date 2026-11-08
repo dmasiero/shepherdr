@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { anyMod, KEY_ROW, keyBytes, modText, NO_MODS, parseKey, tapMod, typedDiff, withMods } from './input.ts'
+import { anyMod, EXTRA_KEYS, keyBytes, modText, NO_MODS, parseKey, tapMod, typedDiff, withMods } from './input.ts'
 
 test("a person's keys are a terminal's bytes, so they go in with their text and never wait (SHEP-20)", () => {
   expect(keyBytes(['enter'], false)).toBe('\r')
@@ -101,13 +101,37 @@ test('typed text takes the modifiers on its first new character only, the rest i
   expect(modText('', ctrl)).toEqual([])
 })
 
-test('the key row has ← ↑ ↓ → together in place of Ctrl-C and Enter, and the arrows take the sticky Ctrl and Alt (SHEP-24)', () => {
-  expect(KEY_ROW.map(([l]) => l)).toEqual(['Esc', 'Ctrl', 'Alt', 'Tab', '←', '↑', '↓', '→'])
+test('the arrows take the sticky Ctrl and Alt, and Ctrl-C is the sticky Ctrl then c (SHEP-24)', () => {
   const ctrl = { ctrl: true, alt: false }
   expect(withMods('left', ctrl)).toBe('ctrl+left')
   expect(withMods('right', { ctrl: false, alt: true })).toBe('alt+right')
   expect(keyBytes(['left', 'right'], false)).toBe('\x1b[D\x1b[C')
   expect(keyBytes([withMods('left', ctrl), withMods('right', ctrl)], false)).toBe('\x1b[1;5D\x1b[1;5C')
-  // Ctrl-C without its button: the sticky Ctrl, then c on the keyboard
   expect(modText('c', ctrl)).toEqual([{ keys: ['ctrl+c'] }])
+})
+
+test('the extra-keys bar is Termux’s two rows of seven, each key with the input it sends (SHEP-26)', () => {
+  expect(EXTRA_KEYS.map((row) => row.map((x) => x.label))).toEqual([
+    ['ESC', '/', '−', 'HOME', '↑', 'END', 'PGUP'],
+    ['TAB', 'CTRL', 'ALT', '←', '↓', '→', 'PGDN'],
+  ])
+  const sent = (x: (typeof EXTRA_KEYS)[number][number], appCursor = false) =>
+    'key' in x ? keyBytes([x.key], appCursor) : 'text' in x ? x.text : `mod:${x.mod}`
+  expect(EXTRA_KEYS.flat().map((x) => sent(x))).toEqual([
+    '\x1b', '/', '-', '\x1b[H', '\x1b[A', '\x1b[F', '\x1b[5~',
+    '\t', 'mod:ctrl', 'mod:alt', '\x1b[D', '\x1b[B', '\x1b[C', '\x1b[6~',
+  ])
+  // in a full-screen program (application cursor mode) the arrows, HOME and END are SS3
+  expect(EXTRA_KEYS.flat().filter((x) => 'key' in x && /up|down|left|right|home|end/.test(x.key) && !/page/.test(x.key)).map((x) => sent(x, true)))
+    .toEqual(['\x1bOH', '\x1bOA', '\x1bOF', '\x1bOD', '\x1bOB', '\x1bOC'])
+  // every name is unique: it is the button's key and what a screen reader says
+  expect(new Set(EXTRA_KEYS.flat().map((x) => x.name)).size).toBe(14)
+  // the bar's keys take the sticky Ctrl and Alt: CTRL then HOME, ALT then PGUP, CTRL then / or −
+  const ctrl = { ctrl: true, alt: false }, alt = { ctrl: false, alt: true }
+  expect(keyBytes([withMods('home', ctrl), withMods('pageup', alt), withMods('end', ctrl)], false)).toBe('\x1b[1;5H\x1b[5;3~\x1b[1;5F')
+  expect(modText('/', ctrl)).toEqual([{ keys: ['ctrl+/'] }])
+  expect(modText('-', alt)).toEqual([{ keys: ['alt+-'] }])
+  expect(keyBytes(['alt+-'], false)).toBe('\x1b-')
+  // CTRL then l on the keyboard clears
+  expect(keyBytes(modText('l', ctrl).flatMap((p) => ('keys' in p ? p.keys : [])), false)).toBe('\x0c')
 })

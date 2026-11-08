@@ -1,8 +1,8 @@
 // Terminal: an agent's live herdr terminal. A task's is an item of its side panel (a tab beside its chat on a desktop,
 // a sheet from the task header's ⋯ on a phone); a coordinator's flips its chat, from the Terminal row of its top-right
 // menu. Ctrl+` opens either on a desktop. Every key goes in, Esc too: in a coordinator's while it shows, in a task's
-// while its screen has the focus (a click puts it there); Ctrl+` goes back to the chat. A phone or tablet gets a key
-// row, and a tap brings up its keyboard.
+// while its screen has the focus (a click puts it there); Ctrl+` goes back to the chat. A phone or tablet gets
+// Termux's extra-keys bar, and a tap brings up its keyboard.
 import clsx from 'clsx'
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react'
 import type { Terminal } from '@xterm/xterm'
@@ -10,7 +10,7 @@ import '@xterm/xterm/css/xterm.css'
 import { act, agentChat, definePlugin, getState, openItem, placeOf, setUI, shownItem, useStore, useUI } from '@client/kernel.ts'
 import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Small, Tab, Tabs, TermIcon } from '@client/ui.tsx'
 import type { Place, TermScreen } from '@shared/types.ts'
-import { anyMod, KEY_ROW, modText, NO_MODS, tapMod, typedDiff, withMods, type Mods } from './input.ts'
+import { anyMod, EXTRA_KEYS, modText, NO_MODS, tapMod, typedDiff, withMods, type Mods } from './input.ts'
 import { connectTerminal, streamInput } from './stream.ts'
 import { atEnd, colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, toEnd, ZOOM } from './screen.ts'
 
@@ -64,7 +64,7 @@ const css = (name: string) => getComputedStyle(document.documentElement).getProp
  *  resizing a view disturbs nobody. The font scales so the width fits; too small, it stops at MIN and the screen pans
  *  sideways. A pinch (or Ctrl and the wheel) zooms. fork: each new `pin` brings it to the prompt and follows it again
  *  (SHEP-22). */
-function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScreen | undefined; stream?: string; pin?: number } & HTMLAttributes<HTMLDivElement>) {
+function Screen({ screen, stream, pin = 0, flush, className, ...p }: { screen: TermScreen | undefined; stream?: string; pin?: number; flush?: boolean } & HTMLAttributes<HTMLDivElement>) {
   const box = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
   const [term, setTerm] = useState<Terminal | null>(null)
@@ -226,7 +226,8 @@ function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScre
       data-cols={cols}
       data-font={font}
       className={clsx('term-screen min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto bg-term', className)}
-      style={{ padding: PAD }}
+      // fork: flush, the last line sits right on the extra-keys bar below, as Termux's prompt (SHEP-26)
+      style={{ padding: PAD, paddingBottom: flush ? 2 : PAD }}
     >
       <div ref={host} className="w-max overflow-hidden" />
       {stream ? (streamStatus ? <div className="text-[0.75rem] text-(--ansi-0b)">{streamStatus}</div> : null) : screen ? null : <div className="text-[0.75rem] text-(--ansi-0b) phone:text-[0.8125rem]">Reading the terminal…</div>}
@@ -236,6 +237,7 @@ function Screen({ screen, stream, pin = 0, className, ...p }: { screen: TermScre
 
 function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) {
   const ui = useUI()
+  const keyboard = useUI((u) => u.keyboard)
   const screen = useStore((s) => s.terms[chatKey])
   const streaming = useStore((s) => s.snap?.terminalTransport === 'core')
   const input = useRef<HTMLTextAreaElement>(null)
@@ -245,7 +247,7 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   /** bumped on a tap and on each thing typed: the screen goes to the prompt, just above the keyboard */
   const [pin, setPin] = useState(0)
   const toPrompt = () => setPin((n) => n + 1)
-  // fork: the key row's sticky Ctrl and Alt (SHEP-23): engaged, they go on the next key or letter, then let go
+  // fork: the extra keys' sticky Ctrl and Alt (SHEP-23): engaged, they go on the next key or letter, then let go
   const [mods, showMods] = useState(NO_MODS)
   const modsNow = useRef(NO_MODS)
   const setMods = (m: Mods) => showMods((modsNow.current = m))
@@ -260,14 +262,18 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   /** fork: the touch box (SHEP-20): a word being composed stays in it, and `sent` is what of it already went in */
   const composing = useRef(false)
   const sent = useRef('')
-  const typeBox = (el: HTMLTextAreaElement) => {
-    const text = typedDiff(sent.current, el.value)
-    // fork: with Ctrl or Alt engaged, the first new letter goes in as that combo (SHEP-23)
+  /** text typed, by the keyboard or the bar's / and −. fork: with Ctrl or Alt engaged, its first new letter goes in as
+   *  that combo (SHEP-23); says whether one did */
+  const type = (text: string) => {
     const parts = modText(text, modsNow.current)
     for (const part of parts) terminalInput(chatKey, 'keys' in part ? { type: 'keys', ...part } : { type: 'text', ...part })
     if (parts.length) toPrompt()
     const modded = parts.some((part) => 'keys' in part)
     if (modded) setMods(NO_MODS)
+    return modded
+  }
+  const typeBox = (el: HTMLTextAreaElement) => {
+    const modded = type(typedDiff(sent.current, el.value))
     // the combo's letter is used up: a word the keyboard was composing starts afresh
     if (composing.current && !modded) sent.current = el.value
     else el.value = sent.current = ''
@@ -292,6 +298,7 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
         screen={screen}
         stream={streaming ? chatKey : undefined}
         pin={pin}
+        flush={touch}
         role="log"
         aria-label="Terminal"
         tabIndex={typed ? 0 : undefined}
@@ -344,42 +351,47 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
               }
             }}
           />
-          {/* a bar of keys, as the browser's keyboard bar. fork: a press keeps the focus in the box, so the on-screen
-              keyboard stays up, and Ctrl and Alt stick for the next key (SHEP-23); its eight keys fit one line on a
-              320px phone (SHEP-24) */}
-          <div className="flex flex-wrap gap-1 border-t border-line px-3 py-2">
-            {KEY_ROW.map(([l, k]) => {
-              const mod = k === 'ctrl' || k === 'alt' ? k : null
+          {/* fork: Termux's extra-keys bar (SHEP-26), two rows of seven, the terminal's own background (dark in either theme), with no line between them. The app
+              takes the visible viewport's height (viewport.ts) and the phone's bottom bar goes with the keyboard up,
+              so the bar, last in the view, docks on the keyboard's top. A press keeps the focus in the box, so the
+              keyboard stays as it was, and CTRL and ALT stick for the next key (SHEP-23) */}
+          <div role="group" aria-label="Extra keys" className="grid shrink-0 grid-cols-7 bg-term pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] text-white select-none [-webkit-touch-callout:none]">
+            {EXTRA_KEYS.flat().map((x) => {
+              const mod = 'mod' in x ? x.mod : null
               return (
                 <button
-                  key={l}
+                  key={x.name}
                   type="button"
+                  aria-label={x.name}
                   aria-pressed={mod ? mods[mod] : undefined}
                   // the press never takes the focus from the box: the keyboard stays as it was, up or down
                   onPointerDown={(e) => e.preventDefault()}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
-                    if (!mod) return keys([k])
-                    const m = tapMod(modsNow.current, mod)
+                    if ('key' in x) return keys([x.key])
+                    if ('text' in x) return void type(x.text)
+                    const m = tapMod(modsNow.current, x.mod)
                     setMods(m)
                     // engaged with the keyboard down: it comes up for the letter
-                    if (m[mod] && document.activeElement !== input.current) {
+                    if (m[x.mod] && document.activeElement !== input.current) {
                       input.current?.focus({ preventScroll: true })
                       toPrompt()
                     }
                   }}
-                  className="press-dim h-11 min-w-8 flex-auto rounded-full bg-bubble px-1 text-[0.875rem] font-medium whitespace-nowrap aria-pressed:bg-fg aria-pressed:text-bg"
+                  // the arrows thin, the words bold, as Termux's
+                  className={clsx('h-11 min-w-0 touch-manipulation text-center text-[clamp(0.75rem,3.6vw,0.9375rem)] tracking-wide whitespace-nowrap active:bg-white/15 aria-pressed:bg-white/20 aria-pressed:text-sky-300', /^[←↑↓→]$/.test(x.label) ? 'font-normal' : 'font-bold')}
                 >
-                  {l}
+                  {x.label}
                 </button>
               )
             })}
           </div>
+          {/* the hint while the keyboard is down; up, the bar sits right on it, as Termux's */}
+          {keyboard ? null : <Small className="truncate px-4 pt-1.5 pb-2 text-fg3">Tap to type · pinch to zoom</Small>}
         </>
-      ) : null}
-      <Small className={clsx('truncate px-4 pb-3 text-fg3', touch ? 'pt-0.5' : 'pt-2')}>
-        {touch ? 'Tap to type · pinch to zoom' : `${typed ? 'Click to type' : 'Keys go to the terminal'} · ${shortcut(CTRL, '`')} back to the chat`}
-      </Small>
+      ) : (
+        <Small className="truncate px-4 pt-2 pb-3 text-fg3">{`${typed ? 'Click to type' : 'Keys go to the terminal'} · ${shortcut(CTRL, '`')} back to the chat`}</Small>
+      )}
     </>
   )
 }
