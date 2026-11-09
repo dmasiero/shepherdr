@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, rmSync } 
 import { join, normalize } from "node:path";
 import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
-import { DATA, SOCK, TOKEN, PORT, HOME, ensureData, settingsFile } from "./paths.ts";
+import { DATA, SOCK, TOKEN, PORT, HOME, ensureData, settingsFile, where } from "./paths.ts";
 import { holdLock } from "./lock.ts";
 import { gate, localCaller, type Gate } from "./auth.ts";
 import { trustedPeer, peerUid } from "./peer.ts";
@@ -33,11 +33,13 @@ import { Chats } from "./chats.ts";
 import { act, hc as hcRun } from "./actions.ts";
 import { AgentWatch } from "./watch.ts";
 import { Compat, activity, newsKey, placeKey } from "./compat.ts";
+import { keep, served as fileResponse, smaller } from "./media.ts";
 import { Asks } from "./asks.ts";
 import { Jobs } from "./jobs.ts";
 import { terminalBridge } from "./terminal.ts";
 import { worktree } from "./worktree.ts";
 import * as W from "../core/worktree.js";
+import * as SPm from "../core/spaces.js";
 import { browserRelay } from "./browser.ts";
 import { voiceCall, callToResume, pageWhere, type ChatView } from "./voice.ts";
 import { hearing, type HearIO, type Hearing } from "./voice-hear.ts";
@@ -224,7 +226,7 @@ const settings = new Settings();
 const readDefaults = async () => {
   try {
     let check: any = {};
-    try { check = JSON.parse(readFileSync(join(HOME, ".herdr", "cli-check.json"), "utf8"))?.machines?.[""] ?? {}; } catch {}
+    try { check = JSON.parse(readFileSync(where()["cli-check"], "utf8"))?.machines?.[""] ?? {}; } catch {}
     settings.choices = SC.choicesFrom(await compat.agents!.ownDefaults(), { claude: check.claude !== "missing", codex: check.codex !== "missing" });
     model.rebuild();
   } catch {}
@@ -312,7 +314,9 @@ const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live
       secrets: secretNames.filter((x) => (s.id === "all" ? !x.space : x.space === s.id)) })),
     windowSection((k) => model.value(k))], off: offList(), offPlugins: offPlugins(),
   // every machine the window's sidebar lists: one not connected reads "Offline" (or "Connecting…") under its header
-  machines: [{ name: here(), here: true, state: "connected" }, ...b.known.map((m) => ({ name: m.name, here: false, state: m.state }))],
+  // in the order the person dragged them into (SHEP-153): this computer first until then
+  machines: (SPm.byMachineOrder as any)([{ name: here(), here: true, state: "connected" }, ...b.known.map((m) => ({ name: m.name, here: false, state: m.state }))],
+    (SPm.machineOrderOf as any)(model.value("spaces-chat")), (m: { name: string; here: boolean }) => (m.here ? null : m.name)),
 })));
 // a task that moved on (accepted, done) changes its news lines in its Assistant's chat, whose conversation may not move:
 // open chats are told again (compat.chat reads the rows the snapshot just took)
@@ -325,7 +329,7 @@ model.onBuild = (b) => {
 };
 model.start();
 
-// The Web add-on (Shepherdr settings > Window > Add-ons, Everywhere's "off" in ~/.herdr/shepherdr.json): off, the web
+// The Web add-on (Shepherdr settings > Window > Add-ons, Everywhere's "off" in ~/.config/shepherdr/settings.json): off, the web
 // app stops and /shepherdr is no longer shared; the service keeps its background work.
 const APP_DATA = join(process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app"), "data", "shepherdr");
 /** where files from a page's message box are kept (the window keeps pasted ones there too) */
@@ -336,7 +340,7 @@ function webOn() {
 }
 
 // Tailscale can come up after the service: look again now and then, and keep /shepherdr shared while web is on. What
-// the window's Shepherdr settings > Web shows goes into ~/.herdr/shepherdr/web.json (the link, its QR code).
+// the window's Shepherdr settings > Web shows goes into ~/.local/state/shepherdr/service/web.json (the link, its QR code).
 let wasOn: boolean | null = null;
 // Serve from: a move this service started (shepherdr web serve-from), until it ends; what went wrong, for a while
 let moving: { to: string; at: number; error?: string } | null = null;
@@ -721,16 +725,28 @@ const server = Bun.serve<{ who: string }>({
       const upload = want.startsWith(ATTACH + "/") && !want.slice(ATTACH.length + 1).includes("/") && !!statSync(want, { throwIfNoEntry: false })?.isFile();
       const at = upload ? want : compat.fileOf(key, want);
       const addr = compat.addrOf(key) ?? "", on = !upload && addr.includes("/") ? addr.split("/")[0] : null;
-      if (!at || !at.startsWith("/") || at.includes("/../") || (!on && !existsSync(at))) return json({ error: "not found" }, 404);
-      const named = { "cache-control": "private, max-age=3600", ...(url.searchParams.get("download") ? { "content-disposition": `attachment; filename="${at.split("/").pop()!.replace(/"/g, "")}"` } : {}) };
+      // (another machine's agent may name one in its home: ~/…, read there)
+      if (!at || !(at.startsWith("/") || (on && at.startsWith("~/"))) || at.includes("/../") || (!on && !existsSync(at))) return json({ error: "not found" }, 404);
+      const named: Record<string, string> = url.searchParams.get("download") ? { "content-disposition": `attachment; filename="${at.split("/").pop()!.replace(/"/g, "")}"` } : {};
+      const range = req.headers.get("range"), type = Bun.file(at).type || "application/octet-stream";
       if (on) {
-        // a chat on another machine (one this machine serves the web app for): the file there, through herdr-core
-        const r = await hub.call<{ code: number; stdout: string; truncated?: boolean }>("machine.exec", { on, argv: ["cat", "--", at], timeout: 30 }, 35_000).catch(() => null);
-        if (!r || r.code !== 0 || r.truncated) return json({ error: "not found" }, 404);
-        return new Response(Buffer.from(r.stdout, "base64"), { headers: { "content-type": Bun.file(at).type || "application/octet-stream", ...named } });
+        // a chat on another machine (one this machine serves the web app for): the file there, through herdr-core; kept
+        // a little while, as a player asks for it part by part (service/media.ts)
+        const k = `${on}\0${at}`;
+        let bytes = keep(k);
+        if (!bytes) {
+          const argv = at.startsWith("~/") ? ["sh", "-c", 'cat -- "$HOME/$1"', "cat", at.slice(2)] : ["cat", "--", at];
+          const r = await hub.call<{ code: number; stdout: string; truncated?: boolean }>("machine.exec", { on, argv, timeout: 30 }, 35_000).catch(() => null);
+          if (!r || r.code !== 0 || r.truncated) return json({ error: "not found" }, 404);
+          bytes = keep(k, new Uint8Array(Buffer.from(r.stdout, "base64")))!;
+        }
+        return fileResponse(new Blob([bytes as Uint8Array<ArrayBuffer>]), type, range, named);
       }
-      const f = Bun.file(at);
-      return new Response(f, { headers: { "content-type": f.type || "application/octet-stream", ...named } });
+      // a big picture's thumbnail, a video's still (made here once: service/media.ts); the file itself when it has none
+      const small = url.searchParams.get("thumb") ? await smaller(at, "thumb") : url.searchParams.get("poster") ? await smaller(at, "poster") : null;
+      if (url.searchParams.get("poster") && !small) return json({ error: "no still" }, 404);
+      if (small) return fileResponse(Bun.file(small), "image/jpeg", range);
+      return fileResponse(Bun.file(at), type, range, named);
     }
     // a recipe artifact's files (the web's recipe view asks api/artifacts/<id>/recipe?v=, /file/<path>?v=; &on=<machine>
     // for another machine's, read there)

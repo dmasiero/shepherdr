@@ -26,17 +26,20 @@ import { items as needs, ASKS, toAgent, reasonOf, reqReason, REASONS, fit, tabOf
 import { words } from "./core/asks.js";
 import { taskDot, ownProgress } from "./dot.js";
 import { taskMenu } from "./core/menus.js";
+import { machinesInOrder, machineOrderOf } from "./core/spaces.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
   queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
+import { SH } from "./core/paths.js";
+import { dirs } from "./dirs.js";
 import { TEXT, H, RADIUS, red, amber } from "./ui.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 const DONE_SHOWN = 5; // Done rows a group shows before "Show N more"
 // Task ids in monospace, small and dim at the start of a row's second line (Herdr ships JetBrains Mono).
 const ID_FONT = "JetBrains Mono", ID_SIZE = TEXT.id;
-// Every list in ~/.herdr/tasks on a machine is read with READ_LISTS and kept by taskLists (one
+// Every list in ~/.local/share/shepherdr/tasks on a machine is read with READ_LISTS and kept by taskLists (one
 // rule with herdr-task's: tasklists.js).
 // Pinned tasks, as Pinned spaces (mods/spaces-chat): a view choice, never a change to the task.
 // Shared "tasks.pinned" = ["<machine, empty here>:<folder>#<id>"] (shared.json: survives
@@ -49,8 +52,15 @@ const pinnedKeys = () => { const v = shared(PINS); return Array.isArray(v) ? v :
 // sidebar's order: the list goes by that space's name, else its folder's.
 // spaces() is read once a render (render() fills this), not once a row.
 let spaceAt = null;
+// the machines in the sidebar's order (shared "spaces-chat".machineOrder, SHEP-153): "" this computer, else names
+const machineRank = () => {
+  const keys = machinesInOrder([null, ...machines().map((m) => m.name).filter(Boolean)], machineOrderOf(shared("spaces-chat")));
+  return (m) => { const i = keys.indexOf(m ?? ""); return i < 0 ? keys.length : i; };
+};
+
 function spaceOf(list) {
-  if (!spaceAt) { spaceAt = new Map(); for (const [i, s] of spaces().entries()) { const k = `${s.machine ?? ""}:${s.folder}`; if (!spaceAt.has(k)) spaceAt.set(k, { id: s.id, name: s.name, at: i, active: Boolean(s.active) }); } }
+  // each space's place: its machine's in the sidebar's order, then Herdr's among its machine's
+  if (!spaceAt) { spaceAt = new Map(); const rank = machineRank(), n = spaces().length + 1; for (const [j, s] of spaces().entries()) { const i = rank(s.machine) * n + j; const k = `${s.machine ?? ""}:${s.folder}`; if (!spaceAt.has(k)) spaceAt.set(k, { id: s.id, name: s.name, at: i, active: Boolean(s.active) }); } }
   return spaceAt.get(`${list.machine ?? ""}:${list.folder}`) ?? { name: list.name, at: Infinity };
 }
 const placeName = (list) => spaceOf(list).name;
@@ -128,7 +138,7 @@ export default class Tasks extends View {
         cx.notify();
       }
     });
-    // This computer's lists, read again whenever ~/.herdr/tasks changes; every other machine's
+    // This computer's lists, read again whenever ~/.local/share/shepherdr/tasks changes; every other machine's
     // (their files can't be watched) now and then.
     cx.spawn(async (cx) => this.load(cx, null));
     this.watch(cx);
@@ -138,7 +148,7 @@ export default class Tasks extends View {
     cx.timer.every(60000, (cx) => cx.notify());
   }
 
-  // ~/.herdr/tasks here changes: read again. One watch for the panel's life.
+  // ~/.local/share/shepherdr/tasks here changes: read again. One watch for the panel's life.
   watch(cx) {
     if (this.watching) return;
     this.watching = true;
@@ -147,7 +157,7 @@ export default class Tasks extends View {
         let w = null;
         for (;;) {
           // At most 5 s per wait, as the commands above.
-          w ??= watchFolder(`${home()}/.herdr/tasks`).then(() => true);
+          w ??= watchFolder(dirs().tasks).then(() => true);
           if (!(await Promise.race([w, cx.sleep(5000)]))) continue;
           w = null;
           await this.load(cx, null);
@@ -190,10 +200,10 @@ export default class Tasks extends View {
     cx.notify();
   }
 
-  // Every machine's lists as one: this computer's first, then the machines' in the sidebar's order.
+  // Every machine's lists as one, the machines in the sidebar's order (this computer first until dragged).
   merge() {
-    const order = [null, ...machines().map((m) => m.name).filter(Boolean)];
-    this.lists = [...this.byMachine.entries()].sort(([a], [b]) => order.indexOf(a || null) - order.indexOf(b || null)).flatMap(([, ls]) => ls);
+    const rank = machineRank();
+    this.lists = [...this.byMachine.entries()].sort(([a], [b]) => rank(a || null) - rank(b || null)).flatMap(([, ls]) => ls);
   }
 
   // A task's agents now: live terminals labelled with its key, on the folder's machine.
@@ -787,7 +797,8 @@ export default class Tasks extends View {
       if (!slug || this.prefixes.has(at) || this.listOf(slug, m)) continue;
       this.prefixes.set(at, null);
       cx.spawn(async (cx) => {
-        const text = await readTextFile(`${home()}/.herdr/tasks/${slug}.json`, { on: m }).catch(() => null);
+        const text = m ? (await exec("sh", ["-c", SH + 'cat "$SHEP_TASKS/$1.json"', "sh", slug], { on: m }).catch(() => null))?.stdout ?? null
+          : await readTextFile(`${dirs().tasks}/${slug}.json`).catch(() => null);
         let d = null;
         try { d = JSON.parse(text || "null"); } catch {}
         if (d?.folder) { this.prefixes.set(at, d.prefix || autoPrefix(d.folder)); cx.notify(); }

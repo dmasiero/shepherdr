@@ -12,7 +12,7 @@ import { hush } from './motion.ts'
 import { closed, loadPanes, MAX_PANES, normal, only, opened, PANE_MIN, replaced, samePane, savePanes, type Pane, type Panes } from './panes.ts'
 import { setupGuarded } from './guard.tsx'
 import { followOff, note as noteUsage, noteAct, noteView, startUsage } from './usage.ts'
-import { decide, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
+import { decide, itemOfUrl, screenOf, screenOfUrl, stepKey, stepsTo, systemSwipe, urlOf, type Entry } from './nav.ts'
 import { machineName, taskChatId, type Action, type Chat, type Message, type Place, type ReplyQuote, type ServerEvent, type Snapshot, type Task, type TermScreen, type UpdateStatus } from '@shared/types.ts'
 
 /* ---------- slots ---------- */
@@ -54,7 +54,7 @@ export interface Views {
 }
 
 /**
- * An item of an open task's side panel (Terminal, Files, Diff, Pull request; Browser): a tab in the panel on a
+ * An item of an open task's side panel (Terminal, Pull request, Artifacts, Browser): a tab in the panel on a
  * desktop, a row of the task header's ⋯ menu opening it as a full-screen sheet on a phone or tablet.
  */
 export interface PanelItem {
@@ -107,8 +107,10 @@ export interface Registry {
   overlays: FC[]
   /** a line under the top of the screen (voice call elsewhere, offline) */
   topBars: FC[]
-  /** rows at the top of the spaces list, under its brand row, above Spaces (the Shepherdr voice call, SHEP-105) */
+  /** rows at the top of the spaces list, under its brand row, above Spaces (the voice call's card, SHEP-105) */
   sideTop: FC[]
+  /** icon buttons in the sidebar's brand row, before Search (the voice call, SHEP-135) */
+  sideHead: FC[]
   /** round buttons after Search in the phone's bottom bar (the voice call) */
   phoneBar: FC[]
   /** just above the phone's bottom bar (a voice call's Mute and End) */
@@ -147,6 +149,7 @@ export const registry: Registry = {
   overlays: [],
   topBars: [],
   sideTop: [],
+  sideHead: [],
   phoneBar: [],
   phoneAbove: [],
   tasksFooter: [],
@@ -355,7 +358,7 @@ export function setThisSpace(on: boolean) {
   setUI({ thisSpace: on, cur: 0 })
 }
 
-function deviceFor(w: number): Device {
+export function deviceFor(w: number): Device {
   return w < CHAT_READ + RIGHT.min ? 'phone' : w < 1024 ? 'tablet' : 'desktop'
 }
 
@@ -442,7 +445,7 @@ let state: State = {
     adding: false,
     term: null,
     arts: null,
-    sheet: params.get('task') && deviceFor(innerWidth) !== 'desktop' ? params.get('item') : null,
+    sheet: params.get('task') && deviceFor(innerWidth) !== 'desktop' ? itemOfUrl(params.get('item')) : null,
     taskMenu: false,
     picked: {},
     call: false,
@@ -1612,7 +1615,7 @@ function closing(ui: UI, i: number): Partial<UI> {
   return { ...splitTo(v), ...(last?.kind === 'place' ? { place: last.id } : {}) }
 }
 
-/** a task's pane gives way to the task opened on the right, with its side panel at `item` (its Terminal, Files, …) */
+/** a task's pane gives way to the task opened on the right, with its side panel at `item` (its Terminal, Artifacts, …) */
 export function paneToPanel(i: number, item: string) {
   setUI((ui) => {
     const p = ui.split.panes[i]

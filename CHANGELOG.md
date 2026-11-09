@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+- On a Mac, you can talk over the agent in a window voice call to interrupt it, as on the web: the call uses
+  Apple's echo cancellation, so the microphone stays open while the agent speaks. Other apps' sound dips slightly
+  during a call. If echo cancellation can't run, the call works as before.
+
+## 3.1.28
+
+Tasks say Ready only when they are truly done, and every machine can open its own artifacts.
+
+- A task stays Working while its agent still runs anything: a background command, a helper or a subagent. It shows
+  Ready, with its news and alert, only once the agent is at rest.
+- A question in an agent's last words while its own work still runs waits: the task shows Needs you once nothing
+  runs. A question card or a permission still needs you at once.
+- `herdr-artifact preview <id>` opens a machine's own artifact on that machine, even one that can't reach the
+  machine serving the web app. It starts when asked and stops after 30 minutes unused.
+- Shepherdr's own tests can no longer touch the real home's settings or hooks.
+
+## 3.1.27
+
+Shepherdr keeps your tasks, settings and secrets in folders of its own now, and moves them there for you. Chats show
+pictures and artifact previews, and you can answer task agents' questions right in the chat.
+
+- Updating moves Shepherdr's data out of `~/.herdr` into its own folders, once per machine: `~/.config/shepherdr`
+  (settings), `~/.local/share/shepherdr` (tasks, artifacts, secrets, new tasks' worktrees) and
+  `~/.local/state/shepherdr` (task browsers, the web service's files). Nothing to do: it says so in one line, and
+  `shepherdr where` shows every path. `SHEPHERDR_HOME` or the `XDG_*` folders move them elsewhere.
+- Nothing stops working: the old paths link to the new ones, so a machine not updated yet, an older helper or a path
+  in an old brief still finds everything. Running tasks keep their worktrees where they are; new ones go to the new
+  folder (or the one `tasks.worktree_root` names).
+- Safe to stop halfway and run again; it doesn't move by itself on a network disk. To roll back:
+  `shepherdr migrate --rollback` puts everything back in `~/.herdr`. Once every machine is updated,
+  `shepherdr migrate --cleanup-legacy --yes` removes the old links.
+- A repo's tasks now follow it when you rename or move its folder.
+- Agents' pictures and videos show in the chat, and an artifact's card shows a preview that opens in place.
+- A task agent's question shows as a card in the chat on every machine, with each option's preview and room for a
+  note.
+- The Accept card shows the task's proof inside it.
+- Voice call is a small button beside Search; on a call it turns into Mute and End. The call screen shows the crook
+  instead of the orb.
+- A task's tabs are Chat, Terminal, Artifacts and Browser. Files and Changes stay in the space's side panels.
+- Enter sends on a computer and makes a new line on a phone, in every chat box.
+- Fewer false "Needs you": a quiet agent needs you only after 20 seconds, and a long command still counts as work.
+- The task view's Back link lines up with the tabs.
+
 ## 3.1.26
 
 The order you drag your spaces into now stays put.

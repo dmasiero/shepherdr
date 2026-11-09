@@ -1,6 +1,7 @@
 """The fork's sync with upstream (FORK.md): scripts/sync-upstream.sh as renix runs it (`--ref`, `--continue`, `--dir`;
 exit 3 on conflicts, 4 on a failed check), on throwaway git repos with a fake gh, and scripts/fork_layer.py, which
 reads FORK.md's table for the layer's tests and its `fork:` hooks."""
+import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
 import importlib.util
 import os
 import shutil
