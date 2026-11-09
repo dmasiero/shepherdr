@@ -29,6 +29,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `--args "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"`.
 - Real taps on the dev VM: agent-browser alone has no touch; use CDP `Emulation.setTouchEmulationEnabled` +
   `Input.dispatchTouchEvent` through herdr-browser's `get cdp-url` (touchstart, then click).
+  Touch emulation lasts only while its CDP connection is open: for a touch screen (`any-pointer: coarse`, the touch
+  terminal) keep it open from a small background script on the page's websocket (`get cdp-url`'s `/json`); the
+  blink-settings pointer value 4 above is a mouse.
 - Claude Code may log an agent's message only as a thinking block: replay a real log through `core/chat-log.js`
   before blaming the reader.
 - A branch's web app with live data, the installed one untouched: `vite preview` of its build behind
