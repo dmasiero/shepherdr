@@ -43,7 +43,7 @@ import { AskCards, linkCtl } from "./cards.js";
 import * as strips from "./strips.js";
 import { button, red, green, amber, H, RADIUS, TEXT, toast, toastWho, plainError } from "./ui.js";
 import { openViewer, noteChatArea } from "./artview.js";
-import { KEY_HOLDER, holdKeys, keysElsewhere, keysInDialog } from "./keyholder.js"; // fork: keysInDialog
+import { KEY_HOLDER, holdKeys, keysElsewhere, dialogHolds, liveHolder } from "./keyholder.js";
 import { SecretCards } from "./secret-card.js";
 import * as secrets from "./secrets.js";
 import { taskDot, ownProgress } from "./dot.js";
@@ -68,7 +68,6 @@ import { dayLabel, dayOf } from "./days.js";
 import { CallScreen } from "./call-screen.js";
 import { on as addonOn } from "./addons.js";
 import { note } from "./usage.js";
-import { zoomOf, listHeight, atZoom1 } from "./zoom.js"; // fork: SHEP-13, SHEP-17
 
 // Messages a page of history holds: the newest page first, earlier ones as the person scrolls up.
 const PAGE = 200;
@@ -234,6 +233,12 @@ function voiceOpened(nav) {
   return nav.kind === "space" || nav.kind === "chat" ? "A space" : "";
 }
 
+// Herdr's zoom (View › Zoom): what the window reports (a size, a press's place) is in pixels at the zoom, while
+// what the chat lays out (.w(), .h(), the list's row sizes) is at zoom 1. Every reported number comes back to zoom 1
+// here, so the rows' heights and the presses' places match what's drawn at any zoom (#759).
+export function zoomOf() { return Number(settings()?.zoom) || 1; }
+export function unzoom(px) { return px === undefined || px === null ? px : px / zoomOf(); }
+
 export default class Chat extends View {
   init(_props, cx) {
     // The Tasks panel's drill-in view (props { panel: true }): its header (props { head: true })
@@ -336,8 +341,8 @@ export default class Chat extends View {
     });
     // A paste with no text: the clipboard's image or copied files become attachments.
     this.box.on("paste_other", (_e, cx) => cx.spawn(async (cx) => {
-      const got = await attach.fromClipboard().catch(() => []);
-      if (got.length) { this.addFiles(got); this.saveSoon(cx); cx.notify(); }
+      const got = await attach.fromClipboard().catch((e) => { this.error = String(e?.message ?? e); cx.notify(); return []; });
+      if (got.length) { this.error = null; this.addFiles(got); this.saveSoon(cx); cx.notify(); }
     }));
     this.wasFocused = false;
     // Up/Down/Tab/Escape reach the textarea first, which keeps them. While the "/" list shows
@@ -2112,10 +2117,9 @@ export default class Chat extends View {
   // ---- message actions ----------------------------------------------------------------------
 
   // The column's left and right edges in the pane, for the action buttons under messages.
-  // fork: at zoom 1, where the column is laid out: the pane's width as Herdr reports it is at its zoom (SHEP-18).
-  edges(width = this.pointer().width) {
-    const outer = Math.min(width, COLUMN + 36);
-    const left = (width - outer) / 2 + 18;
+  edges() {
+    const outer = Math.min(this.width, COLUMN + 36);
+    const left = (this.width - outer) / 2 + 18;
     return { left, right: left + outer - 36 };
   }
 
@@ -2144,26 +2148,14 @@ export default class Chat extends View {
     return { x: x0, w: at, parts };
   }
 
-  // fork (SHEP-18): every press test in one frame. Herdr reports the press (local_position), the pane's size and
-  // each measured control's width (on_size_change) in pixels at its zoom (settings.json "zoom"), while the column,
-  // its padding and the bands are laid out at zoom 1: at Doug's zoom 1.7 a question card's right-aligned Submit
-  // was looked for about 145 px left of where it is drawn and never sent. { x: the press, width: the pane's, widths: get(id)
-  // of cardW, z }, all at zoom 1 (zoom.js atZoom1).
-  pointer() {
-    const z = zoomOf(settings()), x = this.press?.x;
-    return { z, x: Number.isFinite(x) ? atZoom1(x, z) : undefined, width: atZoom1(this.width, z),
-      widths: { get: (id) => { const w = this.cardW.get(id); return w === undefined ? undefined : atZoom1(w, z); } } };
-  }
-
   // Which part of a band the press was on (rows take no handlers of their own): the band is a
   // row of its own, so the list names it exactly; across, barLayout()'s places. The time
   // isn't a button.
   hitBar(row) {
-    const { x, z } = this.pointer(); // fork: at zoom 1 (SHEP-18)
+    const x = this.press?.x;
     if (row.kind !== "band" || x === undefined || Date.now() - (this.press?.at ?? 0) > 3000) return null;
     const p = this.barLayout(row.bar).parts.find((p) => p.what !== "time" && x >= p.x && x <= p.x + p.w);
-    // fork: the picker's anchor goes with the press as Herdr gave it (openReactions()), so back at the zoom (SHEP-18).
-    if (p) this.hitLeft = p.x * z;
+    if (p) this.hitLeft = p.x;
     return p?.what ?? null;
   }
 
@@ -2211,12 +2203,14 @@ export default class Chat extends View {
     const W = 360, H = 420;
     const p = this.pressWin, local = this.press;
     let at = "pointer";
-    if (p && local?.x !== undefined) {
-      const paneX = p.x - local.x, paneY = p.y - (local.y ?? 0);
-      const left = anchor ?? local.x;
-      const x = Math.max(8, Math.min(paneX + left, paneX + this.width - W - 8));
+    if (p && local?.rx !== undefined) {
+      // In the window's pixels (pressWin's): the chat's own numbers are at zoom 1.
+      const z = zoomOf();
+      const paneX = p.x - local.rx, paneY = p.y - (local.ry ?? 0);
+      const left = anchor !== undefined && anchor !== null ? anchor * z : local.rx;
+      const x = Math.max(8, Math.min(paneX + left, paneX + this.width * z - W - 8));
       const rowTop = p.y - 14, rowBottom = p.y + 14;
-      const y = rowTop - H - 4 >= 8 ? rowTop - H - 4 : Math.min(rowBottom + 4, paneY + (this.height ?? 800) - H - 8);
+      const y = rowTop - H - 4 >= 8 ? rowTop - H - 4 : Math.min(rowBottom + 4, paneY + (this.height ?? 800) * z - H - 8);
       at = { x, y: Math.max(8, y) };
     }
     const fr = this.frequent(18);
@@ -3447,20 +3441,16 @@ export default class Chat extends View {
     else if (row.kind === "tasknews") {
       // Accept's place on a Ready line: the line's right end, its padding in (as row() draws it:
       // col(…, 12, 0), then px 6).
-      // fork: press, width and Accept's measured width at zoom 1 (SHEP-18).
-      const at = this.pointer();
-      const inner = Math.min(at.width, COLUMN + 24) - 24;
-      const off = (at.width + inner) / 2 - 6 - (at.x ?? -1);
-      if (row.accept && off >= -2 && off <= (at.widths.get("accept") ?? ACCEPT) + 2) this.acceptTask(row, cx);
+      const inner = Math.min(this.width, COLUMN + 24) - 24;
+      const off = (this.width + inner) / 2 - 6 - (this.press?.x ?? -1);
+      if (row.accept && off >= -2 && off <= (this.cardW.get("accept") ?? ACCEPT) + 2) this.acceptTask(row, cx);
       // Needs you with its card open just under it: the card takes the keys.
       else if (row.asks) { const a = (this.wasks ?? []).find((w) => w.ref === row.ref && !w.secret); if (a) this.workerCards.pressed(a); }
       else this.openTask(row.taskId, row.task);
     }
     else if (row.kind === "cardstrip") {
       // Which of the strip's controls the press was on (rows take no handlers: strips.js hit()).
-      // fork: at zoom 1, the controls' measured widths too: Submit and Next sit at the card's right (SHEP-18).
-      const at = this.pointer();
-      const c = strips.hit(row.s, at.x, strips.innerOf(this.edges()), at.widths);
+      const c = strips.hit(row.s, this.press?.x, strips.innerOf(this.edges()), this.cardW);
       if (row.ask) row.owner?.pressed(row.ask);
       if (c?.kind === "input") (c.state ?? null)?.focus();
       else c?.fn?.(cx);
@@ -3468,10 +3458,7 @@ export default class Chat extends View {
     else if (row.kind === "brief") { if (this.opened.has(key)) this.opened.delete(key); else this.opened.add(key); }
     else if (row.kind === "fold") {
       // Only on its words (as rowBare() draws them: the column's edge, the bubble's padding in).
-      // fork: the press and the pane's width come at Herdr's zoom, the column is laid out at zoom 1 (COLUMN, the
-      // padding): at Doug's zoom 1.7 the press landed 140 px or more left of the words and Show more never opened
-      // (SHEP-17). Both go to zoom 1 first (pointer(), edges(): SHEP-18).
-      const off = (this.pointer().x ?? -1) - this.edges().left - 12;
+      const off = (this.press?.x ?? -1) - this.edges().left - 12;
       if (off >= -4 && off <= 100) this.toggleFold(row, rows);
     }
     else if (row.kind === "replyref") {
@@ -3480,7 +3467,7 @@ export default class Chat extends View {
       cx.timer.after(80, (cx) => { if (this.flash) { this.flash.on = false; cx.notify(); } });
       cx.timer.after(1400, (cx) => { this.flash = null; cx.notify(); });
     } else if (row.kind === "chips") {
-      const off = this.edges().right - (this.pointer().x ?? -1); // fork: at zoom 1 (SHEP-18)
+      const off = this.edges().right - (this.press?.x ?? -1);
       const j = Math.floor(off / (TASK + TASK_GAP));
       const k = row.tasks[row.tasks.length - 1 - j];
       if (off >= 0 && off % (TASK + TASK_GAP) <= TASK && k) this.openTask(k.id);
@@ -3488,7 +3475,7 @@ export default class Chat extends View {
     else if (row.kind === "imgs") {
       // Thumbnails, right-aligned (the person's) or left (the agent's): which one the press was on (rows take no
       // handlers of their own).
-      const x = this.pointer().x; // fork: at zoom 1 (SHEP-18)
+      const x = this.press?.x;
       const boxes = this.fitThumbs(row.paths).boxes;
       if (row.left) {
         const off = x === undefined ? -1 : x - this.edges().left;
@@ -3878,12 +3865,27 @@ export default class Chat extends View {
     }));
   }
 
+  // The pane's size as the window reports it, kept at zoom 1 (the column's width, the rows' wrap).
+  paneSize(size) {
+    const w = unzoom(size.width);
+    if (Math.abs(w - this.width) > 1) this.width = w;
+    this.height = unzoom(size.height);
+  }
+
+  // A press on the chat: where in the pane at zoom 1 (x, y: what the hit tests compare with the layout), and as the
+  // window said it (rx, ry: with pressWin, where the pane sits in the window, for what opens over it).
+  notePress(e) {
+    const x = e.local_position?.x, y = e.local_position?.y;
+    this.press = { x: unzoom(x), y: unzoom(y), rx: x, ry: y, at: Date.now() };
+  }
+
   // This chat pane in the window ({ x, y, width, height }), from the press that opens something
   // over it (the viewers: images, text, artifacts); null before any press.
   paneArea() {
     const p = this.pressWin, local = this.press;
-    if (!p || local?.x === undefined) return null;
-    return { x: p.x - local.x, y: p.y - (local.y ?? 0), width: Math.round(this.width), height: Math.round(this.height ?? 700) };
+    if (!p || local?.rx === undefined) return null;
+    const z = zoomOf();
+    return { x: p.x - local.rx, y: p.y - (local.ry ?? 0), width: Math.round(this.width * z), height: Math.round((this.height ?? 700) * z) };
   }
 
   // Where this chat is and whether its box has the keyboard, for Ctrl+K's artifacts (artview.js
@@ -3902,7 +3904,7 @@ export default class Chat extends View {
   openText(f) {
     const a = this.paneArea();
     const at = a ? { x: a.x, y: a.y } : "pointer";
-    const width = Math.round(this.width), height = Math.round(this.height ?? 700);
+    const width = Math.round(this.width * zoomOf()), height = Math.round((this.height ?? 700) * zoomOf());
     openOverlay({ mod: "chat-image", kind: "popup", frame: "none", width, height, at, props: { textPath: f.path, title: f.name, width, height } });
   }
 
@@ -3950,7 +3952,7 @@ export default class Chat extends View {
     // Over this chat pane, at its size (a popup's root needs its size spelled out).
     const a = this.paneArea();
     const at = a ? { x: a.x, y: a.y } : "pointer";
-    const width = Math.round(this.width), height = Math.round(this.height ?? 700);
+    const width = Math.round(this.width * zoomOf()), height = Math.round((this.height ?? 700) * zoomOf());
     openOverlay({ mod: "chat-image", kind: "popup", frame: "none", width, height, at,
       props: { images, index: Math.max(0, Math.min(images.length - 1, i)), width, height } });
   }
@@ -3973,13 +3975,12 @@ export default class Chat extends View {
     if (this.pinned) this.stick = true;
   }
 
-  // The desktop's own file picker (pick-files.py, xdg-desktop-portal): the chosen files join
+  // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
   // the message as tiles, as a drop or a paste makes them.
   pickFiles(cx) {
     cx.spawn(async (cx) => {
-      const r = await exec("sh", ["-c", 'P=/usr/bin/python3; [ -x "$P" ] || P=python3; exec "$P" -I "$1"', "x", `${appHome()}/mods/chat/pick-files.py`]).catch(() => null);
-      const list = (r?.stdout ?? "").split("\n").filter(Boolean);
-      if (r && r.code !== 0) this.error = "Couldn't open the file picker.";
+      const { code, paths: list } = await attach.pick();
+      if (code !== 0) this.error = "Couldn't open the file picker.";
       if (!list.length) { cx.notify(); return; }
       this.addFiles(attach.paths(list));
       this.saveSoon(cx);
@@ -4047,7 +4048,7 @@ export default class Chat extends View {
     const bars = [...Array(n - lv.length).fill(0), ...lv];
     // Quiet is one thin faint line across, behind the bars.
     return h_flex().id(`${id}-wave`).relative().flex_1().min_w(0).h(28).gap(WAVE_GAP).items_center().overflow_hidden()
-      .on_size_change((size, cx) => { if (Math.abs((this.waveW ?? 0) - size.width) > 2) { this.waveW = size.width; cx.notify(); } })
+      .on_size_change((size, cx) => { const w = unzoom(size.width); if (Math.abs((this.waveW ?? 0) - w) > 2) { this.waveW = w; cx.notify(); } })
       .child(div().absolute().left(0).right(0).top(13.5).h(1).bg(t.dim).opacity(0.3))
       .children(bars.map((v) => v < 0.04
         ? div().w(WAVE_BAR).h(1).flex_none()
@@ -4262,6 +4263,28 @@ export default class Chat extends View {
 
   // One copy of Herdr's live lists for the whole render (live.js): a render past Herdr's 50 ms
   // is stopped, and the chat then shows "This view could not be re-rendered".
+  // The message box gets the keyboard back when its pane does (opened, clicked, gone to), or after a notice; from
+  // render, the focus itself from a timer right after.
+  refocus(paneFocused, showsBox, cx) {
+    // Focus moves only outside render: from a timer callback right after it.
+    // Never while a dialog over it holds the keyboard (New space's field, #752): Herdr counts this pane focused under it.
+    const dialog = dialogHolds(shared(KEY_HOLDER));
+    if (paneFocused && showsBox && !dialog && (!this.wasFocused || !this.hadBox)) {
+      cx.timer.after(0, () => { if (!dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
+      cx.timer.after(600, () => { if (!dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
+    }
+    // The pane focused again (a command, a click on its header) can leave the box without the
+    // keyboard: give it back, unless the person just pressed something inside the chat.
+    // Not while the keyboard is somewhere else in the window that isn't a pane (#633): a task's chat, the list or its
+    // search in the Tasks panel (shared "keyboard.holder", keyHolder()); Herdr still counts this pane as focused then.
+    else if (paneFocused && showsBox && !this.call && this.focused === false && Date.now() - (this.press?.at ?? 0) > 1500
+      && !keysElsewhere(liveHolder(shared(KEY_HOLDER)), this.areaKey())
+      && Date.now() - (this.refocusAt ?? 0) > 1000) {
+      this.refocusAt = Date.now();
+      cx.timer.after(0, () => this.box.focus());
+    }
+  }
+
   render(cx) {
     return inRender(() => this.draw(cx));
   }
@@ -4274,21 +4297,7 @@ export default class Chat extends View {
     // Herdr settles pane focus a moment later, so ask again after it (as the help mod does).
     // The box also comes back after a notice (opening, restarting): it gets the keyboard then too.
     const showsBox = Boolean(this.addr) && this.phase === "ready";
-    // Focus moves only outside render: from a timer callback right after it.
-    // fork: never while a dialog over the panes holds the keyboard (the New space one, keysInDialog): Herdr still counts
-    // this pane as focused under it, so each redraw (a message, the agent restarting) took the keyboard out of it.
-    const dialog = keysInDialog(shared(KEY_HOLDER));
-    if (!dialog && paneFocused && showsBox && (!this.wasFocused || !this.hadBox)) { cx.timer.after(0, () => this.box.focus()); cx.timer.after(600, () => this.box.focus()); }
-    // The pane focused again (a command, a click on its header) can leave the box without the
-    // keyboard: give it back, unless the person just pressed something inside the chat.
-    // Not while the keyboard is somewhere else in the window that isn't a pane (#633): a task's chat, the list or its
-    // search in the Tasks panel (shared "keyboard.holder", keyHolder()); Herdr still counts this pane as focused then.
-    else if (!dialog && paneFocused && showsBox && !this.call && this.focused === false && Date.now() - (this.press?.at ?? 0) > 1500
-      && !keysElsewhere(shared(KEY_HOLDER), this.areaKey())
-      && Date.now() - (this.refocusAt ?? 0) > 1000) {
-      this.refocusAt = Date.now();
-      cx.timer.after(0, () => this.box.focus());
-    }
+    this.refocus(paneFocused, showsBox, cx);
     this.wasFocused = paneFocused;
     this.hadBox = showsBox;
     this.paneFocused = paneFocused;
@@ -4364,15 +4373,14 @@ export default class Chat extends View {
     this.lastWorking = st;
     const root = v_flex().id("chat").size_full().bg(t.background).text_color(t.foreground).text_size(13)
       .on_size_change((size, cx) => {
-        if (Math.abs(size.width - this.width) > 1) this.width = size.width;
-        this.height = size.height;
+        this.paneSize(size);
         if (this.pinned) this.stick = true;
         this.noteArea(null);
         cx.notify();
       })
       .on_mouse_move((e) => { if (e.bounds) this.noteArea(e.bounds); })
       // Where a press was, for the action buttons under messages (rows can't take handlers).
-      .on_mouse_down("left", (e) => { this.press = { x: e.local_position?.x, y: e.local_position?.y, at: Date.now() }; holdKeys(this.areaKey()); this.pressWin = e.position; this.keepIcons = null; if (e.bounds) this.noteArea(e.bounds); })
+      .on_mouse_down("left", (e) => { this.notePress(e); holdKeys(this.areaKey()); this.pressWin = e.position; this.keepIcons = null; if (e.bounds) this.noteArea(e.bounds); })
       // Files dropped anywhere on the chat go with the next message.
       .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); });
 
@@ -4432,9 +4440,9 @@ export default class Chat extends View {
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
     if (below !== this.below) { this.below = below; if (this.pinned) this.stick = true; }
-    // fork: heights are at one zoom (zoom.js): another zoom measures them again (SHEP-13).
-    if (this.heightsZoom !== zoomOf(settings())) { this.heightsZoom = zoomOf(settings()); this.heightsFor = -1; }
-    if (Math.abs(this.heightsFor - this.width) > 1) { this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.measureGen++; }
+    if (Math.abs(this.heightsFor - this.width) > 1 || (this.heightsZoom ?? 1) !== zoomOf()) {
+      this.heights.clear(); this.measuredAt.clear(); this.heightsFor = this.width; this.heightsZoom = zoomOf(); this.measureGen++;
+    }
     const keys = rows.map((x) => this.key(x));
     // Every size a real number of pixels: one NaN, zero or runaway height leaves the list blank.
     const sizes = rows.map((x, i) => {
@@ -4449,15 +4457,15 @@ export default class Chat extends View {
       : v_flex().relative().flex_1().min_h(0).pt(8)
         .id("chat-body")
         .on_size_change((size, cx) => {
-          const was = this.listH;
-          this.listH = size.height;
-          if (was && Math.abs(was - size.height) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
+          const was = this.listH, h = unzoom(size.height);
+          this.listH = h;
+          if (was && Math.abs(was - h) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
         })
         // How far down the list a press was, for the action bands (rows take no handlers).
-        .on_mouse_down("left", (e) => { this.bodyPress = e.local_position?.y; })
+        .on_mouse_down("left", (e) => { this.bodyPress = unzoom(e.local_position?.y); })
         // Rows' hover styles show on a redraw: one per 6 px the pointer moves down or up.
         .on_mouse_move((e, cx) => {
-          const b = Math.floor((e.local_position?.y ?? 0) / 6);
+          const b = Math.floor(unzoom(e.local_position?.y ?? 0) / 6);
           if (b !== this.hoverBand) { this.hoverBand = b; cx.notify(); }
         })
         .on_hover((hovered, cx) => { if (!hovered) { this.hoverBand = null; cx.notify(); } })
@@ -4494,8 +4502,8 @@ export default class Chat extends View {
         .child(Scrollbar.vertical("chat-rows").absolute().inset_0())
         .child(this.measurer(rows, keys, t))
         // Cards' controls measured (strips.js hit()), and where question cards' keys come in.
-        .child(strips.measure(t, rows.filter((r) => r.kind === "cardstrip").map((r) => r.s), this.cardW, (cx) => cx.notify())
-          .child(div().id("mw-accept").flex_none().on_size_change((size, cx) => { if (this.cardW.get("accept") !== size.width) { this.cardW.set("accept", size.width); cx.notify(); } })
+        .child(strips.measure(t, rows.filter((r) => r.kind === "cardstrip").map((r) => r.s), this.cardW, (cx) => cx.notify(), unzoom)
+          .child(div().id("mw-accept").flex_none().on_size_change((size, cx) => { const w = unzoom(size.width); if (this.cardW.get("accept") !== w) { this.cardW.set("accept", w); cx.notify(); } })
             .child(this.acceptButton(false))))
         .child(this.cards.sink("own")).child(this.workerCards.sink("worker"))
         .when(!this.pinned, (el) => {
@@ -4545,14 +4553,15 @@ export default class Chat extends View {
       .child(v_flex().w_full().children(order.map((i) => div().id(`m${this.measureGen}-${keys[i]}`).flex_none().w_full()
         .on_size_change((size, cx) => {
           if (!this.measuredAt.has(keys[i])) this.measuredAt.set(keys[i], Date.now());
-          // fork: reported at the person's zoom, the list's sizes are at zoom 1 (zoom.js, SHEP-13)
-          const h = listHeight(size.height, zoomOf(settings()));
+          const h = unzoom(size.height);
           if (this.heights.get(keys[i]) === h) return;
           this.heights.set(keys[i], h);
           if (this.pinned) this.stick = true;
           if (this.anchor && Date.now() < this.anchor.until) this.reanchor = true;
           cx.notify();
         })
-        .child(this.row(rows[i], t, "m-")))));
+        // Its words' ids carry the width's generation too, as the list's rows do: kept from an older width, a
+        // reply measured at the wrap it first had there (shorter or taller than drawn: the next row over it, #775).
+        .child(this.row(rows[i], t, `m${this.measureGen}-`)))));
   }
 }

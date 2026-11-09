@@ -124,6 +124,7 @@ for (const [z, width] of [[1.7, 1130], [1.7, 2000], [1, 700]]) {
     zoom = z;
     const log = logOf(`masi1-${z}-${width}`, [user("Write it up.", 1), said("Short first reply.", 2), said(long, 3)]);
     const v = thread(log, { width });
+    v.paneSize({ width, height: 900 }); // the pane's size as Herdr reports it, at the zoom
     // A live agent's chat: its tasks loaded (loadTasks()).
     v.tasks = [];
     let rows = v.rows();
@@ -134,14 +135,14 @@ for (const [z, width] of [[1.7, 1130], [1.7, 2000], [1, 700]]) {
     // The column as drawn: at zoom 1, centred, the words 12 px in (rowBare()'s fold); a press 20 px into
     // "Show more", reported at the zoom as Herdr reports it, against the chat's root.
     const w1 = width / z, left1 = (w1 - Math.min(w1, 760 + 36)) / 2 + 18;
-    v.press = { x: (left1 + 12 + 20) * z, y: 10, at: Date.now() };
+    v.notePress({ local_position: { x: (left1 + 12 + 20) * z, y: 10 } });
     v.clickRow(fold.id, rows, cx, rows.map(() => 30));
     rows = v.rows();
     expect(rows.find((r) => r.kind === "fold").open).toBe(true);
     expect(rows.filter((r) => r.kind === "agent").at(-1).clip).toBeUndefined();
     expect(() => draw(v)).not.toThrow();
     // Beside the words (the bubble's far side) it stays as it is.
-    v.press = { x: (left1 + 12 + 400) * z, y: 10, at: Date.now() };
+    v.notePress({ local_position: { x: (left1 + 12 + 400) * z, y: 10 } });
     v.clickRow(fold.id, rows, cx, rows.map(() => 30));
     expect(v.rows().find((r) => r.kind === "fold").open).toBe(true);
     zoom = 1.7;
@@ -176,7 +177,7 @@ function column(width, z) {
   const p = width / z, outer = Math.min(p, 760 + 36), left = (p - outer) / 2 + 18;
   return { left, right: left + outer - 36 };
 }
-const press = (v, x1, z) => { v.press = { x: x1 * z, y: 10, at: Date.now() }; };
+const press = (v, x1, z) => { v.notePress({ local_position: { x: x1 * z, y: 10 } }); };
 const cardRows = (v) => v.rows().filter((r) => r.kind === "cardstrip");
 
 // MASI-1's card: three questions, one Submit on the last step.
