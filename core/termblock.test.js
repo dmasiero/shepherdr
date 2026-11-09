@@ -41,5 +41,6 @@ test("no agent, or one that ended, never shows a terminal", () => {
 
 test("the header and the Tasks list use it", () => {
   expect(read("mods/chat/panel.js")).toMatch(/term && wrongTerminal\(layout\(\), addr, live\) && !this\.busy\) cx\.timer\.after\(0, \(\) => showWorkerChat\(\)\)/);
-  expect(read("mods/tasks/main.js")).toMatch(/if \(bodyOf\(layout\(\)\)\?\.active === "tasks-thread-term"\) run\("layout\.select", \{ stack: "tasks-thread-body", child: "tasks-thread-chat" \}\)/);
+  // upstream's #756 (3.1.28) opens a task on its chat itself, in place of the fork's hook
+  expect(read("mods/tasks/main.js")).toMatch(/if \(hasNode\(layout\(\), "tasks-thread-body"\)\) run\("layout\.select", \{ stack: "tasks-thread-body", child: "tasks-thread-chat" \}\)/);
 });
