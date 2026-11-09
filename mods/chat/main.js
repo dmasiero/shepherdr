@@ -307,7 +307,7 @@ export default class Chat extends View {
     this.box.set_rows(1);
     // Ctrl+Enter (the textarea's secondary submit): held until the agent is free.
     this.box.on("submit", (e, cx) => { if (!e?.shift) this.enter(cx, Boolean(e?.secondary)); });
-    this.box.on("focus", (_e, cx) => { this.focused = true; noteChatArea(this.areaKey(), { focus: true, at: Date.now() }); holdKeys(this.areaKey()); cx.notify(); });
+    this.box.on("focus", (_e, cx) => { this.focused = true; this.textSel = null; noteChatArea(this.areaKey(), { focus: true, at: Date.now() }); holdKeys(this.areaKey()); cx.notify(); });
     this.box.on("blur", (_e, cx) => { this.focused = false; noteChatArea(this.areaKey(), { focus: false, at: Date.now() }); cx.notify(); });
     this.box.on("change", (_e, cx) => {
       // A big paste (over 8 KB or 200 lines) becomes a text file to send, not text in the box.
@@ -390,6 +390,8 @@ export default class Chat extends View {
     this.argv = null;
     this.call = null;
     this.press = null;
+    // A highlight in the messages (SHEP-37), while it may be live: { pos, at, count, down, live }; null: none.
+    this.textSel = null;
     this.views = {};
     this.myReacts = new Map();
     // Words written in the box while a card asked, which answered it: shown as the person's,
@@ -1855,6 +1857,7 @@ export default class Chat extends View {
     note("feature", { type: "chat-find" });
     this.finding = true;
     this.findJump = true;
+    this.textSel = null;
     cx.timer.after(0, () => this.findBox.focus());
     cx.notify();
   }
@@ -3894,6 +3897,53 @@ export default class Chat extends View {
     this.height = unzoom(size.height);
   }
 
+  // Ctrl+C (Cmd+C) on a highlight in the messages (SHEP-37). Dragging over a message moves the keyboard to that
+  // message's text, whose own Ctrl+C copies the highlight (Herdr's TextView); giving the keyboard back to the message
+  // box (refocus()) took it away mid-drag or right after, so the key reached the empty box instead. While a highlight
+  // may be live the box waits: a plain click on the messages, a press outside them, the box taking the keyboard,
+  // Ctrl+F or a key that isn't a shortcut ends the wait. That key then goes into the box, as if it had the keyboard.
+  textDown(e) {
+    this.textSel = { pos: e.position, at: Date.now(), count: e.click_count ?? 1, down: true, live: (e.click_count ?? 1) > 1 };
+  }
+
+  textUp(e) {
+    const s = this.textSel;
+    if (!s?.down) return;
+    s.down = false;
+    const a = s.pos, b = e.position;
+    const moved = Boolean(a && b) && Math.hypot(b.x - a.x, b.y - a.y) > 3;
+    // A double or triple click selects a word or a line; a plain click leaves nothing highlighted.
+    if (!moved && !s.live && (e.click_count ?? 1) <= 1) this.textSel = null;
+    else s.live = true;
+  }
+
+  // A press anywhere on the chat (root's handler, after the messages' own): one outside them ends the wait.
+  textPressAnywhere(e) {
+    const s = this.textSel;
+    if (!s) return;
+    const same = s.down && s.pos && e.position && s.pos.x === e.position.x && s.pos.y === e.position.y && Date.now() - s.at < 250;
+    if (!same) this.textSel = null;
+  }
+
+  // The highlight keeps the keyboard: refocus() leaves it be.
+  keepsText() {
+    return Boolean(this.textSel) && !this.focused;
+  }
+
+  // A key while the highlight has the keyboard (root's on_key_down; the message box's own keys never come here).
+  textKey(e, cx) {
+    if (!this.keepsText() || this.call || this.finding) return;
+    const m = e.modifiers ?? {};
+    // Shortcuts (Ctrl+C itself, Ctrl+F, Herdr's own) and Shift alone pass by.
+    if (m.control || m.platform || m.alt || m.function) return;
+    if (["shift", "control", "alt", "platform", "cmd", "super", "capslock", "fn"].includes(e.key)) return;
+    this.textSel = null;
+    this.box.focus();
+    if (e.key_char && e.key !== "enter" && e.key !== "tab") this.box.replace(e.key_char);
+    cx.stop_propagation();
+    cx.notify();
+  }
+
   // A press on the chat: where in the pane at zoom 1 (x, y: what the hit tests compare with the layout), and as the
   // window said it (rx, ry: with pressWin, where the pane sits in the window, for what opens over it).
   notePress(e) {
@@ -4292,14 +4342,15 @@ export default class Chat extends View {
     // Never while a dialog over it holds the keyboard (New space's field, #752): Herdr counts this pane focused under it.
     const dialog = dialogHolds(shared(KEY_HOLDER));
     if (paneFocused && showsBox && !dialog && (!this.wasFocused || !this.hadBox)) {
-      cx.timer.after(0, () => { if (!dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
-      cx.timer.after(600, () => { if (!dialogHolds(shared(KEY_HOLDER))) this.box.focus(); });
+      cx.timer.after(0, () => { if (!dialogHolds(shared(KEY_HOLDER)) && !this.keepsText()) this.box.focus(); });
+      cx.timer.after(600, () => { if (!dialogHolds(shared(KEY_HOLDER)) && !this.keepsText()) this.box.focus(); });
     }
     // The pane focused again (a command, a click on its header) can leave the box without the
     // keyboard: give it back, unless the person just pressed something inside the chat.
     // Not while the keyboard is somewhere else in the window that isn't a pane (#633): a task's chat, the list or its
     // search in the Tasks panel (shared "keyboard.holder", keyHolder()); Herdr still counts this pane as focused then.
-    else if (paneFocused && showsBox && !this.call && this.focused === false && Date.now() - (this.press?.at ?? 0) > 1500
+    // Nor while a highlight in the messages has it, for its Ctrl+C (SHEP-37, keepsText()).
+    else if (paneFocused && showsBox && !this.call && this.focused === false && !this.keepsText() && Date.now() - (this.press?.at ?? 0) > 1500
       && !keysElsewhere(liveHolder(shared(KEY_HOLDER)), this.areaKey())
       && Date.now() - (this.refocusAt ?? 0) > 1000) {
       this.refocusAt = Date.now();
@@ -4402,7 +4453,9 @@ export default class Chat extends View {
       })
       .on_mouse_move((e) => { if (e.bounds) this.noteArea(e.bounds); })
       // Where a press was, for the action buttons under messages (rows can't take handlers).
-      .on_mouse_down("left", (e) => { this.notePress(e); holdKeys(this.areaKey()); this.pressWin = e.position; this.keepIcons = null; if (e.bounds) this.noteArea(e.bounds); })
+      .on_mouse_down("left", (e) => { this.textPressAnywhere(e); this.notePress(e); holdKeys(this.areaKey()); this.pressWin = e.position; this.keepIcons = null; if (e.bounds) this.noteArea(e.bounds); })
+      // A key while a highlight in the messages has the keyboard (textKey()).
+      .on_key_down((e, cx) => this.textKey(e, cx))
       // Files dropped anywhere on the chat go with the next message.
       .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); });
 
@@ -4484,7 +4537,9 @@ export default class Chat extends View {
           if (was && Math.abs(was - h) > 0.5 && this.pinned) { this.stick = true; cx.notify(); }
         })
         // How far down the list a press was, for the action bands (rows take no handlers).
-        .on_mouse_down("left", (e) => { this.bodyPress = unzoom(e.local_position?.y); })
+        .on_mouse_down("left", (e) => { this.bodyPress = unzoom(e.local_position?.y); this.textDown(e); })
+        // Where a highlight ends: a drag or a double click leaves one for Ctrl+C (textUp()).
+        .on_mouse_up("left", (e) => this.textUp(e))
         // Rows' hover styles show on a redraw: one per 6 px the pointer moves down or up.
         .on_mouse_move((e, cx) => {
           const b = Math.floor(unzoom(e.local_position?.y ?? 0) / 6);
