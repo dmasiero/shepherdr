@@ -6,6 +6,7 @@
 // imports), so the tests run in a bun test of this file alone, with mocks of their own.
 import { expect, mock, test } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { fakeHerdr } from "../service/fake-herdr.ts";
 import { dirname } from "node:path";
 
 if (!process.env.SHEP_TABS_WAITS) {
@@ -45,7 +46,9 @@ if (!process.env.SHEP_TABS_WAITS) {
 
   let command = null, watch = null;
   const overlays = [], execs = [];
-  mock.module("herdr", () => ({
+  // Bun keeps one mocked module per name for the whole `bun test` run: every name another file's stand-in has (fakeHerdr's,
+  // the gpui ones service/spaces-sidebar.test.ts gives) is here too, or that file's import fails.
+  mock.module("herdr", () => fakeHerdr({
     agents: () => [], panes: () => [], terminals: () => [], machines: () => [{ name: null, layout: "ready" }],
     spaces: () => [{ id: "sp1", name: "one", active: true, tabs: [{ id: "tb1", active: true }] }],
     focused: () => null, shared: () => undefined, setShared: () => {}, appHome: () => "/nowhere", home: () => "/nowhere",
@@ -60,7 +63,7 @@ if (!process.env.SHEP_TABS_WAITS) {
   }));
   const el = () => new Proxy(function () {}, { get: (_t, p) => (p === "then" ? undefined : () => el()) });
   mock.module("gpui-kit", () => ({ View: class {}, div: el, svg: el, image: el }));
-  mock.module("gpui-base", () => ({ h_flex: el, v_flex: el }));
+  mock.module("gpui-base", () => ({ h_flex: el, v_flex: el, Input: el, InputState: class {}, VirtualListScrollHandle: class {}, v_virtual_list: el, Scrollbar: el }));
   globalThis.localStorage ??= { getItem: () => null, setItem: () => {} };
 
   Date.now = () => now;

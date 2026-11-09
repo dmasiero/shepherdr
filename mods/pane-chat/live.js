@@ -34,18 +34,3 @@ export function inRender(fn) {
   frame = outer ?? { at: Date.now(), lists: {} };
   try { return fn(); } finally { frame = outer; }
 }
-
-// fork: an agent parked behind a chat carries herdr.chat=<its chat pane>, spelt as the window that
-// started it spells the pane: "p…" in the window of the pane's own machine, "<machine>/p…" in another
-// machine's window. With a window on each machine, both read the same label (SHEP-7): each took the
-// other's Assistants for agents whose chat was gone, and its sweep ended them. A pane is found by its
-// machine and bare id however the label spells it. chatPaneOf(k): this window's id for k's chat
-// pane (any pane, not only chat ones), or null.
-const machineOf = (id) => (String(id ?? "").includes("/") ? String(id).split("/")[0] : "");
-const bareId = (id) => String(id ?? "").split("/").pop();
-export const paneKey = (pane) => `${machineOf(pane)}|${bareId(pane)}`;
-export const chatKey = (k) => (k?.labels?.["herdr.chat"] ? `${machineOf(k.address)}|${bareId(k.labels["herdr.chat"])}` : null);
-export function chatPaneOf(k, ps = panes()) {
-  const key = chatKey(k);
-  return key ? ps.find((p) => paneKey(p.pane) === key)?.pane ?? null : null;
-}

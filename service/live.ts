@@ -3,6 +3,7 @@
 import type { ServerWebSocket } from "bun";
 import type { Hub } from "./hub.ts";
 import type { Store } from "./store.ts";
+import type { Me } from "./tailscale.ts";
 
 import type { Chats, Watcher } from "./chats.ts";
 import type { Compat } from "./compat.ts";
@@ -22,8 +23,7 @@ export class Live {
   compat: Compat | null = null;
   private snap: string | null = null;
 
-  // fork: proxy mode. The machine's name and the web link come from main.ts (Tailscale's, or the proxy's), not from Tailscale here.
-  constructor(private hub: Hub, private store: Store, private here: () => string, private hereName: () => string | null, private version: string, private link: () => string | null) {
+  constructor(private hub: Hub, private store: Store, private me: () => Me | null, private version: string, private link: () => string | null = () => null) {
     hub.on((e) => {
       if (e.type === "reset") { void this.machines(); this.agents(); }
       else if ("terminal" in e && e.terminal) this.agents();
@@ -35,7 +35,8 @@ export class Live {
   join(ws: WS) {
     ws.data.seen = Date.now();
     this.pages.add(ws);
-    ws.send(JSON.stringify({ type: "hello", version: this.version, login: ws.data.who, machine: this.hereName(), link: this.link() }));
+    const me = this.me();
+    ws.send(JSON.stringify({ type: "hello", version: this.version, login: ws.data.who, machine: me?.host ?? null, link: this.link() }));
     for (const [name, text] of this.views) ws.send(`{"type":"view","name":${JSON.stringify(name)},"value":${text}}`);
     if (this.snap) ws.send(this.snap);
     if (!this.views.has("state")) void this.store.load().then((d) => this.put("state", d));
@@ -130,7 +131,8 @@ export class Live {
   private async machines() {
     try {
       const r = await this.hub.call<{ machines: any[] }>("machine.list", {});
-      const here = { name: this.here(), here: true, state: "connected" };
+      const me = this.me();
+      const here = { name: me?.host ?? "this machine", here: true, state: "connected" };
       this.put("machines", [here, ...r.machines.map((m) => ({ name: m.name, here: false, state: m.state, version: m.version ?? null }))]);
     } catch {}
   }

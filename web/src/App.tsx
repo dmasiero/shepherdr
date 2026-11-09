@@ -1,5 +1,4 @@
 import { attentionCounts } from './attention.ts'
-import { StatusBar } from './status.tsx'
 // The layout: places | coordinator chat | tasks or artifacts on a desktop (sidebars resize, places hides), and an open
 // task's side panel after them (focus hides places and the chat, for the task); chat | tasks or artifacts with places in a drawer on a tablet; one column with a
 // Chat | Tasks | Artifacts switch on a phone, where a task's panel items open as sheets. Every part inside comes from a
@@ -108,8 +107,6 @@ export default function App() {
         ))}
         {search && registry.views.search ? <registry.views.search onClose={() => setUI({ search: false })} /> : null}
       </div>
-      {/* the window's status bar: machine, branch, Needs you (status.tsx) */}
-      {device !== 'phone' ? <StatusBar /> : null}
     </div>
   )
 }
@@ -190,7 +187,7 @@ function SideFoot({ drawer }: { drawer?: boolean }) {
   return (
     <div
       className={clsx(
-        'sticky bottom-0 z-2 mt-auto flex border-t border-line bg-well px-1.5 pt-1.5 phone:px-2 phone:pt-2',
+        '@container sticky bottom-0 z-2 mt-auto flex border-t border-line bg-well px-1.5 pt-1.5 phone:px-2 phone:pt-2',
         drawer ? 'pb-2 phone:pb-[max(env(safe-area-inset-bottom),--spacing(2))]' : 'pb-1.5',
       )}
     >
@@ -198,7 +195,7 @@ function SideFoot({ drawer }: { drawer?: boolean }) {
           with the crook, but here it only opens settings */}
       <FootButton onClick={settings} className="flex-1">
         <CogIcon className="size-4 shrink-0 text-fg3 coarse:text-fg2 phone:size-5 phone:text-fg2" />
-        Settings
+        <span className="truncate">Settings</span>
       </FootButton>
       {registry.sideFoot.map(({ View }, i) => (
         <View key={i} />
@@ -304,6 +301,10 @@ function PlaceMarks({ place }: { place: Place }) {
 
 /** The coordinator chat in the middle; a container (named place) so its header can fit what it shows to its width */
 function PlaceColumn({ place, pane }: { place: Place; pane?: number }) {
+  return place.id ? <SpaceColumn place={place} pane={pane} /> : <NoSpaces />
+}
+
+function SpaceColumn({ place, pane }: { place: Place; pane?: number }) {
   const snap = useSnap()!
   const Chat = registry.views.chat
   const term = useUI((u) => u.term)
@@ -341,16 +342,13 @@ function PlaceColumn({ place, pane }: { place: Place; pane?: number }) {
   )
 }
 
-/** fork: no spaces at all (the last one closed, upstream #747): a calm word and New space where the space's chat
- *  would be */
+/** No space left (the last one closed, #747): says so, and New space as the window's empty sidebar offers it */
 function NoSpaces() {
   return (
-    <div data-no-spaces className="grid min-h-0 flex-1 place-items-center px-6">
-      <div className="flex flex-col items-center gap-3 text-center text-fg2">
-        <span>No spaces yet</span>
-        <Primary onClick={() => setUI({ adding: true, drawer: false, menu: false, plus: null, search: false })}>New space</Primary>
-      </div>
-    </div>
+    <section data-drawer-from className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+      <p className="text-fg2">No spaces yet</p>
+      <Primary onClick={() => setUI({ adding: true, drawer: false, menu: false, plus: null, search: false })}>New space</Primary>
+    </section>
   )
 }
 
@@ -535,28 +533,30 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
       className={clsx('@container/task flex min-h-0 min-w-0 flex-1 flex-col border-line', !focus && !middle && 'border-l')}
     >
       <Head conversation>
-        {/* at the task's left edge, in line with its tabs below, however wide the reading column centres the rest */}
-        <div className="to-task-gutter flex shrink-0 items-center gap-2.5">
-          {middle ? (
-            <>
-              <MenuButton />
-              <PlacesToggle when="closed" />
-            </>
-          ) : null}
-          {/* in a narrow column (the side's) Back is its arrow alone, so the title keeps the room */}
-          <button type="button" onClick={back} aria-label="Tasks" className="press-dim relative inline-flex h-7 shrink-0 items-center gap-0.5 rounded-full px-1.5 text-[0.8125rem] text-fg2 after:absolute after:-inset-y-2 after:inset-x-0 hover:bg-hover hover:text-fg @lg/task:pr-2.5">
-            <BackIcon className={ic} />
-            <span aria-hidden className="hidden @lg/task:inline">Tasks</span>
-          </button>
-        </div>
-        <Dot s={task.status} p={task.report?.progress} halo />
-        <Who name={task.name} kind={sub} />
-        {/* its buttons close together, as a toolbar's, so the name keeps the room */}
-        <div className="flex shrink-0 items-center gap-1">
-          {tools}
+        {/* one row, as the Assistant's header, in the chat's reading column: Back, its status and title on the left, its
+            views (Chat, Terminal, …) on the right. Without room for both, the views wrap under the title, on Back's left
+            edge; Back, status, title and its buttons keep at least 20rem before they do */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1.5 py-2">
+          <div className="flex min-w-0 flex-[1_1_20rem] items-center gap-2.5">
+            {middle ? (
+              <>
+                <MenuButton />
+                <PlacesToggle when="closed" />
+              </>
+            ) : null}
+            {/* in a narrow column (the side's) Back is its arrow alone, so the title keeps the room */}
+            <button type="button" onClick={back} aria-label="Tasks" className="press-dim relative inline-flex h-7 shrink-0 items-center gap-0.5 rounded-full px-1.5 text-[0.8125rem] text-fg2 after:absolute after:-inset-y-2 after:inset-x-0 hover:bg-hover hover:text-fg @lg/task:pr-2.5">
+              <BackIcon className={ic} />
+              <span aria-hidden className="hidden @lg/task:inline">Tasks</span>
+            </button>
+            <Dot s={task.status} p={task.report?.progress} halo />
+            <Who name={task.name} kind={sub} />
+            {/* its buttons close together, as a toolbar's, so the name keeps the room */}
+            {tools ? <div className="flex shrink-0 items-center gap-1">{tools}</div> : null}
+          </div>
+          <TaskTabs task={task} head />
         </div>
       </Head>
-      <TaskTabs task={task} />
       <Scroll chat><TabBody task={task} chatKey={g?.chat ?? ''}>{body}</TabBody></Scroll>
     </section>
   )
@@ -594,24 +594,11 @@ function Middle({ snap }: { snap: Snapshot }) {
   const task = useStore((s) => (taskInMiddle(s.ui, s.snap) ? taskOf(snap, s.ui.task) : null))
   const panes = useUI(panesHere)
   const TabBar = registry.views.tabBar
-  // fork: no spaces (#747): the header keeps the way to the places, the rest is the empty state
-  if (!place)
-    return (
-      <ChatColumn>
-        <section data-drawer-from className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <Head>
-            <MenuButton />
-            <PlacesToggle when="closed" />
-          </Head>
-          <NoSpaces />
-        </section>
-      </ChatColumn>
-    )
   return (
     <ChatColumn>
       {/* 3.0's tab bar over it: the shown space's tabs, its + and the side panels' buttons */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {TabBar ? <TabBar place={place} /> : null}
+        {TabBar && place.id ? <TabBar place={place} /> : null}
         {panes.length ? <Split snap={snap} panes={panes} /> : task ? <TaskPage key={task.id} task={task} middle /> : <PlaceColumn place={place} />}
       </div>
     </ChatColumn>
@@ -806,8 +793,7 @@ function WideLayout({ snap }: { snap: Snapshot }) {
   const docked = useStore((s) => placesDocked(s.ui, s.snap))
   // the open task whose side panel has a column here
   const panel = useUI((u) => (panelHere(u, snap) ? u.task : null))
-  // fork: with no spaces there are no lists to show (#747)
-  const shut = useUI((u) => !!u.sideShut || !placeOf(snap, u.place))
+  const shut = useUI((u) => !!u.sideShut)
   // a task opened (a toast, Jump, a card) shows the panel it opens in again, as the window's
   const opened = useUI((u) => u.task)
   useEffect(() => {
@@ -880,26 +866,17 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
   const Tasks = registry.views.tasks
   const TasksMenu = registry.views.tasksMenu
   const Artifacts = registry.views.artifacts
-  // fork: no spaces (#747): the drawer's button, the empty state and the drawer
-  if (!place)
-    return (
-      <div data-drawer-from className="relative flex min-h-0 flex-1 flex-col">
-        <PhoneTop left={<MenuButton />} name="Spaces" />
-        <NoSpaces />
-        <Drawer />
-      </div>
-    )
   return (
     <div data-drawer-from className="relative flex min-h-0 flex-1 flex-col">
       <PhoneTop
         left={<MenuButton />}
         // as 3.0's panels: the chat names its space; Tasks and Artifacts are their panels, everything in them
         name={tab === 'tasks' ? 'Tasks' : tab === 'artifacts' ? 'Artifacts' : place.name}
-        icon={tab === 'chat' ? <PlaceIcon level={2} className="text-fg2" /> : undefined}
-        kind={tab === 'chat' ? placeKind(snap, place) : undefined}
-        mark={tab === 'chat' ? <PlaceMarks place={place} /> : undefined}
+        icon={tab === 'chat' && place.id ? <PlaceIcon level={2} className="text-fg2" /> : undefined}
+        kind={tab === 'chat' && place.id ? placeKind(snap, place) : undefined}
+        mark={tab === 'chat' && place.id ? <PlaceMarks place={place} /> : undefined}
         right={
-          tab === 'chat' ? (
+          tab === 'chat' && !place.id ? null : tab === 'chat' ? (
             <>
               {registry.placeHeader.map(({ View }, i) => (
                 <View key={i} place={place} />
@@ -911,7 +888,9 @@ function PhoneHome({ snap }: { snap: Snapshot }) {
           )
         }
       />
-      {tab === 'chat' ? (
+      {tab === 'chat' && !place.id ? (
+        <NoSpaces />
+      ) : tab === 'chat' ? (
         <div className="flex min-h-0 flex-1 flex-col">
           {Chat ? (
             tabChat ? <Chat key={tabChat} chatKey={tabChat} placeholder={`Message ${place.tabs?.find((t) => t.term === tabChat)?.prog ?? 'the agent'}`} /> : <Chat chatKey={place.chat} placeholder="Message the Assistant" unreachable={unreachable(place, snap)} />

@@ -20,7 +20,9 @@ const fakeDiv = () => {
   });
   return api;
 };
-mock.module("gpui-kit", () => ({ div: fakeDiv }));
+// Bun keeps one mocked module per name for the whole `bun test` run: every name another file's stand-in has (fakeHerdr's,
+// the gpui ones service/spaces-sidebar.test.ts gives) is here too, or that file's import fails.
+mock.module("gpui-kit", () => ({ View: class {}, div: fakeDiv, svg: fakeDiv, image: fakeDiv }));
 const { columnZones, pressedCell } = await import("../lib/emoji-grid.js");
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 

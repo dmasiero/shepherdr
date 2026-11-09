@@ -62,7 +62,7 @@ test("a followed task chat moves to its worker's new terminal by itself", async 
   const h = hub();
   feed(h, "restarted", "t1y", { address: "t1y", state: "live", argv: ["sh"], cwd: "/work/demo", labels: {}, foreground: { name: "sh", pid: 4001, argv: ["sh"], cwd: "/work/demo" } });
   const map = new Map([["DEMO-1/worker", "t1y"]]);
-  const live = new Live(h, { on() {}, load: async () => ({}) } as any, () => "here", () => null, "test", () => null); // fork: proxy mode's Live (here, hereName, version, link)
+  const live = new Live(h, { on() {}, load: async () => ({}) } as any, () => null, "test");
   live.chats = new Chats(h);
   live.compat = { addrOf: (k: string) => map.get(k) ?? null, chat: (k: string, r: any) => ({ key: k, state: r.state, path: r.path ?? null }) } as any;
   const got: any[] = [];

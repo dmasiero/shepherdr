@@ -101,17 +101,49 @@ class Sync(unittest.TestCase):
         self.assertEqual(self.install_there(b"#!/bin/sh\necho hi\n"), ("installed", True))
 
 
+# What renix's Nix build does to bin/herdr-browser (pkgs/shepherdr.nix, substituteInPlace --replace-fail): its own
+# agent-browser's path in place of the PATH's on the fork's `packaged` line.
+RENIX_FROM = "bin=${HERDR_BROWSER_BIN:-$(command -v agent-browser)}"
+
+
 class Browser(unittest.TestCase):
-    def test_a_missing_baked_in_agent_browser_falls_back_to_path(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            fake = os.path.join(tmp, "agent-browser")
-            with open(fake, "w") as f:
-                f.write('#!/bin/sh\n[ "$1" = --version ] && { echo "agent-browser 0.41.1"; exit 0; }\necho "ran: $*"\n')
-            os.chmod(fake, 0o755)
-            env = {"HOME": tmp, "PATH": f"{tmp}:{os.environ.get('PATH', '/usr/bin:/bin')}", "HERDR_BROWSER_BIN": "/nix/store/gone-shepherdr/libexec/agent-browser/bin/agent-browser"}
-            r = subprocess.run(["sh", J("bin", "herdr-browser"), "--task", "t#1", "--own", "get", "url"], capture_output=True, text=True, env=env)
+    def fake(self, path, says):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(f'#!/bin/sh\n[ "$1" = --version ] && {{ echo "agent-browser 0.41.1"; exit 0; }}\necho "{says}: $*"\n')
+        os.chmod(path, 0o755)
+
+    def run_browser(self, tmp, packaged=None):
+        """herdr-browser as installed: as it is, or as renix's build patches it to name `packaged`."""
+        script = J("bin", "herdr-browser")
+        if packaged:
+            with open(script) as f:
+                src = f.read()
+            self.assertEqual(src.count(RENIX_FROM), 1, "renix's substitution no longer finds its line")
+            script = os.path.join(tmp, "herdr-browser")
+            with open(script, "w") as f:
+                f.write(src.replace(RENIX_FROM, "bin=${HERDR_BROWSER_BIN:-%s}" % packaged))
+        self.fake(os.path.join(tmp, "path", "agent-browser"), "path")
+        env = {"HOME": tmp, "PATH": f"{tmp}/path:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+        r = subprocess.run(["sh", script, "--task", "t#1", "--own", "get", "url"], capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("ran: --session herdr-t-1", r.stdout)
+        return r.stdout
+
+    def test_the_packaged_agent_browser_goes_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = os.path.join(tmp, "pkg", "agent-browser")
+            self.fake(pkg, "packaged")
+            self.assertIn("packaged: --session herdr-t-1", self.run_browser(tmp, pkg))
+
+    def test_a_missing_packaged_agent_browser_falls_back_to_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = self.run_browser(tmp, "/nix/store/gone-shepherdr/libexec/agent-browser/bin/agent-browser")
+        self.assertIn("path: --session herdr-t-1", out)
+
+    def test_unpackaged_shepherdrs_own_comes_before_the_path_as_upstream(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.fake(os.path.join(tmp, ".local", "share", "shepherdr", "agent-browser", "0.41.1", "agent-browser"), "own")
+            self.assertIn("own: --session herdr-t-1", self.run_browser(tmp))
 
 
 if __name__ == "__main__":

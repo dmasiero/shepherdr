@@ -10,13 +10,13 @@
 // Edit lib/unread.js, never a mod's copy, then run bin/sync-shared.
 
 import { focused, window, shared, hc } from "herdr";
-import { terminals, panes, chatPaneOf } from "./live.js"; // fork: chatPaneOf (SHEP-7)
+import { terminals, panes } from "./live.js";
 import { muted } from "./notify.js";
 
 // The rules (which terminal is a space's Assistant, the turn read, unread) are core/spaces.js, shared with
 // the service and the web app.
 export { READ } from "./core/spaces.js";
-import { READ, assistantOf as assistantIn, isUnread } from "./core/spaces.js";
+import { READ, assistantOf as assistantIn, isUnread, chatPane } from "./core/spaces.js";
 
 export const assistantOf = (space, ts = terminals()) => assistantIn(space, ts);
 
@@ -43,7 +43,7 @@ export function markRead(k) {
 // not behind another pane's zoom nor showing a worker's thread, and the window is in front.
 export function onScreen(k, ps = panes()) {
   if (!k || !window()?.active) return false;
-  const chat = chatPaneOf(k, ps); // fork: however the label spells the pane
+  const chat = chatPane(k);
   const p = ps.find((x) => x.terminal === k.address) ?? ps.find((x) => x.pane === chat && x.mod === "chat");
   if (!p || p.tab !== focused()?.tab) return false;
   if (p.mod === "chat" && shared("chat.threads")?.[p.pane]) return false;

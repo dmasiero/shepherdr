@@ -8,7 +8,9 @@
 // the proxy's origins, on a connection the proxy's user opened, with writes from that origin only.
 import { proxyOrigin, type Proxy } from "./proxy.ts";
 
-export type Gate = { owner: string | null; dns: string | null; port: number; token: string; proxy?: Proxy | null };
+// httpsPort: the tailnet HTTPS port the web app is shared on (none: 443); the page's host and origin carry it when it
+// isn't 443, and only that port gets in.
+export type Gate = { owner: string | null; dns: string | null; port: number; token: string; httpsPort?: number; proxy?: Proxy | null };
 export type Pass = { ok: true; who: string; via: "tailnet" | "local" | "proxy" } | { ok: false; status: number; why: string };
 
 const READS = new Set(["GET", "HEAD"]);
@@ -25,10 +27,11 @@ export function gate(req: Request, g: Gate, socket = false, peerTrusted = false)
     if (!g.owner || !g.dns) return { ok: false, status: 503, why: "Tailscale isn't running here" };
     if (!peerTrusted) return { ok: false, status: 403, why: "not from Tailscale" };
     if (login !== g.owner) return { ok: false, status: 403, why: "only this machine's owner" };
-    if (host !== g.dns && host !== `${g.dns}:443`) return { ok: false, status: 421, why: "wrong host" };
+    const hp = g.httpsPort ?? 443;
+    if (hp === 443 ? host !== g.dns && host !== `${g.dns}:443` : host !== `${g.dns}:${hp}`) return { ok: false, status: 421, why: "wrong host" };
     if (write) {
       const origin = h.get("origin");
-      if (origin !== `https://${g.dns}`) return { ok: false, status: 403, why: "wrong origin" };
+      if (origin !== (hp === 443 ? `https://${g.dns}` : `https://${g.dns}:${hp}`)) return { ok: false, status: 403, why: "wrong origin" };
       if (!socket && h.get("x-shepherdr") !== "1") return { ok: false, status: 403, why: "missing x-shepherdr" };
     }
     return { ok: true, who: login, via: "tailnet" };
