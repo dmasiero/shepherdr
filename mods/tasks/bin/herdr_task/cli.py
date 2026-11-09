@@ -317,6 +317,9 @@ def main():
             c.add_argument("--agent")
             c.add_argument("--space", help="the space its tasks start in (default: yours)")
             c.add_argument("--parent", help="its tasks' agents' parent (default: you)")
+            c.add_argument("--set", action="append", metavar="KEY=VALUE",
+                           help="a setting for each task it adds, as add --set: review=on|off, review.rounds=1..10, proof=on|off, "
+                                "merge=..., ... (\"\": Settings' again)")
             g = c.add_mutually_exclusive_group()
             g.add_argument("--here", action="store_true")
             g.add_argument("--worktree", action="store_true")
@@ -447,6 +450,7 @@ def main():
     c.add_argument("--keep", action="store_true", help="add the agent beside the old one")
     c = sub.add_parser("_allow")  # Codex's PermissionRequest hook (own_argv)
     c.add_argument("--command", required=True)
+    c.add_argument("--sandboxed", action="store_true")  # Codex's: its proof and commits run escalated (#866)
     c.set_defaults(fn=cmd_allow, json=False)
     c = sub.add_parser("_session-note")  # the chat's SessionStart hook (mods/chat/session-note.sh): an Assistant's extra words
     c.add_argument("terminal")
