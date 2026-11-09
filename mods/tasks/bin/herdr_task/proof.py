@@ -8,7 +8,7 @@ import os
 import re
 
 from .base import Fail, HOME, git, WHERE
-from .github import BAD, PENDING, pr_view
+from .github import BAD, CANT_READ_CHECKS, PENDING, pr_view
 from .gitea import word as forge_word  # fork: GitHub's or Gitea's (gitea.py)
 
 ARTIFACTS = WHERE.path("artifacts")
@@ -89,6 +89,9 @@ def checks_of(t):
         return {"state": "failed", "text": f"{len(bad)} failing: " + ", ".join(bad[:FEW])}
     if running:
         return {"state": "running", "text": f"{len(running)} of {len(rows)} still running"}
+    if v.get("checks_unknown"):
+        # SHEP-179: this machine's GitHub token can't read its checks: never said to pass
+        return {"state": "unknown", "text": CANT_READ_CHECKS}
     if not rows:
         return {"state": "none", "text": "No checks on its pull request"}
     return {"state": "passed", "text": f"All {len(rows)} passed"}

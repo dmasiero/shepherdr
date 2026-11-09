@@ -20,7 +20,7 @@ from .agents import (
     WORKING_AGAIN,
 )
 from .sessions import refresh_sessions
-from .github import (already_merged, drop_branch, finish, gh, github, merged_here, needs_approval, own_work, pr_adopt, pr_open,
+from .github import (already_merged, drop_branch, finish, gh, github, merged_here, needs_approval, note_checks, own_work, pr_adopt, pr_open,
                      pr_pending, pr_problem, pr_view, remote_of, update_main, watch_main)
 from .github import CHECKS_RUNNING as PR_CHECKS_RUNNING
 from .github import remote_of  # fork: for gitea.local_merge_refused (gitea.py)
@@ -1006,6 +1006,7 @@ def merge_now(s, t):
     s.dirty = True
     if not v:
         return f"Couldn't reach pull request #{n} on {gitea.word(t)}."  # fork: or Gitea
+    note_checks(s, t, v)
     queue = False
     if v.get("state") != "MERGED":
         problem = pr_problem(v)
