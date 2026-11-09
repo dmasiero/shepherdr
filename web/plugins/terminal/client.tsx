@@ -264,7 +264,7 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   /** fork: the touch box (SHEP-20): a word being composed stays in it, and `sent` is what of it already went in */
   const composing = useRef(false)
   const sent = useRef('')
-  /** text typed, by the keyboard or the bar's / and −. fork: with Ctrl or Alt engaged, its first new letter goes in as
+  /** text typed, by the keyboard or the bar's −. fork: with Ctrl or Alt engaged, its first new letter goes in as
    *  that combo (SHEP-23); says whether one did */
   const type = (text: string) => {
     const parts = modText(text, modsNow.current)
@@ -353,7 +353,7 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
               }
             }}
           />
-          {/* fork: Termux's extra-keys bar (SHEP-26), two rows of seven, the terminal's own background (dark in either theme), with no line between them. The app
+          {/* fork: Termux's extra-keys bar (SHEP-26), two rows of seven in groups with ENTER bottom-right (SHEP-32), the terminal's own background (dark in either theme), with no line between them. The app
               takes the visible viewport's height (viewport.ts) and the phone's bottom bar goes with the keyboard up,
               so the bar, last in the view, docks on the keyboard's top. A press keeps the focus in the box, so the
               keyboard stays as it was, and CTRL and ALT stick for the next key (SHEP-23) */}
