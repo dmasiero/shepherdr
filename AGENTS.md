@@ -24,11 +24,16 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - A branch's web app on the machine that serves it: build it (`bun run build`), then send `bin/shepherdr`'s
   `pack(<worktree>)` to `INSTALL_THERE` over `hc exec --on <machine> --stdin` (what `cmd_web_install_on` does from
   the installed copy). Browser pages can't use the local service on 127.0.0.1.
+- An artifact's proof on the dev VM: after `bun run build`, run the worktree's own `mods/artifacts/bin/herdr-artifact
+  preview <id>` (the installed one finds no viewer here).
 - `herdr-browser screenshot` takes an absolute path (a relative one lands in the repo). Headless agent-browser has no
   hover: restart its session with
   `--args "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"`.
 - Real taps on the dev VM: agent-browser alone has no touch; use CDP `Emulation.setTouchEmulationEnabled` +
   `Input.dispatchTouchEvent` through herdr-browser's `get cdp-url` (touchstart, then click).
+  Touch emulation lasts only while its CDP connection is open: for a touch screen (`any-pointer: coarse`, the touch
+  terminal) keep it open from a small background script on the page's websocket (`get cdp-url`'s `/json`); the
+  blink-settings pointer value 4 above is a mouse.
 - Claude Code may log an agent's message only as a thinking block: replay a real log through `core/chat-log.js`
   before blaming the reader.
 - A branch's web app with live data, the installed one untouched: `vite preview` of its build behind
@@ -51,6 +56,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `claude --model haiku`) as the target.
 - Web dictation on the dev VM: agent-browser's fake-mic flags don't apply; override
   `navigator.mediaDevices.getUserMedia` with an oscillator `MediaStreamDestination` via eval.
+- herdr-task forge tests (GitHub/Gitea): give the repo a real remote's host and send its pushes to a bare repo with
+  `git config url.<bare>.insteadOf <full url>`; fake `tea`/`gh` first on PATH (see `GiteaTasks`).
 - Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
   read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
@@ -72,8 +79,14 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Web stub, terminals: a task needs `agent: {chat, role, cli, status, running: true, age, note}` for its Terminal tab;
   `terminalTransport: 'core'` in the snapshot makes terminals use `/api/terminal` (answer `open` with a size message,
   then bytes).
+- Web stub, voice calls: also upgrade `/api/voice` and send `{type:'call',id}`, then `{type:'state',state:'listening'}`;
+  the snapshot needs `name`, `host`, `machines`, `automations`, `artifacts`, `asks`, `needs`, `settings` and `user` (else
+  a blank page). To fire the call's Media Session handlers, wrap `navigator.mediaSession.setActionHandler` via eval
+  before starting the call.
 - Web stub: a place's `chat` is its chat key string (the chat object goes only in the watch reply). Headless screenshots
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
+- Claude Code trusts /tmp, so a scratch folder there never shows its trust screen: reproduce trust-screen bugs in a
+  fresh folder under /var/tmp, and remove its `~/.claude.json` entry after.
 - Before/after web screenshots: build main's version of the changed files into a scratch dist (`git checkout main --
   <files>`, `bun run build`, copy `web/dist`, `git checkout HEAD -- web`) and run one stub per dist on different ports.
 - Crash recovery for real: a throwaway core, `HC_SESSION=<name> hc ...` with `HC_TERMINAL_SOCKET` and Claude's
