@@ -7,6 +7,6 @@ import { tabInChat } from './shown.ts'
  * or any other chat keeps its own conversation. A tab switched to Chat shows its own chat instead (upstream's tabInChat).
  */
 export function tabTermFor(term: string | null | undefined, tabView: Record<string, 'chat' | 'terminal'> | undefined, chatKey: string, places: Place[]) {
-  if (!term?.startsWith('t:') || tabInChat({ tabView }, term)) return false
+  if (!term?.startsWith('t:') || tabInChat({ term, tabView }, term)) return false
   return places.some((p) => p.chat === chatKey && !!p.tabs?.some((t) => t.term === term))
 }
