@@ -112,7 +112,8 @@ def manifest():
     if art:
         root = os.path.dirname(os.path.dirname(art))
         add(f"{ARTIFACT_HOME}/bin/herdr-artifact", _read(art), 0o755, [art], test=["--version"])
-        for extra in ("ARTIFACTS.md", "markup.js"):
+        # Mark up and what it imports (herdr-artifact copies them into each artifact it installs there)
+        for extra in ("ARTIFACTS.md", "markup.js", "dirs.js", "core/paths.js"):
             p = os.path.join(root, extra)
             if os.path.isfile(p):
                 add(f"{ARTIFACT_HOME}/{extra}", _read(p), 0o644, [p])

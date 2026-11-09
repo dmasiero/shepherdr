@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -104,6 +105,13 @@ class Publish(unittest.TestCase):
             shutil.copyfile(src, dst)
             os.chmod(dst, 0o444)
             parts[name] = dst
+        marks = []
+        for i, (src, installed, rename) in enumerate(A.MARKUP_PARTS):
+            dst = os.path.join(ro, f"markup-part-{i}.js")
+            shutil.copyfile(src, dst)
+            os.chmod(dst, 0o444)
+            marks.append((dst, installed, rename))
+        parts["MARKUP_PARTS"] = marks
         os.chmod(ro, 0o555)
         d = self.recipe()
         os.chmod(os.path.join(d, "recipe.json"), 0o444)
@@ -115,6 +123,85 @@ class Publish(unittest.TestCase):
         mod = os.path.join(self.dir, "app", "mods", out["mod"])
         for f in ("recipe-view.js", "recipe.js", "artifact-markup.js", "recipe.json"):
             self.assertTrue(os.stat(os.path.join(mod, f)).st_mode & stat.S_IWUSR, f)
+
+    def imports_resolve(self, mod):
+        """Every relative import in an installed mod names a file that's there (as the window loads it)."""
+        rel = re.compile(r'''(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)["'](\.{1,2}/[^"']+)["']''')
+        seen = 0
+        for d, _, files in os.walk(mod):
+            for f in files:
+                if f.endswith(".js"):
+                    with open(os.path.join(d, f), encoding="utf-8") as fh:
+                        for spec in rel.findall(fh.read()):
+                            seen += 1
+                            target = os.path.normpath(os.path.join(d, spec))
+                            self.assertTrue(target.startswith(mod + os.sep) and os.path.isfile(target),
+                                            f"{f}: {spec} isn't in the installed mod")
+        return seen
+
+    def test_an_installed_recipe_has_everything_it_imports(self):
+        """SHEP-36: Mark up imported ./dirs.js (and it ./core/paths.js), never copied in: every artifact failed to
+        load in the window. Each import of an installed mod resolves there, under names of ours."""
+        os.makedirs(os.path.join(self.dir, "app", "mods"))
+        out = self.publish(self.recipe())
+        mod = os.path.join(self.dir, "app", "mods", out["mod"])
+        self.assertGreater(self.imports_resolve(mod), 3)
+        for f in ("artifact-markup.js", "artifact-dirs.js", "artifact-paths.js"):
+            self.assertTrue(os.path.isfile(os.path.join(mod, f)), f)
+        with open(os.path.join(mod, "artifact-markup.js")) as f:
+            self.assertIn('from "./artifact-dirs.js"', f.read())
+        with open(os.path.join(mod, ".version")) as f:
+            self.assertEqual(f.read().split(), ["1", A.markup_hash()])
+
+    def test_a_custom_panel_has_everything_it_imports(self):
+        """The same for a custom panel, whose own dirs.js and core/ can't collide with Mark up's."""
+        os.makedirs(os.path.join(self.dir, "app", "mods"))
+        d = os.path.join(self.dir, "panel")
+        os.makedirs(os.path.join(d, "core"))
+        with open(os.path.join(d, "main.js"), "w") as f:
+            f.write('import { mine } from "./dirs.js";\nexport default class X {}\n')
+        with open(os.path.join(d, "dirs.js"), "w") as f:
+            f.write('import { p } from "./core/paths.js";\nexport const mine = p;\n')
+        with open(os.path.join(d, "core", "paths.js"), "w") as f:
+            f.write('export const p = 1;\n')
+        out = self.publish(d, custom=True)
+        mod = os.path.join(self.dir, "app", "mods", out["mod"])
+        self.imports_resolve(mod)
+        with open(os.path.join(mod, "dirs.js")) as f:
+            self.assertIn("export const mine", f.read())  # its own, untouched
+        with open(os.path.join(mod, "core", "paths.js")) as f:
+            self.assertEqual(f.read(), "export const p = 1;\n")
+
+    def test_a_broken_install_heals(self):
+        """An artifact installed with the old Mark up (its .version names the old hash) is no longer current, so its
+        next open reinstalls it; the hash follows every copied part, not markup.js alone."""
+        os.makedirs(os.path.join(self.dir, "app", "mods"))
+        out = self.publish(self.recipe())
+        mod = out["mod"]
+        self.assertTrue(A.current(mod, 1))
+        with open(os.path.join(self.dir, "app", "mods", mod, ".version"), "w") as f:
+            f.write("1 bf40b2b9d7f6\n")  # what the broken (SHEP-141) installs carry
+        self.assertFalse(A.current(mod, 1))
+        os.remove(os.path.join(self.dir, "app", "mods", mod, "artifact-dirs.js"))
+        A.local_mod(out["id"])
+        self.assertTrue(A.current(mod, 1))
+        self.imports_resolve(os.path.join(self.dir, "app", "mods", mod))
+        # a change to dirs.js alone changes the hash
+        alt = os.path.join(self.dir, "dirs-changed.js")
+        with open(A.MARKUP_PARTS[1][0]) as f, open(alt, "w") as g:
+            g.write(f.read() + "\n// changed\n")
+        parts = [A.MARKUP_PARTS[0], (alt,) + tuple(A.MARKUP_PARTS[1][1:]), A.MARKUP_PARTS[2]]
+        with mock.patch.object(A, "MARKUP_PARTS", parts):
+            self.assertFalse(A.current(mod, 1))
+
+    def test_markup_importing_what_is_not_copied_lays_no_markup(self):
+        """A Mark up that imports something not copied in isn't laid over (the artifact still loads, unwrapped)."""
+        bad = os.path.join(self.dir, "markup-bad.js")
+        with open(A.MARKUP) as f, open(bad, "w") as g:
+            g.write('import { x } from "./elsewhere.js";\n' + f.read())
+        with mock.patch.object(A, "MARKUP_PARTS", [(bad,) + tuple(A.MARKUP_PARTS[0][1:])] + A.MARKUP_PARTS[1:]):
+            self.assertIsNone(A.markup_files())
+            self.assertEqual(A.markup_hash(), "")
 
     def test_a_checker_that_does_not_connect_still_publishes_a_recipe(self):
         """#847: herdr-app's isolated checker doesn't connect (after Herdr restarted): it tries again, then a recipe
