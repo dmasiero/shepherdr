@@ -11,6 +11,7 @@ before it:
   provider     Provider errors: a turn the model's provider cut off, and whether to retry it.
   sessions     Agent sessions: the Claude Code or Codex session a task's agent runs, so it can
                resume.
+  gitea        fork: Gitea pull requests through tea, in gh's shapes (FORK.md, docs/gitea.md).
   github       GitHub and merging: pull requests, checks, and finishing a merged task.
   launch       Starting agents: their argv, labels, brief, tab and coordinator.
   takeover     The backup agent: a task whose CLI can't go on is taken over, once, by the other

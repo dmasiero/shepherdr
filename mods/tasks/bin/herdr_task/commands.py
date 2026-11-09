@@ -23,6 +23,8 @@ from .sessions import refresh_sessions
 from .github import (already_merged, drop_branch, finish, gh, github, merged_here, needs_approval, own_work, pr_adopt, pr_open,
                      pr_pending, pr_problem, pr_view, update_main, watch_main)
 from .github import CHECKS_RUNNING as PR_CHECKS_RUNNING
+from .github import remote_of  # fork: for gitea.local_merge_refused (gitea.py)
+from . import gitea  # fork: Gitea pull requests through tea (gitea.py)
 from .launch import (
     base_ref, brief, caller_labels, caller_space, current_base, default_space, folder_for, handoff, launch, name_tabs,
     own_path, parent_for, resume_argv, retag_tabs, set_branch, tab_title, task_tabs,
@@ -648,7 +650,7 @@ def finalize(s, t):
             # Working until its checks are done and GitHub knows it can merge (the tick: pr_wait()).
             pr["wait"] = PR_CHECKS_RUNNING
             msg = (f"{s.ref(t)} is ready: pull request #{pr['number']}, {pr['url']}. It shows Working until its checks "
-                   "pass and GitHub says it can merge; a failing check or a conflict comes back to you to fix.")
+                   f"pass and {gitea.word(t)} says it can merge; a failing check or a conflict comes back to you to fix.")  # fork: or Gitea
         except Fail as e:
             t["attention"] = str(e)
             return f"{s.ref(t)} is ready, but: {e} Tell the person."
@@ -943,7 +945,7 @@ def merge_now(s, t):
     v = pr_view(t)
     s.dirty = True
     if not v:
-        return f"Couldn't reach pull request #{n} on GitHub."
+        return f"Couldn't reach pull request #{n} on {gitea.word(t)}."  # fork: or Gitea
     queue = False
     if v.get("state") != "MERGED":
         problem = pr_problem(v)
@@ -963,7 +965,8 @@ def merge_now(s, t):
         merge = lambda *extra: gh("pr", "merge", n, "--repo", repo, "--squash", *extra,
                                   "--match-head-commit", v.get("headRefOid") or "")
         queue = uses_queue(s, base)
-        ok, _, err = merge() if queue else merge("--delete-branch")
+        # fork: a Gitea pull request merges through tea, at once: no merge queue (gitea.py)
+        ok, _, err = gitea.pr_merge(t, v) if gitea.on(t) else merge() if queue else merge("--delete-branch")
         if not ok and not queue and "merge queue" in err:
             # gh refuses --delete-branch on a merge queue: asked again without it, which queues it.
             s.data.setdefault("merge_queue", {})[base] = now()
@@ -972,7 +975,9 @@ def merge_now(s, t):
         # Merged, or only queued (or set to merge by itself)? Asked again; a one-off GitHub error can
         # also come after the merge went through.
         again = pr_view(t)
-        if (again or {}).get("state") == "MERGED":
+        if ok and gitea.on(t):  # fork: Gitea said merged (gitea.py)
+            v = {**v, **(again or {}), "state": "MERGED"}
+        elif (again or {}).get("state") == "MERGED":
             v = again
         elif ok:
             t["merge_queued"] = now()
@@ -980,7 +985,7 @@ def merge_now(s, t):
             t["pr"]["checked"] = 0
             return IN_QUEUE
         else:
-            t["attention"], t["attention_at"] = f"{MERGE_FAILED}: {err}", now()
+            t["attention"], t["attention_at"] = f"{gitea.MERGE_FAILED if gitea.on(t) else MERGE_FAILED}: {err}", now()  # fork: or Gitea's
             # The next tick reads the pull request at once (merged by hand meanwhile: done).
             t["pr"]["checked"] = 0
             return t["attention"]
@@ -1010,6 +1015,8 @@ def cmd_merge(args):
                 error += " Merge again when they pass."
             elif error == WAITS_APPROVAL:
                 error += " Merge again once it's approved."
+        elif refused := gitea.local_merge_refused(s, remote_of):  # fork: never merged here on Gitea (gitea.py)
+            raise Fail(f"{s.ref(t)} has no pull request yet. {refused}")
         else:
             t["merge_requested"] = now()
             s.dirty = True
@@ -1102,6 +1109,8 @@ def cmd_accept(args):
             if not t["merged"]:
                 t["nothing_to_merge"] = True
             finish(s, t, even_if_busy=True)
+        elif refused := gitea.local_merge_refused(s, remote_of):  # fork: never merged here on Gitea (gitea.py)
+            raise Fail(f"{s.ref(t)} has no pull request yet. {refused}")
         elif ff_merge(s, t):
             how = "merged"
             t["merged"] = True

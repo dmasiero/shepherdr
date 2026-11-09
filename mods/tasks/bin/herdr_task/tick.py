@@ -25,6 +25,7 @@ from .archive import archive_pass
 from .browsers import browser_pass
 from .output import progress_clock, say
 from .commands import back_to_work, begin, merge_now, MERGE_FAILED
+from . import gitea  # fork: Gitea pull requests (gitea.py)
 from .news import news_pass, typing
 from .takeover import cant_go_on, takeover
 from .ghnews import main_pass, pr_deliver, pr_news
@@ -123,7 +124,8 @@ def facts(s, t, report):
                 t["attention"], t["attention_at"] = problem, now()
                 t.pop("merge_queued", None)
                 report["attention"].append(t["id"])
-            elif t.get("attention", "").startswith(("Checks failing", "It conflicts", "The pull request was closed", MERGE_FAILED, BEHIND)):
+            elif t.get("attention", "").startswith(("Checks failing", "It conflicts", "The pull request was closed", MERGE_FAILED, BEHIND,
+                                                    gitea.MERGE_FAILED)):  # fork: or Gitea's failed merge
                 t.pop("attention")
     elif merged_here(s, t) and not at_work(s, t):
         t["merged"] = True
@@ -150,7 +152,8 @@ def squash_merged(s, t):
     found = pr_merged(t, repo) if repo else None
     if not found or found.get("headRefOid") != (t.get("own") or t.get("head")):
         return None
-    t["pr"] = {"number": found["number"], "url": found["url"], "repo": repo}
+    # fork: a Gitea one's record says so (gitea.py)
+    t["pr"] = gitea.record(repo, found) if gitea.is_target(repo) else {"number": found["number"], "url": found["url"], "repo": repo}
     return {**t["pr"], "mergeCommit": found.get("mergeCommit")}
 
 
