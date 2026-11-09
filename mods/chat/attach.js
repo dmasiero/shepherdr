@@ -115,11 +115,13 @@ export function prune() {
 // Images shown in the chat (thumbnails, the viewer): `image()` loads from the app's folder, so
 // each one is linked (or copied) into data/chat-attach/view, with its pixel size for fitting.
 // Resolves { <path>: { rel, w, h } } for the ones that exist here and are images.
-const VIEW = `
+// ffprobe's size comes with its default comma, then made "w h": ffprobe 8 refuses a space
+// separator (csv=s=' '), which left every image a grey box where only ffprobe reads sizes (SHEP-39).
+export const VIEW = `
 d="$1"; shift; mkdir -p "$d"
 for p in "$@"; do
   [ -f "$p" ] || continue
-  s=$(magick identify -format '%w %h' "$p[0]" 2>/dev/null) || s=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=' ' "$p" 2>/dev/null)
+  s=$(magick identify -format '%w %h' "$p[0]" 2>/dev/null) || s=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$p" 2>/dev/null | head -n 1 | tr ',' ' ')
   [ -n "$s" ] || continue
   n=$(printf '%s' "$p" | cksum | cut -d' ' -f1)-$(printf '%s' "\${p##*/}" | tr -c 'A-Za-z0-9._-' '_')
   [ -f "$d/$n" ] || ln -f "$p" "$d/$n" 2>/dev/null || cp "$p" "$d/$n" 2>/dev/null || continue
