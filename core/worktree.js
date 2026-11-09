@@ -90,9 +90,11 @@ export const VIEW_WORDS = {
   noTextDiff: "No text diff available",
   firstThousand: "Showing the first 1,000 changed files",
   askingGitHub: "Asking GitHub…",
+  askingGitea: "Asking Gitea…", // fork: a Gitea pull request (giteaPr, below)
   noPr: "This task has no pull request.",
   noBranch: "This task works in its folder, with no branch of its own, so it has no pull request.",
   openOnGitHub: "Open on GitHub",
+  openOnGitea: "Open on Gitea", // fork
   copyLink: "Copy link",
   copied: "Copied",
   checks: "Checks",
@@ -102,6 +104,56 @@ export const VIEW_WORDS = {
 export const CHANGE_WORDS = { A: "Added", M: "Changed", D: "Deleted", U: "Conflict" };
 export const CHECK_WORDS = { pass: "Passed", fail: "Failed", pending: "Running", skip: "Skipped" };
 export const PR_STATES = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" };
+
+// fork (dmasiero/shepherdr): a task's pull request on Gitea, which herdr-task opened through tea (herdr_task/gitea.py:
+// its record says forge "gitea" and the tea login that reaches it). tea(args) runs tea on the task's machine and gives
+// { code, stdout, stderr }; the answer is prOf's shape, its checks the commit statuses on its head (warning passes, as
+// on Gitea). FORK.md, docs/gitea.md.
+export const isGitea = (pr) => pr?.forge === "gitea" && Boolean(pr.login && pr.repo && pr.number);
+const GITEA_CHECK = { success: "pass", warning: "pass", skipped: "skip", pending: "pending", failure: "fail", error: "fail" };
+
+export function giteaPrOf(d, statuses = []) {
+  const state = d.merged ? "merged" : d.state === "closed" ? "closed" : d.draft || /^\s*(wip:|\[wip\])/i.test(d.title ?? "") ? "draft" : "open";
+  // Gitea Actions' links are its server's paths (/owner/repo/actions/runs/3/jobs/0): whole, from the pull request's.
+  const whole = (u) => { try { return u ? new URL(u, d.html_url).href : null; } catch { return null; } };
+  const checks = statuses.map((c) => ({ name: c.context || "Check", url: whole(c.target_url),
+    state: GITEA_CHECK[String(c.status ?? c.state ?? "").toLowerCase()] ?? "pending" }))
+    .sort((a, b) => CHECK_ORDER[a.state] - CHECK_ORDER[b.state] || a.name.localeCompare(b.name));
+  return { number: d.number, title: d.title, url: d.html_url, state, head: d.head?.ref ?? null, base: d.base?.ref ?? null,
+    add: d.additions ?? 0, del: d.deletions ?? 0, files: d.changed_files ?? 0, checks, forge: "gitea" };
+}
+
+// { pr } or { error }, as the views' gh readers answer.
+export async function giteaPr(tea, pr) {
+  const api = async (path) => {
+    const r = await tea(["api", "--login", pr.login, path]);
+    if (r.code !== 0) throw new Error((r.stderr || r.stdout || "").trim().split("\n")[0] || "Gitea didn't answer.");
+    const d = JSON.parse(r.stdout || "null");
+    // tea api exits 0 on any HTTP status: Gitea's error is a bare { message }
+    if (d && typeof d === "object" && !Array.isArray(d) && typeof d.message === "string" && d.number === undefined && d.statuses === undefined) throw new Error(d.message);
+    return d;
+  };
+  try {
+    const d = await api(`repos/${pr.repo}/pulls/${pr.number}`);
+    const sha = d?.head?.sha, open = !d?.merged && d?.state !== "closed";
+    // Every page of its statuses (at most 20); ones that can't be read are said, never shown as none.
+    const statuses = [];
+    let checksError = null;
+    if (open && /^[0-9a-f]{40,64}$/.test(sha ?? "")) {
+      try {
+        for (let page = 1; ; page++) {
+          if (page > 20) throw new Error("too many statuses");
+          const rows = (await api(`repos/${pr.repo}/commits/${sha}/status?limit=50&page=${page}`))?.statuses ?? [];
+          statuses.push(...rows);
+          if (rows.length < 50) break;
+        }
+      } catch { checksError = "Couldn't read its checks on Gitea."; }
+    }
+    return { pr: { ...giteaPrOf(d, checksError ? [] : statuses), ...(checksError ? { checksError } : {}) } };
+  } catch (e) {
+    return { error: String(e?.message ?? e) };
+  }
+}
 // "No changes against main", "Against main"; "3 files"
 export const noChanges = (label) => (label ? `No changes against ${label}` : VIEW_WORDS.noUncommitted);
 export const againstLine = (label) => (label ? `Against ${label}` : VIEW_WORDS.uncommitted);

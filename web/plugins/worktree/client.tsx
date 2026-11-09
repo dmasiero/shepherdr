@@ -390,8 +390,9 @@ function PrView({ task }: { task: Task }) {
   const { copied: done, copy } = useCopy()
   const copied = done === 'pr'
   const pr = p.data?.pr
+  const gitea = task.pr?.forge === 'gitea' // fork: a Gitea pull request's words (core/worktree.js)
   if (!pr) {
-    const text = p.error ? `GitHub didn't answer: ${p.error}` : p.data ? (p.data.why ?? WORDS.noPr) : WORDS.askingGitHub
+    const text = p.error ? `${gitea ? 'Gitea' : 'GitHub'} didn't answer: ${p.error}` : p.data ? (p.data.why ?? WORDS.noPr) : gitea ? WORDS.askingGitea : WORDS.askingGitHub
     return (
       <div className="grid flex-1 place-items-center px-6 text-center">
         <div className="flex max-w-[300px] flex-col items-center gap-2">
@@ -425,7 +426,7 @@ function PrView({ task }: { task: Task }) {
             <div className="flex flex-wrap gap-1.5 pt-1">
               <a href={pr.url} target="_blank" rel="noreferrer" className={outline}>
                 <OpenIcon className={ic} />
-                {WORDS.openOnGitHub}
+                {pr.forge === 'gitea' ? WORDS.openOnGitea : WORDS.openOnGitHub /* fork: or Gitea */}
               </a>
               <button type="button" onClick={(e) => void copy(pr.url, 'pr', e)} className={outline}>
                 <CopyIcon className={ic} />
