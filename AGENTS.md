@@ -54,6 +54,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `claude --model haiku`) as the target.
 - Web dictation on the dev VM: agent-browser's fake-mic flags don't apply; override
   `navigator.mediaDevices.getUserMedia` with an oscillator `MediaStreamDestination` via eval.
+- herdr-task forge tests (GitHub/Gitea): give the repo a real remote's host and send its pushes to a bare repo with
+  `git config url.<bare>.insteadOf <full url>`; fake `tea`/`gh` first on PATH (see `GiteaTasks`).
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - nextgate's `/usr/bin` is envfs: a tool shows there only to a caller whose PATH has it, so a test that narrows PATH
