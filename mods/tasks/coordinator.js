@@ -12,7 +12,8 @@
 import { appHome, exec, hc, run, openOverlay, shared, setShared, home, machines, focused, readTextFile } from "herdr";
 import { dirs } from "./dirs.js";
 import { isWorktreePath } from "./core/paths.js";
-import { terminals, panes, spaces as allSpaces, paneKey, chatKey, chatPaneOf } from "./live.js"; // fork: paneKey, chatKey, chatPaneOf (SHEP-7)
+import { terminals, panes, spaces as allSpaces } from "./live.js";
+import { chatPane, chatLabel } from "./core/spaces.js";
 import { logSpace } from "./spacelog.js";
 import { toast, plainError } from "./ui.js";
 import { trustArgv } from "./core/claude-trust.js"; // fork: SHEP-28
@@ -31,8 +32,8 @@ export function coordinatorIn(tabId, all = terminals(), ps = null) {
   const direct = all.find((k) => isCoordinator(k) && k.labels?.["herdr.tab"] === tab && split(k.address)[0] === machine);
   if (direct) return direct;
   // In Chat mode the agent has no pane and no tab label: its chat pane (herdr.chat) says where it is.
-  const chats = new Set((ps ?? panes()).filter((p) => p.mod === "chat" && p.tab === tabId).map((p) => paneKey(p.pane)));
-  return chats.size ? all.find((k) => isCoordinator(k) && chats.has(chatKey(k))) ?? null : null; // fork: by machine and bare id
+  const chats = new Set((ps ?? panes()).filter((p) => p.mod === "chat" && p.tab === tabId).map((p) => p.pane));
+  return chats.size ? all.find((k) => isCoordinator(k) && chats.has(chatPane(k))) ?? null : null;
 }
 
 // The agentless coordinator chat in a tab ({ slot, space, tab, pane, folder }), or null.
@@ -103,7 +104,7 @@ function folderOf(space) {
   const p = panes().find((p) => mine.has(p.tab) && p.focused && p.cwd) ?? panes().find((p) => mine.has(p.tab) && p.cwd);
   // A pane in Chat mode isn't a terminal pane: its agent's folder stands in for it.
   const chat = !p && panes().find((q) => mine.has(q.tab) && q.mod === "chat");
-  const agent = chat && terminals().find((k) => chatKey(k) === paneKey(chat.pane)); // fork: however the label spells the pane
+  const agent = chat && terminals().find((k) => chatPane(k) === chat.pane);
   return p?.cwd || agent?.cwd || space.folder || home();
 }
 
@@ -165,7 +166,7 @@ const machineReady = (name) => machines().find((m) => (m.name ?? null) === (name
 // the web app, or its tab closed while it ran on): the new tab takes it instead of starting another.
 function runningAssistant(space, ps = panes()) {
   const id = String(space.id).split("/").pop(), machine = space.machine ?? "";
-  const shown = (k) => ps.some((p) => p.terminal === k.address || (p.mod === "chat" && p.pane === chatPaneOf(k, ps)));
+  const shown = (k) => ps.some((p) => p.terminal === k.address || (p.mod === "chat" && p.pane === chatPane(k)));
   return terminals().find((k) => isCoordinator(k) && split(k.address)[0] === machine && !shown(k)
     && [k.labels?.["herdr.coordinator.space"], k.labels?.["herdr.space"]].includes(id)) ?? null;
 }
@@ -192,7 +193,7 @@ export async function openCoordinator(space, show = true, settings = null) {
     const pane = out.pane ?? panes().find((p) => p.tab === out.tab && p.mod === "chat")?.pane ?? null;
     setShared("coordinator.slots", { ...liveSlots(), [slot]: { space: space.id, tab: out.tab, pane, folder } });
     // The chat follows the agent its slot names (mods/chat adoptSlot).
-    if (running && pane) await hc(["label", running.address, `herdr.chat=${pane}`, `herdr.chat.slot=${slot}`, `herdr.chat.origin=slot:${slot}`,
+    if (running && pane) await hc(["label", running.address, `herdr.chat=${chatLabel(pane)}`, `herdr.chat.slot=${slot}`, `herdr.chat.origin=slot:${slot}`,
       `herdr.coordinator.tab=${String(out.tab).split("/").pop()}`]).catch(() => {});
     await app("tab.move", { id: out.tab, index: 1 });
     if (show) {

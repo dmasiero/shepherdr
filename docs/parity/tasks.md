@@ -74,7 +74,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Queued | "After HERD-3", "Waits: …", "Starts soon" | compat `sub` (core queueReason) | ✓ |
 | Scheduled | a grey calendar (mods/tasks/scheduled.svg), its time until it starts under it ("6h", core `leftOf`), "Starts Today 18:00" (core `startsLine`) | ui.tsx `.dot.scheduled` (the same drawing), TaskDot `until` (core `untilShort`, live), compat `sub` | ✓ (SHEP-38) |
 | Ready | "Ready 5m ago" + Review (opens the Accept card) | compat `sub` + W `accept` | ✓ |
-| Merging | "Merges once its checks pass" | compat `sub` | ✓ |
+| Merging | "Merges once its checks pass", "Merges once it's approved", "In GitHub's merge queue" (#743, #802) | compat `sub` | ✓ |
 | To do, Done | one line, place at the end | W Line one-line | ✓ |
 | Where it is | T whereOf: the space, only where the grouping doesn't say it; never the machine (SHEP-98); Settings "Where on task rows" off: none | W whereOf / autoWhere, `names` | ✓ |
 | Place gives way | T line(): after the words, it takes only the room left and shrinks first | W Line: whole or not at all (wraps out of sight) | ✓ |
@@ -121,7 +121,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 
 | Element | Window | Web | State |
 |---|---|---|---|
-| Tabs | P:363-372 Chat, Terminal, Pull request (once it has one), Artifacts, Browser (add-ons on); no Files or Changes (SHEP-143: the space's side panels) | N TaskTabs (registry order 10-50, itemsFor) | ✓ |
+| Tabs | P:363-372 Chat, Terminal, Pull request (once it has one), Artifacts, Browser (add-ons on); no Files or Changes (SHEP-143: the space's side panels) | N TaskTabs (registry order 10-50, itemsFor): on a desktop the header's own row, a segmented control right of the title as the Assistant's Chat · Terminal, wrapping under the title without room (SHEP-176); a phone's row under its header | ◇ one header row on the web's wider task view; the window's thread head is a narrow side block (3 rows, layouts/shepherdr.json 127) with no room beside its title |
 | Old Files/Changes links | voice nav: the service sends a task's files/changes as pr, else chat | `?item=files`/`diff` opens Pull request, else Chat (nav itemOfUrl); a saved panel item falls back to Terminal | ✓ |
 | Tabs without an agent | P:340-348 always | A TaskTabs always | ✓ fixed (hidden until an agent started) |
 | Switch in place | P:336 body stack | N TabBody | ✓ |

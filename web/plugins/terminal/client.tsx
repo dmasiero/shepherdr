@@ -12,8 +12,9 @@ import { CTRL, ic, MenuItem, MenuSeparator, MenuSetting, ModelIcon, shortcut, Sm
 import type { Place, TermScreen } from '@shared/types.ts'
 import { anyMod, EXTRA_KEYS, modText, NO_MODS, tapMod, typedDiff, withMods, type Mods } from './input.ts'
 import { connectTerminal, streamInput } from './stream.ts'
+import { keysTerm, termInPlace, termInput, touchScreen, typedInBox } from './shown.ts'
 import { tabTermFor } from './tab.ts'
-import { atEnd, colsOf, fitFont, foldShown, frame, inputOf, LINE, MAX, MIN, PAD, toEnd, ZOOM } from './screen.ts'
+import { atEnd, colsOf, fitFont, foldShown, frame, LINE, MAX, MIN, PAD, toEnd, ZOOM } from './screen.ts'
 
 const KEYMAP: Record<string, string> = {
   Enter: 'enter',
@@ -242,9 +243,9 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
   const screen = useStore((s) => s.terms[chatKey])
   const streaming = useStore((s) => s.snap?.terminalTransport === 'core')
   const input = useRef<HTMLTextAreaElement>(null)
-  // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger, through the hidden box
-  // fork: any phone or tablet, in every terminal (SHEP-19)
-  const { typed, touch } = inputOf(ui.device, !!panel)
+  // a mouse or keyboard types into a task's terminal while its screen has the focus; a finger (any touch screen, a
+  // landscape iPad too), through the hidden box
+  const { typed, touch } = termInput(ui.device, !!panel, touchScreen())
   /** bumped on a tap and on each thing typed: the screen goes to the prompt, just above the keyboard */
   const [pin, setPin] = useState(0)
   const toPrompt = () => setPin((n) => n + 1)
@@ -480,13 +481,14 @@ export default definePlugin({
     reg.placeMenu.push({ order: 60, View: PlaceTerm })
     reg.placeHeader.push({ order: 15, View: ChatOrTerminal })
     reg.taskPanel.push({ id: 'terminal', order: 10, label: 'Terminal', Icon: TermIcon, View: ({ chatKey }) => <TerminalView chatKey={chatKey} panel /> })
-    reg.chatBody.push({ when: (ui, key) => ui.term === key, View: TerminalView })
+    reg.chatBody.push({ when: termInPlace, View: TerminalView })
     // Shepherdr 3: one of the space's other tabs, in place of its chat (t:<terminal>)
     // fork: only in the column of the space that owns the tab, never a task panel's chat (SHEP-27; tab.ts)
     reg.chatBody.push({ when: (ui, key) => tabTermFor(ui.term, ui.tabView, key, getState().snap?.places ?? []), View: ({ chatKey: _ }: { chatKey: string }) => <TerminalView chatKey={useUI((u) => u.term!)} /> })
     reg.keys.push({
       order: 0,
       handle: ({ e, ui, snap }) => {
+        if (typedInBox(e)) return true
         if (ui.device !== 'desktop') return false
         const task = agentChat(ui, snap)?.chat
         const focused = (e.target as HTMLElement | null)?.closest?.<HTMLElement>(SCREEN)?.dataset.termScreen
@@ -511,12 +513,13 @@ export default definePlugin({
           else if (k.text) terminalInput(focused, { type: 'text', text: k.text })
           return true
         }
-        if (!ui.term) return false
+        const term = keysTerm(ui)
+        if (!term) return false
         const k = toKey(e)
         if (!k) return true
         e.preventDefault()
-        if (k.keys) terminalInput(ui.term, { type: 'keys', keys: k.keys })
-        else if (k.text) terminalInput(ui.term, { type: 'text', text: k.text })
+        if (k.keys) terminalInput(term, { type: 'keys', keys: k.keys })
+        else if (k.text) terminalInput(term, { type: 'text', text: k.text })
         return true
       },
     })

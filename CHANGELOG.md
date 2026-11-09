@@ -5,6 +5,16 @@
 - On a Mac, you can talk over the agent in a window voice call to interrupt it, as on the web: the call uses
   Apple's echo cancellation, so the microphone stays open while the agent speaks. Other apps' sound dips slightly
   during a call. If echo cancellation can't run, the call works as before.
+- `shepherdr web https-port 8443` (or `./install.sh --https-port 8443`) shares the web app at
+  `https://<machine>:8443/shepherdr/`; the share moves within seconds, and every link Shepherdr gives follows (Settings
+  → Web, `herdr-artifact link`, `shepherdr web status`). Installs that never set one stay on 443 with nothing to do.
+- When tailscale won't share it, `shepherdr doctor`, the installer and Settings → Web say tailscale's own reason; a port
+  held by another app (a TCP forward) is named plainly, with a free port to use instead (GitHub #754, #778).
+- The task browser works out of the box: Shepherdr installs agent-browser itself when it's missing (install,
+  `shepherdr update`, or an agent's first browser command), into its own folder, without npm or sudo, on macOS and
+  Linux. An agent-browser you already have is used when it's 0.41.1 or a newer 0.41.x (GitHub #739, #799).
+- When it can't install it (offline, say), the Browser tab, `herdr-browser` and `shepherdr doctor` show the whole
+  message with the one command that fixes it: `herdr-browser --install`. Doctor says which agent-browser it uses.
 
 ## 3.1.28
 

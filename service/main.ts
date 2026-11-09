@@ -8,7 +8,7 @@
 //   SHEPHERDR_PROXY_ORIGINS=…      fork: a reverse proxy here serves it instead of tailscale serve (service/proxy.ts)
 // Serve from (service/host.ts): one machine serves the web app and holds the shared data; on the others the service
 // reads and writes it there, keeps their settings in step (service/sync.ts) and doesn't share /shepherdr.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, rmSync, watchFile } from "node:fs";
 import { join, normalize } from "node:path";
 import { hostname } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -17,7 +17,7 @@ import { holdLock } from "./lock.ts";
 import { gate, localCaller, type Gate } from "./auth.ts";
 import { trustedPeer, peerUid } from "./peer.ts";
 import { proxyFrom, proxyOrigin, proxyLink, type Proxy } from "./proxy.ts";
-import { whoami, share, served, unshare, restoreShare, type Me } from "./tailscale.ts";
+import { whoami, share, served, unshare, restoreShare, httpsPort, webLink, webOrigin, HTTPS_PORT_FILE, type Me } from "./tailscale.ts";
 import { qrFile } from "./qr.ts";
 import { Hub } from "./hub.ts";
 import { Store } from "./store.ts";
@@ -118,13 +118,16 @@ let me: Me | null = await whoami();
 let proxy: Proxy | null = null;
 try { proxy = proxyFrom(); } catch (err) { console.error((err as Error).message); process.exit(1); }
 const g: Gate = { owner: me?.login ?? null, dns: me?.dns ?? null, port: PORT, token, proxy };
-// the web app's own link: the proxy's, or this machine's tailnet name
-const ownLink = () => (proxy ? proxyLink(proxy) : me ? `https://${me.dns}/shepherdr/` : null);
-// this machine's name: its tailnet one; without Tailscale, its host name in proxy mode (the web app sends it back as
-// the machine to act on, compared with this)
+// the tailnet HTTPS port the web app is shared on (tailscale.ts httpsPort: 443 unless this machine set another),
+// looked at again with the rest of the tailnet; ownLink: this machine's own link on it (fork: or the proxy's)
+let hp = httpsPort();
+g.httpsPort = hp;
+const ownLink = () => (proxy ? proxyLink(proxy) : me ? webLink(me.dns, hp) : null);
+// fork: this machine's name: its tailnet one; without Tailscale, its host name in proxy mode (the web app sends it
+// back as the machine to act on, compared with this). Live gets it as a stand-in for Tailscale's own.
 const here = () => me?.host ?? (proxy ? hostname().split(".")[0] : "this machine");
 const hereName = () => (me?.host ?? (proxy ? here() : null));
-const live = new Live(hub, store, here, hereName, VERSION, ownLink);
+const live = new Live(hub, store, () => me ?? (proxy ? ({ host: here() } as Me) : null), VERSION, ownLink);
 const compat = new Compat();
 const model = new Model(hub, live);
 live.chats = new Chats(hub);
@@ -132,7 +135,7 @@ live.compat = compat;
 compat.reader = (a) => live.chats?.reader(a) ?? null;
 // the chat scrolled to its top: the page before (as the window's loadEarlier)
 (compat as any).earlier = (a: string) => live.chats?.earlier(a);
-const push = new Push(() => (proxy ? proxy.origins[0] : me ? `https://${me.dns}` : "https://herdr.dev"));
+const push = new Push(() => (proxy ? proxy.origins[0] : me ? webOrigin(me.dns, hp) : "https://herdr.dev")); // fork: or the proxy's
 // only the machine that serves the web app sends push alerts (its pages subscribed there): never two of one alert
 const pushSend = push.send.bind(push);
 push.send = ((a: any) => (host.serving() ? pushSend(a) : Promise.resolve())) as typeof push.send;
@@ -348,18 +351,21 @@ async function tailnet() {
   me = await whoami();
   g.owner = me?.login ?? null;
   g.dns = me?.dns ?? null;
+  g.httpsPort = hp = httpsPort();
   const on = webOn(), serving = host.serving();
   const own = ownLink();
   host.link = own;
   // another machine serves it: its link (the window's Settings › Web shows it and its QR code); this one isn't shared
   const link = serving ? own : host.hostLink();
   let why: string | null = own || !serving ? null : "Tailscale isn't running here";
+  // what tailscale serve said when sharing failed (doctor counts it as broken, not a note)
+  let shareWhy: string | null = null;
   if (proxy) {
     // fork: the proxy serves it; tailscale serve is left as it is
   } else if (me && on && serving) {
     const s = await served(me.dns);
     if (s.funnel) { why = "Funnel is on for this machine: the web app stays off until it's off"; g.owner = null; }
-    else why = await share(me.dns, PORT);
+    else why = shareWhy = await share(me.dns, PORT, hp);
   } else if (me && (!on || !serving) && wasOn !== false) {
     await unshare(me.dns, PORT);
     // moved away: what the move here set aside is shared again (shepherdr web serve-from --take-link)
@@ -371,7 +377,7 @@ async function tailnet() {
   try { if (link && on && !why) qr = qrFile(existsSync(join(APP_DATA, "..")) ? APP_DATA : DATA, link); } catch {}
   const serve = serveNow();
   const via = proxy ? "proxy" : "tailnet";
-  writeFileSync(join(DATA, "web.json"), JSON.stringify({ on, link, qr, why, serve, via, at: Date.now() }) + "\n");
+  writeFileSync(join(DATA, "web.json"), JSON.stringify({ on, link, qr, why, share_error: shareWhy, https_port: hp, serve, via, at: Date.now() }) + "\n");
   let picture: string | null = null;
   try { if (qr) picture = `data:image/svg+xml;base64,${Buffer.from(readFileSync(qr)).toString("base64")}`; } catch {}
   const was = JSON.stringify(webNow);
@@ -408,6 +414,8 @@ async function serveFrom(machine: string | null) {
   await tailnet();
 }
 host.on(() => { void tailnet(); model.rebuild(); });
+// shepherdr web https-port changed the port: move the share and the links within seconds, not at the next minute
+watchFile(HTTPS_PORT_FILE, { interval: 2000 }, () => { if (httpsPort() !== hp) void tailnet(); });
 await tailnet();
 setInterval(tailnet, 60_000);
 
@@ -545,7 +553,7 @@ const voiceIO: VoiceIO = {
         const home = (await exec(hub, ["sh", "-c", 'printf %s "$HOME"'], machine).catch(() => ({ stdout: "" }))).stdout;
         return folders(hub, machine, path || "~", home);
       }
-      case "me": return { machine: me?.host ?? null, link: me ? `https://${me.dns}/shepherdr/` : null, version: VERSION, off: offPlugins() };
+      case "me": return { machine: me?.host ?? null, link: ownLink(), version: VERSION, off: offPlugins() };
     }
     throw new Error(`No such data: ${source}.`);
   },

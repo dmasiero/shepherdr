@@ -38,7 +38,8 @@ import { dirsReady } from "./dirs.js";
 import { notifies, spaceOfTerminal } from "./notify.js";
 import { toast, toastWho as whoOf } from "./ui.js";
 import { exec, appHome, home, focused, shared, setShared, watchFolder, readTextFile, writeTextFile, playSound, settings, run, layout } from "herdr";
-import { terminals, agents, panes, spaces, chatPaneOf } from "./live.js"; // fork: chatPaneOf (SHEP-7)
+import { terminals, agents, panes, spaces } from "./live.js";
+import { chatPane } from "./core/spaces.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 export const ASKS = () => `${appHome()}/data/chat-asks`;
@@ -52,8 +53,8 @@ const claudeHere = (k) => k.state === "live" && !String(k.address).includes("/")
 
 // The chat pane showing a terminal, if one is open.
 export function chatOf(address) {
-  const ps = panes(), c = chatPaneOf(terminals().find((k) => k.address === address), ps); // fork: however the label spells the pane
-  return c && ps.some((p) => p.pane === c && p.mod === "chat") ? c : null;
+  const c = chatPane(terminals().find((k) => k.address === address));
+  return c && panes().some((p) => p.pane === c && p.mod === "chat") ? c : null;
 }
 
 // On screen as a terminal: its pane is in the shown tab, with no chat showing it.

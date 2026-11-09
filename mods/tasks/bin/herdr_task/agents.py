@@ -98,6 +98,8 @@ def status_of(task, live):
 # What people see a task as: one of eight, derived, never stored. From the task's record (todo,
 # scheduled (SHEP-38: starts by itself at a time), queued, ready, done, attention, a merge asked for or waiting on checks) and its agents' own
 # Herdr status (working, blocked, idle/done), which agents report as always.
+IN_QUEUE_LINE = "In GitHub's merge queue"
+APPROVAL_LINE = "Merges once it's approved"
 STATUSES = {"todo": "To do", "scheduled": "Scheduled", "queued": "Queued", "working": "Working", "needs": "Needs you",
             "ready": "Ready", "merging": "Merging", "done": "Done"}
 
@@ -135,10 +137,11 @@ def task_status(task, live):
     if task.get("attention"):
         return "working", None, WORKING_AGAIN if st == "ready" else None
     if st == "ready":
-        if task.get("merge_requested") and live:
-            return "merging", None, None
-        if task.get("auto_merge") and task.get("pr") and not task.get("merged"):
-            return "merging", None, "Merges once its checks pass"
+        # Nothing for the person yet (SHEP-175): its merge under way (asked, in GitHub's merge queue, or
+        # by itself), or its pull request's checks still running. Working, with what it waits for.
+        wait = ready_wait(task, live)
+        if wait:
+            return "working", None, wait
         # Said ready but not at rest yet (SHEP-148): Working until it is, and only then Ready.
         if live and not_at_rest(task, live):
             return "working", None, None
@@ -167,6 +170,26 @@ def task_status(task, live):
 
 
 STOPPED = "Agent stopped"
+
+
+# ---- Ready only when the person must act (SHEP-175) ----------------------------------------------
+# A task said ready is Ready (and its news and alerts) only once the person's Accept is what's
+# left: not while its pull request's checks still run or GitHub works out whether it can merge
+# (pr["wait"], kept by the tick), nor while it merges by itself. Then it is Working, its row saying
+# in small words what it waits for. As core/tasks.js readyWait().
+MERGING, MERGES_ITSELF = "Merging", "Merges once its checks pass"
+
+
+def ready_wait(task, live):
+    """What a Ready task waits on that needs nobody, in a few words; None when it's the person's."""
+    if task.get("merge_requested") and live:
+        return MERGING
+    if task.get("merge_queued") and task.get("pr"):
+        return IN_QUEUE_LINE
+    if task.get("auto_merge") and task.get("pr") and not task.get("merged"):
+        # #743: waits calmly for a review GitHub requires
+        return APPROVAL_LINE if task["pr"].get("needs_approval") else MERGES_ITSELF
+    return (task.get("pr") or {}).get("wait") or None
 
 
 # ---- a short grace before Needs you (SHEP-133) ------------------------------------------------

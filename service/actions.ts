@@ -597,7 +597,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
       return { ok: true, waiting: true };
     }
     const labels = slot
-      ? ["--label", `herdr.chat=${rec.pane}`, "--label", `herdr.chat.slot=${slot}`, "--label", `herdr.chat.origin=slot:${slot}`, "--label", "herdr.role=coordinator",
+      ? ["--label", `herdr.chat=${SP.chatLabel(rec.pane)}`, "--label", `herdr.chat.slot=${slot}`, "--label", `herdr.chat.origin=slot:${slot}`, "--label", "herdr.role=coordinator",
         "--label", `herdr.coordinator.space=${bare}`, ...(rec.tab ? ["--label", `herdr.coordinator.tab=${String(rec.tab).split("/").pop()}`] : [])]
       : ["--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${bare}`, "--label", `herdr.space=${bare}`];
     await trustFolder(hub, sp.machine ?? null, sp.folder); // fork: never the trust screen (SHEP-28)
