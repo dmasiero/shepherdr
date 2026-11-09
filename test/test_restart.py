@@ -101,6 +101,11 @@ class ChatLabel(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(LOCAL_HC)
         os.chmod(hc, 0o755)
+        # fork: on NixOS this narrow PATH finds no bash, tail or jq either (as run_script's)
+        for tool in ("bash", "cat", "tail", "jq"):
+            found = shutil.which(tool)
+            if found:
+                os.symlink(found, os.path.join(d, "bin", tool))
         e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "HERDR_APP_HOME": d, "FAKE_DIR": d, "HERDR_RESTART_RESUME": "1", **env}
         r = subprocess.run(["bash", SCRIPT, "t2", json.dumps(["claude", "--resume", "s1"])], env=e,
                            capture_output=True, text=True, timeout=30)

@@ -565,6 +565,15 @@ class AgentBrowser(unittest.TestCase):
         self.sha = hashlib.sha256(FAKE_RELEASE.encode()).hexdigest()
         self.mine = os.path.join(self.home, ".local/share/shepherdr/agent-browser/0.41.1/agent-browser")
         self.hb = os.path.join(ROOT, "bin", "herdr-browser")
+        # fork: on NixOS (nextgate's envfs /usr/bin) the narrow PATH below finds no sed, mkdir or curl: the tools
+        # herdr-browser needs go in a bin of their own, from the caller's PATH.
+        self.tools = os.path.join(self.tmp, "tools")
+        os.makedirs(self.tools)
+        for tool in ("awk", "cat", "chmod", "curl", "cut", "find", "grep", "ldd", "mkdir", "mv", "python3", "readlink",
+                     "rm", "rmdir", "sed", "sha256sum", "shasum", "sleep", "stat", "tail", "uname"):
+            found = shutil.which(tool)
+            if found:
+                os.symlink(found, os.path.join(self.tools, tool))
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -580,7 +589,7 @@ class AgentBrowser(unittest.TestCase):
         return d
 
     def hbr(self, *args, path=None, url=None, sha=None, **extra):
-        env = {"HOME": self.home, "PATH": f"{path or self.on_path(None)}:/usr/bin:/bin",
+        env = {"HOME": self.home, "PATH": f"{path or self.on_path(None)}:/usr/bin:/bin:{self.tools}",  # fork: the tools last
                "HERDR_BROWSER_URL": url or "file://" + self.rel, "HERDR_BROWSER_SHA256": sha or self.sha, **extra}
         return subprocess.run(["sh", self.hb, *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
 
