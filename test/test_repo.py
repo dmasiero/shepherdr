@@ -51,6 +51,23 @@ class Repo(unittest.TestCase):
         self.assertEqual(used - ours - shipped, set(), "the layout uses a mod nobody ships")
         self.assertEqual(d["id"], "root")
 
+    def test_a_lone_child_is_never_pinned(self):
+        # A row or column with one child has no boundary to drag, yet Herdr can still keep a fixed px for that child
+        # in the person's clicks (layouts/.state): nextgate's "panel-body" pinned at 1014 px hid the task chat's box
+        # and cut its last row at zoom 2.3 (SHEP-38). Not resizable, and an explicit weight the file's edit beats a
+        # stale click with.
+        lone = []
+        def walk(n):
+            kids = n.get("children", [])
+            if n.get("type") in ("row", "column") and len(kids) == 1:
+                lone.append(n["id"])
+                self.assertIs(n.get("resizable"), False, f"{n['id']} holds one child: not resizable")
+                self.assertIn("weight", kids[0].get("size", {}), f"{kids[0]['id']} fills {n['id']} by weight")
+            for c in kids:
+                walk(c)
+        walk(json.load(open(J("layouts", "shepherdr.json"))))
+        self.assertIn("panel", lone)
+
     def test_keys_name_our_layout_and_parse(self):
         keys = json.load(open(J("keys.json")))
         layouts = [c for c in keys if c.startswith("layout:")]
