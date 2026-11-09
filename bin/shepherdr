@@ -1165,7 +1165,8 @@ def cmd_install(a, update=False):
         counts[x[2]] = counts.get(x[2], 0) + 1
     say(f"Shepherdr {VERSION} {'update' if update else 'install'} from {src}")
     say(f"  into {root}{' (dry run: nothing is written)' if a.dry_run else ''}")
-    say("  files: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + (f", {len(gone)} removed" if gone else ""))
+    say("  files: " + ", ".join(f"{n} {'old copies replaced' if k == 'old' else k}" for k, n in sorted(counts.items()))   # fork: SHEP-34
+        + (f", {len(gone)} removed" if gone else ""))
     touches_tools = any(x[2] in ("new", "update", "adopt", "old") and (x[0] in ("template", "bin") or x[1].endswith(("/bin/herdr-task", "/bin/herdr-artifact"))
                                                                   or "/bin/herdr_task/" in x[1]) for x in actions)
     if a.dry_run:
