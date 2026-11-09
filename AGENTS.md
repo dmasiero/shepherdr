@@ -51,10 +51,14 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `claude --model haiku`) as the target.
 - Web dictation on the dev VM: agent-browser's fake-mic flags don't apply; override
   `navigator.mediaDevices.getUserMedia` with an oscillator `MediaStreamDestination` via eval.
+- Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
+  read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - nextgate's `/usr/bin` is envfs: a tool shows there only to a caller whose PATH has it, so a test that narrows PATH
   to `/usr/bin:/bin` finds nothing; link the tools it needs into its fake bin instead.
+- Python tests: each `test/test_*.py` imports `home_guard` first (a throwaway HOME for the run; touching the real home
+  fails the test). Run them with `discover -s test` or from `test/`.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
 - No herdr-app window runs on the dev VM: window-mod UI can only be syntax-checked here, not screenshot. No ImageMagick,
   PIL or lsof either: stop a background stub by the pid `ss -ltnp` shows for its port, never `pkill -f` on its path

@@ -1,5 +1,6 @@
 """herdr-task: every module compiles, the add-on switch it reads, and (on CI only, where HOME is
 a throwaway) its commands start. On a person's machine herdr-task never runs with another HOME."""
+import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
 import json
 import os
 import subprocess
@@ -738,7 +739,10 @@ class BackToWork(unittest.TestCase):
         t = self.ready()
         self.assertEqual(self.agents.task_status(t, [self.agent({"address": "t1", "status": "working", "turn": 5, "role": "worker"})]),
                          ("working", None, "Working again"))
-        self.assertEqual(self.agents.task_status(t, [self.agent({"address": "t1", "status": "working", "turn": 4, "role": "worker"})])[0], "ready")
+        # still finishing the turn it said ready in: not Working again, but not Ready yet either (SHEP-148)
+        self.assertEqual(self.agents.task_status(t, [self.agent({"address": "t1", "status": "working", "turn": 4, "role": "worker"})]),
+                         ("working", None, None))
+        self.assertEqual(self.agents.task_status(t, [self.agent({"address": "t1", "status": "idle", "turn": 5, "role": "worker"})])[0], "ready")
 
     def test_a_problem_its_agent_is_on_reads_working(self):
         """SHEP-8: the cases core/tasks.test.js checks place() on (core/on-it.cases.json)."""
@@ -1069,12 +1073,17 @@ class OwnBackgroundWork(unittest.TestCase):
                                                                        "content": "Monitor started (task m1, expires in 15m)"}]}})
         self.assertEqual(self.status(), ("working", None, None))
 
-    def test_idle_with_a_question_needs_you_even_with_a_background_shell(self):
+    def test_a_plain_question_needs_you_once_nothing_runs(self):
+        """SHEP-148: a plain question with its own work still running is no ask yet (asking for real
+        is its question tool or a permission: blocked); once nothing runs, it is."""
         self.background(-300_000)
         self.say(-200_000, "Tests run in the background. Should I also update the docs?")
-        self.assertEqual(self.status()[:2], ("needs", "reply"))
-        # asking with its question tool or a permission: blocked, Needs you
+        self.assertEqual(self.status(), ("working", None, None))
+        # asking with its question tool or a permission: blocked, Needs you at once
         self.assertEqual(self.status([dict(self.idle[0], status={"state": "blocked"})])[:2], ("needs", "asks"))
+        # its shell ended: the question is the person's now
+        self.finished(-100_000)
+        self.assertEqual(self.status()[:2], ("needs", "reply"))
 
     def test_idle_with_nothing_running_needs_you(self):
         self.say(-200_000, "Done with the first part.")
@@ -1148,10 +1157,22 @@ class NoFalseNeedsYou(unittest.TestCase):
         self.assertEqual(self.agents.GRACE_MS, 20_000)
         agent = lambda a: {"address": a["address"], "status": {"state": a["status"]}, "turn": a["turn"],
                            "labels": {"herdr.role": a["role"]}, **({"status_ms": a["since"]} if "since" in a else {})}
-        with self.mock.patch.object(self.agents, "now", lambda: g["now"]):
-            for c in g["cases"]:
-                got = self.agents.task_status(dict(c["task"], id=7), [agent(a) for a in c["live"]])
+        with self.mock.patch.object(self.agents, "now", lambda: g["now"]), \
+                self.mock.patch.object(self.agents, "held_ask", lambda address: None):
+            for i, c in enumerate(g["cases"]):
+                task = dict(c["task"], id=7)
+                if "log" in c:
+                    # SHEP-148: an agent's real state, its session log written as Claude Code writes it
+                    log = os.path.join(self.dir, f"case{i}.jsonl")
+                    with open(log, "w") as f:
+                        f.write("".join(json.dumps(d, ensure_ascii=False, separators=(",", ":")) + "\n" for d in c["log"]))
+                    task["agents"] = [dict(a, log=log) for a in task["agents"]]
+                live = [agent(a) for a in c["live"]]
+                got = self.agents.task_status(task, live)
                 self.assertEqual(got[:2], (c["expect"]["status"], c["expect"]["needs"]), c["name"])
+                # core reads task.own_work: what herdr-task's scheduler keeps from that same log
+                if "own_work" in c["task"]:
+                    self.assertEqual(self.agents.own_work(task, live, ready=task["state"] == "ready"), c["task"]["own_work"], c["name"])
 
     def test_a_quiet_agent_needs_you_once_the_grace_is_over(self):
         self.say(-3_000, "Done with the first part.")
@@ -1403,9 +1424,9 @@ class WorkersOwnHelpers(OwnBackgroundWork):
         self.reviewer["status"] = "working"
         self.say(-200_000, "Codex reviews it now.")
         self.assertEqual(self.status(), ("working", None, None))
-        # asking the person still needs them
+        # a plain question while its reviewer still works: no ask yet (SHEP-148), Working
         self.say(-100_000, "Should I also update the docs?")
-        self.assertEqual(self.status()[:2], ("needs", "reply"))
+        self.assertEqual(self.status(), ("working", None, None))
         # the review over: quiet again
         self.lines[:] = self.lines[:1]
         self.say(-100_000, "Done.")
@@ -2166,7 +2187,7 @@ class CleanEnv(unittest.TestCase):
 
     def agent_env(self, argv):
         """What the agent at the end of a launch argv sees, started from a parent environment with the markers."""
-        out = subprocess.run(argv, env={"PATH": os.environ["PATH"], **self.MARKERS, **self.KEPT}, capture_output=True, text=True, timeout=20)
+        out = subprocess.run(argv, env={"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], **self.MARKERS, **self.KEPT}, capture_output=True, text=True, timeout=20)
         self.assertEqual(out.returncode, 0, out.stderr)
         return dict(l.split("=", 1) for l in out.stdout.splitlines() if "=" in l)
 
@@ -2434,7 +2455,11 @@ class AutomationFromAnotherMachine(unittest.TestCase):
                 if not self.b_up:
                     return subprocess.CompletedProcess(argv, 1, "", "hc: vmb: connection refused\n")
                 rest = argv[argv.index("--on") + 2:]
-                return real_run([sys.executable, os.path.join(BIN, "herdr-task"), *rest], env=self.b_env, **kw)
+                # on this run's throwaway HOME herdr-task refuses hc (base.not_real): B's hc is a fake, so let it
+                b = ("import sys, runpy; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]);"
+                     "import herdr_task.base as base; base.not_real = lambda: None;"
+                     "sys.argv = sys.argv[2:]; runpy.run_path(sys.argv[0], run_name='__main__')")
+                return real_run([sys.executable, "-c", b, BIN, os.path.join(BIN, "herdr-task"), *rest], env=self.b_env, **kw)
             return real_run(argv, **kw)
 
         def begin(s, t, argv, space, parent=None):
@@ -3391,7 +3416,7 @@ class CodexAsksOnTheCard(unittest.TestCase):
     """SHEP-91: a Codex worker's PermissionRequest hook (`herdr-task _allow`) allows its own commands, and hands anything
     else to the chat's card (ask-hook.sh, marked HERDR_ASK_CHAINED), waiting as long as the card does."""
 
-    def run_allow(self, command, hook):
+    def run_allow(self, command, hook, home=None):
         app = tempfile.mkdtemp()
         if hook is not None:
             os.makedirs(os.path.join(app, "mods", "chat"))
@@ -3400,7 +3425,9 @@ class CodexAsksOnTheCard(unittest.TestCase):
         code = ("import sys, types, argparse; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]);"
                 "from herdr_task.launch import cmd_allow; cmd_allow(argparse.Namespace(command='/x/herdr-task'))")
         req = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "turn_id": "t1"})
-        env = {**os.environ, "HERDR_APP_HOME": app}
+        # its own HOME too: else, with no hook in the app home, cmd_allow falls back to ~/.local/share/herdr/ask's
+        # copy, and the real one files a real card for this test and waits on it forever (SHEP-147)
+        env = {**os.environ, "HERDR_APP_HOME": app, "HOME": home or app}
         env.pop("HERDR_ASK_CHAINED", None)
         return subprocess.run([sys.executable, "-c", code, BIN], input=req, capture_output=True, text=True, env=env)
 
@@ -3416,6 +3443,72 @@ class CodexAsksOnTheCard(unittest.TestCase):
         # no card answer (answered in the terminal, or no chat hook installed): no decision, Codex asks itself
         self.assertEqual(self.run_allow("rm -rf build", "exit 0").stdout, "")
         self.assertEqual(self.run_allow("rm -rf build", None).stdout, "")
+
+    def test_without_an_app_hook_the_synced_copy_answers(self):
+        """SHEP-147: a machine that only runs tasks has no app-home hook; cmd_allow falls back to the copy a sync left in
+        ~/.local/share/herdr/ask. It is HOME's own: a test's HOME, never the person's real one."""
+        home = tempfile.mkdtemp()
+        ask = os.path.join(home, ".local", "share", "herdr", "ask")
+        os.makedirs(ask)
+        with open(os.path.join(ask, "ask-hook.sh"), "w") as f:
+            f.write('[ "$HERDR_ASK_CHAINED" = 1 ] || exit 0; '
+                    'echo \'{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"synced"}}}\'')
+        out = self.run_allow("rm -rf build", None, home=home)
+        self.assertEqual(json.loads(out.stdout)["hookSpecificOutput"]["decision"]["message"], "synced", out.stderr)
+        # neither: nothing answers, and no other home's copy is asked
+        self.assertEqual(self.run_allow("rm -rf build", None, home=tempfile.mkdtemp()).stdout, "")
+        # this run itself: a throwaway HOME, so no test can reach the real copy (test/home_guard.py)
+        self.assertNotEqual(os.path.realpath(os.path.expanduser("~")), home_guard.REAL)
+
+    def test_a_claude_worker_asks_on_the_card_too(self):
+        # SHEP-139: a Claude worker's question tool (AskUserQuestion) reached the card only where ~/.claude/settings.json
+        # had Herdr's hook: a machine that only runs tasks (synced herdr-task, no Herdr app) showed just "Open terminal".
+        # Its launch now carries the same hook as Codex's, in its --settings, once, beside what was there.
+        sys.path.insert(0, BIN)
+        from herdr_task import launch
+        argv = launch.own_argv(["claude", "--settings", json.dumps({"fastMode": False, "hooks": {"Stop": [{"hooks": []}]}}), "go"])
+        st = json.loads(argv[argv.index("--settings") + 1])
+        [entry] = st["hooks"]["PermissionRequest"]
+        self.assertIn(" _allow --command ", entry["hooks"][0]["command"])
+        self.assertEqual(entry["hooks"][0]["timeout"], launch.ASK_TIMEOUT)
+        self.assertFalse(st["fastMode"])
+        self.assertIn("Stop", st["hooks"])
+        # resumed (its argv given again): still one hook, and its allow rules not repeated
+        again = launch.own_argv(argv)
+        st2 = json.loads(again[again.index("--settings") + 1])
+        self.assertEqual(len(st2["hooks"]["PermissionRequest"]), 1)
+        self.assertEqual(st2["permissions"]["allow"], st["permissions"]["allow"])
+        # no --settings of its own: one is added
+        plain = launch.own_argv(["claude", "go"])
+        self.assertIn("PermissionRequest", json.loads(plain[2])["hooks"])
+
+    def test_the_card_hook_where_only_tasks_run(self):
+        # no Herdr app home here: the copy a sync left in ~/.local/share/herdr/ask is the card's hook
+        home = tempfile.mkdtemp()
+        os.makedirs(os.path.join(home, ".local", "share", "herdr", "ask"))
+        hook = os.path.join(home, ".local", "share", "herdr", "ask", "ask-hook.sh")
+        with open(hook, "w") as f:
+            f.write("exit 0\n")
+        code = ("import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]);"
+                "from herdr_task.launch import ask_hook; print(ask_hook())")
+        env = {**os.environ, "HOME": home, "HERDR_APP_HOME": os.path.join(home, "none")}
+        out = subprocess.run([sys.executable, "-c", code, BIN], capture_output=True, text=True, env=env)
+        self.assertEqual(out.stdout.strip(), hook, out.stderr)
+
+    def test_a_sync_takes_the_card_hook_along(self):
+        sys.path.insert(0, BIN)
+        from herdr_task import machines
+        app = tempfile.mkdtemp()
+        os.makedirs(os.path.join(app, "mods", "chat"))
+        for name in ("ask-hook.sh", "ask-end.py"):
+            with open(os.path.join(app, "mods", "chat", name), "w") as f:
+                f.write(f"# {name}\n")
+        from unittest import mock
+        with mock.patch.object(machines, "APP_HOME", app):
+            files = {f["path"]: f for f in machines.manifest()["files"]}
+        self.assertEqual(files[".local/share/herdr/ask/ask-hook.sh"]["data"], b"# ask-hook.sh\n")
+        self.assertEqual(files[".local/share/herdr/ask/ask-hook.sh"]["mode"], 0o755)
+        self.assertIn(".local/share/herdr/ask/ask-end.py", files)
 
     def test_codex_waits_as_long_as_the_card(self):
         sys.path.insert(0, BIN)

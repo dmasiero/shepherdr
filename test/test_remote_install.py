@@ -2,6 +2,7 @@
 rewrites `#!/usr/bin/env python3` and `#!/bin/sh` to Nix store paths, so copies sent on as they were
 didn't run on a machine without that store (a Mac). Everything that sends a script gets a portable
 first line back (base.portable_script, with verbatim copies in the two helpers that stand alone)."""
+import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
 import ast
 import base64
 import hashlib

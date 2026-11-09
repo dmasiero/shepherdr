@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { join } from "node:path";
 import type { Hub } from "./hub.ts";
-import { HOME, appHome, writable } from "./paths.ts";
+import { HOME, appHome, where, writable } from "./paths.ts";
 import { sh } from "./model.ts";
 import * as AG from "../core/agents.js";
 import { kindOf } from "../core/chat-reader.js";
@@ -22,7 +22,7 @@ export class Agents {
   constructor(private hub: Hub) {}
 
   /** The person's pinned and recent models (core/agents.js PICKS_FILE), as the window's model menu keeps them here */
-  private picksPath = join(HOME, PICKS_FILE);
+  private picksPath = where()["model-picks"];
   picks() {
     try { return parsePicks(readFileSync(this.picksPath, "utf8")); } catch { return parsePicks(""); }
   }
@@ -141,7 +141,7 @@ export class Agents {
       let out: any = {};
       try { out = JSON.parse(r.out || "{}"); } catch {}
       if (r.code !== 0 || !out.terminal) throw new Error((r.err || r.out).trim() || "herdr-task switch failed");
-      if (pane) await run(["hc", "label", out.terminal, `herdr.chat=${pane}`, `herdr.chat.origin=${t.labels?.["herdr.chat.origin"] || addr}`]);
+      if (pane) await run([process.env.SHEPHERDR_HC || "hc", "label", out.terminal, `herdr.chat=${pane}`, `herdr.chat.origin=${t.labels?.["herdr.chat.origin"] || addr}`]);
       await run(["herdr-app", "do", "terminal.park", "--terminal", out.terminal]);
       this.used(pick);
       return out.terminal as string;

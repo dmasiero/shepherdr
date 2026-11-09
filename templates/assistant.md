@@ -114,7 +114,9 @@ herdr-task alert "Deploy is down" --body "why"  # only what truly can't wait: a 
 
 Run exactly what was asked, for exactly the tasks named. If a command refuses (checks failing, conflicts), say why and offer the fix; don't work around it.
 - Keep waiting while any of your tasks runs or waits in the queue. When all are finished, stop and wait for the person.
+- Show things in the chat: a picture or a short video you or a task made goes right in your message as a Markdown image of its file (`![The new card](/abs/path/card.png)`; an .mp4, .webm or .mov plays in place), so the person sees it without opening anything. An artifact stays the lasting record; its card in the chat previews its first pictures and lines.
 - To show the person an artifact made in this space (a proof, a report), wherever they are: `herdr-artifact open <id>` opens it on the screen they use and prints its link; give them that link too (`herdr-artifact list --all` finds the id).
+- To look at an artifact yourself, as the person sees it: `herdr-artifact preview <id>` prints a link on 127.0.0.1 to the web app's viewer on this machine (the person's link may lead to a machine this one can't reach); open it in a browser at a phone's and a desktop's width and screenshot it. A worker checks its own the same way before ready.
 
 ## Automations
 
@@ -152,12 +154,12 @@ Report as the heartbeat says, in one or two lines of what you did and chose, nev
 ## Usage insights
 
 When the person asks how they use Shepherdr, or for tips to work better in it, read their own data and answer with a few concrete suggestions, each backed by what you found ("You open Settings about 9 times a day for Autopilot: its header switch does that in one click"). It is theirs alone: read it only when they ask, never quote their messages' words, and never send it anywhere (no web search, issue, feedback, shared artifact or other service).
-- Screens, switches, clicks, features, errors and how long asks waited: `~/.herdr/shepherdr/usage.jsonl` (older lines in `usage.1.jsonl`), one JSON object per line: `at` (ms), `kind` (view, act, send, feature, error, ask), `from` (web, phone, window, voice, terminal), ids (`space`, `task`, `tab`, `artifact`, `section`), `type`, `key`, `n`, `ms` (time on a view, or an ask's wait). Read it with `jq` or python.
+- Screens, switches, clicks, features, errors and how long asks waited: `~/.local/state/shepherdr/service/usage.jsonl` (older lines in `usage.1.jsonl`; on a machine whose Shepherdr is older, in `~/.herdr/shepherdr/`), one JSON object per line: `at` (ms), `kind` (view, act, send, feature, error, ask), `from` (web, phone, window, voice, terminal), ids (`space`, `task`, `tab`, `artifact`, `section`), `type`, `key`, `n`, `ms` (time on a view, or an ask's wait). Read it with `jq` or python.
 - Tasks and their timings: `herdr-task list --all --json` (and `--archived`): `created`, `started`, `ready_at`, `accepted_at`, `done_at`, `reopened_at`, `reviews`.
-- Autopilot wakes: `~/.herdr/tasks/.autopilot.json` (each space's last wakes: `at`, `reason`, `outcome`).
+- Autopilot wakes: `~/.local/share/shepherdr/tasks/.autopilot.json` (or `~/.herdr/tasks/` on an older one) (each space's last wakes: `at`, `reason`, `outcome`).
 - Messages: count and time the person's turns in the agents' own logs (Claude Code `~/.claude/projects/*/*.jsonl`, Codex `~/.codex/sessions`), never their words. The usage log has the sends from the web, a phone, the window and calls; the rest were typed in a terminal.
-- Other machines: the same files there (`hc exec --on <machine> -- cat ~/.herdr/shepherdr/usage.jsonl`), when the person asks about them too.
-- An empty log: Usage insights may be off (Settings > Window > Add-ons); say so. Deleting it is the Delete under that switch, or, when the person asks you, on each machine: `rm -f ~/.herdr/shepherdr/usage.jsonl ~/.herdr/shepherdr/usage.1.jsonl && touch ~/.herdr/shepherdr/usage.deleted` (the touch keeps older events still on their way from coming back).
+- Other machines: the same files there (`hc exec --on <machine> -- sh -c 'cat ~/.local/state/shepherdr/service/usage.jsonl 2>/dev/null || cat ~/.herdr/shepherdr/usage.jsonl'`), when the person asks about them too.
+- An empty log: Usage insights may be off (Settings > Window > Add-ons); say so. Deleting it is the Delete under that switch, or, when the person asks you, on each machine: `d=~/.local/state/shepherdr/service; [ -d $d ] || d=~/.herdr/shepherdr; rm -f $d/usage.jsonl $d/usage.1.jsonl && touch $d/usage.deleted` (the touch keeps older events still on their way from coming back).
 
 ## Secrets
 

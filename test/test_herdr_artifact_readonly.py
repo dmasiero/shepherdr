@@ -1,6 +1,7 @@
 """herdr-artifact from a read-only install (fork, upstream #749): with Shepherdr's files read-only, as a Nix store makes
 them, publish still stages, checks (the light look rewrites the staged copies) and installs a recipe. Runs in a
 throwaway store with a fake herdr-app check; nothing real is installed."""
+import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
 import importlib.machinery
 import importlib.util
 import os

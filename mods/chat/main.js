@@ -30,9 +30,10 @@ import * as fs from "fs/promises";
 import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
 import { ChatReader, kindOf } from "./core/chat-reader.js"; // fork: kindOf (SHEP-28)
+import { preview } from "./core/recipe.js";
 import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
-import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
 import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE } from "./core/send.js";
 // hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
@@ -48,6 +49,8 @@ import { taskDot, ownProgress } from "./dot.js";
 import * as attach from "./attach.js";
 import * as slash from "./slash.js";
 import * as mentions from "./core/mentions.js";
+import { SH } from "./core/paths.js";
+import { dirsReady } from "./dirs.js";
 import * as agent from "./agent.js";
 import { cleanCommand } from "./core/clean-env.js";
 import { trustArgv } from "./core/claude-trust.js"; // fork: SHEP-28
@@ -56,7 +59,7 @@ import { Dictation, BUN_PATH, warmAudio } from "./dictate.js";
 
 // Writing down after Done this long says it's taking longer than usual (SHEP-63).
 const DICT_SLOW = 5000;
-import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, FILES as THREAD_FILES, CHANGES as THREAD_CHANGES, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
+import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
 import { ScreenWatch, screenStrips, openCard, cardsOf, starting, cliOf } from "./screens.js";
@@ -100,6 +103,8 @@ const ROUND = 28, TEXT_ROW = 34;
 // Image thumbnails: the box's files are squares this many px, this far apart; under sent
 // messages each image keeps its shape, fitted in THUMB_ONE (one image) or THUMB_MANY (w, h).
 const THUMB = 56, THUMB_GAP = 6;
+// An artifact's card in the chat: as wide as this at most (its pictures fit inside: peekOf()).
+const PEEK_W = 420;
 // The live row's level wave: each bar's width and the gap between bars, in px.
 const WAVE_BAR = 3, WAVE_GAP = 2;
 // ONE row under each message, its band (a list row of its own), on the message's side (left
@@ -179,6 +184,21 @@ const threadOf = (terminal) => Object.entries(threads()).find(([, v]) => v?.term
 async function answerAsk(dir, id, text, how) {
   if (how) await writeTextFile(`${dir}/end/${id}`, `${how}\n`, null).catch(() => {});
   await writeTextFile(`${dir}/ans/${id}.json`, text, null).catch(() => {});
+}
+// Another machine's asks (SHEP-139), as the service reads and answers them (service/asks.ts):
+// each request there still waiting for this terminal ($1) whose hook lives, one line each ("req",
+// its id, its JSON), then how each id given after it ended ("end", its id, the hook's words).
+const ASKS_THERE = 'd="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/chat-asks"';
+const REMOTE_LIST = `${ASKS_THERE}; t=$1; shift
+for f in "$d/req/$t".*.json; do [ -f "$f" ] || continue; n=\${f##*/}; n=\${n%.json}; [ -f "$d/ans/$n.json" ] && continue
+  kill -0 "\${n##*.}" 2>/dev/null || continue; printf 'req\\t%s\\t' "$n"; tr '\\n\\t' '  ' < "$f"; echo; done
+for n in "$@"; do [ -f "$d/end/$n" ] && printf 'end\\t%s\\t%s\\n' "$n" "$(head -n 1 "$d/end/$n")"; done; exit 0`;
+// An answer there: how it went, then the answer ($3) in place at once.
+const REMOTE_ANSWER = `${ASKS_THERE}; mkdir -p "$d/ans" "$d/end"; [ -f "$d/req/$1.json" ] || exit 3
+[ -z "$2" ] || printf '%s\\n' "$2" > "$d/end/$1"
+printf '%s' "$3" > "$d/ans/$1.json.tmp" && mv "$d/ans/$1.json.tmp" "$d/ans/$1.json"`;
+async function answerRemote(machine, id, text, how) {
+  await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_ANSWER, "x", id, how ?? "", text]).catch(() => {});
 }
 // The person's words keep the line breaks they typed: markdown joins single lines, so each one
 // becomes a hard break (outside code fences, which keep theirs). A "<word>" they typed shows as
@@ -493,7 +513,7 @@ export default class Chat extends View {
       this.anchor = null; this.pinned = true; this.stick = true;
       cx.notify();
     });
-    if (this.addr && !this.machine) cx.spawn(async (cx) => this.watchAsks(cx));
+    if (this.addr) cx.spawn(async (cx) => this.watchAsks(cx));
     // Keys (keys.json "mod:chat") and the header's buttons (pane-chat) for this chat.
     // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
     // cx use instead of staying in memory.
@@ -645,13 +665,56 @@ export default class Chat extends View {
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans" && touch "$1/open/$2"', "x", this.askDir, this.addr]);
   }
 
+  // One loop per chat, whichever agent it shows now: this machine's asks are watched in its
+  // folder, another machine's (SHEP-139: a task worker there) read over herdr-core's link.
   async watchAsks(cx) {
+    if (this.askLoop) return;
+    this.askLoop = true;
     await exec("sh", ["-c", 'mkdir -p "$1/open" "$1/req" "$1/ans"', "x", this.askDir]).catch(() => {});
     for (;;) {
+      if (!this.addr) { await cx.sleep(3000); continue; }
+      if (this.machine) {
+        await this.readRemoteAsks(cx).catch(() => {});
+        await cx.sleep(3000);
+        continue;
+      }
       await this.readAsks(cx);
       // One watch at a time, as for the log.
       this.askWatch ??= watchFolder(`${this.askDir}/req`).finally(() => { this.askWatch = null; });
       await Promise.race([this.askWatch, cx.sleep(5000)]);
+    }
+  }
+
+  // Another machine's agent (SHEP-139): its requests there that still wait (their hook alive),
+  // and how each card shown here ended, in one call (as the service's poll, service/asks.ts).
+  // Ids stay that machine's own (<terminal>.<time>.<pid>); its replies go back the same way.
+  async readRemoteAsks(cx) {
+    const machine = this.machine, local = this.addr.slice(machine.length + 1);
+    const r = await exec("hc", ["exec", "--on", machine, "sh", "-c", REMOTE_LIST, "x", local, ...this.asks.map((a) => a.id)]);
+    if (r.code !== 0 || this.machine !== machine) return;
+    const reqs = new Map(), ends = new Map();
+    for (const line of String(r.stdout ?? "").split("\n")) {
+      const [kind, id, ...rest] = line.split("\t");
+      if (!id || !/^[\w.-]+$/.test(id)) continue;
+      if (kind === "req") reqs.set(id, rest.join("\t"));
+      else if (kind === "end" && rest.join("\t").trim()) ends.set(id, rest.join("\t").trim());
+    }
+    const kept = this.asks.filter((a) => reqs.has(a.id));
+    for (const a of this.asks.filter((a) => !reqs.has(a.id))) this.askEnded(a, ends.get(a.id) || "No longer waiting");
+    let added = false;
+    for (const [id, text] of reqs) {
+      if (kept.some((a) => a.id === id)) continue;
+      let req = null;
+      try { req = JSON.parse(text); } catch {}
+      const w = req ? words(req) : { kind: "permission", title: "Claude asks for something the chat can't read", detail: "", unread: true };
+      kept.push({ id, req, words: w, machine });
+      added = true;
+    }
+    if (added || kept.length !== this.asks.length) {
+      this.asks = kept;
+      this.cards.keep(kept.map((a) => a.id));
+      if (added) this.askAlert();
+      cx.notify();
     }
   }
 
@@ -723,7 +786,8 @@ export default class Chat extends View {
     if (how) this.askEnded(ask, how);
     cx.notify();
     // A task worker's ask may show in its Assistant's chat too: that copy reads how it went.
-    cx.spawn(async () => answerAsk(this.askDir, ask.id, text, howAnswered(ask, text, this.thread || this.t?.labels?.["herdr.task"] ? "in the task's chat" : "in its chat")));
+    const where = howAnswered(ask, text, this.thread || this.t?.labels?.["herdr.task"] ? "in the task's chat" : "in its chat");
+    cx.spawn(async () => ask.machine ? answerRemote(ask.machine, ask.id, text, where) : answerAsk(this.askDir, ask.id, text, where));
   }
 
   // ---- a task worker's asks (an Assistant's chat) ---------------------------------------------
@@ -1578,7 +1642,7 @@ export default class Chat extends View {
     this.reset();
     this.phase = "finding";
     cx.spawn(async (cx) => this.follow(cx));
-    if (!this.machine) cx.spawn(async (cx) => this.watchAsks(cx));
+    cx.spawn(async (cx) => this.watchAsks(cx));
     cx.notify();
   }
 
@@ -1697,7 +1761,7 @@ export default class Chat extends View {
         cx.spawn(async () => { const paths = await attach.deliver(msg.files, this.addr, this.machine).catch(() => []); if (paths.length) await personHc(["send", this.addr, paths.join("\n")]); });
       }
       cx.spawn(async (cx) => this.follow(cx));
-      if (!this.machine) cx.spawn(async (cx) => this.watchAsks(cx));
+      cx.spawn(async (cx) => this.watchAsks(cx));
       cx.notify();
       // From the header's Terminal: show its terminal once it runs (the usual Chat → Terminal).
       if (thenTerminal) {
@@ -2401,7 +2465,7 @@ export default class Chat extends View {
     const panel = find(tree, "panel"), thread = shared("tasks.thread");
     const open = panel && !panel.hidden && find(tree, "panel-body")?.active === TASKS_STACK && find(tree, TASKS_STACK)?.active === THREAD && thread?.task;
     const m = open && String(thread.terminal ?? "").includes("/") ? String(thread.terminal).split("/")[0] : null;
-    const TAB = { [THREAD_CHAT]: "chat", [THREAD_TERM]: "terminal", [THREAD_FILES]: "files", [THREAD_CHANGES]: "changes", [THREAD_PR]: "pr", [THREAD_BROWSER]: "browser" };
+    const TAB = { [THREAD_CHAT]: "chat", [THREAD_TERM]: "terminal", [THREAD_PR]: "pr", [THREAD_BROWSER]: "browser" };
     const w = JSON.stringify({ place, task: open ? (m ? `${m}:${thread.task}` : String(thread.task)) : null, tab: open ? TAB[find(tree, THREAD_BODY)?.active] ?? "chat" : null });
     if (w === this.callWhereWas) return;
     this.callWhereWas = w;
@@ -2482,7 +2546,8 @@ export default class Chat extends View {
         return { ok: true };
       }
       openTaskThread(nav.addr, nav.ref ?? String(nav.task).split(":").pop(), nav.title ?? null);
-      const child = { terminal: THREAD_TERM, files: THREAD_FILES, changes: THREAD_CHANGES, pr: THREAD_PR, browser: THREAD_BROWSER }[nav.tab];
+      // no Files or Changes tab (SHEP-143): the service sends those as pr or chat
+      const child = { terminal: THREAD_TERM, pr: THREAD_PR, browser: THREAD_BROWSER }[nav.tab];
       if (child) { if (nav.tab === "terminal") requestWorkerTerminal(nav.addr); run("layout.select", { stack: THREAD_BODY, child }); }
       return { ok: true };
     }
@@ -2819,7 +2884,8 @@ export default class Chat extends View {
         // A published artifact: its card (the latest publish of it; earlier ones a line), or a
         // quiet line while the registry doesn't list it yet.
         const r = arts.get(x.id);
-        if (r) out.push({ kind: "artifact", id: x.id, art: r.id, title: r.title, text: r.title, version: r.version, v: r.v, line: !r.latest });
+        // its latest card shows its key pictures and first lines (peekOf: this machine's artifacts)
+        if (r) out.push({ kind: "artifact", id: x.id, art: r.id, title: r.title, text: r.title, version: r.version, v: r.v, line: !r.latest, ...(r.latest ? { peek: this.peekOf(r.id, r.version) } : {}) });
         else if (Date.now() - (x.at ?? 0) < 180000) out.push({ kind: "artifact", id: x.id, pending: true, text: "" });
         continue;
       }
@@ -2858,10 +2924,13 @@ export default class Chat extends View {
         continue;
       }
       if (x.kind === "agent") {
-        const ps = parts(x.text);
+        // The pictures and videos it named in its words (core/chat-view.js mediaIn, as the web app's chat): the
+        // pictures under its words as the person's are, each video a line that opens it (the window can't play one).
+        const md = mediaIn(x.text, { cwd: this.t?.foreground?.cwd ?? this.t?.cwd ?? null, home: this.machine ? null : home() });
+        const ps = md.text || !md.media.length ? parts(md.text || x.text) : [];
         const first = out.length;
         // A long reply: its first lines (the part where they end cut off there), then Show more.
-        const fold = this.foldOf(x, ps);
+        const fold = ps.length ? this.foldOf(x, ps) : null;
         const clip = (n) => (fold && !fold.open ? fold.clips.get(n) : undefined);
         if (ps.length === 1 && ps[0].type === "md") out.push(clip(0) ? { ...x, clip: clip(0) } : x);
         else ps.forEach((p, n) => {
@@ -2873,6 +2942,11 @@ export default class Chat extends View {
           }
         });
         if (fold) out.push({ kind: "fold", id: `fold:${x.id}`, of: x.id, open: fold.open });
+        const pics = md.media.filter((m) => m.kind === "image").map((m) => m.path);
+        // (another machine's pictures aren't here to draw: a line saying how many, as a person's the chat can't show)
+        if (pics.length && !this.machine) out.push({ kind: "imgs", id: `i:${x.id}`, paths: pics, left: true });
+        else if (pics.length) out.push({ kind: "video", id: `i:${x.id}`, path: null, text: imagesLine(pics.length), pics: true });
+        md.media.filter((m) => m.kind === "video").forEach((m, n) => out.push({ kind: "video", id: `v:${x.id}:${n}`, path: m.path, text: m.alt || m.name.replace(/\.[^.]+$/, "") }));
         // Every message of the agent's gets its own actions and reactions, also while it works;
         // only the one it may still be writing (the newest, while working) waits. The actions go
         // under its last row.
@@ -3021,7 +3095,7 @@ export default class Chat extends View {
     const found = q && String(x.text ?? x.code ?? "").toLowerCase().includes(q.toLowerCase()) ? `|f:${q}` : "";
     const open = (x.kind === "tools" || x.kind === "brief") && this.opened.has(x.id);
     const shown = open && x.steps ? x.steps.filter((s) => this.results.get(s.id) != null).length : 0;
-    return `${x.id}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}`;
+    return `${x.id}|${x.kind}${x.closed ? `.${x.closed}` : ""}|${open ? `o${x.steps?.length ?? 1}.${shown}` : ""}|${x.text?.length ?? x.code?.length ?? 0}|${x.from ? 1 : 0}${x.failed ? 1 : 0}${x.late ? 1 : 0}${x.waiting ? 1 : 0}${x.images ? 1 : 0}${x.files?.length ?? 0}|${x.paths?.length ?? 0}${x.paths?.every((p) => this.views[p]) ? "v" : ""}|${(x.pills ?? []).map((p) => p.emoji + (p.you ? 1 : 0) + (p.agent ? 1 : 0)).join("")}|${x.bar ? "b" : ""}${x.kind === "artifact" ? `|a${x.version ?? ""}${x.line ? "l" : ""}${x.pending ? "p" : ""}${x.peek ? `k${x.peek.paths.filter((p) => this.views[p]).length}.${x.peek.text.length}` : ""}` : ""}${x.kind === "tasknews" ? `|${x.accept ? "a" : ""}` : ""}${x.kind === "cardstrip" ? `|cs${x.sig}${x.first ? "F" : ""}${x.last ? "L" : ""}` : ""}|${x.clip ? `c${x.clip}` : ""}${x.open ? "o" : ""}${x.kind === "day" ? x.text : ""}|${x.top0 ? "T" : ""}${x.bot0 ? "B" : ""}${x.h ?? ""}${found}`;
   }
 
   // A row's height before it is measured: bands and gaps are as tall as spaced() made them.
@@ -3039,6 +3113,7 @@ export default class Chat extends View {
       case "replyref": return 22;
       case "chips": return 30;
       case "imgs": return this.fitThumbs(x.paths).h + 8;
+      case "video": return 24;
       case "codehead": return 34;
       case "code": return 16 + (x.clip ?? String(x.code).split("\n").length * 19);
       case "fold": case "queued": return 26;
@@ -3046,7 +3121,7 @@ export default class Chat extends View {
       case "user": case "pending": return 30 + lines(x.text, w * 0.8 - 24) * 20 + (x.from ? 17 : 0) + ((x.images || x.files?.length) ? 20 : 0);
       case "agent": return 30 + (x.clip ?? lines(x.text, w * 0.8 - 24) * 21);
       case "tools": return this.opened.has(x.id) ? 26 + x.steps.length * 19 : 20;
-      case "artifact": return x.pending || x.line ? 20 : 62;
+      case "artifact": return x.pending || x.line ? 20 : 62 + (x.peek?.paths?.some((p) => this.views[p]) ? fitThumbs(x.peek.paths.filter((p) => this.views[p]).map((p) => this.views[p]), PEEK_W - 22).h + 8 : 0) + (x.peek?.text ? 8 + Math.ceil((x.peek.text.length * 7) / (PEEK_W - 22)) * 18 : 0);
       case "tasknews": return x.accept ? 26 : 20;
       case "cardstrip": {
         const s = x.s, edge = (x.first ? 10 : s.gap ?? 8) + (x.last ? 10 : 0);
@@ -3183,8 +3258,14 @@ export default class Chat extends View {
           .when(open, (el) => el.child(div().pl(18).pt(6).text_size(12.5).text_color(t.muted)
             .child(TextView.markdown(`${pre}chat-brief-${x.id}`, literal(x.text) || " ").selectable(true)))), 12, 0);
       }
+      case "video":
+        // A video the agent showed: the window can't play one, so a line that opens it in the system's player (clickRow)
+        return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12.5).text_color(t.muted).rounded(8).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .child(svg(x.pics ? "mods/chat/paperclip.svg" : "mods/chat/play.svg").size(12).flex_none())
+          .child(div().min_w(0).truncate().child(x.pics ? x.text : videoLine(x.text))), 18, 2);
       case "imgs":
-        return col(h_flex().w_full().gap(THUMB_GAP).items_start().justify_end().when(Boolean(x.faded), (el) => el.opacity(0.55))
+        return col(h_flex().w_full().gap(THUMB_GAP).items_start().when(!x.left, (el) => el.justify_end()).when(Boolean(x.left), (el) => el.justify_start()).when(Boolean(x.faded), (el) => el.opacity(0.55))
           .children(this.fitThumbs(x.paths).boxes.map((b) => this.shot(t, b).cursor_pointer())), 18, 4);
       case "agent":
         return pad(theirs(x.text));
@@ -3240,15 +3321,23 @@ export default class Chat extends View {
         if (x.pending || x.line) return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12).text_color(t.dim).child(icon(12))
           .when(Boolean(x.art) && !x.pending, (el) => el.rounded(8).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.muted)))
           .child(div().min_w(0).truncate().child(x.pending ? WORDS.publishing : published(x.title, x.v))), 18, 0);
-        // The whole card opens it (rows take no handlers; clickRow).
-        return pad(h_flex().w_full().max_w(420).gap(10).items_center().px(10).py(8).rounded(10).cursor_pointer()
-          .bg(t.surface).border_1().border_color(t.border).hover((s) => s.bg(t.hover))
+        // The whole card opens it over this chat (rows take no handlers; clickRow): its title, "Artifact · v3" and Open,
+        // then its key pictures and first lines (core/recipe.js preview, as the web app's card).
+        const peek = x.peek;
+        const head = h_flex().w_full().gap(10).items_center()
           .child(div().size(32).flex_none().flex().items_center().justify_center().rounded(8).bg(t.raised).text_color(t.muted).child(icon(16)))
           .child(v_flex().flex_1().min_w(0).gap(1)
             .child(div().font_medium().text_color(t.foreground).truncate().child(x.title))
             .child(div().text_size(12).text_color(t.dim).child(artifactLine(x.version))))
           .child(h_flex().h(28).px(10).flex_none().items_center().rounded(7).border_1().border_color(t.input).bg(t.background)
-            .text_size(12.5).font_medium().text_color(t.foreground).child("Open")));
+            .text_size(12.5).font_medium().text_color(t.foreground).child("Open"));
+        const shots = peek?.paths?.filter((p) => this.views[p]) ?? [];
+        return pad(v_flex().w_full().max_w(PEEK_W).gap(8).px(10).py(8).rounded(10).cursor_pointer()
+          .bg(t.surface).border_1().border_color(t.border).hover((s) => s.bg(t.hover))
+          .child(head)
+          .when(shots.length > 0, (el) => el.child(h_flex().w_full().gap(THUMB_GAP).items_start()
+            .children(fitThumbs(shots.map((p) => this.views[p]), PEEK_W - 22).boxes.map((b, i) => this.shot(t, { ...b, path: shots[i] })))))
+          .when(Boolean(peek?.text), (el) => el.child(div().w_full().text_size(12.5).text_color(t.muted).child(peek.text))));
       }
       case "tasknews": {
         // A task's news line (newsLines()): its mark, the id, what happened, then its words, dim;
@@ -3360,13 +3449,21 @@ export default class Chat extends View {
       if (off >= 0 && off % (TASK + TASK_GAP) <= TASK && k) this.openTask(k.id);
     }
     else if (row.kind === "imgs") {
-      // Right-aligned thumbnails: which one the press was on (rows take no handlers of their own).
+      // Thumbnails, right-aligned (the person's) or left (the agent's): which one the press was on (rows take no
+      // handlers of their own).
       const x = this.pointer().x; // fork: at zoom 1 (SHEP-18)
-      const off = x === undefined ? -1 : this.edges().right - x;
       const boxes = this.fitThumbs(row.paths).boxes;
-      for (let i = boxes.length - 1, edge = 0; i >= 0 && off >= 0; edge += boxes[i].w + THUMB_GAP, i--)
-        if (off >= edge && off <= edge + boxes[i].w) { this.openImages(row.paths, i); break; }
+      if (row.left) {
+        const off = x === undefined ? -1 : x - this.edges().left;
+        for (let i = 0, edge = 0; i < boxes.length && off >= 0; edge += boxes[i].w + THUMB_GAP, i++)
+          if (off >= edge && off <= edge + boxes[i].w) { this.openImages(row.paths, i); break; }
+      } else {
+        const off = x === undefined ? -1 : this.edges().right - x;
+        for (let i = boxes.length - 1, edge = 0; i >= 0 && off >= 0; edge += boxes[i].w + THUMB_GAP, i--)
+          if (off >= edge && off <= edge + boxes[i].w) { this.openImages(row.paths, i); break; }
+      }
     }
+    else if (row.kind === "video") this.openVideo(row.path);
     cx.notify();
   }
 
@@ -3772,6 +3869,41 @@ export default class Chat extends View {
     openOverlay({ mod: "chat-image", kind: "popup", frame: "none", width, height, at, props: { textPath: f.path, title: f.name, width, height } });
   }
 
+  // A video the agent showed, in the system's player: the window can't play one. Another machine's is there, not
+  // here: the web app plays it.
+  openVideo(path) {
+    if (this.machine || !path) { toast({ title: "It's on another machine", body: "Open this chat in the web app to see it.", level: "info" }); return; }
+    const os = window()?.platform;
+    (os === "macos" ? exec("open", [path]) : os === "windows" ? exec("cmd", ["/c", "start", "", path]) : exec("xdg-open", [path])).catch(() => {});
+  }
+
+  // What an artifact's card shows of it: its key pictures (linked for image(): needViews) and its first lines, from its
+  // recipe on this machine (core/recipe.js preview, as the web app's card). Read once per version; null until then,
+  // and for another machine's (its card stays the title and Open).
+  peekOf(id, version) {
+    return this.machine || !id || !version ? null : this.peeks?.get(`${id}:${version}`) ?? null;
+  }
+
+  // Read for the latest cards in these rows that have no preview yet (asked once each; from render, so right after).
+  needPeeks(rows, cx) {
+    if (this.machine) return;
+    this.peeks ??= new Map();
+    const want = rows.filter((r) => r.kind === "artifact" && r.art && !r.line && !r.pending && !this.peeks.has(`${r.art}:${r.version}`));
+    if (!want.length) return;
+    for (const r of want) this.peeks.set(`${r.art}:${r.version}`, null);
+    cx.timer.after(0, (cx) => cx.spawn(async (cx) => {
+      for (const r of want) {
+        const dir = `${(await dirsReady()).artifacts}/files/${r.art}/v${r.version}`;
+        try {
+          const p = preview(JSON.parse(await readTextFile(`${dir}/recipe.json`)));
+          const text = p.lines.join(" · ").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>]+/g, "").trim();
+          this.peeks.set(`${r.art}:${r.version}`, { paths: p.images.map((src) => `${dir}/${src}`), text: text.length > 200 ? `${text.slice(0, 199)}…` : text });
+        } catch {}
+      }
+      cx.notify();
+    }));
+  }
+
   // The viewer (mods/chat-image) on these images, from the i-th.
   openImages(paths, i) {
     const all = paths.map((p) => this.views[p] ? { ...this.views[p], name: p.split("/").pop(), path: p } : null);
@@ -4064,7 +4196,7 @@ export default class Chat extends View {
     this.artsLoading = true;
     cx.spawn(async (cx) => {
       try {
-        const r = await exec("sh", ["-c", 'cd "$HOME/.herdr/artifacts" 2>/dev/null || exit 0; for f in *.json .*.json; do [ -f "$f" ] && cat "$f" && printf "\\n\\036\\n"; done; true'], this.machine ? { on: this.machine } : {});
+        const r = await exec("sh", ["-c", SH + 'cd "$SHEP_ARTIFACTS" 2>/dev/null || exit 0; for f in *.json .*.json; do [ -f "$f" ] && cat "$f" && printf "\\n\\036\\n"; done; true'], this.machine ? { on: this.machine } : {});
         const arts = [];
         for (const part of r.stdout.split("\x1e")) { try { arts.push(...(JSON.parse(part).artifacts ?? [])); } catch {} }
         this.arts = arts;
@@ -4259,7 +4391,8 @@ export default class Chat extends View {
     const current = found.length ? this.findRow(found) : null;
     if (this.findJump && current) { this.findJump = false; this.pinned = false; this.scroll.scroll_to_item(current.index, "center"); }
     const lit = new Set(found.map((m) => m.id));
-    this.needViews([...this.files.filter((f) => f.image).map((f) => f.path), ...rows.flatMap((r) => (r.kind === "imgs" ? r.paths : []))], cx);
+    this.needViews([...this.files.filter((f) => f.image).map((f) => f.path), ...rows.flatMap((r) => (r.kind === "imgs" ? r.paths : r.kind === "artifact" && r.peek ? r.peek.paths : []))], cx);
+    this.needPeeks(rows, cx);
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
     if (below !== this.below) { this.below = below; if (this.pinned) this.stick = true; }

@@ -152,14 +152,15 @@ function useKeyboard() {
 
 /* ---------- pieces of the frame ---------- */
 
-/** the sidebar's top row, as the window's (workspace-chrome-shepherdr): the mark and name, a search button (Jump,
- *  Ctrl+K) and the sidebar toggle */
+/** the sidebar's top row, as the window's (workspace-chrome-shepherdr): the mark and name, plugins' buttons (the voice
+ *  call, SHEP-135), a search button (Jump, Ctrl+K) and the sidebar toggle */
 export function Brand() {
   const snap = useSnap()!
   return (
     <div className="flex items-center gap-1 px-3.5 pt-3 pb-0.5 text-[0.9375rem] font-semibold desktop:pr-2.5 phone:px-5 phone:pt-3 phone:pb-1 phone:text-[1.125rem]">
-      <CrookIcon className="mr-1 size-6" />
+      <CrookIcon className="mr-0.5 size-6" />
       <span className="min-w-0 flex-1 truncate">{snap.name}</span>
+      {registry.sideHead.map((View, i) => <View key={i} />)}
       <SearchButton />
       <PlacesToggle when="open" />
     </div>
@@ -175,7 +176,7 @@ function SearchButton() {
   )
 }
 
-/** what plugins put at the top of the spaces list, above Spaces (the Shepherdr voice call's row) */
+/** what plugins put at the top of the spaces list, above Spaces (the voice call's card) */
 function SideTop() {
   return registry.sideTop.map((View, i) => <View key={i} />)
 }
@@ -534,17 +535,20 @@ function TaskPage({ task, middle, pane }: { task: Task; middle?: boolean; pane?:
       className={clsx('@container/task flex min-h-0 min-w-0 flex-1 flex-col border-line', !focus && !middle && 'border-l')}
     >
       <Head conversation>
-        {middle ? (
-          <>
-            <MenuButton />
-            <PlacesToggle when="closed" />
-          </>
-        ) : null}
-        {/* in a narrow column (the side's) Back is its arrow alone, so the title keeps the room */}
-        <button type="button" onClick={back} aria-label="Tasks" className="press-dim relative inline-flex h-7 shrink-0 items-center gap-0.5 rounded-full px-1.5 text-[0.8125rem] text-fg2 after:absolute after:-inset-y-2 after:inset-x-0 hover:bg-hover hover:text-fg @lg/task:pr-2.5">
-          <BackIcon className={ic} />
-          <span aria-hidden className="hidden @lg/task:inline">Tasks</span>
-        </button>
+        {/* at the task's left edge, in line with its tabs below, however wide the reading column centres the rest */}
+        <div className="to-task-gutter flex shrink-0 items-center gap-2.5">
+          {middle ? (
+            <>
+              <MenuButton />
+              <PlacesToggle when="closed" />
+            </>
+          ) : null}
+          {/* in a narrow column (the side's) Back is its arrow alone, so the title keeps the room */}
+          <button type="button" onClick={back} aria-label="Tasks" className="press-dim relative inline-flex h-7 shrink-0 items-center gap-0.5 rounded-full px-1.5 text-[0.8125rem] text-fg2 after:absolute after:-inset-y-2 after:inset-x-0 hover:bg-hover hover:text-fg @lg/task:pr-2.5">
+            <BackIcon className={ic} />
+            <span aria-hidden className="hidden @lg/task:inline">Tasks</span>
+          </button>
+        </div>
         <Dot s={task.status} p={task.report?.progress} halo />
         <Who name={task.name} kind={sub} />
         {/* its buttons close together, as a toolbar's, so the name keeps the room */}
@@ -565,7 +569,8 @@ function TaskTop({ back, task, sub, tools }: { back: () => void; task: Task; sub
   return (
     // under a bar at the top (offline, a call) the notch is already kept clear
     <div data-kb data-chrome className="relative flex shrink-0 items-center gap-2 border-b border-line px-3 pt-[calc(env(safe-area-inset-top)+6px)] pb-1.5 [[data-topbar]~*_&]:pt-1.5">
-      <RoundButton label="Tasks" onClick={back}>
+      {/* in line with the tabs and messages below (16px in); its status and title stay put */}
+      <RoundButton label="Tasks" onClick={back} className="ml-1 -mr-1">
         <BackIcon className={ic} />
       </RoundButton>
       <Dot s={task.status} p={task.report?.progress} halo />
