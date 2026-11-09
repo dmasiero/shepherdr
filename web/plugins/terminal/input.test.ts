@@ -110,22 +110,28 @@ test('the arrows take the sticky Ctrl and Alt, and Ctrl-C is the sticky Ctrl the
   expect(modText('c', ctrl)).toEqual([{ keys: ['ctrl+c'] }])
 })
 
-test('the extra-keys bar is Termux’s two rows of seven, each key with the input it sends (SHEP-26)', () => {
+test('the extra-keys bar is two rows of seven in groups, each key with the input it sends (SHEP-26, SHEP-32)', () => {
   expect(EXTRA_KEYS.map((row) => row.map((x) => x.label))).toEqual([
-    ['ESC', '/', '−', 'HOME', '↑', 'END', 'PGUP'],
-    ['TAB', 'CTRL', 'ALT', '←', '↓', '→', 'PGDN'],
+    ['ESC', 'TAB', 'PGUP', 'HOME', '↑', 'END', '−'],
+    ['CTRL', 'ALT', 'PGDN', '←', '↓', '→', 'ENTER'],
   ])
   const sent = (x: (typeof EXTRA_KEYS)[number][number], appCursor = false) =>
     'key' in x ? keyBytes([x.key], appCursor) : 'text' in x ? x.text : `mod:${x.mod}`
   expect(EXTRA_KEYS.flat().map((x) => sent(x))).toEqual([
-    '\x1b', '/', '-', '\x1b[H', '\x1b[A', '\x1b[F', '\x1b[5~',
-    '\t', 'mod:ctrl', 'mod:alt', '\x1b[D', '\x1b[B', '\x1b[C', '\x1b[6~',
+    '\x1b', '\t', '\x1b[5~', '\x1b[H', '\x1b[A', '\x1b[F', '-',
+    'mod:ctrl', 'mod:alt', '\x1b[6~', '\x1b[D', '\x1b[B', '\x1b[C', '\r',
   ])
   // in a full-screen program (application cursor mode) the arrows, HOME and END are SS3
   expect(EXTRA_KEYS.flat().filter((x) => 'key' in x && /up|down|left|right|home|end/.test(x.key) && !/page/.test(x.key)).map((x) => sent(x, true)))
     .toEqual(['\x1bOH', '\x1bOA', '\x1bOF', '\x1bOD', '\x1bOB', '\x1bOC'])
+  // no `/` any more: the phone's keyboard has it
+  expect(EXTRA_KEYS.flat().some((x) => x.label === '/')).toBe(false)
   // every name is unique: it is the button's key and what a screen reader says
   expect(new Set(EXTRA_KEYS.flat().map((x) => x.name)).size).toBe(14)
+  // ENTER takes the sticky modifiers too: ALT then ENTER is Esc then Enter, CTRL then ENTER plain Enter, both Esc, Enter
+  expect(keyBytes([withMods('enter', { ctrl: false, alt: true })], false)).toBe('\x1b\r')
+  expect(keyBytes([withMods('enter', { ctrl: true, alt: false })], false)).toBe('\r')
+  expect(keyBytes([withMods('enter', { ctrl: true, alt: true })], false)).toBe('\x1b\r')
   // the bar's keys take the sticky Ctrl and Alt: CTRL then HOME, ALT then PGUP, CTRL then / or −
   const ctrl = { ctrl: true, alt: false }, alt = { ctrl: false, alt: true }
   expect(keyBytes([withMods('home', ctrl), withMods('pageup', alt), withMods('end', ctrl)], false)).toBe('\x1b[1;5H\x1b[5;3~\x1b[1;5F')

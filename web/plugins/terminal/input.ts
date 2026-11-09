@@ -66,33 +66,36 @@ export const tapMod = (m: Mods, which: keyof Mods): Mods => ({ ...m, [which]: !m
  *  (`mod`), with its label and the name a screen reader says. */
 export type ExtraKey = { label: string; name: string } & ({ key: string } | { text: string } | { mod: keyof Mods })
 
-/** fork (SHEP-26): the phone's extra-keys bar, two rows of seven as Termux's, in place of SHEP-24's one-line key row.
- *  `−` is the hyphen-minus key; Ctrl-C is the sticky Ctrl then `c`, and Enter is on the phone's keyboard. */
+/** fork (SHEP-26, SHEP-32): the phone's extra-keys bar, two rows of seven as Termux's, in place of SHEP-24's one-line
+ *  key row. The keys go in groups: ESC, TAB and the sticky modifiers on the left, the page keys in a column, the arrows
+ *  as an inverted T with HOME and END beside ↑, and ENTER bottom-right where a keyboard has it. `−` is the hyphen-minus
+ *  key (the phone's keyboard has `/`); Ctrl-C is the sticky Ctrl then `c`. */
 export const EXTRA_KEYS: ExtraKey[][] = [
   [
     { label: 'ESC', name: 'Esc', key: 'esc' },
-    { label: '/', name: 'Slash', text: '/' },
-    { label: '−', name: 'Minus', text: '-' },
+    { label: 'TAB', name: 'Tab', key: 'tab' },
+    { label: 'PGUP', name: 'Page up', key: 'pageup' },
     { label: 'HOME', name: 'Home', key: 'home' },
     { label: '↑', name: 'Up', key: 'up' },
     { label: 'END', name: 'End', key: 'end' },
-    { label: 'PGUP', name: 'Page up', key: 'pageup' },
+    { label: '−', name: 'Minus', text: '-' },
   ],
   [
-    { label: 'TAB', name: 'Tab', key: 'tab' },
     { label: 'CTRL', name: 'Ctrl', mod: 'ctrl' },
     { label: 'ALT', name: 'Alt', mod: 'alt' },
+    { label: 'PGDN', name: 'Page down', key: 'pagedown' },
     { label: '←', name: 'Left', key: 'left' },
     { label: '↓', name: 'Down', key: 'down' },
     { label: '→', name: 'Right', key: 'right' },
-    { label: 'PGDN', name: 'Page down', key: 'pagedown' },
+    { label: 'ENTER', name: 'Enter', key: 'enter' },
   ],
 ]
 
 /** a key name with the engaged modifiers added: `up` with Ctrl is `ctrl+up`, the row's `ctrl+c` with Alt `ctrl+alt+c` */
 export function withMods(key: string, m: Mods) {
   const k = parseKey(key)
-  const ctrl = k.ctrl || m.ctrl
+  // fork (SHEP-32): a terminal has no Ctrl+Enter of its own, so the sticky Ctrl on Enter is plain Enter (`\r`)
+  const ctrl = (k.ctrl || m.ctrl) && k.base !== 'enter'
   const base = ctrl && /^[A-Z]$/.test(k.base) ? k.base.toLowerCase() : k.base
   return [ctrl && 'ctrl', (k.alt || m.alt) && 'alt', k.shift && 'shift', base].filter(Boolean).join('+')
 }
