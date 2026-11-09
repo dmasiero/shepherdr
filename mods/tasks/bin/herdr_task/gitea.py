@@ -207,18 +207,25 @@ def forge(s, remote_of):
     return g.get("target") if g.get("kind") == "gitea" else None
 
 
-def local_merge_refused(s, remote_of):
+def local_merge_refused(s, remote_of, ready=None):
     """Why a task in this repo can't merge here, or None: a Gitea repo merges only through its pull
     request (ready opens it), and one that says Gitea but tea can't reach never merges here. Read
-    now, without gh: GitHub's and other repos' answer is None."""
+    now, without gh: GitHub's and other repos' answer is None. ready: the task's ready command as
+    this herdr-task writes it (SHEP-35: an older copy's ready, as INF-19's brief named, opens none)."""
     if s.loc["kind"] != "repo":
         return None
     try:
         d = decide(s.loc["folder"], remote_of)
     except Fail as e:
         return f"Its repo says Gitea, but: {e}"
-    return ("Its repo is on Gitea, where it merges only through its pull request, which ready opens: ask its agent "
-            "to run ready again.") if d["kind"] == "gitea" else None
+    if d["kind"] != "gitea":
+        return None
+    if not ready:
+        return ("Its repo is on Gitea, where it merges only through its pull request, which ready opens: ask its agent "
+                "to run ready again.")
+    return ("Its repo is on Gitea, where it merges only through its pull request, which ready opens: ask its agent to run "
+            f"`{ready}` again, this herdr-task exactly (a copy from before Gitea support, as an older brief names, says "
+            "ready and opens none). It pushes the branch and opens the pull request, or says why it can't.")
 
 
 # ---- pull requests --------------------------------------------------------------------------

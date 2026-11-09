@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from .base import ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
+from .base import APP_HOME, ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
 from .settings import agent_key, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
 from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
@@ -52,9 +52,23 @@ def secret_path():
 
 def own_path():
     """This herdr-task as agents write it: the one on PATH when that is this file, else this file."""
-    me = ENTRY
+    me = installed_copy(ENTRY)  # fork: never a frozen Nix store copy (SHEP-35)
     found = shutil.which("herdr-task")
-    return found if found and os.path.realpath(found) == me else me
+    return found if found and os.path.realpath(found) == os.path.realpath(me) else me
+
+
+def installed_copy(me):
+    """Fork (SHEP-35, FORK.md): a herdr-task run from the Nix store is one release, frozen there (a
+    long-running process's HERDR_TASK_BIN kept 3.1.14's), so a brief naming it kept its agent on
+    that release's ready after every update (INF-19's said ready on Gitea and opened nothing). The
+    installed copy updates with each install: briefs and allow rules name that one when it's there."""
+    if not os.path.realpath(me).startswith(NIX_STORE):
+        return me
+    there = os.path.join(APP_HOME, "mods", "tasks", "bin", "herdr-task")
+    return there if os.path.isfile(there) and not os.path.realpath(there).startswith(NIX_STORE) else me
+
+
+NIX_STORE = "/nix/store/"
 
 
 def own_rules(path):
