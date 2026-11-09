@@ -8,12 +8,14 @@ import { exec, theme, shared, setShared } from "herdr";
 import { where, shown, PR } from "./taskwhere.js";
 // gh's answer in words, as the web app's Pull request reads it (core/worktree.js).
 import { PR_FIELDS, prOf, checksLine } from "./core/worktree.js";
+import { isGitea, giteaPr } from "./core/worktree.js"; // fork: Gitea pull requests through tea (core/worktree.js)
 
 const EVERY = 30000;
 
 // Asks gh: { pr } or { why } (nothing to show, and why) or { error }.
 async function ask(w) {
   const on = w.machine ?? undefined;
+  if (isGitea(w.pr)) return giteaPr((args) => exec("tea", args, { on }), w.pr); // fork: on Gitea
   let r;
   if (w.pr?.number && w.pr?.repo) {
     r = await exec("gh", ["pr", "view", String(w.pr.number), "--repo", w.pr.repo, "--json", PR_FIELDS], { on });
@@ -83,8 +85,9 @@ export default class PullRequest extends View {
     const res = this.key === JSON.stringify(where()) ? this.res : null;
     const root = v_flex().id("task-pr").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13);
     if (!where()) return root.child(this.note("No task open.", t));
-    if (!res) return root.child(this.note("Asking GitHub…", t));
-    if (!res.pr) return root.child(this.note(res.why ?? `GitHub didn't answer: ${res.error}`, t, Boolean(res.error)));
+    const forge = where().pr?.forge === "gitea" ? "Gitea" : "GitHub"; // fork: or Gitea
+    if (!res) return root.child(this.note(forge === "Gitea" ? "Asking Gitea…" : "Asking GitHub…", t));
+    if (!res.pr) return root.child(this.note(res.why ?? `${forge} didn't answer: ${res.error}`, t, Boolean(res.error)));
     const pr = res.pr;
     // A state is a soft tint with its word in the colour (red is for what needs you, so Closed is grey).
     const tone = { open: ["Open", t.ansi2], draft: ["Draft", t.muted], merged: ["Merged", t.ansi5], closed: ["Closed", t.muted] }[pr.state];
@@ -107,7 +110,7 @@ export default class PullRequest extends View {
             .child(svg("mods/workspace-chrome/git-branch.svg").size(12).flex_none())
             .child(div().min_w(0).truncate().child(`${pr.head} → ${pr.base}`)))
           .child(h_flex().gap(6).pt(4)
-            .child(this.button("task-pr-open", "mods/chat-image/external-link.svg", "Open on GitHub", t, (cx) => cx.open_url(pr.url)))
+            .child(this.button("task-pr-open", "mods/chat-image/external-link.svg", pr.forge === "gitea" ? "Open on Gitea" : "Open on GitHub", t, (cx) => cx.open_url(pr.url))) // fork: or Gitea
             .child(this.button("task-pr-copy", "mods/chat-image/copy.svg", this.copied === pr.url ? "Copied" : "Copy link", t, (cx) => {
               cx.write_to_clipboard(pr.url);
               this.copied = pr.url;

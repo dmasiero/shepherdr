@@ -4072,3 +4072,309 @@ class CodexAsksOnTheCard(unittest.TestCase):
         argv = launch.own_argv(["codex", "--sandbox", "workspace-write"])
         self.assertIn(f"timeout={launch.ASK_TIMEOUT}", argv[2])
         self.assertEqual(launch.ASK_TIMEOUT, 1800)
+
+
+FAKE_TEA = r'''#!/usr/bin/env python3
+"""A fake tea (Gitea's command line) for GiteaTasks: one login, one repo o/r, its pull requests kept
+in a JSON file and merged for real in a throwaway bare repo. Every call is logged."""
+import json, os, re, subprocess, sys
+STATE, LOG, BARE = sys.argv[0] + ".json", sys.argv[0] + ".log", os.environ["FAKE_TEA_BARE"]
+args = sys.argv[1:]
+with open(LOG, "a") as f:
+    f.write(json.dumps(args) + "\n")
+if args[:2] == ["login", "list"]:
+    print(json.dumps([{"name": "t", "url": "https://gitea.test", "ssh_host": "gitea.test", "user": "me", "default": "false"}]))
+    sys.exit(0)
+assert args[0] == "api" and args[1:3] == ["--login", "t"], args
+method = args[args.index("-X") + 1]
+path = args[-1]
+body = json.loads(sys.stdin.read()) if "-d" in args else None
+st = json.load(open(STATE)) if os.path.exists(STATE) else {"pulls": [], "comments": {}, "statuses": {}}
+git = lambda *a: subprocess.run(["git", "-C", BARE, *a], capture_output=True, text=True).stdout.strip()
+code, out = 200, None
+route, _, query = path.partition("?")
+q = dict(x.split("=", 1) for x in query.split("&") if x)
+m = re.fullmatch(r"repos/o/r(?:/(.*))?", route)
+rest = m.group(1) or "" if m else None
+pull = lambda n: next((p for p in st["pulls"] if p["number"] == int(n)), None)
+def fresh(p):
+    if p["state"] == "open":
+        p["head"]["sha"] = git("rev-parse", "refs/heads/" + p["head"]["ref"]) or p["head"]["sha"]
+    return p
+if rest is None:
+    code, out = 404, {"message": "not found"}
+elif rest == "" and method == "GET":
+    out = {"default_merge_style": "merge"}
+elif rest == "pulls" and method == "GET":
+    rows = [fresh(p) for p in st["pulls"] if p["state"] == q.get("state", "open")]
+    out = rows if q.get("page", "1") == "1" else []
+elif rest == "pulls" and method == "POST":
+    sha = git("rev-parse", "refs/heads/" + body["head"])
+    n = len(st["pulls"]) + 1
+    p = {"number": n, "title": body["title"], "body": body["body"], "state": "open", "merged": False, "mergeable": True,
+         "html_url": f"https://gitea.test/o/r/pulls/{n}", "merge_commit_sha": None,
+         "head": {"ref": body["head"], "sha": sha, "repo_id": 1}, "base": {"ref": body["base"], "repo_id": 1}}
+    st["pulls"].append(p)
+    code, out = 201, p
+elif re.fullmatch(r"pulls/\d+", rest) and method == "GET":
+    p = pull(rest.split("/")[1])
+    code, out = (200, fresh(p)) if p else (404, {"message": "not found"})
+elif re.fullmatch(r"pulls/\d+", rest) and method == "PATCH":
+    p = pull(rest.split("/")[1]); p.update(body); out = p
+elif re.fullmatch(r"pulls/\d+/merge", rest) and method == "POST":
+    p = fresh(pull(rest.split("/")[1]))
+    if body.get("head_commit_id") != p["head"]["sha"]:
+        code, out = 409, {"message": "head out of date"}
+    else:
+        base, head = p["base"]["ref"], p["head"]["sha"]
+        tree = git("merge-tree", "--write-tree", "refs/heads/" + base, head).split()[0]
+        sha = git("commit-tree", tree, "-p", "refs/heads/" + base, "-p", head, "-m", f"Merge pull request #{p['number']}")
+        git("update-ref", "refs/heads/" + base, sha)
+        if body.get("delete_branch_after_merge"):
+            git("update-ref", "-d", "refs/heads/" + p["head"]["ref"])
+        p.update(state="closed", merged=True, merge_commit_sha=sha, style=body.get("Do"))
+elif re.fullmatch(r"pulls/\d+/reviews", rest):
+    out = []
+elif re.fullmatch(r"issues/\d+/comments", rest) and method == "POST":
+    st["comments"].setdefault(rest.split("/")[1], []).append(body["body"]); code, out = 201, {"id": 1}
+elif re.fullmatch(r"issues/\d+/comments", rest):
+    out = []
+elif re.fullmatch(r"commits/[0-9a-f]+/status", rest):
+    out = {"statuses": st["statuses"].get(rest.split("/")[1], []) if q.get("page", "1") == "1" else []}
+elif rest == "branch_protections":
+    out = []
+else:
+    code, out = 404, {"message": "no route " + rest}
+json.dump(st, open(STATE, "w"))
+sys.stderr.write(f"HTTP/1.1 {code} X\nContent-Type: application/json\n")
+print(json.dumps(out))
+'''
+
+FAKE_GH = r'''#!/usr/bin/env python3
+"""A fake gh for GiteaTasks' GitHub run: repo o/r on github.com, its pull requests in a JSON file."""
+import json, os, subprocess, sys
+STATE, LOG, BARE = sys.argv[0] + ".json", sys.argv[0] + ".log", os.environ["FAKE_TEA_BARE"]
+args = sys.argv[1:]
+with open(LOG, "a") as f:
+    f.write(json.dumps(args) + "\n")
+st = json.load(open(STATE)) if os.path.exists(STATE) else {"pulls": []}
+git = lambda *a: subprocess.run(["git", "-C", BARE, *a], capture_output=True, text=True).stdout.strip()
+val = lambda k: args[args.index(k) + 1]
+out = ""
+if args[:2] == ["repo", "view"]:
+    if not subprocess.run(["git", "remote"], capture_output=True, text=True).stdout.strip():
+        sys.exit("none of the git remotes configured for this repository point to a known GitHub host")
+    out = "o/r"
+elif args[:2] == ["pr", "list"]:
+    out = json.dumps([])
+elif args[:2] == ["pr", "create"]:
+    n = len(st["pulls"]) + 1
+    st["pulls"].append({"number": n, "head": val("--head"), "base": val("--base"), "state": "OPEN"})
+    out = f"https://github.com/o/r/pull/{n}"
+elif args[:2] == ["pr", "view"]:
+    p = st["pulls"][int(args[2]) - 1]
+    out = json.dumps({"state": p["state"], "mergeable": "MERGEABLE", "headRefOid": git("rev-parse", "refs/heads/" + p["head"]) or "x",
+                      "statusCheckRollup": [{"name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+                      "mergeCommit": {"oid": p.get("sha")} if p.get("sha") else None, "reviewDecision": "", "mergeStateStatus": "CLEAN"})
+elif args[:2] == ["pr", "merge"]:
+    p = st["pulls"][int(args[2]) - 1]
+    base = p["base"]
+    tree = git("merge-tree", "--write-tree", "refs/heads/" + base, "refs/heads/" + p["head"]).split()[0]
+    sha = git("commit-tree", tree, "-p", "refs/heads/" + base, "-m", f"squash #{p['number']}")
+    git("update-ref", "refs/heads/" + base, sha)
+    git("update-ref", "-d", "refs/heads/" + p["head"])
+    p.update(state="MERGED", sha=sha)
+json.dump(st, open(STATE, "w"))
+print(out)
+'''
+
+
+class GiteaTasks(unittest.TestCase):
+    """SHEP-33 (the fork's Gitea layer, FORK.md): a task in a repo whose remote is Gitea pushes its
+    branch on ready and opens a Gitea pull request through tea; the tick reads its checks; Accept
+    merges it on Gitea and tidies up. A GitHub repo and a local-only one go as before. A real
+    throwaway git repo (its remote a bare repo, reached through insteadOf so its address keeps the
+    forge's host); a fake tea first on PATH and a fake gh, never the real ones."""
+
+    def setUp(self):
+        from unittest import mock
+        import shutil
+        sys.path.insert(0, BIN)
+        import herdr_task.commands as commands
+        import herdr_task.github as github
+        import herdr_task.ghnews as ghnews
+        import herdr_task.tick as tick
+        self.commands, self.github, self.ghnews, self.tick = commands, github, ghnews, tick
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.bin, self.bare = os.path.join(self.root, "bin"), os.path.join(self.root, "remote.git")
+        self.main, self.wt = os.path.join(self.root, "repo"), os.path.join(self.root, "wt")
+        os.makedirs(self.bin)
+        for name, text in (("tea", FAKE_TEA), ("gh", FAKE_GH)):
+            with open(os.path.join(self.bin, name), "w") as f:
+                f.write(text)
+            os.chmod(os.path.join(self.bin, name), 0o755)
+        self.git(self.root, "init", "-q", "--bare", "-b", "main", self.bare)
+        self.git(self.root, "init", "-q", "-b", "main", self.main)
+        for k, v in (("user.name", "T"), ("user.email", "t@example.com"), ("commit.gpgsign", "false")):
+            self.git(self.main, "config", k, v)
+        self.git(self.main, "commit", "-q", "--allow-empty", "-m", "base")
+        self.clock = [50_000_000]
+        env = {"PATH": self.bin + os.pathsep + os.environ.get("PATH", ""), "FAKE_TEA_BARE": self.bare,
+               "GIT_CONFIG_GLOBAL": os.path.join(self.root, "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1"}
+        done = []
+        for p in (mock.patch.dict(os.environ, env), *(mock.patch.object(m, n, v) for m, n, v in (
+                (github, "GH", os.path.join(self.bin, "gh")), (github, "STORE", self.root),
+                (commands, "open_store", lambda args, write=True: self.store), (commands, "view", lambda s, t, live=None: dict(t)),
+                (commands, "say", lambda args, v, text=None: done.append(text)), (commands, "live_agents", lambda key: []),
+                (commands, "detail", lambda k: k), (commands, "review_refusal", lambda *a: None),
+                (commands, "find_proof", lambda *a: None), (commands, "task_settings", lambda *a: []),
+                (commands, "ready_turns", lambda *a: {}), (commands, "merge_policy", lambda *a: "ask"),
+                (commands, "tell", lambda *a: (_ for _ in ()).throw(AssertionError("asked an agent to merge here"))),
+                (commands, "finish", github.finish), (tick, "live_agents", lambda key: []),
+                (tick, "now", lambda: self.clock[0]), (commands, "now", lambda: self.clock[0]), (github, "now", lambda: self.clock[0]),
+                (ghnews, "now", lambda: self.clock[0]), (ghnews, "resting", lambda s, t: {"address": "t1"})))):
+            p.start()
+            self.addCleanup(p.stop)
+        os.environ.pop("HC_TERMINAL_ID", None)
+        self.said = done
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, check=True).stdout.strip()
+
+    def remote(self, url):
+        """origin at this address; pushes and fetches go to the bare repo (insteadOf), as on a real forge."""
+        self.git(self.main, "remote", "add", "origin", url)
+        self.git(self.main, "config", f"url.{self.bare}.insteadOf", url)
+        self.git(self.main, "push", "-q", "origin", "main")
+
+    def task(self):
+        self.git(self.main, "worktree", "add", "-q", "-b", "task/1", self.wt, "HEAD")
+        start = self.git(self.wt, "rev-parse", "HEAD")
+        with open(os.path.join(self.wt, "notes.txt"), "w") as f:
+            f.write("the change\n")
+        self.git(self.wt, "add", "notes.txt")
+        self.git(self.wt, "commit", "-q", "-m", "the change")
+        self.store = Store([{"id": 1, "title": "Notes", "state": "running", "mode": "worktree", "worktree": self.wt,
+                             "branch": "task/1", "base": "main", "start": start, "agents": []}])
+        self.store.loc["folder"] = self.main
+        return self.store.data["tasks"][0]
+
+    def args(self):
+        import argparse
+        return argparse.Namespace(id="SHEP-1", json=True, folder=None, summary="Notes added.", details=None, proof=None, agents_md=None)
+
+    def calls(self, name):
+        try:
+            with open(os.path.join(self.bin, name + ".log")) as f:
+                return [json.loads(x) for x in f]
+        except FileNotFoundError:
+            return []
+
+    def tea_state(self):
+        with open(os.path.join(self.bin, "tea.json")) as f:
+            return json.load(f)
+
+    def set_status(self, sha, state):
+        st = self.tea_state()
+        st["statuses"][sha] = [{"context": "ci", "status": state, "target_url": "/o/r/actions/runs/7/jobs/0"}]
+        with open(os.path.join(self.bin, "tea.json"), "w") as f:
+            json.dump(st, f)
+
+    def look(self, t):
+        self.clock[0] += 60_000
+        t["pr"]["checked"] = 0
+        self.tick.facts(self.store, t, {"attention": [], "done": []})
+
+    def test_gitea_ready_opens_a_pull_request_then_accept_merges_it_there(self):
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        tip = self.git(self.wt, "rev-parse", "HEAD")
+        self.commands.cmd_ready(self.args())
+        # pushed, and a Gitea pull request opened through tea
+        self.assertEqual(self.git(self.bare, "rev-parse", "refs/heads/task/1"), tip)
+        self.assertEqual(t["state"], "ready", t.get("attention"))
+        self.assertEqual({k: t["pr"][k] for k in ("number", "url", "repo", "forge", "login", "web")},
+                         {"number": 1, "url": "https://gitea.test/o/r/pulls/1", "repo": "o/r", "forge": "gitea", "login": "t",
+                          "web": "https://gitea.test"})
+        self.assertIn("pull request #1, https://gitea.test/o/r/pulls/1", self.said[-1])
+        self.assertIn("Gitea says it can merge", self.said[-1])
+        pr = self.tea_state()["pulls"][0]
+        self.assertEqual((pr["title"], pr["head"]["ref"], pr["base"]["ref"]), ("SHEP-1 Notes", "task/1", "main"))
+        self.assertIn("Notes added.", pr["body"])
+        # its checks show in the task, as GitHub's do: Working while they run, then Ready
+        self.set_status(tip, "pending")
+        self.look(t)
+        self.assertEqual(t["pr"].get("wait"), "Checks running")
+        self.set_status(tip, "failure")
+        self.look(t)
+        self.assertEqual(t["attention"], "Checks failing: ci.")
+        self.assertIn("Gitea news on pull request #1", t["pr"]["news"]["text"])
+        self.assertIn("https://gitea.test/o/r/actions/runs/7/jobs/0", t["pr"]["news"]["text"])
+        self.set_status(tip, "success")
+        self.look(t)
+        self.assertNotIn("wait", t["pr"])
+        self.assertNotIn("attention", t)
+        # Accept merges it on Gitea (a merge commit, its branch there deleted), then tidies up here
+        self.commands.cmd_accept(self.args())
+        self.assertEqual((t["state"], t.get("merged")), ("done", True))
+        merged = self.tea_state()["pulls"][0]
+        self.assertTrue(merged["merged"])
+        self.assertEqual(merged["style"], "merge")
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), merged["merge_commit_sha"])
+        self.assertEqual(self.git(self.main, "rev-parse", "main^2"), tip)
+        self.assertFalse(os.path.isdir(self.wt))
+        self.assertEqual(self.git(self.main, "branch", "--list", "task/1"), "")
+        self.assertEqual(self.git(self.bare, "branch", "--list", "task/1"), "")
+        self.assertEqual(self.calls("gh"), [], "gh is never asked about a Gitea repo")
+
+    def test_gitea_ready_twice_keeps_one_pull_request(self):
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.commands.cmd_ready(self.args())
+        t["state"] = "running"
+        self.commands.cmd_ready(self.args())
+        self.assertEqual(len(self.tea_state()["pulls"]), 1)
+        self.assertEqual(self.tea_state()["comments"]["1"], ["Notes added."])
+
+    def test_gitea_task_is_never_merged_here(self):
+        """No pull request (tea not logged in to its host): ready says why and Accept refuses the local merge."""
+        self.remote("ssh://git@gitea.other:2222/o/r.git")
+        self.git(self.main, "config", "shepherdr.forge", "gitea")
+        t = self.task()
+        before = self.git(self.main, "rev-parse", "main")
+        self.commands.cmd_ready(self.args())
+        self.assertIn("tea isn't logged in to gitea.other", t["attention"])
+        self.assertNotIn("pr", t)
+        t.pop("attention")
+        with self.assertRaises(self.commands.Fail) as e:
+            self.commands.cmd_accept(self.args())
+        self.assertIn("has no pull request yet", str(e.exception))
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), before)
+        self.assertEqual(t["state"], "ready")
+
+    def test_github_repo_goes_as_before(self):
+        self.remote("git@github.com:o/r.git")
+        t = self.task()
+        tip = self.git(self.wt, "rev-parse", "HEAD")
+        self.commands.cmd_ready(self.args())
+        self.assertEqual(t["pr"], {"number": 1, "url": "https://github.com/o/r/pull/1", "repo": "o/r", "checked": 0, "wait": "Checks running"})
+        self.assertIn("GitHub says it can merge", self.said[-1])
+        self.assertEqual(self.git(self.bare, "rev-parse", "refs/heads/task/1"), tip)
+        self.commands.cmd_accept(self.args())
+        self.assertEqual((t["state"], t.get("merged")), ("done", True))
+        merge = next(a for a in self.calls("gh") if a[:2] == ["pr", "merge"])
+        self.assertEqual(merge[:6], ["pr", "merge", "1", "--repo", "o/r", "--squash"])
+        self.assertIn("--delete-branch", merge)
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), self.git(self.bare, "rev-parse", "main"))
+        self.assertEqual(self.calls("tea"), [], "tea is never asked about a GitHub repo")
+
+    def test_local_repo_merges_here_as_before(self):
+        t = self.task()
+        tip = self.git(self.wt, "rev-parse", "HEAD")
+        self.commands.cmd_ready(self.args())
+        self.assertNotIn("pr", t)
+        self.commands.cmd_accept(self.args())
+        self.assertEqual((t["state"], t.get("merged")), ("done", True))
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), tip)
+        self.assertEqual(self.calls("tea"), [])

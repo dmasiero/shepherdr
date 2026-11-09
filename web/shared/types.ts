@@ -341,8 +341,8 @@ export interface Task {
   created: string
   /** its agent's job, while it works or pauses; none once it is done */
   report?: Report
-  /** its pull request on GitHub, once one is open */
-  pr?: { number: number; url: string }
+  /** its pull request on GitHub, once one is open (fork: forge "gitea" on Gitea) */
+  pr?: { number: number; url: string; forge?: 'gitea' }
   /** queued: the tasks it still waits for ("SHE-12", "vm-str:SHE-12" on another machine) */
   after?: string[]
   /** how it ended, for a task queued after it: done (merged, or closed with nothing to merge), stopped, failed */
@@ -1182,6 +1182,8 @@ export interface PullRequest {
   checks: PrCheck[]
   /** Missing access or unreadable checks is different from no checks reported. */
   checksError?: string
+  /** fork: on Gitea (through tea), not GitHub */
+  forge?: 'gitea'
 }
 
 /** what the side panel asks of a task's worktree */

@@ -6,6 +6,7 @@ import shutil
 
 from .base import Fail, GH, git, hc_json, now, run, STORE
 from .agents import agent_running, live_agents, live_helpers
+from . import gitea  # fork: Gitea pull requests through tea (gitea.py)
 
 
 # ---- GitHub ---------------------------------------------------------------------------------
@@ -22,6 +23,8 @@ def gh(*args, cwd=None):
 def github(s):
     """The repo on GitHub ("owner/name") when it has a GitHub remote and gh works there; asked
     again after an hour. None: tasks merge locally."""
+    if (target := gitea.forge(s, remote_of)):  # fork: or a Gitea target, before gh is asked (gitea.py)
+        return target
     if s.loc["kind"] != "repo" or not shutil.which(GH):
         return None
     g = s.data.get("github") or {}
@@ -45,6 +48,8 @@ def pr_open(s, task, repo, summary=None):
     ok, _, err = git(wt, "push", "--force-with-lease", "-u", remote_of(s.loc["folder"]), br)
     if not ok:
         raise Fail(f"Couldn't push {br}: {err}")
+    if gitea.is_target(repo):  # fork: the pull request is on Gitea (gitea.py)
+        return gitea.pr_open(s, task, repo, summary)
     pr = task.get("pr") or {}
     if pr.get("number"):
         ok, out, _ = gh("pr", "view", str(pr["number"]), "--repo", repo, "--json", "state", "-q", ".state")
@@ -80,6 +85,8 @@ def pr_adopt(task, repo):
     """The open pull request for the task's branch, opened by hand or by its agent, recorded on the
     task; None when there is none (SHEP-13: ready failed with "already exists"). Only one from this
     repo (never a fork's branch of the same name), into the task's base, at the branch's tip here."""
+    if gitea.is_target(repo):  # fork: on Gitea (gitea.py)
+        return gitea.pr_adopt(task, repo)
     ok, out, _ = gh("pr", "list", "--repo", repo, "--head", task["branch"], "--state", "open",
                     "--json", "number,url,isCrossRepository,baseRefName,headRefOid")
     tip_ok, tip, _ = git(task["worktree"], "rev-parse", task["branch"])
@@ -97,6 +104,8 @@ def pr_adopt(task, repo):
 def pr_merged(task, repo):
     """The merged pull request for the task's branch (from this repo, into its base), or None
     (SHEP-59: a squash merge leaves the branch's commits out of the base)."""
+    if gitea.is_target(repo):  # fork: on Gitea (gitea.py)
+        return gitea.pr_merged(task, repo)
     ok, out, _ = gh("pr", "list", "--repo", repo, "--head", task["branch"], "--state", "merged",
                     "--json", "number,url,isCrossRepository,baseRefName,headRefOid,mergeCommit")
     try:
@@ -141,7 +150,8 @@ def already_merged(s, task):
                 return {**task["pr"], "mergeCommit": v.get("mergeCommit")}
         found = pr_merged(task, repo)
         if found and found.get("headRefOid") == tip:
-            task["pr"] = {"number": found["number"], "url": found["url"], "repo": repo}
+            # fork: a Gitea one's record says so (gitea.py)
+            task["pr"] = gitea.record(repo, found) if gitea.is_target(repo) else {"number": found["number"], "url": found["url"], "repo": repo}
             return {**task["pr"], "mergeCommit": found.get("mergeCommit")}
     return {} if landed(s, task) else None
 
@@ -151,6 +161,8 @@ PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED
 
 
 def pr_view(task):
+    if gitea.on(task):  # fork: on Gitea, read through tea in gh's shape (gitea.py)
+        return gitea.pr_view(task)
     pr = task["pr"]
     ok, out, _ = gh("pr", "view", str(pr["number"]), "--repo", pr["repo"], "--json",
                     "state,mergeable,headRefOid,statusCheckRollup,mergeCommit,reviewDecision,mergeStateStatus")
@@ -282,7 +294,7 @@ MAIN_WATCH_MS = 3 * 3600000  # how long main is watched after a task merges thro
 def watch_main(s, task, sha=None):
     """A task just merged through its pull request: its base branch on GitHub is watched for a few
     hours (ghnews.main_pass), so the Assistant hears once if it goes red (as Shepherdr)."""
-    if not task.get("pr"):
+    if not task.get("pr") or gitea.on(task):  # fork: a Gitea base branch isn't watched (docs/gitea.md)
         return
     base = task.get("base") or "main"
     w = s.data.setdefault("main_watch", {}).setdefault(base, {})
