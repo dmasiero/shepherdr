@@ -341,8 +341,8 @@ export interface Task {
   created: string
   /** its agent's job, while it works or pauses; none once it is done */
   report?: Report
-  /** its pull request on GitHub, once one is open */
-  pr?: { number: number; url: string }
+  /** its pull request on GitHub, once one is open (fork: forge "gitea" on Gitea) */
+  pr?: { number: number; url: string; forge?: 'gitea' }
   /** queued: the tasks it still waits for ("SHE-12", "vm-str:SHE-12" on another machine) */
   after?: string[]
   /** how it ended, for a task queued after it: done (merged, or closed with nothing to merge), stopped, failed */
@@ -396,6 +396,8 @@ export interface Choice {
   description?: string
   /** the agent marked it (Recommended) */
   recommended?: boolean
+  /** what the agent drew to compare the options (a mockup, code), shown as its prompt shows it (SHEP-139) */
+  preview?: string
 }
 
 export interface Question {
@@ -557,8 +559,9 @@ export interface Message {
   /** why it waits: a menu is up (typed text could pick an option), the agent is starting, a CLI command waits for the
    *  turn to end, it is in the CLI's own queue until its next step, or nothing here: its machine is out of reach */
   waitsFor?: 'menu' | 'start' | 'turn' | 'queue'
-  /** an attached file: each one is a message of its own, right after the text it came with */
-  file?: { name: string; path: string }
+  /** an attached file: each one is a message of its own, right after the text it came with; an agent's picture or
+   *  video named in its words (core/chat-view.js mediaIn) comes the same way, with its Markdown words as alt */
+  file?: { name: string; path: string; alt?: string }
   /** the id the screen gave what you sent: it showed it at once, and this message takes its place */
   cid?: string
   /** what it answers: a short quote of that message, and its id while the chat still has it (a tap jumps to it) */
@@ -1179,6 +1182,8 @@ export interface PullRequest {
   checks: PrCheck[]
   /** Missing access or unreadable checks is different from no checks reported. */
   checksError?: string
+  /** fork: on Gitea (through tea), not GitHub */
+  forge?: 'gitea'
 }
 
 /** what the side panel asks of a task's worktree */
@@ -1224,6 +1229,16 @@ export interface Snapshot {
   /** the sidebar's sections, as Slack's, each with its spaces in the human's order: the top ones first (Pinned, id
    *  'pinned', among them), then each machine's, its machine in order (shared/order.ts) */
   sections?: Section[]
+  /** fork: the install on the machine that serves this isn't whole: what `shepherdr doctor` found last (SHEP-34) */
+  install?: InstallHeld
+}
+
+/** fork: doctor's last verdict when not whole (install-check.json): its problems, since when, and whether the sync to
+ *  other machines waits on it (SHEP-34) */
+export interface InstallHeld {
+  problems: string[]
+  since: number
+  held: boolean
 }
 
 export type Action =

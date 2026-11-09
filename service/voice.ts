@@ -10,16 +10,15 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Hub } from "./hub.ts";
-import { HOME } from "./paths.ts";
+import { HOME, appHome, where, writable } from "./paths.ts";
 import * as V from "../core/voice.js";
 import { secretBin } from "./secrets.ts";
 import { voiceTool, lookHere, shown, type Ack, type Nav, type VoiceIO, type Where } from "./voice-tools.ts";
 import { hearing, type HearIO } from "./voice-hear.ts";
 export type { ChatView } from "./voice-hear.ts";
 
-const { API, opening, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile, toolWords, turnGate } = V as any;
-const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
-const SECRETS = join(APP, "secrets");
+const { API, opening, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile, toolWords, turnGate, hangUpGuard, closeWords, HUNG_UP, REFUSED } = V as any;
+const secretsDir = () => join(appHome(), "secrets");
 
 const envFile = (file: string): Record<string, string> => { try { return envLines(readFileSync(file, "utf8")); } catch { return {}; } };
 
@@ -27,13 +26,13 @@ const envFile = (file: string): Record<string, string> => { try { return envLine
  *  secrets, read over herdr-core's link into memory only. */
 export function keyFor(hub: Pick<Hub, "call">) {
   return voiceKey({
-    oldFile: () => envFile(join(SECRETS, "elevenlabs.env")).ELEVENLABS_API_KEY || "",
+    oldFile: () => envFile(join(secretsDir(), "elevenlabs.env")).ELEVENLABS_API_KEY || "",
     where: async () => {
       const p = Bun.spawn([secretBin(), "where", "--json"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
       const out = await new Response(p.stdout).text();
       return (await p.exited) === 0 ? JSON.parse(out) : null;
     },
-    vault: () => { try { return readFileSync(join(HOME, ".herdr", "vault.json"), "utf8"); } catch { return null; } },
+    vault: () => { try { return readFileSync(where().vault, "utf8"); } catch { return null; } },
     machines: async () => ((await hub.call<{ machines: any[] }>("machine.list", {})).machines ?? [])
       .filter((m) => !m.temporary && m.state === "connected" && m.name).map((m) => String(m.name)),
     ask: async (on: string, script: string) => {
@@ -52,13 +51,13 @@ export async function api(path: string, key: string, init: RequestInit = {}) {
 
 /** The "Herdr chat" voice agent, up to this spec (core/voice.js ensureAgent); only its id, a tag of the key and the
  *  spec are kept here, never the key. */
-export function agentId(key: string, made = "", dir = SECRETS, call = api) {
+export function agentId(key: string, made = "", dir = secretsDir(), call = api) {
   const file = join(dir, "elevenlabs-agent.env");
   const tag = createHash("sha256").update(key).digest("hex").slice(0, 16);
   return ensureAgent({
     saved: envFile(file), tag, made,
     api: (path: string, init?: RequestInit) => call(path, key, init),
-    save: (id: string, spec: string) => { mkdirSync(dir, { recursive: true, mode: 0o700 }); writeFileSync(file, agentFile(id, tag, spec), { mode: 0o600 }); },
+    save: (id: string, spec: string) => { writable(file); mkdirSync(dir, { recursive: true, mode: 0o700 }); writeFileSync(file, agentFile(id, tag, spec), { mode: 0o600 }); },
   }) as Promise<string>;
 }
 
@@ -69,6 +68,8 @@ type Page = { send(x: string | Uint8Array): void; close(): void };
 export const HOLD_MS = 60_000;
 /** the calls on now, by their id (the page's to come back with; only for the same person) */
 const calls = new Map<string, { who: string; call: ReturnType<typeof voiceCall> }>();
+/** how many calls are on now (an update waits for none before the service starts again: SHEP-173) */
+export const callsOn = () => calls.size;
 /** a call a page comes back to, if it is still holding, for that person */
 export function callToResume(id: string, who: string) {
   const c = calls.get(id);
@@ -119,7 +120,7 @@ async function dialElevenLabs(hub: Hub) {
 /** The page's "where" message, checked: what it shows now. */
 export function pageWhere(m: any): Partial<Where> {
   const s = (v: unknown, n = 200) => (typeof v === "string" && v.length <= n ? v : null);
-  return { device: s(m.device, 20), place: s(m.place), task: s(m.task), tab: s(m.tab, 40), artifact: s(m.artifact), settings: m.settings === true };
+  return { device: s(m.device, 20), place: s(m.place), task: s(m.task), tab: s(m.tab, 40), artifact: s(m.artifact), settings: m.settings === true, ...(typeof m.full === "boolean" ? { full: m.full } : {}) };
 }
 
 /** One call: the page's audio to the voice agent and back. message(): a frame from the page; end(): the page went. */
@@ -146,6 +147,9 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
   // (SHEP-113: their ask comes first): updates wait for a quiet moment after it
   let heardAt = 0, speakUntil = 0, busy = 0;
   const turn = turnGate();
+  // SHEP-173: hang_up ends the call only right after the person's yes; once it may, the call closes after its last words
+  const guard = hangUpGuard();
+  let hangingUp = 0;
   const tell = (m: object) => { try { page?.send(JSON.stringify(m)); } catch {} };
   const toVoice = (m: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
   const here = () => { const s = io.snap(); return s ? lookHere(s, where) : ""; };
@@ -158,12 +162,23 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
     if (hold) clearTimeout(hold);
     clearInterval(watch);
     if (saying) clearTimeout(saying);
+    if (closing) clearInterval(closing);
     hear.stop();
     for (const done of [...waiting.values()]) done({ ok: false, why: "the call ended" });
     if (why) tell({ type: "error", message: why });
     try { ws?.close(); } catch {}
     try { page?.close(); } catch {}
     page = null;
+  };
+  // the agent hung up (the person's yes): its "Bye." plays out, then the call ends with no error (the page chimes)
+  let closing: ReturnType<typeof setInterval> | null = null;
+  const hangUp = () => {
+    if (closing || ended) return;
+    hangingUp = Date.now();
+    closing = setInterval(() => {
+      const t = Date.now();
+      if ((t - hangingUp > 1500 && t > speakUntil + 600) || t - hangingUp > 10000) { tell({ type: "ended" }); end(); }
+    }, 250);
   };
   calls.set(id, { who: deps.who ?? "", call: null as any });
   tell({ type: "call", id });
@@ -193,9 +208,10 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
         if (!/pcm_16000/.test(meta.agent_output_audio_format ?? "pcm_16000")) return end("The voice agent speaks in a format the page can't play.");
         tell({ type: "state", state: "listening" });
       }
-      else if (m.type === "user_transcript") { turn.seen("user_transcript"); tell({ type: "state", state: "thinking" }); }
+      else if (m.type === "user_transcript") { turn.seen("user_transcript"); guard.seen("user_transcript"); tell({ type: "state", state: "thinking" }); }
       else if (m.type === "agent_response") {
         turn.seen("agent_response");
+        guard.seen("agent_response", m.agent_response_event?.agent_response);
         // a word before a tool ("On it."): the call is still working on it
         tell(busy ? { type: "state", state: "working", doing } : { type: "state", state: "listening" });
         // what it said, for the call card (SHEP-105: the last thing the voice said)
@@ -210,6 +226,13 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
       else if (m.type === "interruption") { speakUntil = 0; tell({ type: "interrupt" }); }
       else if (m.type === "client_tool_call") {
         const c = m.client_tool_call ?? {};
+        guard.seen("client_tool_call", String(c.tool_name ?? ""));
+        if (c.tool_name === "hang_up") {
+          const may = guard.may();
+          toVoice({ type: "client_tool_result", tool_call_id: c.tool_call_id, result: may ? HUNG_UP : REFUSED, is_error: !may });
+          if (may) hangUp();
+          return;
+        }
         // SHEP-113: the call shows what it is doing, in plain words ("Working: checking tasks")
         doing = toolWords(String(c.tool_name ?? ""), c.parameters ?? {});
         turn.seen("client_tool_call");
@@ -228,13 +251,16 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
         }
       }
     };
-    ws.onerror = () => end("The voice connection failed.");
+    // an error is followed by its close, which says why
+    ws.onerror = () => {};
     ws.onclose = (e) => {
       if (ended) return;
-      // the voice agent ended the call (end_call after the person's yes, or a long silence): the page plays its last
-      // words, then closes the call without an error
-      if (e.code === 1000) tell({ type: "ended" });
-      end(e.code === 1000 ? null : `The call was closed (${e.code}${e.reason ? `: ${e.reason}` : ""}).`);
+      // the person said yes and the agent hung up: its last words play out, no note
+      if (hangingUp) { tell({ type: "ended" }); return end(); }
+      // SHEP-173: else it ended on its own (a limit, a long silence, the line): its last words play out, then the page
+      // says why in plain words ("Call ended: ...") with Call again
+      tell({ type: "ended", why: closeWords(e.code, e.reason) });
+      end();
     };
   })().catch((err) => end(String(err?.message ?? err)));
 

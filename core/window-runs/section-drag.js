@@ -31,6 +31,7 @@ const NAMES = "agents appHome closeOverlay exec focused hc home knownAgents layo
 const herdr = {
   ...Object.fromEntries(NAMES.map((n) => [n, noop])),
   shared: (k) => store[k], setShared: (k, v) => { store[k] = v; }, machines: () => [], spaces: () => ["s0", "s1", "s2"].map((id) => ({ id, machine: null, name: id, tabs: [] })), panes: () => [],
+  exec: async () => ({ stdout: "", stderr: "", code: 0 }), hc: async () => ({ stdout: "", stderr: "", code: 0 }),
   agents: () => [], terminals: () => [], knownAgents: () => [], props: () => null, layout: () => null, focused: () => null,
   theme: () => new Proxy({}, { get: () => "#000" }), settings: () => ({}), home: () => "/h", appHome: () => "/a",
 };

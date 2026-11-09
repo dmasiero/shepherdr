@@ -10,6 +10,7 @@
 // server holds the call (service/voice.ts HOLD_MS) and the page goes back to it on its own, then the agent says it's
 // back; nothing said before is lost.
 import { levelOf, meter, TALKING, type Sample } from '@client/meter.ts'
+import { chimePcm } from '@core/voice.js'
 
 let ws: WebSocket | null = null
 let mic: MediaStream | null = null
@@ -43,7 +44,8 @@ const RATE = 16000
 /** how long a dropped call keeps trying to get back (the server holds it 60 s) */
 export const RETRY_MS = 55_000
 
-type Handlers = { chatKey: string | null; onError: (message: string) => void; onNav: (nav: Nav) => NavAck | Promise<NavAck>; onOpen: () => void; onEnded: () => void }
+/** onEnded: the call ended by itself (why: in plain words, "the connection was lost"), or after the person's yes (no why) */
+type Handlers = { chatKey: string | null; onError: (message: string) => void; onNav: (nav: Nav) => NavAck | Promise<NavAck>; onOpen: () => void; onEnded: (why: string | null) => void }
 /** the lock screen's call controls: hang up, and mute (on: true mutes) */
 export type Controls = { title: string; hangUp: () => void; mute: (on: boolean) => void }
 
@@ -83,6 +85,15 @@ let waiting: ArrayBuffer[] = []
 /** what the voice agent asked to show (service/voice-tools.ts Nav), done by the page */
 export type Nav = { kind: string; [k: string]: unknown }
 
+/** SHEP-118, SHEP-124: whether a voice action that worked minimizes the full-screen call afterwards, so the person sees
+ *  what it did: not the call's own view (call_view), not a screen look, and not an action that itself made the call
+ *  full screen (a screen click on its Full screen button: it used to be minimized again at once) */
+export function stepsAside(nav: Nav, ok: boolean, fullBefore: boolean, fullAfter: boolean) {
+  if (!ok || nav.kind === 'call') return false
+  if (nav.kind === 'screen' && nav.do === 'look') return false
+  return !(fullAfter && !fullBefore)
+}
+
 /** what the page shows now, for the voice agent's "here" and "this task" (sent as it changes) */
 export function sendWhere(where: Record<string, unknown>) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'where', ...where }))
@@ -94,6 +105,46 @@ export type NavAck = { ok: boolean; why?: string; where?: Record<string, unknown
 /** WebKit's audio session (Safari 16.4+): "play-and-record" is a call, which iOS lets play and record in the background */
 type AudioSessionLike = { type: string; state?: string; onstatechange: ((e: Event) => void) | null }
 const audioSession = (): AudioSessionLike | null => (globalThis.navigator as unknown as { audioSession?: AudioSessionLike })?.audioSession ?? null
+
+/** fork: SHEP-30, a headset's button while Shepherdr is in the background (Android Chrome). Android gives a media
+ *  button to the app whose media session is active, and Chrome makes one (its "Voice call" notification, which takes
+ *  the button) only for a media element it counts: the voice's <audio> plays a MediaStream, which Chrome leaves out,
+ *  so a press away from the page went elsewhere. This one counts: a real file (a silent WAV, longer than Chrome's 5 s
+ *  for a "content" player), looping all call long, started in the call's tap and stopped at hang-up. Its presses come
+ *  to setLockScreen's pause/play, so press(). Not where WebKit's audioSession is (iOS: SHEP-102's call has its own
+ *  lock screen, and a second playing element there could pause the voice). */
+let hold: HTMLAudioElement | null = null
+let holdUrl: string | null = null
+export const HOLD_SECONDS = 10
+/** a mono 8 kHz 16-bit WAV of silence */
+export function silentWav(seconds = HOLD_SECONDS) {
+  const rate = 8000
+  const bytes = rate * seconds * 2
+  const v = new DataView(new ArrayBuffer(44 + bytes))
+  const tag = (at: number, s: string) => { for (let i = 0; i < 4; i++) v.setUint8(at + i, s.charCodeAt(i)) }
+  tag(0, 'RIFF'); v.setUint32(4, 36 + bytes, true); tag(8, 'WAVE')
+  tag(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true)
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true)
+  tag(36, 'data'); v.setUint32(40, bytes, true)
+  return new Blob([v.buffer], { type: 'audio/wav' })
+}
+function holdSession() {
+  dropHold()
+  if (audioSession() || typeof Audio === 'undefined' || typeof URL?.createObjectURL !== 'function') return false
+  const el = new Audio()
+  el.setAttribute('playsinline', '')
+  el.loop = true
+  el.src = holdUrl = URL.createObjectURL(silentWav())
+  hold = el
+  el.play().catch(() => undefined)
+  return true
+}
+function dropHold() {
+  if (hold) { hold.pause(); hold.removeAttribute?.('src'); hold.load?.() }
+  if (holdUrl) URL.revokeObjectURL(holdUrl)
+  hold = null
+  holdUrl = null
+}
 
 /** the call as the phone's audio session: a call (or back to the browser's own choice) */
 export function setSession(call: boolean) {
@@ -118,11 +169,38 @@ export function setLockScreen(c: Controls | null, isMuted = false) {
   } catch { /* no metadata here */ }
   set('hangup', c ? c.hangUp : null)
   set('stop', c ? c.hangUp : null)
-  set('togglemicrophone', c ? () => c.mute(!muted) : null)
-  set('pause', c ? () => c.mute(true) : null)
-  set('play', c ? () => c.mute(false) : null)
+  // fork: SHEP-29, a headset's button toggles mute. A wired headset's press (HEADSETHOOK / PLAY_PAUSE) comes as
+  // `pause` while the session plays, else `play`; the voice's <audio> element plays all call long, so the browser
+  // always reads it as playing (whatever playbackState says) and every press came as `pause`: the first muted, no
+  // press unmuted. Each of these is now one press that flips mute, whichever the browser sends. playbackState stays
+  // 'playing' for the whole call on purpose: the audio keeps its focus and the notification stays a live call, and
+  // its own pause/play button toggles mute the same way. AirPods and EarPods send play/pause alike on iOS.
+  set('togglemicrophone', c ? press : null)
+  set('pause', c ? press : null)
+  set('play', c ? press : null)
   const m = ms as MediaSession & { setMicrophoneActive?: (on: boolean) => Promise<void> }
   if (c) m.setMicrophoneActive?.(!isMuted)?.catch?.(() => undefined)
+}
+
+/** fork: SHEP-29, one press of a headset's button, or the lock screen's mute: mute flips through the call screen's
+ *  own path (Controls.mute: the mic, setMicrophoneActive and the screen's Mute agree). The same press can come twice
+ *  (the Media Session and a keydown): a second within PRESS_GAP_MS counts as the first. */
+export const PRESS_GAP_MS = 300
+let pressedAt = -Infinity
+function press() {
+  const c = controls
+  if (!c || !on) return
+  const now = Date.now()
+  if (now - pressedAt < PRESS_GAP_MS) return
+  pressedAt = now
+  c.mute(!muted)
+}
+/** the keys a headset's button gives a page that has the focus (a fallback where the Media Session doesn't take it) */
+const HEADSET_KEYS = new Set(['MediaPlayPause', 'HeadsetHook'])
+function headsetKey(e: KeyboardEvent) {
+  if (!on || !controls || !HEADSET_KEYS.has(e?.key) || e.repeat) return
+  e.preventDefault?.()
+  press()
 }
 
 /** the call's audio, going again: after an interruption, or the page back on screen */
@@ -130,6 +208,8 @@ function wakeAudio() {
   if (!ctx) return
   if (ctx.state !== 'running' && ctx.state !== 'closed') ctx.resume().catch(() => undefined)
   if (out?.paused) out.play().catch(() => undefined)
+  // fork: SHEP-30, the media session's element too (paused by another app's audio, say)
+  if (hold?.paused) hold.play().catch(() => undefined)
   // the phone ended the microphone (an interruption it never gave back): take it again
   if (mic && mic.getAudioTracks().every((t) => t.readyState === 'ended')) void takeMic()
 }
@@ -204,7 +284,7 @@ function connect(resume: boolean) {
       if (!play(e.data)) { stopCall(); h.onError('Voice audio could not keep up. Start a new call.') }
       return
     }
-    const m = JSON.parse(String(e.data)) as { type: string; id?: number | string; message?: string; state?: typeof phase; doing?: string; nav?: Nav; text?: string }
+    const m = JSON.parse(String(e.data)) as { type: string; id?: number | string; message?: string; state?: typeof phase; doing?: string; nav?: Nav; text?: string; why?: string }
     if (m.type === 'call' && typeof m.id === 'string') callId = m.id
     // back on the call: as it was, the agent says so
     if (m.type === 'resumed') { retryUntil = 0; retries = 0; phase = 'listening'; phaseAt = Date.now(); wakeAudio() }
@@ -229,13 +309,19 @@ function connect(resume: boolean) {
       phase = 'listening'
     }
     if (m.type === 'error') { ws = null; h.onError(m.message ?? 'The voice call could not start.') }
-    if (m.type === 'ended') over = true
+    if (m.type === 'ended') { over = true; overWhy = typeof m.why === 'string' ? m.why.slice(0, 200) : null }
   }
   sock.onclose = () => dropped(sock)
 }
 
-/** the voice agent ended the call (the person said yes, or a long silence): no error, its last words play out */
+/** SHEP-173: a muted call sends nothing; a word now and then keeps every hop (the service, the proxy) from taking the
+ *  socket for idle */
+setInterval(() => { if (on && ws?.readyState === WebSocket.OPEN) try { ws.send('{"type":"keep"}') } catch { /* gone */ } }, 20_000)
+
+/** the voice agent ended the call (the person said yes, or a limit): no error, its last words play out */
 let over = false
+/** why it ended by itself, in plain words (none: the person said yes) */
+let overWhy: string | null = null
 
 /** The socket went. The agent's goodbye: its last words play out. Else the call holds on the server: back to it
  *  quietly (sooner once the page is on screen or online again), until it's clearly gone. */
@@ -247,15 +333,16 @@ function dropped(sock: WebSocket) {
   if (over) {
     muted = true
     const left = ctx ? Math.max(0, playAt - ctx.currentTime) : 0
-    setTimeout(() => { if (on === h) { stopCall(); h.onEnded() } }, Math.min(10000, left * 1000 + 300))
+    const why = overWhy
+    setTimeout(() => { if (on === h) { stopCall(); h.onEnded(why) } }, Math.min(10000, left * 1000 + 300))
     return
   }
   // never got going: nothing to go back to
-  if (!callId) { stopCall(); h.onError('The voice connection failed. Start a new call.'); return }
+  if (!callId) { stopCall(); h.onError('The voice connection failed.'); return }
   phase = 'reconnecting'
   phaseAt = Date.now()
   if (!retryUntil) retryUntil = Date.now() + RETRY_MS
-  if (Date.now() > retryUntil) { stopCall(); h.onError('The voice call lost its connection. Start a new call.'); return }
+  if (Date.now() > retryUntil) { stopCall(); h.onEnded('the connection was lost'); return }
   // what it was saying is gone (the agent says again what was missed)
   sources.forEach((s) => s.stop())
   sources = []
@@ -277,17 +364,23 @@ if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && comeBack())
   addEventListener('online', comeBack)
   addEventListener('pageshow', comeBack)
+  // fork: SHEP-29, a headset's button while the page has the focus (does nothing without a call)
+  addEventListener('keydown', headsetKey as EventListener)
 }
 
 
-export async function startCall(chatKey: string | null, onError: (message: string) => void = () => undefined, onNav: (nav: Nav) => NavAck | Promise<NavAck> = () => ({ ok: false, why: 'this page can\'t open things' }), onOpen: () => void = () => undefined, onEnded: () => void = () => undefined, lock: Controls | null = null) {
+export async function startCall(chatKey: string | null, onError: (message: string) => void = () => undefined, onNav: (nav: Nav) => NavAck | Promise<NavAck> = () => ({ ok: false, why: 'this page can\'t open things' }), onOpen: () => void = () => undefined, onEnded: (why: string | null) => void = () => undefined, lock: Controls | null = null) {
   stopCall()
   const h: Handlers = { chatKey, onError, onNav, onOpen, onEnded }
   on = h
   controls = lock
   over = false
+  overWhy = null
   // a call, to the phone: before the microphone, so its audio is set up as one from the start
   setSession(true)
+  // fork: SHEP-30, still in the tap that started the call: Chrome's media session, for the button in the background
+  // (its buttons at once, so Chrome's own pause can't stop it before the call is through)
+  if (holdSession()) setLockScreen(controls, muted)
   connect(false)
   // The microphone first, then the audio: an iPhone sets its sound up for playing only when the audio comes first,
   // and the microphone then sends silence. Its voice waits until the audio is there.
@@ -337,6 +430,35 @@ export function callSample(): Sample {
   return { level: Math.max(agent, you), who: null }
 }
 
+/** SHEP-173: the end chime, as the call's last sound: through the call's own audio (its <audio> element plays on in
+ *  the background on a phone), then that audio closes. No call audio (it never started): a fresh one, if allowed. */
+export const CHIME_MS = 700
+function chimeThenClose(c: AudioContext | null, el: HTMLAudioElement | null, into: AudioNode | null) {
+  let audio = c
+  if (!audio || audio.state === 'closed') {
+    try { audio = new AudioContext() } catch { audio = null }
+    into = null
+  }
+  const close = () => {
+    if (el) { el.onpause = null; el.pause(); el.srcObject = null }
+    audio?.close().catch(() => undefined)
+    if (c && c !== audio) c.close().catch(() => undefined)
+  }
+  if (!audio) return close()
+  try {
+    audio.resume().catch(() => undefined)
+    const pcm = chimePcm(RATE) as Int16Array
+    const buf = audio.createBuffer(1, pcm.length, RATE)
+    const ch = buf.getChannelData(0)
+    for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 0x8000
+    const src = audio.createBufferSource()
+    src.buffer = buf
+    src.connect(into ?? audio.destination)
+    src.start()
+  } catch { return close() }
+  setTimeout(close, CHIME_MS)
+}
+
 export function stopCall() {
   const was = on
   on = null
@@ -345,8 +467,14 @@ export function stopCall() {
   node?.disconnect()
   micIn?.disconnect()
   mic?.getTracks().forEach((t) => t.stop())
-  if (out) { out.onpause = null; out.pause(); out.srcObject = null }
-  ctx?.close().catch(() => undefined)
+  // what it was still saying stops; the chime plays, then the audio closes
+  sources.forEach((s) => { try { s.stop() } catch { /* not started */ } })
+  if (was) chimeThenClose(ctx, out, theirs)
+  else {
+    if (out) { out.onpause = null; out.pause(); out.srcObject = null }
+    ctx?.close().catch(() => undefined)
+  }
+  dropHold() // fork: the silent hold goes at hang-up (SHEP-30)
   const closing = ws
   ws = null
   // the person ended it: the server ends it now rather than holding it for the page to come back
@@ -371,4 +499,6 @@ export function stopCall() {
   retries = 0
   controls = null
   over = false
+  overWhy = null
+  pressedAt = -Infinity
 }

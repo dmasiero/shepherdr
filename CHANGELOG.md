@@ -1,5 +1,101 @@
 # Changelog
 
+## Unreleased
+
+- On a Mac with Swift 6.4, dictation and window voice calls work again: their audio helper failed to build
+  (GitHub #789).
+- On a Mac, the agent menu's restart, switch agent and close work again, and so does changing a chat's agent or model:
+  they needed Linux's setsid and bash 4 (GitHub #736).
+- The web app is shared again on tailnets whose user ids are very large: Shepherdr misread them and decided Tailscale
+  wasn't running (GitHub #845).
+- On a Mac, you can talk over the agent in a window voice call to interrupt it, as on the web: the call uses
+  Apple's echo cancellation, so the microphone stays open while the agent speaks. Other apps' sound dips slightly
+  during a call. If echo cancellation can't run, the call works as before.
+- `shepherdr web https-port 8443` (or `./install.sh --https-port 8443`) shares the web app at
+  `https://<machine>:8443/shepherdr/`; the share moves within seconds, and every link Shepherdr gives follows (Settings
+  → Web, `herdr-artifact link`, `shepherdr web status`). Installs that never set one stay on 443 with nothing to do.
+- When tailscale won't share it, `shepherdr doctor`, the installer and Settings → Web say tailscale's own reason; a port
+  held by another app (a TCP forward) is named plainly, with a free port to use instead (GitHub #754, #778).
+- The task browser works out of the box: Shepherdr installs agent-browser itself when it's missing (install,
+  `shepherdr update`, or an agent's first browser command), into its own folder, without npm or sudo, on macOS and
+  Linux. An agent-browser you already have is used when it's 0.41.1 or a newer 0.41.x (GitHub #739, #799).
+- When it can't install it (offline, say), the Browser tab, `herdr-browser` and `shepherdr doctor` show the whole
+  message with the one command that fixes it: `herdr-browser --install`. Doctor says which agent-browser it uses.
+
+## 3.1.28
+
+Tasks say Ready only when they are truly done, and every machine can open its own artifacts.
+
+- A task stays Working while its agent still runs anything: a background command, a helper or a subagent. It shows
+  Ready, with its news and alert, only once the agent is at rest.
+- A question in an agent's last words while its own work still runs waits: the task shows Needs you once nothing
+  runs. A question card or a permission still needs you at once.
+- `herdr-artifact preview <id>` opens a machine's own artifact on that machine, even one that can't reach the
+  machine serving the web app. It starts when asked and stops after 30 minutes unused.
+- Shepherdr's own tests can no longer touch the real home's settings or hooks.
+
+## 3.1.27
+
+Shepherdr keeps your tasks, settings and secrets in folders of its own now, and moves them there for you. Chats show
+pictures and artifact previews, and you can answer task agents' questions right in the chat.
+
+- Updating moves Shepherdr's data out of `~/.herdr` into its own folders, once per machine: `~/.config/shepherdr`
+  (settings), `~/.local/share/shepherdr` (tasks, artifacts, secrets, new tasks' worktrees) and
+  `~/.local/state/shepherdr` (task browsers, the web service's files). Nothing to do: it says so in one line, and
+  `shepherdr where` shows every path. `SHEPHERDR_HOME` or the `XDG_*` folders move them elsewhere.
+- Nothing stops working: the old paths link to the new ones, so a machine not updated yet, an older helper or a path
+  in an old brief still finds everything. Running tasks keep their worktrees where they are; new ones go to the new
+  folder (or the one `tasks.worktree_root` names).
+- Safe to stop halfway and run again; it doesn't move by itself on a network disk. To roll back:
+  `shepherdr migrate --rollback` puts everything back in `~/.herdr`. Once every machine is updated,
+  `shepherdr migrate --cleanup-legacy --yes` removes the old links.
+- A repo's tasks now follow it when you rename or move its folder.
+- Agents' pictures and videos show in the chat, and an artifact's card shows a preview that opens in place.
+- A task agent's question shows as a card in the chat on every machine, with each option's preview and room for a
+  note.
+- The Accept card shows the task's proof inside it.
+- Voice call is a small button beside Search; on a call it turns into Mute and End. The call screen shows the crook
+  instead of the orb.
+- A task's tabs are Chat, Terminal, Artifacts and Browser. Files and Changes stay in the space's side panels.
+- Enter sends on a computer and makes a new line on a phone, in every chat box.
+- Fewer false "Needs you": a quiet agent needs you only after 20 seconds, and a long command still counts as work.
+- The task view's Back link lines up with the tabs.
+
+## 3.1.26
+
+The order you drag your spaces into now stays put.
+
+- In the web app, a space you drag to a new spot in the sidebar stays there, even one that used to snap back to the bottom. The Herdr window shows the same order.
+
+## 3.1.25
+
+Calls are easier on a phone held sideways, and you can see how much voice you have left.
+
+- In the web app, a full-screen call on a phone held sideways puts the orb on the left and the buttons on the right.
+- End hangs up at once, with no "Are you sure" step.
+- Settings → Plan usage shows your ElevenLabs credits. If your key can't read them, it says which permission to add.
+
+## 3.1.24
+
+You can ask the voice call to go full screen or step aside.
+
+- On a call, say "go full screen" or "minimize" and the voice does it itself. When it opens the full screen for you, it
+  no longer shrinks it again right after.
+
+## 3.1.23
+
+A minimized call on a phone keeps out of the way.
+
+- In the web app on a phone, a minimized voice call no longer shows a green Listening pill above the bottom bar.
+  Mute and End stay in the bar.
+
+## 3.1.22
+
+The voice call's orb is a clean circle on iPhone.
+
+- In the web app on an iPhone or iPad, the full-screen call's orb shows only its circle, with no grey square around
+  it.
+
 ## 3.1.21
 
 A voice call opens full screen, and research tasks leave your code alone.

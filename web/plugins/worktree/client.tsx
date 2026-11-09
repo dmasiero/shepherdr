@@ -1,11 +1,12 @@
-// Worktree: three of a task view's tabs, all read only, as the window's (mods task-files, task-changes, task-pr).
-// Files browses the task's folder one folder at a time, with each changed file's letter, and shows a file,
-// highlighted; Changes lists what the task changed against where it left its base (committed or not, new files
-// too), each file's diff under the list; Pull request shows the task's PR on GitHub (state, size, branch, checks, a
-// link). Their words are the window's own (core/worktree.js VIEW_WORDS). The server reads only that task's folder
-// (service/worktree.ts).
+// Worktree: a task view's Pull request tab, as the window's (mods/task-pr), and the views of the space's Files and
+// Changes side panels (web/plugins/coordinators SpacePanel), all read only. Files browses a folder one folder at a
+// time, with each changed file's letter, and shows a file, highlighted; Changes lists what changed (committed or not,
+// new files too), each file's diff under the list; Pull request shows the task's PR on GitHub (state, size, branch,
+// checks, a link). Their words are the window's own (core/worktree.js VIEW_WORDS). The server reads only that task's
+// or space's folder (service/worktree.ts).
 import clsx from 'clsx'
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useCopy } from '@client/copy.ts'
 import { definePlugin, setUI, useStore } from '@client/kernel.ts'
 import { escapeHtml, highlighter, HIGHLIGHT_MAX, highlightLine, highlightLines, languageOf, loadHighlighter } from '@client/highlight.ts'
 import { BackIcon, CheckCircleIcon, ClockIcon, CopyIcon, DiffIcon, FileIcon, FolderIcon, ic, IconButton, MinusCircleIcon, NextIcon, OpenIcon, PrIcon, Small, XCircleIcon } from '@client/ui.tsx'
@@ -386,10 +387,12 @@ const outline = 'press-dim relative inline-flex h-7 items-center gap-1.5 rounded
 /** Pull request, as the window's: GitHub asked on showing, then every 30 s */
 function PrView({ task }: { task: Task }) {
   const p = useAsk<{ pr?: PullRequest; why?: string }>(task.id, { what: 'pr' }, 30_000)
-  const [copied, setCopied] = useState(false)
+  const { copied: done, copy } = useCopy()
+  const copied = done === 'pr'
   const pr = p.data?.pr
+  const gitea = task.pr?.forge === 'gitea' // fork: a Gitea pull request's words (core/worktree.js)
   if (!pr) {
-    const text = p.error ? `GitHub didn't answer: ${p.error}` : p.data ? (p.data.why ?? WORDS.noPr) : WORDS.askingGitHub
+    const text = p.error ? `${gitea ? 'Gitea' : 'GitHub'} didn't answer: ${p.error}` : p.data ? (p.data.why ?? WORDS.noPr) : gitea ? WORDS.askingGitea : WORDS.askingGitHub
     return (
       <div className="grid flex-1 place-items-center px-6 text-center">
         <div className="flex max-w-[300px] flex-col items-center gap-2">
@@ -398,11 +401,6 @@ function PrView({ task }: { task: Task }) {
         </div>
       </div>
     )
-  }
-  const copy = () => {
-    void navigator.clipboard?.writeText(pr.url).catch(() => undefined)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
   }
   return (
     <>
@@ -428,9 +426,9 @@ function PrView({ task }: { task: Task }) {
             <div className="flex flex-wrap gap-1.5 pt-1">
               <a href={pr.url} target="_blank" rel="noreferrer" className={outline}>
                 <OpenIcon className={ic} />
-                {WORDS.openOnGitHub}
+                {pr.forge === 'gitea' ? WORDS.openOnGitea : WORDS.openOnGitHub /* fork: or Gitea */}
               </a>
-              <button type="button" onClick={copy} className={outline}>
+              <button type="button" onClick={(e) => void copy(pr.url, 'pr', e)} className={outline}>
                 <CopyIcon className={ic} />
                 {copied ? WORDS.copied : WORDS.copyLink}
               </button>
@@ -482,13 +480,9 @@ function PrView({ task }: { task: Task }) {
 export default definePlugin({
   name: 'worktree',
   setup(reg) {
-    // as the window's task view: Files and Changes always, Pull request once the task has one (itemsFor); none dims:
-    // each says in its own view why it has nothing to show
-    reg.taskPanel.push(
-      { id: 'files', order: 20, label: 'Files', Icon: FolderIcon, View: FilesView },
-      { id: 'diff', order: 30, label: 'Changes', Icon: DiffIcon, View: DiffView },
-      { id: 'pr', order: 40, label: 'Pull request', Icon: PrIcon, View: PrView },
-    )
+    // as the window's task view: Pull request once the task has one (itemsFor). Files and Changes are the space's side
+    // panels only (web/plugins/coordinators SpacePanel), no longer a task's tabs (SHEP-143)
+    reg.taskPanel.push({ id: 'pr', order: 20, label: 'Pull request', Icon: PrIcon, View: PrView })
   },
 })
 

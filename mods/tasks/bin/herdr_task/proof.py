@@ -7,10 +7,11 @@ import json
 import os
 import re
 
-from .base import Fail, HOME, git
+from .base import Fail, HOME, git, WHERE
 from .github import BAD, PENDING, pr_view
+from .gitea import word as forge_word  # fork: GitHub's or Gitea's (gitea.py)
 
-ARTIFACTS = os.path.join(HOME, ".herdr", "artifacts")
+ARTIFACTS = WHERE.path("artifacts")
 # Files named on the card, and commits.
 FEW = 3
 
@@ -79,7 +80,7 @@ def checks_of(t):
         return {"state": "none", "text": "No GitHub checks here"}
     v = pr_view(t)
     if not v:
-        return {"state": "unknown", "text": "Couldn't ask GitHub"}
+        return {"state": "unknown", "text": f"Couldn't ask {forge_word(t)}"}  # fork: or Gitea
     rows = v.get("statusCheckRollup") or []
     word = lambda c: (c.get("conclusion") or c.get("state") or "").upper()
     bad = [c.get("name") or c.get("context") or "a check" for c in rows if word(c) in BAD]

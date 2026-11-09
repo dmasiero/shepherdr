@@ -31,7 +31,7 @@ function page(seen: number, visible = true) {
 }
 
 test("the page on screen the person used last opens it", () => {
-  const live = new Live({ on() {} } as any, { on() {} } as any, () => "here", () => null, "0", () => null); // fork: proxy mode's Live (here, hereName, version, link)
+  const live = new Live({ on() {} } as any, { on() {} } as any, () => null, "0");
   const laptop = page(NOW - 60_000), phone = page(NOW), hidden = page(NOW + 1000, false);
   for (const p of [laptop, phone, hidden]) (live as any).pages.add(p.ws);
   expect(live.show("how-to-group-tasks-fa0a")).toBe(true);
@@ -41,7 +41,7 @@ test("the page on screen the person used last opens it", () => {
 });
 
 test("no page on screen: nothing to show it on", () => {
-  const live = new Live({ on() {} } as any, { on() {} } as any, () => "here", () => null, "0", () => null); // fork: proxy mode's Live (here, hereName, version, link)
+  const live = new Live({ on() {} } as any, { on() {} } as any, () => null, "0");
   (live as any).pages.add(page(NOW, false).ws);
   expect(live.show("x-1")).toBe(false);
 });

@@ -10,6 +10,7 @@ import { connect, getState, installPlugins, registry, setUI, useStore, useUI, ty
 import { watchScrolling } from './scrolling.ts'
 import Settings, { sectionOf, withPluginErrors } from './Settings.tsx'
 import { watchViewport } from './viewport.ts'
+import { installHeldLine } from './install-held.ts'   // fork: SHEP-34
 import { AcceptCard } from './screens/Accept.tsx'
 import { WorktreeDialog } from './screens/Worktree.tsx'
 import { RoleSheet } from './screens/Role.tsx'
@@ -62,6 +63,33 @@ function UpdateFailed() {
   )
 }
 
+/** fork: the install on the machine serving this isn't whole (doctor's last verdict): say so, with every problem under
+ *  Why. Hidden until it changes (SHEP-34). */
+function InstallHeld() {
+  const install = useStore((s) => s.snap?.install)
+  const machine = useStore((s) => s.snap?.machines.find((m) => m.machine === s.snap?.host)?.name ?? s.snap?.host ?? '')
+  const [open, setOpen] = useState(false)
+  const [hidden, setHidden] = useState<string | null>(null)
+  const key = install ? `${install.since} ${install.problems.join('\n')}` : ''
+  if (!install || hidden === key) return null
+  return (
+    <div role="status" data-topbar className={topBar}>
+      {installHeldLine(install, machine)}{' '}
+      <button type="button" className={barButton} onClick={() => setOpen(!open)}>
+        {open ? 'Less' : 'Why'}
+      </button>{' '}
+      <button type="button" className={barButton} onClick={() => setHidden(key)}>
+        Hide
+      </button>
+      {open ? (
+        <pre className="mt-1 max-h-40 overflow-auto text-left font-mono text-[0.6875rem] whitespace-pre-wrap">
+          {[...install.problems, '', `On ${machine || 'that machine'}, \`shepherdr doctor\` says it again; it clears this once it finds the install whole.`].join('\n')}
+        </pre>
+      ) : null}
+    </div>
+  )
+}
+
 /** A plugin of the human's own didn't build, threw as it loaded or threw here: one line, Settings → Plugins says why. */
 function PluginTrouble() {
   const settings = useStore((s) => s.snap?.settings)
@@ -86,7 +114,7 @@ function PluginTrouble() {
 }
 
 registry.views.settings = Settings
-registry.topBars.push(Offline, UpdateFailed, PluginTrouble)
+registry.topBars.push(Offline, UpdateFailed, InstallHeld, PluginTrouble)   // fork: InstallHeld (SHEP-34)
 // Shepherdr 3's Accept card, over everything
 registry.overlays.push(AcceptCard, WorktreeDialog, AddMachineDialog, RoleSheet, ServeFromDialog)
 // the sidebar foot's Add machine, as 3.0's

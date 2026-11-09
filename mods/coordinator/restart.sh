@@ -80,6 +80,8 @@ labels=(--label "herdr.space=$space" --label "herdr.tab=$tab")
 [ "$role" = coordinator ] && labels+=(--label herdr.role=coordinator)
 # An agent in Chat mode (parked behind a chat pane) restarts parked behind the same chat.
 chat=${HERDR_RESTART_CHAT:-$(get '.labels["herdr.chat"]')}
+# The label holds the pane as its own machine names it, never a window's "<machine>/<pane>" (#761).
+chat=${chat##*/}
 if [ -n "$chat" ]; then
   origin=$(get '.labels["herdr.chat.origin"]'); origin=${origin:-$old}
   labels=(--keep --label "herdr.chat=$chat" --label "herdr.chat.origin=$origin")
@@ -96,8 +98,10 @@ tpl=$HOME/.config/herdr-core/templates/assistant.md
 # A coordinator restarted without an argv: the assistant template's own command and words.
 own=""
 [ -z "$argv" ] && [ "$role" = coordinator ] && own=$(awk '/^---[[:space:]]*$/ {f++; next} f == 1 && sub(/^command:[ \t]*/, "") {print; exit}' "$tpl" 2>/dev/null)
+# argv's words into cmd. A read loop, not mapfile: macOS's /bin/bash is 3.2, which has no mapfile (#736).
+argv_cmd() { local a; cmd=(); while IFS= read -r a; do cmd+=("$a"); done < <(jq -r '.[]' <<<"$argv"); }
 if [ -n "${HERDR_RESTART_RESUME:-}" ] && [ -n "$argv" ]; then
-  mapfile -t cmd < <(jq -r '.[]' <<<"$argv")
+  argv_cmd
   [ ${#cmd[@]} -gt 0 ] || exit 1
   new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(basename "${cmd[0]}")" -- sh -c "$clean"' exec "$@"' herdr-clean "${cmd[@]}" | jq -r '.address // empty')
 elif [ -z "$argv" ] && [ "$role" = coordinator ] && [ -z "$own" ]; then
@@ -107,7 +111,7 @@ else
     own=${own#exec }
     line=$own key=$(basename "${own%% *}")
   else
-    mapfile -t cmd < <(jq -r '.[]' <<<"$argv")
+    argv_cmd
     [ ${#cmd[@]} -gt 0 ] || exit 1
     key=$(basename "${cmd[0]}")
     # Codex runs its commands outside hc without --no-daemon.

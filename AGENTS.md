@@ -58,11 +58,18 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `navigator.mediaDevices.getUserMedia` with an oscillator `MediaStreamDestination` via eval.
 - herdr-task forge tests (GitHub/Gitea): give the repo a real remote's host and send its pushes to a bare repo with
   `git config url.<bare>.insteadOf <full url>`; fake `tea`/`gh` first on PATH (see `GiteaTasks`).
+- Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
+  read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - nextgate's `/usr/bin` is envfs: a tool shows there only to a caller whose PATH has it, so a test that narrows PATH
   to `/usr/bin:/bin` finds nothing; link the tools it needs into its fake bin instead.
+- Python tests: each `test/test_*.py` imports `home_guard` first (a throwaway HOME for the run; touching the real home
+  fails the test). Run them with `discover -s test` or from `test/`.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
+- Window-mod render tests: `bun test` in service/ with `mock.module` for gpui-kit/gpui-base and herdr via
+  service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
+  service/spaces-sidebar.test.ts.
 - No herdr-app window runs on the dev VM: window-mod UI can only be syntax-checked here, not screenshot. No ImageMagick,
   PIL or lsof either: stop a background stub by the pid `ss -ltnp` shows for its port, never `pkill -f` on its path
   (it matches the calling shell). A stub can bridge `/api/terminal` to a real bash with `new Hub(<hc wrapper setting
@@ -80,6 +87,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
 - Claude Code trusts /tmp, so a scratch folder there never shows its trust screen: reproduce trust-screen bugs in a
   fresh folder under /var/tmp, and remove its `~/.claude.json` entry after.
+- Before/after web screenshots: build main's version of the changed files into a scratch dist (`git checkout main --
+  <files>`, `bun run build`, copy `web/dist`, `git checkout HEAD -- web`) and run one stub per dist on different ports.
 - Crash recovery for real: a throwaway core, `HC_SESSION=<name> hc ...` with `HC_TERMINAL_SOCKET` and Claude's
   `CLAUDE_*` env unset (`CLAUDE_CODE_CHILD_SESSION` turns off transcripts).
 

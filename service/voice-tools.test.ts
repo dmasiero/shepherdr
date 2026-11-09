@@ -153,6 +153,9 @@ test("open: what it shows in the app the call runs in", async () => {
   const review = await voiceTool("open", { what: "task", id: "45", tab: "review" }, web, io());
   expect(review.error).toBe(true);
   expect((await voiceTool("open", { what: "task", id: "41", tab: "review" }, web, io())).nav).toMatchObject({ kind: "task", task: "SHEP-41", tab: "review" });
+  // a task has no Files or Changes tab (SHEP-143): its pull request, else its chat
+  expect((await voiceTool("open", { what: "task", id: "41", tab: "changes" }, web, io())).nav).toMatchObject({ kind: "task", task: "SHEP-41", tab: "pr" });
+  expect((await voiceTool("open", { what: "task", id: "45", tab: "files" }, web, io())).nav).toMatchObject({ kind: "task", task: "SHEP-45", tab: "chat" });
   expect((await voiceTool("open", { what: "tasks", query: "ready" }, web, io())).nav).toEqual({ kind: "tasks", filter: "ready" });
   expect((await voiceTool("open", { what: "artifact", id: "model menu proof" }, web, io())).nav).toMatchObject({ kind: "artifact", artifact: "a1" });
   expect((await voiceTool("open", { what: "chat" }, web, io())).nav).toEqual({ kind: "chat", chat: "SHEP-45/worker", addr: "t1" });
@@ -343,4 +346,24 @@ test("SHEP-105: a call from the sidebar has no chat of its own: here is what the
   expect(none.error).toBe(true);
   expect(none.result).toContain("which space or task");
   expect((await voiceTool("open", { what: "chat" }, top, x)).nav).toMatchObject({ kind: "chat", chat: "p:sp1" });
+});
+
+test("SHEP-124: call_view: the web call full screen or minimized, on screen once the page says so; not in the window", async () => {
+  const full = await voiceTool("call_view", { view: "full" }, web, io());
+  expect(full.nav).toEqual({ kind: "call", full: true });
+  expect(JSON.parse((await shown(full, async () => ({ ok: true }))).result)).toEqual({ ok: true, shown: "the full-screen call" });
+  const small = await voiceTool("call_view", { view: "minimized" }, web, io());
+  expect(small.nav).toEqual({ kind: "call", full: false });
+  const no = await shown(small, async () => ({ ok: false, why: "no call is on in this app" }));
+  expect(no.error).toBe(true);
+  expect(no.result).toContain("no call is on in this app");
+  const bad = await voiceTool("call_view", { view: "huge" }, web, io());
+  expect(bad.error).toBe(true);
+  expect(bad.nav).toBeUndefined();
+  const win = await voiceTool("call_view", { view: "full" }, { client: "window", machine: "vm" }, io());
+  expect(win.error).toBe(true);
+  expect(win.nav).toBeUndefined();
+  // look here says which view the call is in
+  expect((await voiceTool("look", { what: "here" }, { ...web, full: true }, io())).result).toContain("The call fills the screen");
+  expect((await voiceTool("look", { what: "here" }, { ...web, full: false }, io())).result).toContain("The call is minimized");
 });
