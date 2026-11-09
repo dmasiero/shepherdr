@@ -3,9 +3,12 @@
 // shared store stands in for it.
 import { expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { fakeHerdr } from "../service/fake-herdr.ts";
 
 const store = new Map();
-mock.module("herdr", () => ({ shared: (k) => store.get(k) ?? null, setShared: (k, v) => store.set(k, v), home: () => "/nowhere", readTextFile: async () => null }));
+// Bun keeps one mocked module per name for the whole `bun test` run: every name another file's stand-in has (fakeHerdr's,
+// the gpui ones service/spaces-sidebar.test.ts gives) is here too, or that file's import fails.
+mock.module("herdr", () => fakeHerdr({ shared: (k) => store.get(k) ?? null, setShared: (k, v) => store.set(k, v), home: () => "/nowhere", readTextFile: async () => null }));
 const { KEY_HOLDER, holdKeys, releaseKeys, keysElsewhere, keysInDialog } = await import("../lib/keyholder.js");
 const holder = () => store.get(KEY_HOLDER) ?? null;
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
