@@ -4647,6 +4647,52 @@ print(out)
 '''
 
 
+class BriefNamesTheInstalledHerdrTask(unittest.TestCase):
+    """SHEP-35 (FORK.md): a herdr-task run from the Nix store (a frozen release, as a long-running
+    process's HERDR_TASK_BIN) writes the installed copy into briefs, so its agent's ready follows updates."""
+
+    def setUp(self):
+        import shutil
+        sys.path.insert(0, BIN)
+        import herdr_task.launch as launch
+        self.launch = launch
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.store_copy = os.path.join(self.root, "nix", "store", "abc-shepherdr-3.1.14", "herdr-task")
+        self.app = os.path.join(self.root, "herdr-app")
+        self.installed = os.path.join(self.app, "mods", "tasks", "bin", "herdr-task")
+        self.bin = os.path.join(self.root, "bin")
+        for p in (self.store_copy, self.installed):
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(p, 0o755)
+        os.makedirs(self.bin)
+
+    def own(self, entry, path=""):
+        from unittest import mock
+        with mock.patch.object(self.launch, "ENTRY", entry), mock.patch.object(self.launch, "APP_HOME", self.app), \
+                mock.patch.object(self.launch, "NIX_STORE", os.path.join(self.root, "nix", "store") + os.sep), \
+                mock.patch.dict(os.environ, {"PATH": path}):
+            return self.launch.own_path()
+
+    def test_a_store_copy_names_the_installed_one(self):
+        self.assertEqual(self.own(self.store_copy), self.installed)
+
+    def test_and_its_path_alias_when_path_has_it(self):
+        os.symlink(self.installed, os.path.join(self.bin, "herdr-task"))
+        self.assertEqual(self.own(self.store_copy, self.bin), os.path.join(self.bin, "herdr-task"))
+
+    def test_no_installed_copy_keeps_the_store_one(self):
+        os.remove(self.installed)
+        self.assertEqual(self.own(self.store_copy), self.store_copy)
+
+    def test_an_installed_copy_runs_as_before(self):
+        self.assertEqual(self.own(self.installed), self.installed)
+        os.symlink(self.installed, os.path.join(self.bin, "herdr-task"))
+        self.assertEqual(self.own(self.installed, self.bin), os.path.join(self.bin, "herdr-task"))
+
+
 class GiteaTasks(unittest.TestCase):
     """SHEP-33 (the fork's Gitea layer, FORK.md): a task in a repo whose remote is Gitea pushes its
     branch on ready and opens a Gitea pull request through tea; the tick reads its checks; Accept
@@ -4794,6 +4840,56 @@ class GiteaTasks(unittest.TestCase):
         self.commands.cmd_ready(self.args())
         self.assertEqual(len(self.tea_state()["pulls"]), 1)
         self.assertEqual(self.tea_state()["comments"]["1"], ["Notes added."])
+
+    def test_ready_again_on_a_ready_task_with_no_pull_request_pushes_and_opens_one(self):
+        """SHEP-35 (INF-19): a task already Ready with no pull request (its first ready ran on a herdr-task
+        from before Gitea support: GitHub's "no repo" kept, no forge read, its branch with no upstream)
+        pushes its branch and opens the pull request when ready runs again, and Accept then merges it."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        tip = self.git(self.wt, "rev-parse", "HEAD")
+        t.update(state="ready", ready_at=self.clock[0] - 60_000, head=tip, own=tip, summary="Notes added.")
+        self.store.data["github"] = {"repo": None, "at": self.clock[0] - 60_000}
+        self.assertEqual(subprocess.run(["git", "-C", self.wt, "rev-parse", "--abbrev-ref", "@{u}"],
+                                        capture_output=True).returncode, 128, "no upstream yet")
+        self.assertEqual(self.git(self.bare, "branch", "--list", "task/1"), "")
+        self.commands.cmd_ready(self.args())
+        self.assertEqual(self.git(self.bare, "rev-parse", "refs/heads/task/1"), tip)
+        self.assertEqual((t["state"], t["pr"]["number"], t["pr"]["forge"]), ("ready", 1, "gitea"), t.get("attention"))
+        self.assertIn("pull request #1, https://gitea.test/o/r/pulls/1", self.said[-1])
+        self.assertEqual(len(self.tea_state()["pulls"]), 1)
+        self.set_status(tip, "success")
+        self.look(t)
+        self.commands.cmd_accept(self.args())
+        self.assertEqual((t["state"], t.get("merged")), ("done", True))
+        self.assertEqual(self.calls("gh"), [], "gh is never asked about a Gitea repo")
+
+    def test_ssh_remote_with_a_port_is_gitea_and_pushed_there(self):
+        """ssh://git@host:2222/owner/repo.git (the infra repo's form): the host and repo are read past the
+        user and port, tea's login for that host is found, and ready pushes to that address."""
+        from herdr_task import gitea
+        self.assertEqual(gitea.remote_parts("ssh://git@gitea.masiero.internal:2222/masiero/infra.git"),
+                         ("gitea.masiero.internal", "masiero/infra"))
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        self.assertEqual(gitea.decide(self.main, self.github.remote_of)["target"]["repo"], "o/r")
+        t = self.task()
+        self.commands.cmd_ready(self.args())
+        self.assertEqual(self.git(self.wt, "rev-parse", "--abbrev-ref", "task/1@{u}"), "origin/task/1")
+        self.assertEqual(self.git(self.main, "config", "remote.origin.url"), "ssh://git@gitea.test:2222/o/r.git")
+        self.assertEqual(self.git(self.bare, "rev-parse", "refs/heads/task/1"), self.git(self.wt, "rev-parse", "HEAD"))
+        self.assertEqual(t["pr"]["web"], "https://gitea.test")
+
+    def test_accept_without_a_pull_request_names_the_ready_to_run(self):
+        """SHEP-35: Accept's refusal names this herdr-task's own ready command, the one that opens it."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        t["state"] = "ready"
+        with self.assertRaises(self.commands.Fail) as e:
+            self.commands.cmd_accept(self.args())
+        said = str(e.exception)
+        self.assertIn("has no pull request yet", said)
+        self.assertIn(f"`{self.commands.own_path()} ready SHEP-1 --folder {self.main}` again", said)
+        self.assertNotIn("pr", t)
 
     def test_gitea_task_is_never_merged_here(self):
         """No pull request (tea not logged in to its host): ready says why and Accept refuses the local merge."""

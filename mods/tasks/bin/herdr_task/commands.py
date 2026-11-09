@@ -1075,7 +1075,7 @@ def cmd_merge(args):
                 error += " Merge again when they pass."
             elif error == WAITS_APPROVAL:
                 error += " Merge again once it's approved."
-        elif refused := gitea.local_merge_refused(s, remote_of):  # fork: never merged here on Gitea (gitea.py)
+        elif refused := gitea.local_merge_refused(s, remote_of, ready_command(s, t)):  # fork: never merged here on Gitea (gitea.py)
             raise Fail(f"{s.ref(t)} has no pull request yet. {refused}")
         else:
             t["merge_requested"] = now()
@@ -1119,6 +1119,12 @@ def ff_merge(s, t):
     # A base not checked out here (a task's own --base): its branch moves forward to the task's
     # (git refuses unless it's a fast-forward, or when another worktree has it checked out).
     return git(main, "fetch", ".", f"{br}:{base}")[0]
+
+
+def ready_command(s, t):
+    """Fork (SHEP-35): the task's ready command as this herdr-task writes it, for Accept's and
+    merge's refusal on Gitea: run by an older copy, ready says ready and opens no pull request."""
+    return f"{own_path()} ready {s.ref(t)} --folder {shlex.quote(s.loc['folder'])}"
 
 
 def cmd_accept(args):
@@ -1171,7 +1177,7 @@ def cmd_accept(args):
             if not t["merged"]:
                 t["nothing_to_merge"] = True
             finish(s, t, even_if_busy=True)
-        elif refused := gitea.local_merge_refused(s, remote_of):  # fork: never merged here on Gitea (gitea.py)
+        elif refused := gitea.local_merge_refused(s, remote_of, ready_command(s, t)):  # fork: never merged here on Gitea (gitea.py)
             raise Fail(f"{s.ref(t)} has no pull request yet. {refused}")
         elif ff_merge(s, t):
             how = "merged"
