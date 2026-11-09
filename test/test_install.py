@@ -556,6 +556,126 @@ class Install(unittest.TestCase):
         self.assertEqual(tree(self.root), self.before)
 
 
+# fork: SHEP-34. nextgate kept five pre-3.x leftovers as "changed since install", doctor failed on them, and every
+# later install from the Nix wrapper ran only doctor and failed again.
+def strip_shep(text):
+    a, b = text.index("# ---- SHEP:"), text.index("# ---- end SHEP ----")
+    return text[:a] + text[b + len("# ---- end SHEP ----"):]
+
+
+class OldCopies(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="shepherdr-old-")
+        os.makedirs(os.path.join(self.root, APP))
+        run("install", "--root", self.root, "--yes")
+        self.assertEqual(run("doctor", "--root", self.root).returncode, 0)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def p(self, *rel):
+        return os.path.join(self.root, *rel)
+
+    def write(self, rel, text):
+        os.makedirs(os.path.dirname(self.p(APP, rel)), exist_ok=True)
+        with open(self.p(APP, rel), "w") as f:
+            f.write(text)
+
+    def leftovers(self):
+        """nextgate's 2026-11-06 home: two helpers without a SHEP block, a layout naming the retired mods, and those
+        mods (one carrying a copy of lib/ui.js no lib/COPIES line lists)."""
+        for rel in ("bin/herdr-secret", "mods/artifacts/bin/herdr-artifact"):
+            self.write(rel, strip_shep(open(self.p(APP, rel)).read()))
+        lay = json.load(open(self.p(APP, "layouts/shepherdr.json")))
+        lay["children"].append({"id": "task-changes", "type": "block", "content": {"mod": "task-changes"}})
+        self.write("layouts/shepherdr.json", json.dumps(lay, indent=2))
+        self.write("mods/task-changes/mod.json", "{}\n")
+        self.write("mods/task-changes/ui.js", open(os.path.join(ROOT, "lib/ui.js")).read().split("\n", 1)[0] + "\n// old\n")
+        self.write("mods/task-files/main.js", "// an older Shepherdr's\n")
+
+    def backup(self):
+        top = self.p(APP, ".shepherdr-backup")
+        return {os.path.relpath(os.path.join(d, f), top).split(os.sep, 1)[1] for d, _, fs in os.walk(top) for f in fs}
+
+    def test_old_copies_are_replaced_and_stale_mods_backed_up(self):
+        self.leftovers()
+        d = run("doctor", "--root", self.root, ok=False)
+        self.assertEqual(d.returncode, 1, "the leftovers make the install not whole")
+        self.assertIn("has no SHEP block", d.stdout)
+        check = json.load(open(self.p(".local/state/shepherdr/install-check.json")))
+        self.assertFalse(check["whole"])
+        self.assertTrue(any("SHEP block" in x for x in check["problems"]))
+
+        out = run("install", "--root", self.root, "--yes").stdout
+        for rel in ("bin/herdr-secret", "mods/artifacts/bin/herdr-artifact", "layouts/shepherdr.json"):
+            self.assertIn(f"replaced {APP}/{rel}, an older Shepherdr's", out)
+            self.assertFalse(os.path.exists(self.p(APP, rel + ".new")))
+            if not rel.startswith("layouts/"):
+                self.assertEqual(open(self.p(APP, rel), "rb").read(), open(os.path.join(ROOT, rel), "rb").read())
+        self.assertIn("# ---- SHEP:", open(self.p(APP, "bin/herdr-secret")).read())
+        self.assertNotIn("task-changes", open(self.p(APP, "layouts/shepherdr.json")).read())
+        self.assertIn(f"moved {APP}/mods/task-changes to the backup", out)
+        self.assertIn(f"moved {APP}/mods/task-files to the backup", out)
+        self.assertFalse(os.path.exists(self.p(APP, "mods/task-changes")))
+        self.assertFalse(os.path.exists(self.p(APP, "mods/task-files")))
+        saved = self.backup()
+        for rel in ("bin/herdr-secret", "mods/artifacts/bin/herdr-artifact", "layouts/shepherdr.json",
+                    "mods/task-changes/ui.js", "mods/task-files/main.js"):
+            self.assertIn(f"{APP}/{rel}", saved, "backed up, never deleted")
+        d = run("doctor", "--root", self.root)
+        self.assertIn("whole", d.stdout)
+        self.assertTrue(json.load(open(self.p(".local/state/shepherdr/install-check.json")))["whole"])
+        # Herdr's own mods and the person's own are never stale
+        self.assertTrue(os.path.isdir(self.p(APP, "mods/tasks")))
+
+    def test_a_mod_of_the_persons_own_stays(self):
+        self.write("mods/mine/main.js", "// my own mod\n")
+        os.makedirs(self.p(APP, "mods/changes"))
+        run("install", "--root", self.root, "--yes")
+        self.assertTrue(os.path.isfile(self.p(APP, "mods/mine/main.js")))
+        self.assertTrue(os.path.isdir(self.p(APP, "mods/changes")))
+
+    def test_a_real_edit_stays_and_doctor_names_its_fix(self):
+        rel = "mods/chat/ui.js"
+        with open(self.p(APP, rel), "a") as f:
+            f.write("// mine\n")
+        src = tempfile.mkdtemp(prefix="shepherdr-src-")
+        try:
+            s = os.path.join(src, "s")
+            shutil.copytree(ROOT, s, ignore=shutil.ignore_patterns(".git", "node_modules"))
+            for m in ("lib/ui.js", *[f"mods/{x}/ui.js" for x in os.listdir(os.path.join(s, "mods")) if os.path.isfile(os.path.join(s, "mods", x, "ui.js"))]):
+                with open(os.path.join(s, m), "a") as f:
+                    f.write("// release\n")
+            out = run("update", "--root", self.root, "--source", s).stdout
+            self.assertIn("1 keep", out)
+            self.assertTrue(open(self.p(APP, rel)).read().endswith("// mine\n"), "the person's edit stays")
+            d = run("doctor", "--root", self.root, ok=False)
+            self.assertEqual(d.returncode, 1)
+            self.assertIn(f"your edit of {APP}/{rel} fails Shepherdr's check", d.stdout)
+            self.assertIn(f"`shepherdr update --take {rel} --root {self.root}`", d.stdout)
+            run("update", "--root", self.root, "--source", s, "--take", rel)
+            self.assertTrue(open(self.p(APP, rel)).read().endswith("// release\n"))
+            self.assertFalse(os.path.exists(self.p(APP, rel + ".new")))
+            mine = [x for x in self.backup() if x == f"{APP}/{rel}"]
+            self.assertEqual(len(mine), 1, "the person's edit is in the backup")
+            self.assertIn("whole", run("doctor", "--root", self.root).stdout)
+        finally:
+            shutil.rmtree(src)
+
+    def test_take_refuses_a_file_shepherdr_doesnt_install(self):
+        p = run("update", "--root", self.root, "--take", "mods/nope/x.js", ok=False)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("--take: not a file Shepherdr installs", p.stderr)
+
+    def test_doctor_notes_a_layout_naming_missing_mods(self):
+        lay = json.load(open(self.p(APP, "layouts/shepherdr.json")))
+        lay["children"].append({"id": "x", "type": "block", "content": {"mod": "someones-gone-mod"}})
+        self.write("layouts/shepherdr.json", json.dumps(lay))
+        d = run("doctor", "--root", self.root)
+        self.assertIn("names mods that aren't here (someones-gone-mod)", d.stdout)
+        self.assertIn("whole", d.stdout)
+
+
 class AudioTools(unittest.TestCase):
     def test_doctor_names_the_mic_and_speaker_tools_per_platform(self):
         """Linux names pw-record and pw-play; a Mac names Apple's command line tools (swiftc) instead."""

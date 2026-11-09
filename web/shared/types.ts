@@ -1229,6 +1229,16 @@ export interface Snapshot {
   /** the sidebar's sections, as Slack's, each with its spaces in the human's order: the top ones first (Pinned, id
    *  'pinned', among them), then each machine's, its machine in order (shared/order.ts) */
   sections?: Section[]
+  /** fork: the install on the machine that serves this isn't whole: what `shepherdr doctor` found last (SHEP-34) */
+  install?: InstallHeld
+}
+
+/** fork: doctor's last verdict when not whole (install-check.json): its problems, since when, and whether the sync to
+ *  other machines waits on it (SHEP-34) */
+export interface InstallHeld {
+  problems: string[]
+  since: number
+  held: boolean
 }
 
 export type Action =

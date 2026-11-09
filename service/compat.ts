@@ -25,6 +25,7 @@ import * as MNc from "../core/menus.js";
 import * as APc from "../core/autopilot.js";
 const { machineLabel } = MNc as any;
 import { HOME, appHome } from "./paths.ts";
+import { installCheck } from "./install-check.ts";   // fork: SHEP-34
 const { spaceName } = SPc as any;
 import type { Where } from "./worktree.ts";
 import * as AGc from "../core/agents.js";
@@ -471,6 +472,8 @@ export class Compat {
       look: lookOf((k) => this.shared?.value(k)),
       // Herdr's Files and Changes panels, as the window's tab bar offers them (unset: both)
       panels: Array.isArray(this.shared?.value("workspace.panels")) ? this.shared!.value("workspace.panels").filter((x: unknown) => x === "files" || x === "changes") : ["files", "changes"],
+      // fork: this machine's install isn't whole (doctor's last verdict), for the top bar (SHEP-34)
+      ...((install) => (install ? { install } : {}))(installCheck()),
     };
     return this.last;
   }
