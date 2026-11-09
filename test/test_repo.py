@@ -154,6 +154,36 @@ class Repo(unittest.TestCase):
                         self.assertTrue(target.startswith(top + os.sep), f"{os.path.relpath(os.path.join(d, f), ROOT)}: {a or b} leaves the mod")
                         self.assertTrue(os.path.isfile(target), f"{os.path.relpath(os.path.join(d, f), ROOT)}: {a or b} isn't there")
 
+    def test_installed_artifact_imports_are_copied(self):
+        """SHEP-36: markup.js and recipe-view.js run inside each installed artifact, not in mods/artifacts: an import
+        resolving here proves nothing. Each relative import of theirs (and of what herdr-artifact copies in with them)
+        must be one herdr-artifact writes or copies in: markup's in MARKUP_PARTS, the recipe view's below."""
+        imp = re.compile(r'''(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)["'](\.{1,2}/[^"']+)["']''')
+        src = open(J("mods", "artifacts", "bin", "herdr-artifact"), encoding="utf-8").read()
+        # herdr-artifact writes artifact.js, recipe-data.js; copies recipe-view.js and core/recipe.js (as recipe.js)
+        self.assertIn('os.path.join(dst, "recipe-data.js")', src)
+        self.assertIn('os.path.join(dst, "recipe.js")', src)
+        view = {"./artifact.js", "./recipe-data.js", "./recipe.js"}
+        for f, ok in ((J("mods", "artifacts", "recipe-view.js"), view), (J("core", "recipe.js"), set())):
+            for spec in imp.findall(open(f, encoding="utf-8").read()):
+                self.assertIn(spec, ok, f"{os.path.relpath(f, ROOT)} imports {spec}, not copied into installed artifacts")
+        # Mark up: each part's imports are its rename table's (herdr-artifact markup_files() refuses others)
+        import importlib.machinery
+        import importlib.util
+        import sys
+        sys.dont_write_bytecode = True
+        loader = importlib.machinery.SourceFileLoader("herdr_artifact_repo_rule", J("mods", "artifacts", "bin", "herdr-artifact"))
+        spec_ = importlib.util.spec_from_loader(loader.name, loader)
+        A = importlib.util.module_from_spec(spec_)
+        loader.exec_module(A)
+        installed = {name for _, name, _ in A.MARKUP_PARTS} | {"artifact.js"}
+        for path, name, rename in A.MARKUP_PARTS:
+            for spec in imp.findall(open(path, encoding="utf-8").read()):
+                self.assertIn(spec, rename, f"{os.path.relpath(path, ROOT)} imports {spec}: not copied into installed artifacts")
+                self.assertIn(rename[spec].removeprefix("./"), installed, f"{name}: {spec} -> {rename[spec]}")
+            self.assertIn(name, A.SKIP, f"{name} is reserved: an artifact's own file of that name would be overwritten")
+        self.assertIsNotNone(A.markup_files())
+
     def test_core_is_plain(self):
         """core/ runs in the window, the service and the browser: no Herdr, GPUI, Node or Bun imports."""
         if not os.path.isdir(J("core")):
