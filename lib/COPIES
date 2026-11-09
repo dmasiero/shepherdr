@@ -14,12 +14,11 @@ core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toas
 core/tasks.js: chat jump tasks
 core/notify.js: chat spaces-chat tabs-tasks tasks shepherdr-settings workspace-status-chat
 parked.js: chat spaces-chat tabs-tasks workspace-status-chat
-keyholder.js: chat tasks newspace  # fork: the New space dialog holds the keyboard while open
+keyholder.js: chat tasks newspace
 unread.js: chat spaces-chat
 agent.js: chat newspace shepherdr-settings
 settings.js: chat newspace shepherdr-settings
 dot.js: chat jump tasks
-emoji-grid.js: chat-react spaces-chat  # fork: which emoji a press in a picker was on
 core/tasklists.js: jump tasks
 core/chat-log.js: chat
 core/chat-view.js: chat
