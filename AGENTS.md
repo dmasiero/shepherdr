@@ -24,6 +24,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - A branch's web app on the machine that serves it: build it (`bun run build`), then send `bin/shepherdr`'s
   `pack(<worktree>)` to `INSTALL_THERE` over `hc exec --on <machine> --stdin` (what `cmd_web_install_on` does from
   the installed copy). Browser pages can't use the local service on 127.0.0.1.
+- An artifact's proof on the dev VM: after `bun run build`, run the worktree's own `mods/artifacts/bin/herdr-artifact
+  preview <id>` (the installed one finds no viewer here).
 - `herdr-browser screenshot` takes an absolute path (a relative one lands in the repo). Headless agent-browser has no
   hover: restart its session with
   `--args "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"`.
