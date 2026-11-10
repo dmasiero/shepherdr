@@ -25,6 +25,12 @@ const STEP = 1.25;                   // one zoom step (buttons, keys)
 const MAX = 8;                       // 800%
 // The theme's own colors: its background, nearly opaque, behind; its text and hover on top.
 const backdrop = (t) => `${t.background}f2`;
+// Herdr's zoom: the window reports sizes and presses in pixels at the zoom, while the viewer lays out at zoom 1 (as
+// props' width and height). Every reported number comes back to zoom 1 here (SHEP-42: at zoom 2.3 the stage was 2.3x
+// too big and the picture centred off-screen).
+const zoomOf = () => Number(settings()?.zoom) || 1;
+const unzoom = (px) => (typeof px === "number" ? px / zoomOf() : px);
+const point = (p) => (p ? { x: unzoom(p.x), y: unzoom(p.y) } : p);
 
 export default class ImageViewer extends View {
   init(_props, cx) {
@@ -188,20 +194,21 @@ export default class ImageViewer extends View {
   }
 
   down(e, cx) {
-    const at = e.local_position;
+    const at = point(e.local_position), pos = point(e.position);
     const img = this.img();
     if (!img || !at) return;
     const r = this.rect();
     const on = at.x >= r.left && at.x <= r.left + r.w && at.y >= r.top && at.y <= r.top + r.h;
     if (on && e.click_count === 2) { this.press = null; this.toggleActual(at); cx.notify(); return; }
-    this.press = { x: e.position.x, y: e.position.y, ox: this.ox, oy: this.oy, on, moved: false };
+    this.press = { x: pos.x, y: pos.y, ox: this.ox, oy: this.oy, on, moved: false };
     if (on && this.canPan()) { this.dragging = true; cx.notify(); }
   }
 
   move(e, cx) {
     const p = this.press;
     if (!p) return;
-    const dx = e.position.x - p.x, dy = e.position.y - p.y;
+    const pos = point(e.position);
+    const dx = pos.x - p.x, dy = pos.y - p.y;
     if (Math.abs(dx) + Math.abs(dy) > 3) p.moved = true;
     if (!this.dragging) return;
     this.ox = p.ox + dx;
@@ -220,18 +227,18 @@ export default class ImageViewer extends View {
 
   wheel(e, cx) {
     if (!this.img()) return;
-    const at = e.local_position;
+    const at = point(e.local_position);
     const lines = e.delta_lines && (e.delta_lines.x || e.delta_lines.y);
     const zoomKey = e.modifiers?.control || e.modifiers?.platform;
     if (zoomKey || lines) {
       // A wheel's notch (lines) or a pinch / ctrl-scroll (pixels): zoom at the pointer.
-      const dy = lines ? e.delta_lines.y * 40 : e.delta.y;
+      const dy = lines ? e.delta_lines.y * 40 : unzoom(e.delta.y);
       if (!dy) return;
       this.zoomBy(Math.exp(Math.max(-1, Math.min(1, dy * 0.004))), at);
     } else if (this.canPan()) {
       // A trackpad's two-finger scroll pans a zoomed image.
-      this.ox += e.delta.x;
-      this.oy += e.delta.y;
+      this.ox += unzoom(e.delta.x);
+      this.oy += unzoom(e.delta.y);
       this.clamp();
     } else return;
     cx.stop_propagation();
@@ -298,7 +305,7 @@ export default class ImageViewer extends View {
     return v_flex().id("viewer").w(props()?.width ?? this.size.width).h(props()?.height ?? this.size.height)
       .bg(backdrop(t))
       .track_focus(this.handle)
-      .on_size_change((size, cx) => { this.size = size; cx.notify(); })
+      .on_size_change((size, cx) => { this.size = { width: unzoom(size.width), height: unzoom(size.height) }; cx.notify(); })
       .on_key_down((e, cx) => this.key(e, cx))
       .on_mouse_move((e, cx) => this.move(e, cx))
       .on_mouse_up("left", (_e, cx) => this.up(cx))

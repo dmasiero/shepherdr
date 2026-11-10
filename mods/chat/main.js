@@ -3983,7 +3983,8 @@ export default class Chat extends View {
   openText(f) {
     const a = this.paneArea();
     const at = a ? { x: a.x, y: a.y } : "pointer";
-    const width = Math.round(this.width * zoomOf()), height = Math.round((this.height ?? 700) * zoomOf());
+    // An overlay's size is at zoom 1, as the chat's own; only `at` is in the window's pixels.
+    const width = Math.round(this.width), height = Math.round(this.height ?? 700);
     openOverlay({ mod: "chat-image", kind: "popup", frame: "none", width, height, at, props: { textPath: f.path, title: f.name, width, height } });
   }
 
@@ -4028,10 +4029,11 @@ export default class Chat extends View {
     const images = all.filter(Boolean);
     if (!images.length) return;
     i = images.indexOf(all[i] ?? images[0]);
-    // Over this chat pane, at its size (a popup's root needs its size spelled out).
+    // Over this chat pane, at its size (a popup's root needs its size spelled out). An overlay's size is at zoom 1,
+    // as the chat's own; only `at` is in the window's pixels (SHEP-42: times the zoom, it ran past the window).
     const a = this.paneArea();
     const at = a ? { x: a.x, y: a.y } : "pointer";
-    const width = Math.round(this.width * zoomOf()), height = Math.round((this.height ?? 700) * zoomOf());
+    const width = Math.round(this.width), height = Math.round(this.height ?? 700);
     openOverlay({ mod: "chat-image", kind: "popup", frame: "none", width, height, at,
       props: { images, index: Math.max(0, Math.min(images.length - 1, i)), width, height } });
   }
