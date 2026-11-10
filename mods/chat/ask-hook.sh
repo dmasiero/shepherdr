@@ -39,12 +39,17 @@ command -v hc >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && watch=1
 [ "$watch" = 1 ] || fresh || exit 0
 # A task worker runs its own hook too (herdr-task _allow: Codex's in its argv, Claude's in its
 # --settings, SHEP-139), which hands this what it doesn't allow itself ($HERDR_ASK_CHAINED): the
-# agent waits for both, so this copy steps aside. Codex's is inside a -c value (hooks.PermissionRequest=...),
-# never a word of its own: matching only a bare "_allow" put two cards up for each ask (#866).
+# agent waits for both, so this copy steps aside. herdr-task labels such a worker herdr.asks=chained
+# (SHEP-40): its argv is no sure sign, as a fish shell gets the agent's whole command as one string.
+# Workers started before the label: Codex's hook is inside a -c value (hooks.PermissionRequest=...),
+# never a word of its own (matching only a bare "_allow" put two cards up for each ask, #866), and
+# Claude's is the --settings after the flag, or inside a shell's one-string command (fish).
 if [ -z "${HERDR_ASK_CHAINED:-}" ] && [ "$watch" = 1 ] \
-  && hc get "$t" --json 2>/dev/null | jq -e '(.argv // []) as $a | ($a | index("_allow")) != null
-       or any($a[]; tostring | startswith("hooks.PermissionRequest=") and contains(" _allow --command "))
-       or (($a | index("--settings")) as $i | $i != null and (($a[$i + 1] // "") | tostring | contains(" _allow --command ")))' >/dev/null 2>&1; then
+  && hc get "$t" --json 2>/dev/null | jq -e '((.labels // {})["herdr.asks"] == "chained")
+       or ((.argv // []) as $a | ($a | index("_allow")) != null
+         or any($a[]; tostring | startswith("hooks.PermissionRequest=") and contains(" _allow --command "))
+         or (($a | index("--settings")) as $i | $i != null and (($a[$i + 1] // "") | tostring | contains(" _allow --command ")))
+         or any($a[]; tostring | test("(^|[ /])(claude --settings|codex -c) \u0027(hooks\\.PermissionRequest=)?[^\u0027]* _allow --command ")))' >/dev/null 2>&1; then
   exit 0
 fi
 
@@ -55,8 +60,17 @@ end="$d/end/$id"
 done_() { rm -f "$req" "$req.tmp" "$ans"; exit 0; }
 # Over without a decision from here: why, for the card's quiet line, then go.
 ended() { printf '%s\n' "$1" > "$end.tmp" 2>/dev/null && mv "$end.tmp" "$end" 2>/dev/null; done_; }
-# Claude stops the hook itself when its prompt is refused or interrupted in the terminal.
-trap 'ended "$(how declined)"' TERM INT HUP
+# Claude stops the hook itself when its prompt is refused or interrupted in the terminal, and when
+# the hook's timeout runs out: a machine whose settings.json still says 30 minutes (SHEP-40: both
+# cards then read "Declined" while Claude's prompt still waited in the terminal).
+start=$(date +%s)
+stopped() {
+  if [ $(( $(date +%s) - start )) -ge 1790 ] && [ -z "$(python3 "$(dirname "$0")/ask-end.py" "$req" 2>/dev/null)" ]; then
+    ended "No answer here in time; it waits in the terminal"
+  fi
+  ended "$(how declined)"
+}
+trap stopped TERM INT HUP
 mkdir -p "$d/req" "$d/ans" "$d/end" 2>/dev/null || exit 0
 find "$d/end" -type f -mmin +1440 -delete 2>/dev/null
 cat > "$req.tmp" 2>/dev/null && mv "$req.tmp" "$req" 2>/dev/null || done_
@@ -78,9 +92,12 @@ how() {
 }
 armed=0
 
-# Up to 30 minutes (the hook's timeout in settings.json is the same).
+# Until it's answered (SHEP-40: the card closed after 30 minutes, leaving the person the terminal):
+# up to a week, the hook's timeout in settings.json and herdr-task's ASK_TIMEOUT, less a minute so
+# it says why itself. Every 0.3 s for two minutes, then every 2 s.
+until=$((start + ${HERDR_ASK_WAIT:-604740}))
 i=0
-while [ "$i" -lt 6000 ]; do
+while [ "$(date +%s)" -lt "$until" ]; do
   if [ -f "$ans" ]; then
     cat "$ans" 2>/dev/null
     done_
@@ -94,7 +111,7 @@ while [ "$i" -lt 6000 ]; do
   else
     fresh || done_
   fi
-  sleep 0.3
   i=$((i + 1))
+  if [ "$i" -lt 400 ]; then sleep 0.3; else sleep 2; fi
 done
-ended "No answer here in 30 minutes; it waits in the terminal"
+ended "No answer here in a week; it waits in the terminal"

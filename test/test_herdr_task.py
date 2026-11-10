@@ -3005,6 +3005,46 @@ class CleanEnv(unittest.TestCase):
         self.assertEqual(self.agent_env(["sh", "-c", line + ' exec env']).keys() & self.MARKERS.keys(), set())
 
 
+class AsksLabel(unittest.TestCase):
+    """SHEP-40: a worker with its own ask hook (herdr-task _allow) is labelled herdr.asks=chained, so ask-hook.sh's global
+    copy steps aside for it whatever its argv looks like: under fish and the low-priority wrapper Claude's --settings is
+    inside one string, the global copy missed it and each question got two cards. A reviewer or another CLI gets no
+    label (no hook of its own: the global copy is its card). hc is never run."""
+
+    def launched(self, argv, role=None, shell="/usr/bin/fish"):
+        from types import SimpleNamespace
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.launch as L
+        ran = []
+
+        def run(a, *_, **__):
+            ran.append(a)
+            return subprocess.CompletedProcess(a, 0, json.dumps({"address": "t9"}), "")
+        s = SimpleNamespace(key=lambda t: "dev#6", dirty=False)
+        task = {"id": 6, "title": "fake", "agents": []}
+        with mock.patch.object(L, "run", run), mock.patch.object(L, "folder_for", lambda s, t: "/tmp"), \
+                mock.patch.object(L, "agent_name", lambda *a: "dev-6-fake"), mock.patch.object(L, "track", lambda *a: None), \
+                mock.patch.object(L, "coordinator_tab", lambda a: None), mock.patch.dict(os.environ, {"SHELL": shell}), \
+                mock.patch.object(L, "scope_argv", lambda: ["systemd-run", "--user", "--scope", "--quiet", "--collect"]), \
+                mock.patch("herdr_task.settings.machine_option", lambda k, d=None: d):
+            L.launch(s, task, argv, "sp1", role=role)
+        hc = ran[0]
+        labels = [hc[i + 1] for i, w in enumerate(hc) if w == "--label"]
+        return labels, hc[hc.index("--") + 1:]
+
+    def test_claude_and_codex_workers_get_it(self):
+        for agent in ("claude", "codex"):
+            labels, argv = self.launched([agent])
+            self.assertIn("herdr.asks=chained", labels, agent)
+            self.assertEqual(argv[0], "systemd-run")  # the wrapper that hid the argv from the old check
+            self.assertTrue(any(w.startswith(f"{agent} ") and " _allow --command " in w for w in argv), "fish: one string")
+
+    def test_a_reviewer_or_another_cli_gets_none(self):
+        self.assertNotIn("herdr.asks=chained", self.launched(["claude", "--permission-mode", "plan"], role="reviewer")[0])
+        self.assertNotIn("herdr.asks=chained", self.launched(["aider"])[0])
+
+
 class Revive(unittest.TestCase):
     """SHEP-30:an Assistant or a task's agent the core gave a plain shell (a crash, a power loss, a
     reboot) gets its agent typed back into that shell, on its own session. A fake core in memory:
@@ -4290,7 +4330,8 @@ class CodexAsksOnTheCard(unittest.TestCase):
         from herdr_task import launch
         argv = launch.own_argv(["codex", "--sandbox", "workspace-write"])
         self.assertIn(f"timeout={launch.ASK_TIMEOUT}", argv[2])
-        self.assertEqual(launch.ASK_TIMEOUT, 1800)
+        # SHEP-40: until it's answered, up to a week (30 minutes closed the card while the terminal still asked)
+        self.assertEqual(launch.ASK_TIMEOUT, 604800)
 
     def test_a_codex_workers_proof_and_commits_never_ask(self):
         """#866: Codex's sandbox can't write Shepherdr's stores nor git's data, so a Codex worker runs its proof and

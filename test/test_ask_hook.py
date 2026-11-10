@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -131,9 +132,73 @@ class AskHook(unittest.TestCase):
         p.wait()
         p.stdout.close()
 
+    def test_a_labelled_worker_hands_it_over_whatever_its_argv(self):
+        # SHEP-40: herdr-task labels a worker with its own hook herdr.asks=chained; the label alone is enough
+        self.term({"state": "live", "status": "working", "argv": ["sh", "-c", "anything"], "labels": {"herdr.asks": "chained"}})
+        self.assertEqual(self.out(self.start()), b"")
+        self.assertIsNone(self.waiting(0.2))
+
+    def test_a_fish_workers_one_string_command_is_its_own_hook(self):
+        # SHEP-40 (INF-23): a worker started from fish under the low-priority wrapper, before the label: Claude's
+        # --settings is inside fish's one -ic string, and both copies put a card up for the one question
+        sys_path = os.path.join(ROOT, "mods", "tasks", "bin")
+        for agent in ("claude", "codex"):
+            code = (f"import sys, os, json; sys.path.insert(0, {sys_path!r}); os.environ['SHELL'] = '/usr/bin/fish'; "
+                    f"from herdr_task.launch import own_argv, in_shell, low_priority, clean_env; "
+                    f"print(json.dumps(['systemd-run', '--user', '--scope', '--', *low_priority(clean_env(in_shell(own_argv([{agent!r}, 'go']))), 'x')]))")
+            argv = json.loads(subprocess.run(["python3", "-c", code], capture_output=True, text=True, check=True).stdout)
+            self.assertNotIn("--settings", argv)
+            self.term({"state": "live", "status": "working", "argv": argv})
+            self.assertEqual(self.out(self.start()), b"", agent)
+            self.assertIsNone(self.waiting(0.2), agent)
+
+    def test_a_card_waits_past_the_old_30_minutes(self):
+        # SHEP-40: the wait is a deadline (a week by default, the hook's timeout), not 6000 rounds; here two seconds
+        p = self.start(HERDR_ASK_WAIT="2")
+        ask = self.waiting()
+        self.assertIsNotNone(ask)
+        self.assertEqual(self.out(p), b"")
+        with open(os.path.join(self.asks, "end", ask)) as f:
+            self.assertEqual(f.read().strip(), "No answer here in a week; it waits in the terminal")
+        hook = open(HOOK).read()
+        self.assertIn("${HERDR_ASK_WAIT:-604740}", hook)
+        sys.path.insert(0, os.path.join(ROOT, "mods", "tasks", "bin"))
+        from herdr_task import launch
+        self.assertEqual(launch.ASK_TIMEOUT - 60, 604740, "it ends itself a minute before the agent's timeout")
+
+    def test_a_stopped_worker_hook_takes_its_card_down(self):
+        # SHEP-40: Claude stops the worker's own hook (herdr-task _allow) when its timeout runs out; the card's hook it
+        # runs (ask_card) stops too and says why, never a card left up with nobody waiting on its answer
+        import signal
+        sys_path = os.path.join(ROOT, "mods", "tasks", "bin")
+        code = (f"import sys; sys.path.insert(0, {sys_path!r}); from herdr_task import launch; "
+                f"launch.ask_hook = lambda: {HOOK!r}; print(repr(launch.ask_card(sys.stdin.buffer.read())))")
+        e = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": self.tmp, "HERDR_APP_HOME": self.app,
+             "HC_TERMINAL_ID": "t9", "FAKE_HC_STATE": self.state}
+        p = subprocess.Popen(["python3", "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=e)
+        p.stdin.write(json.dumps(REQ).encode())
+        p.stdin.close()
+        ask = self.waiting()
+        self.assertIsNotNone(ask, "the chained hook put the card up")
+        p.send_signal(signal.SIGTERM)
+        self.out(p)
+        end = time.time() + 5
+        while os.path.exists(os.path.join(self.asks, "req", ask + ".json")) and time.time() < end:
+            time.sleep(0.05)
+        self.assertFalse(os.path.exists(os.path.join(self.asks, "req", ask + ".json")), "the card goes")
+        self.assertTrue(os.path.exists(os.path.join(self.asks, "end", ask)), "with why")
+
     def test_a_brief_that_names_the_hook_is_no_worker_hook(self):
         # only the --settings that follows the flag counts, not any argument that mentions it
         self.term({"state": "live", "status": "working", "argv": ["claude", "fix ` _allow --command ` in launch.py"]})
+        p = self.start()
+        self.assertIsNotNone(self.waiting())
+        p.kill()
+        p.wait()
+        p.stdout.close()
+        # nor a fish line whose brief names it: only right after `claude --settings '`
+        shutil.rmtree(os.path.join(self.asks, "req"))
+        self.term({"state": "live", "status": "working", "argv": ["fish", "-ic", "claude 'fix ` _allow --command ` in launch.py'"]})
         p = self.start()
         self.assertIsNotNone(self.waiting())
         p.kill()

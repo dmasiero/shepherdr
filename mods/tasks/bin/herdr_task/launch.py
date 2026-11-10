@@ -29,8 +29,13 @@ from .browsers import browser_line, browser_path
 # Codex through a PermissionRequest hook given with -c (`herdr-task _allow` answers it, and hands
 # anything else to the chat's card: ask_card).
 
-# How long Codex waits on the permission hook: as the chat's card waits (ask-hook.sh).
-ASK_TIMEOUT = 1800
+# How long the agent waits on the permission hook: as the chat's card waits (ask-hook.sh), until
+# it's answered, up to a week (SHEP-40: after 30 minutes the card closed while the question still
+# waited in the terminal). The terminal stays a way to answer meanwhile.
+ASK_TIMEOUT = 604800
+# The label a worker with its own hook gets (SHEP-40): ask-hook.sh's global copy steps aside for it
+# (its argv is no sure sign: a fish shell gets the agent's command as one string).
+ASKS_LABEL = "herdr.asks=chained"
 OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where"]
 # herdr-secret's agent commands (~/.config/herdr-app/bin/herdr-secret): asking for a secret and
 # using one by name never ask either, as Shepherdr's secret commands. Written by its full path or
@@ -255,12 +260,31 @@ def ask_card(raw):
     hook = ask_hook()
     if not hook:
         return ""
+    import signal
     try:
-        r = subprocess.run(["sh", hook], input=raw, capture_output=True, timeout=ASK_TIMEOUT - 10,
-                           env={**os.environ, "HERDR_ASK_CHAINED": "1"})
-    except (OSError, subprocess.SubprocessError):
+        p = subprocess.Popen(["sh", hook], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             env={**os.environ, "HERDR_ASK_CHAINED": "1"})
+    except OSError:
         return ""
-    out = r.stdout.decode("utf-8", "replace").strip()
+
+    # The agent stops this hook (its prompt answered in the terminal, its timeout run out): the card's
+    # hook stops too and says why, never a card left up that nobody waits on (SHEP-40).
+    def stop(*_):
+        p.terminate()
+        try:
+            p.wait(timeout=3)
+        except subprocess.SubprocessError:
+            p.kill()
+        sys.exit(0)
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, stop)
+    try:
+        stdout, _ = p.communicate(raw, timeout=ASK_TIMEOUT - 10)
+    except subprocess.SubprocessError:
+        p.kill()
+        p.wait()
+        return ""
+    out = stdout.decode("utf-8", "replace").strip()
     try:
         json.loads(out)
     except ValueError:
@@ -712,6 +736,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
         labels += ["--label", f"herdr.coordinator={ctab}"]
     if role:
         labels += ["--label", f"herdr.role={role}"]
+    elif agent_key(argv) in ("claude", "codex"):
+        labels += ["--label", ASKS_LABEL]
     rel = ["--parent", parent, "--outlive-parent"] if parent else ["--no-parent"]
     name = agent_name(s, task, "review" if role else None)
     # HERDR_BROWSER_TASK: which task's browser herdr-browser drives (HERD-57), for it and its children.
