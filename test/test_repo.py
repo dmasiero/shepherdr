@@ -68,6 +68,29 @@ class Repo(unittest.TestCase):
             self.assertIs(node.get("resizable"), False, f"{node['id']} holds one child and is resizable")
             self.assertEqual((child.get("size") or {}).get("weight"), 1, f"{child['id']} is the only child of {node['id']} but has no weight 1")
 
+    def test_shipped_json_has_no_duplicate_keys(self):
+        # Python's json keeps the last of two equal keys, but Herdr refuses the file and falls back to its default
+        # layout (SHEP-41: a merge kept both the fork's and upstream's "size" and "resizable" lines).
+        def no_dups(where):
+            def hook(pairs):
+                names = [k for k, _ in pairs]
+                dups = sorted({k for k in names if names.count(k) > 1})
+                self.assertEqual(dups, [], f"{where} has duplicate keys")
+                return dict(pairs)
+            return hook
+
+        found = []
+        for d, dirs, files in os.walk(ROOT):
+            dirs[:] = [x for x in dirs if x not in (".git", "node_modules", "dist", "generated", "__pycache__")]
+            for f in files:
+                if f.endswith(".json"):
+                    p = os.path.join(d, f)
+                    found.append(os.path.relpath(p, ROOT))
+                    with open(p) as fh:
+                        json.load(fh, object_pairs_hook=no_dups(found[-1]))
+        for must in ("layouts/shepherdr.json", "keys.json", "lib/addons.json", "mods/chat/mod.json"):
+            self.assertIn(must, found)
+
     def test_keys_name_our_layout_and_parse(self):
         keys = json.load(open(J("keys.json")))
         layouts = [c for c in keys if c.startswith("layout:")]
