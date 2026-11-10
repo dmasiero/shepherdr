@@ -166,6 +166,28 @@ class AskHook(unittest.TestCase):
         from herdr_task import launch
         self.assertEqual(launch.ASK_TIMEOUT - 60, 604740, "it ends itself a minute before the agent's timeout")
 
+    def test_a_stopped_worker_hook_takes_its_card_down(self):
+        # SHEP-40: Claude stops the worker's own hook (herdr-task _allow) when its timeout runs out; the card's hook it
+        # runs (ask_card) stops too and says why, never a card left up with nobody waiting on its answer
+        import signal
+        sys_path = os.path.join(ROOT, "mods", "tasks", "bin")
+        code = (f"import sys; sys.path.insert(0, {sys_path!r}); from herdr_task import launch; "
+                f"launch.ask_hook = lambda: {HOOK!r}; print(repr(launch.ask_card(sys.stdin.buffer.read())))")
+        e = {"PATH": f"{self.bin}:{os.environ['PATH']}", "HOME": self.tmp, "HERDR_APP_HOME": self.app,
+             "HC_TERMINAL_ID": "t9", "FAKE_HC_STATE": self.state}
+        p = subprocess.Popen(["python3", "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=e)
+        p.stdin.write(json.dumps(REQ).encode())
+        p.stdin.close()
+        ask = self.waiting()
+        self.assertIsNotNone(ask, "the chained hook put the card up")
+        p.send_signal(signal.SIGTERM)
+        self.out(p)
+        end = time.time() + 5
+        while os.path.exists(os.path.join(self.asks, "req", ask + ".json")) and time.time() < end:
+            time.sleep(0.05)
+        self.assertFalse(os.path.exists(os.path.join(self.asks, "req", ask + ".json")), "the card goes")
+        self.assertTrue(os.path.exists(os.path.join(self.asks, "end", ask)), "with why")
+
     def test_a_brief_that_names_the_hook_is_no_worker_hook(self):
         # only the --settings that follows the flag counts, not any argument that mentions it
         self.term({"state": "live", "status": "working", "argv": ["claude", "fix ` _allow --command ` in launch.py"]})

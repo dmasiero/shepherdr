@@ -260,12 +260,31 @@ def ask_card(raw):
     hook = ask_hook()
     if not hook:
         return ""
+    import signal
     try:
-        r = subprocess.run(["sh", hook], input=raw, capture_output=True, timeout=ASK_TIMEOUT - 10,
-                           env={**os.environ, "HERDR_ASK_CHAINED": "1"})
-    except (OSError, subprocess.SubprocessError):
+        p = subprocess.Popen(["sh", hook], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             env={**os.environ, "HERDR_ASK_CHAINED": "1"})
+    except OSError:
         return ""
-    out = r.stdout.decode("utf-8", "replace").strip()
+
+    # The agent stops this hook (its prompt answered in the terminal, its timeout run out): the card's
+    # hook stops too and says why, never a card left up that nobody waits on (SHEP-40).
+    def stop(*_):
+        p.terminate()
+        try:
+            p.wait(timeout=3)
+        except subprocess.SubprocessError:
+            p.kill()
+        sys.exit(0)
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, stop)
+    try:
+        stdout, _ = p.communicate(raw, timeout=ASK_TIMEOUT - 10)
+    except subprocess.SubprocessError:
+        p.kill()
+        p.wait()
+        return ""
+    out = stdout.decode("utf-8", "replace").strip()
     try:
         json.loads(out)
     except ValueError:
