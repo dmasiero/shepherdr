@@ -63,6 +63,16 @@ class Install(unittest.TestCase):
     def p(self, *rel):
         return os.path.join(self.root, *rel)
 
+    def test_an_older_installs_30_minute_wait_is_raised(self):
+        # SHEP-40: the question card closed after 30 minutes; an install raises the old entry's timeout, still one entry
+        old = {"hooks": [{"type": "command", "command": f"sh '{self.p(APP)}/mods/chat/ask-hook.sh'", "timeout": 1800}]}
+        with open(self.p(".claude", "settings.json"), "w") as f:
+            json.dump({"model": "x", "hooks": {"PermissionRequest": [old]}}, f)
+        run("install", "--root", self.root, "--yes")
+        asks = json.load(open(self.p(".claude/settings.json")))["hooks"]["PermissionRequest"]
+        self.assertEqual(len(asks), 1)
+        self.assertEqual(asks[0]["hooks"][0]["timeout"], 604800)
+
     def test_install_again_update_uninstall(self):
         os.makedirs(self.p(".codex"))
         out = run("install", "--root", self.root, "--yes").stdout
