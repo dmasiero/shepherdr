@@ -203,9 +203,6 @@
                                       },
                                       "content": {
                                         "mod": "task-browser"
-                                      },
-                                      "size": {
-                                        "weight": 1
                                       }
                                     }
                                   ],
@@ -281,10 +278,7 @@
                       "active": "artifacts-list"
                     }
                   ],
-                  "active": "tasks",
-                  "size": {
-                    "weight": 1
-                  }
+                  "active": "tasks"
                 }
               ],
               "resizable": false,
@@ -292,8 +286,7 @@
                 "px": 510
               },
               "min": 280,
-              "max": 900,
-              "resizable": false
+              "max": 900
             }
           ],
           "padding": 8,
