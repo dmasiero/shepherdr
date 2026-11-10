@@ -68,7 +68,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "3.1.29"
+VERSION = "3.1.31"
 HERDR_APP_MIN = "0.1.12"
 HC_MIN = "0.1.17"
 
@@ -182,7 +182,7 @@ def shep_py(base):
         return None
 
 
-def shep_block(data, want):
+def shep_check(data, want):
     """Why a one-file helper's SHEP block fails bin/sync-shared --check, or None when it passes."""
     text = (data or b"").decode(errors="replace")
     try:
@@ -257,7 +257,7 @@ def stale_mods(r, rec, src, mods, manifest):
 def old_copy(rel, cur, gone_mods):
     """Why the file at rel (cur, kept or someone else's) is an older Shepherdr's copy, not the person's own: doctor's
     own checks reject it. None: it may well be theirs."""
-    if rel in SHEP_FILES and cur is not None and shep_block(cur, None):
+    if rel in SHEP_FILES and cur is not None and shep_check(cur, None):
         return "an older Shepherdr's copy (it has no SHEP block)"
     if rel.startswith(f"{APP}/layouts/") and cur is not None:
         retired = sorted(layout_mods(cur) & gone_mods)
@@ -287,6 +287,11 @@ def take_rel(root, p):
     if p.startswith((".config/", ".local/")):
         return p
     return f"{APP}/{p}"
+
+
+def old_why(r, rel):
+    """What an install's note says of an old copy it replaces: the fork's reason (old_copy, --take), else upstream's."""
+    return getattr(r, "old_why", {}).get(rel) or "an older Shepherdr's copy that doctor rejects (no current SHEP block)"
 
 
 def write_check(root, bad, notes=()):
@@ -527,9 +532,10 @@ def service_items(src):
             if top != "templates" or f.endswith(".md"):
                 items.append(("service", f"{SHARE}/{top}/{f}", os.path.join(src, top, f)))
     # the artifact guide too (`herdr-artifact guide`), for agents on a web-only machine
-    # (markup.js with dirs.js and core/paths.js, which herdr-artifact copies into each artifact beside it)
+    # (markup.js with dirs.js and core/paths.js, which herdr-artifact copies into each artifact beside it: fork, SHEP-36)
+    # and restart.sh, which the service runs to restart an Assistant from the web (service/layout-scripts.ts)
     for f in ("mods/artifacts/recipe-view.js", "mods/artifacts/markup.js", "mods/artifacts/dirs.js", "mods/artifacts/core/paths.js",
-              "mods/artifacts/ARTIFACTS.md", "install.sh"):
+              "mods/artifacts/ARTIFACTS.md", "install.sh", "mods/coordinator/restart.sh"):
         items.append(("service", f"{SHARE}/{f}", os.path.join(src, f)))
     # recipe-view.js imports it from beside itself
     items.append(("service", f"{SHARE}/mods/artifacts/core/recipe.js", os.path.join(src, "core", "recipe.js")))
@@ -849,10 +855,64 @@ def plan_files(r, rec, items, adopt):
     return actions, clashes
 
 
+# Recorded in the files, but written by their own steps (the service's unit or launch agent, the window's guard), not shipped
+MANAGED = (UNIT, PLIST, f"{BIN}/herdr-app")
+
+
+# The one-file helpers that carry a SHEP block (bin/sync-shared writes it; doctor rejects a copy without it or with another).
+SHEP_HELPERS = (f"{APP}/bin/herdr-secret", f"{APP}/mods/artifacts/bin/herdr-artifact")
+
+
+def shep_block(b):
+    """The SHEP block of a one-file helper (between its marker lines), or None when it has none."""
+    if b is None:
+        return None
+    text = b.decode(errors="replace")
+    try:
+        a = text.index("\n", text.index("# ---- SHEP:")) + 1
+        end = text.index("# ---- end SHEP ----")
+    except ValueError:
+        return None
+    return text[a:end]
+
+
+def old_helper(rel, disk, new):
+    """A kept helper copy that doctor rejects: an older Shepherdr's (not an edit of the person's): its SHEP block is
+    missing or not the one this release ships (#905)."""
+    return rel in SHEP_HELPERS and disk is not None and shep_block(disk) != shep_block(new)
+
+
+def retire_mod(r, mod, old_files, changed):
+    """A mod lib/addons.json no longer lists: its folder goes, with the shared copies and editor helpers in it (#895).
+    What the person changed or put in it is in this run's backup folder, and said. changed: files already backed up."""
+    top = f"{APP}/mods/{mod}"
+    if not os.path.isdir(r.p(top)):
+        return
+    kept = []
+    for d, dirs, names in os.walk(r.p(top)):
+        for n in names:
+            rel = os.path.relpath(os.path.join(d, n), r.root)
+            if rel in changed or n in SKIP or n in GENERATED or n.endswith(".pyc"):
+                continue
+            if rel in old_files and fsha(rel, read(r.p(rel))) == old_files[rel]:
+                continue   # as Shepherdr shipped it
+            kept.append(rel)
+    for rel in kept:
+        r.backup(rel)
+    if r.dry:
+        return
+    try:
+        shutil.rmtree(r.p(top))
+    except OSError as e:
+        raise Stop(f"can't remove {top} (Shepherdr no longer ships it): {e.strerror}. Fix that and run the update again.")
+    where = f" (your changes are in {os.path.join(r.backup_dir, top)})" if kept else ""
+    r.notes.append(f"removed mod {mod}: Shepherdr no longer ships it{where}")
+
+
 def apply_mod(r, mod, acts, rec, gone):
-    """Puts one mod's changes in place in one swap. gone: recorded files no longer shipped."""
+    """Puts one mod's changes in place in one swap. gone: recorded files no longer shipped (backed up already if changed)."""
     target = r.p(f"{APP}/mods/{mod}")
-    changes = [a for a in acts if a[2] in ("new", "update", "adopt", "keep", "replace", "old")] + gone   # fork: "old" (SHEP-34)
+    changes = [a for a in acts if a[2] in ("new", "update", "adopt", "keep", "replace", "old")] + gone
     if not changes:
         return
     if r.dry:
@@ -878,10 +938,13 @@ def apply_mod(r, mod, acts, rec, gone):
             atomic_write(dest, data, mode)
             r.notes.append(f"Shepherdr changed {rel} since you edited it: the new one is in, yours is kept as {dest_b}"
                            " (put your change back into the new one if you still want it)")
-        elif how in ("new", "update", "adopt", "old"):   # fork: "old" (SHEP-34)
+        elif how == "old":
+            dest_b = r.backup(rel)
             atomic_write(dest, data, mode)
-        if how == "old":   # fork: an older Shepherdr's copy, kept before: the backup has it, its .new goes (SHEP-34)
-            r.backup(rel)
+            r.notes.append(f"replaced {rel}: {old_why(r, rel)}; it is kept as {dest_b}")   # fork: why (SHEP-34)
+        elif how in ("new", "update", "adopt"):
+            atomic_write(dest, data, mode)
+        if how == "old":   # fork: an older Shepherdr's copy, kept before: its .new goes (SHEP-34)
             try:
                 os.remove(dest + ".new")
             except FileNotFoundError:
@@ -1158,7 +1221,7 @@ def cmd_install(a, update=False):
     # fork: a kept (or unknown) file that is an older Shepherdr's copy, or one --take names, is replaced, with a
     # backup; a mod no add-on lists any more goes to the backup (SHEP-34)
     stale = stale_mods(r, rec, src, mods, manifest)
-    gone_mods = {m for m, _ in stale} | set(RETIRED_MODS)
+    gone_mods = {m for m, _ in stale} | set(RETIRED_MODS) | (set((rec or {}).get("mods", {})) - set(mods))
     takes = {take_rel(root, p) for p in (a.take or [])}
     unknown = sorted(takes - {x[1] for x in actions})
     if unknown:
@@ -1169,19 +1232,31 @@ def cmd_install(a, update=False):
             why = old_copy(rel, read(r.p(rel)), gone_mods) or (how == "keep" and rel in takes and "you asked for Shepherdr's (--take)")
             if why:
                 actions[i], why_old[rel] = (g, rel, "old", data, mode), why
+    r.old_why = why_old
     clashes = [x[1] for x in actions if x[2] == "clash"]
     if clashes:
         shown = "\n  ".join(clashes[:40]) + (f"\n  ... and {len(clashes) - 40} more" if len(clashes) > 40 else "")
         raise Stop(f"these are someone else's (not installed by Shepherdr, and different):\n  {shown}\n"
                    "Nothing was changed. Rename your own mods, or run with --adopt to back these up and take them over.")
     old_files = (rec or {}).get("files", {})
-    # A mod file the person changed that Shepherdr changed too since: theirs could no longer load with the rest of the
-    # new mod (#766), so Shepherdr's goes in and theirs to the backup folder, said in the notes.
-    actions = [(g, rel, "replace" if how == "keep" and g in mods and rel in old_files and old_files[rel] != fsha(rel, data)
-                else how, data, mode) for g, rel, how, data, mode in actions]
+
+    def settle(g, rel, how, data, mode):
+        # A mod file the person changed that Shepherdr changed too since: theirs could no longer load with the rest of the
+        # new mod (#766), so Shepherdr's goes in and theirs to the backup folder, said in the notes.
+        if how == "keep" and g in mods and rel in old_files and old_files[rel] != fsha(rel, data):
+            how = "replace"
+        elif how == "keep" and old_helper(rel, read(r.p(rel)), data):
+            how = "old"
+        return (g, rel, how, data, mode)
+    actions = [settle(*x) for x in actions]
     shipped = {x[1] for x in actions}
-    gone = [rel for rel in old_files if rel.startswith(f"{APP}/") and rel not in shipped and not rel.startswith(f"{APP}/keys")
-            and rel != f"{BIN}/herdr-app" and fsha(rel, read(r.p(rel))) == old_files[rel]]
+    # Shipped before, not any more (a file, or a mod dropped from lib/addons.json): retired. Changed or not, it goes;
+    # a changed one is backed up first and said (#895: these stayed forever, and doctor then failed on them).
+    gone = [rel for rel in old_files if rel not in shipped and rel not in MANAGED and not rel.startswith(f"{APP}/keys")]
+    changed = {rel for rel in gone if read(r.p(rel)) is not None and fsha(rel, read(r.p(rel))) != old_files[rel]}
+    retired_mods = sorted({m for m in (rec or {}).get("mods", {}) if m not in mods}
+                          | {rel[len(f"{APP}/mods/"):].split("/")[0] for rel in gone if rel.startswith(f"{APP}/mods/")} - set(mods))
+    stale = [(m, why) for m, why in stale if m not in retired_mods]   # fork: upstream's retire_mod has the recorded ones (#895)
     counts = {}
     for x in actions:
         counts[x[2]] = counts.get(x[2], 0) + 1
@@ -1189,7 +1264,7 @@ def cmd_install(a, update=False):
     say(f"  into {root}{' (dry run: nothing is written)' if a.dry_run else ''}")
     say("  files: " + ", ".join(f"{n} {'old copies replaced' if k == 'old' else k}" for k, n in sorted(counts.items()))   # fork: SHEP-34
         + (f", {len(gone)} removed" if gone else ""))
-    touches_tools = any(x[2] in ("new", "update", "adopt", "old") and (x[0] in ("template", "bin") or x[1].endswith(("/bin/herdr-task", "/bin/herdr-artifact"))
+    touches_tools = any(x[2] in ("new", "update", "adopt", "old", "replace") and (x[0] in ("template", "bin") or x[1].endswith(("/bin/herdr-task", "/bin/herdr-artifact"))
                                                                   or "/bin/herdr_task/" in x[1]) for x in actions)
     if a.dry_run:
         for g, rel, how, _, _ in actions:
@@ -1199,6 +1274,10 @@ def cmd_install(a, update=False):
             say(f"  remove  {rel}")
         for m, why in stale:
             say(f"  backup  {APP}/mods/{m} ({why})")
+    if not a.dry_run:
+        for rel in sorted(changed):
+            dest = r.backup(rel)
+            r.notes.append(f"removed {rel}: Shepherdr no longer ships it; your changed copy is in {dest}")
     # The sync to other machines waits until doctor finds this whole.
     if touches_tools and not a.dry_run:
         for p in hold_paths(root):
@@ -1213,14 +1292,14 @@ def cmd_install(a, update=False):
             continue
         r.backup(rel, move=True)
         r.notes.append(f"moved {rel} to the backup: {why}")
-    for rel, why in sorted(why_old.items()):
-        r.notes.append(f"replaced {rel}, {why}: yours is in the backup" if "--take" in why else
-                       f"replaced {rel}, {why}; the file that was there is in the backup")
     # Mods: one swap each.
     for m in mods:
         acts = [x for x in actions if x[0] == m]
         mg = [rel for rel in gone if rel.startswith(f"{APP}/mods/{m}/")]
         apply_mod(r, m, acts, rec, mg)
+    for m in retired_mods:
+        if not r.dry:
+            retire_mod(r, m, old_files, changed)
     # Everything else, file by file (none of it reloads a mod).
     for g, rel, how, data, mode in actions:
         if g in mods:
@@ -1238,11 +1317,20 @@ def cmd_install(a, update=False):
         if how == "keep":
             atomic_write(r.p(rel) + ".new", data, mode)
             r.notes.append(f"kept your {rel}; Shepherdr's is beside it as {os.path.basename(rel)}.new")
-        elif how in ("new", "update", "adopt", "old"):
+        elif how == "old":
+            dest_b = r.backup(rel)
+            if os.path.lexists(r.p(rel) + ".new"):   # fork: its .new goes too (SHEP-34)
+                os.remove(r.p(rel) + ".new")
+            atomic_write(r.p(rel), data, mode)
+            r.notes.append(f"replaced {rel}: {old_why(r, rel)}; it is kept as {dest_b}")   # fork: why (SHEP-34)
+        elif how in ("new", "update", "adopt"):
             atomic_write(r.p(rel), data, mode)
     for rel in gone:
-        if not rel.startswith(f"{APP}/mods/") and not r.dry:
-            os.remove(r.p(rel))
+        if not rel.startswith(f"{APP}/mods/") and not r.dry and os.path.lexists(r.p(rel)):
+            try:
+                os.remove(r.p(rel))
+            except OSError as e:
+                raise Stop(f"can't remove {rel} (Shepherdr no longer ships it): {e.strerror}. Fix that and run the update again.")
     for g, rel, how, data, mode in actions:
         if how != "keep":
             files[rel] = fsha(rel, data)
@@ -1269,12 +1357,19 @@ def cmd_install(a, update=False):
     else:
         save_record(r.root, rec)
         shutil.rmtree(r.p(f"{APP}/.shepherdr-stage"), ignore_errors=True)
+    whole_bad = [] if a.dry_run else install_checks(r, rec)[0]
     for n in r.notes + notes:
         say(f"  - {n}")
     if not a.dry_run:
         if r.backed:
             say(f"  backup of what it replaced: {r.backup_dir}")
-        say("  done. Next: `shepherdr doctor`" + ("" if home else f" --root {root}") + ", then pick the Shepherdr layout in Herdr (Ctrl+Shift+L).")
+        if whole_bad:
+            # loud: the files went in, but doctor would fail the install, and every later update would too (#905)
+            for x in whole_bad:
+                say(f"  ✗ {x}")
+            say("  NOT DONE: the install isn't whole. Fix the ✗ lines above, then run `shepherdr doctor`" + ("" if home else f" --root {root}") + ".")
+        else:
+            say("  done. Next: `shepherdr doctor`" + ("" if home else f" --root {root}") + ", then pick the Shepherdr layout in Herdr (Ctrl+Shift+L).")
     return 0
 
 
@@ -1332,6 +1427,20 @@ def cmd_install_web(a, update=False):
         atomic_write(r.p(rel), data, mode)
         files[rel] = fsha(rel, data)
     say(f"  files: {n} written")
+    # retired, as the herdr-app install does it: shipped before, not any more; a changed one is backed up first
+    shipped = {rel for _g, rel, _p in web_items(src)}
+    for rel in [x for x in files if x not in shipped and x not in MANAGED]:
+        cur = read(r.p(rel))
+        if cur is not None and fsha(rel, cur) != files[rel]:
+            dest = r.backup(rel)
+            r.notes.append(f"removed {rel}: Shepherdr no longer ships it; your changed copy is in {dest}")
+        if cur is not None and not r.dry:
+            try:
+                os.remove(r.p(rel))
+            except OSError as e:
+                raise Stop(f"can't remove {rel} (Shepherdr no longer ships it): {e.strerror}. Fix that and run the update again.")
+        if not r.dry:
+            files.pop(rel)
     links = {}
     for name, target in LINKS.items():
         rel, dest = f"{BIN}/{name}", r.p(f"{SHARE}/{target}")
@@ -1543,39 +1652,14 @@ def github_checks_check(root):
     return out
 
 
-def cmd_doctor(a):
-    root = os.path.realpath(a.root or real_home())
-    home = root == os.path.realpath(real_home())
-    rec = load_record(root)
-    if not rec and os.path.isfile(os.path.join(root, WEB_RECORD)):
-        # web only: its files and links, and where the web app is served from
-        rec = json.load(open(os.path.join(root, WEB_RECORD)))
-        r = Run(root, True)
-        bad = [f"missing: {rel}" for rel in sorted(rec.get("files", {})) if read(r.p(rel)) is None]
-        bad += [f"link {BIN}/{n} doesn't lead to {d}" for n, d in rec.get("links", {}).items()
-                if not os.path.islink(r.p(f"{BIN}/{n}")) or os.path.realpath(r.p(f"{BIN}/{n}")) != os.path.realpath(d)]
-        s_bad, s_notes = serve_check(root) if home else ([], [])
-        d_bad, d_notes = data_check(root)
-        bad += d_bad
-        s_notes = d_notes + s_notes
-        if home and has_unit(root):
-            up, why = service_answers(root)
-            s_bad += [] if up else [why]
-        say(f"Shepherdr {rec.get('version')} (web only) under {root} (from {rec.get('source')}, {rec.get('at')})")
-        for x in bad + s_bad:
-            say(f"  ✗ {x}")
-        ab = agent_browser_state(root)
-        for x in s_notes + ([ab] if ab else []) + [update_hint(rec)]:
-            say(f"  - {x}")
-        if not bad + s_bad:
-            say("  ✓ whole")
-        write_check(root, bad + s_bad)   # fork: SHEP-34
-        return 1 if bad + s_bad else 0
-    if not rec:
-        raise Stop(f"Shepherdr isn't installed under {root}")
-    r = Run(root, True)
+def install_checks(r, rec):
+    """What makes an install whole, as doctor and the end of an install check it: each recorded file is there, the links
+    lead to it, the mods' shared copies match lib/ (sync-shared --check), herdr-task compiles, the layout and keys are
+    JSON. -> (bad, warn): bad fails the install; warn is said and goes on."""
     bad, warn = [], []
     # fork: a kept edit doctor's own checks reject names itself and its fix (SHEP-34)
+    root = r.root
+    home = os.path.realpath(root) == os.path.realpath(real_home())
     app = r.p(APP)
     want_py, copies = shep_py(app), shared_copies(app)
     fix = lambda rel: f"`shepherdr update --take {os.path.relpath(rel, APP)}{'' if home else f' --root {root}'}`"
@@ -1585,7 +1669,7 @@ def cmd_doctor(a):
             bad.append(f"missing: {rel}")
         elif fsha(rel, have) != sha:
             # fork: an edit doctor's own checks reject is a problem, with the way out (SHEP-34)
-            why = shep_block(have, want_py) if rel in SHEP_FILES else (
+            why = shep_check(have, want_py) if rel in SHEP_FILES else (
                 f"it differs from {copies[rel]}" if rel in copies and read(r.p(f"{APP}/{copies[rel]}")) != have else None)
             if why:
                 bad.append(f"your edit of {rel} fails Shepherdr's check ({why}): {fix(rel)} backs it up and puts Shepherdr's in")
@@ -1627,6 +1711,41 @@ def cmd_doctor(a):
     for f, event, cmd in rec.get("hooks", []):
         if cmd not in (read(r.p(f)) or b"").decode(errors="replace").replace("\\'", "'"):
             warn.append(f"hook missing in {f} ({event}): questions from that CLI won't reach the chat")
+    return bad, warn
+
+
+def cmd_doctor(a):
+    root = os.path.realpath(a.root or real_home())
+    home = root == os.path.realpath(real_home())
+    rec = load_record(root)
+    if not rec and os.path.isfile(os.path.join(root, WEB_RECORD)):
+        # web only: its files and links, and where the web app is served from
+        rec = json.load(open(os.path.join(root, WEB_RECORD)))
+        r = Run(root, True)
+        bad = [f"missing: {rel}" for rel in sorted(rec.get("files", {})) if read(r.p(rel)) is None]
+        bad += [f"link {BIN}/{n} doesn't lead to {d}" for n, d in rec.get("links", {}).items()
+                if not os.path.islink(r.p(f"{BIN}/{n}")) or os.path.realpath(r.p(f"{BIN}/{n}")) != os.path.realpath(d)]
+        s_bad, s_notes = serve_check(root) if home else ([], [])
+        d_bad, d_notes = data_check(root)
+        bad += d_bad
+        s_notes = d_notes + s_notes
+        if home and has_unit(root):
+            up, why = service_answers(root)
+            s_bad += [] if up else [why]
+        say(f"Shepherdr {rec.get('version')} (web only) under {root} (from {rec.get('source')}, {rec.get('at')})")
+        for x in bad + s_bad:
+            say(f"  ✗ {x}")
+        ab = agent_browser_state(root)
+        for x in s_notes + ([ab] if ab else []) + [update_hint(rec)]:
+            say(f"  - {x}")
+        if not bad + s_bad:
+            say("  ✓ whole")
+        write_check(root, bad + s_bad)   # fork: SHEP-34
+        return 1 if bad + s_bad else 0
+    if not rec:
+        raise Stop(f"Shepherdr isn't installed under {root}")
+    r = Run(root, True)
+    bad, warn = install_checks(r, rec)
     t_bad, t_notes = check_tools(home)
     bad += t_bad
     if home:
