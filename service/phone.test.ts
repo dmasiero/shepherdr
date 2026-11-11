@@ -161,7 +161,7 @@ test("the right PIN on the keys: the call starts; the caller's voice reaches the
   // the opening says it's a phone call, with no screen, with Shepherdr
   await until(() => heard.some((m) => m.type === "conversation_initiation_client_data"));
   const open = heard.findLast((m) => m.type === "conversation_initiation_client_data");
-  expect(open.conversation_config_override.agent.prompt.prompt).toContain("The call runs in a phone call. It is with Shepherdr");
+  expect(open.conversation_config_override.agent.prompt.prompt).toContain("The call is a phone call. It is with Shepherdr");
   expect(open.conversation_config_override.agent.prompt.prompt).toContain("no screen");
   await Bun.sleep(100);
   const n = heard.length;
