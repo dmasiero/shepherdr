@@ -9,13 +9,27 @@
 // again if the phone ended it, and never ends the call for the page being hidden. If the socket drops anyway, the
 // server holds the call (service/voice.ts HOLD_MS) and the page goes back to it on its own, then the agent says it's
 // back; nothing said before is lost.
+//
+// SHEP-45, an Android phone with another app in front or the screen off: the call went on but heard nothing. The
+// microphone now goes through an AudioWorklet (the audio thread, not the page's own, which Chrome slows down for a page
+// out of sight), its track's mute, unmute and end are watched whether the page shows or not (an ended one is taken
+// again at once), a suspended audio is resumed at once, and every few seconds the page tells the server its state
+// (shown or hidden, the track live or muted, the audio running): service.log then says whether frames stopped coming
+// or came silent.
 import { levelOf, meter, TALKING, type Sample } from '@client/meter.ts'
 import { chimePcm } from '@core/voice.js'
 
 let ws: WebSocket | null = null
 let mic: MediaStream | null = null
 let ctx: AudioContext | null = null
-let node: ScriptProcessorNode | null = null
+let node: AudioNode | null = null
+/** how the microphone is read: an AudioWorklet (the audio thread) or, where there is none, a ScriptProcessor */
+let capture: 'worklet' | 'script' | null = null
+/** SHEP-45: microphone frames sent since the page last told the server its state */
+let sent = 0
+/** a microphone being taken again now, and when it last was */
+let taking = false
+let takenAt = 0
 let micIn: MediaStreamAudioSourceNode | null = null
 /** the agent's voice plays through this element when the browser lets it (else the AudioContext's own output) */
 let out: HTMLAudioElement | null = null
@@ -211,7 +225,84 @@ function wakeAudio() {
   // fork: SHEP-30, the media session's element too (paused by another app's audio, say)
   if (hold?.paused) hold.play().catch(() => undefined)
   // the phone ended the microphone (an interruption it never gave back): take it again
-  if (mic && mic.getAudioTracks().every((t) => t.readyState === 'ended')) void takeMic()
+  if (mic && mic.getAudioTracks().every((t) => t.readyState === 'ended')) retakeMic()
+}
+
+/** SHEP-45: the microphone again. Out of sight, at most once in RETAKE_MS (a phone that keeps ending it can't make
+ *  it loop); on screen, whenever asked. */
+export const RETAKE_MS = 5000
+function retakeMic() {
+  if (!on || !ctx || taking) return
+  if (document.visibilityState !== 'visible' && Date.now() - takenAt < RETAKE_MS) return
+  takenAt = Date.now()
+  taking = true
+  void takeMic().finally(() => { taking = false })
+}
+
+/** SHEP-45: the page's microphone, as the server logs it (states only, never sound): why a call hears nothing */
+function report(event: string) {
+  if (!on || ws?.readyState !== WebSocket.OPEN) return
+  const t = mic?.getAudioTracks()[0]
+  try {
+    ws.send(JSON.stringify({ type: 'diag', event, vis: document.visibilityState, mic: t ? t.readyState : 'none', trackMuted: !!t?.muted,
+      ctx: ctx?.state ?? 'none', capture: capture ?? 'none', muted, sent }))
+    sent = 0
+  } catch { /* gone */ }
+}
+/** how often the page tells it (the server writes its own line as often) */
+export const REPORT_MS = 5000
+setInterval(() => report('tick'), REPORT_MS)
+
+/** SHEP-45: a track the phone mutes (frames of silence), unmutes or ends, whether the page shows or not */
+function watchTrack(t: MediaStreamTrack, stream: MediaStream) {
+  t.onmute = () => {
+    if (mic !== stream) return
+    report('mic-mute')
+    // still muted a moment later out of sight: one try at a fresh one (the server's log says whether it helped)
+    setTimeout(() => { if (mic === stream && t.muted && t.readyState === 'live') retakeMic() }, 3000)
+  }
+  t.onunmute = () => { if (mic === stream) report('mic-unmute') }
+  t.onended = () => { if (mic !== stream) return; report('mic-ended'); retakeMic() }
+}
+
+/** the microphone's frames, read on the audio thread: 4096 samples at a time (as the ScriptProcessor gave them) */
+export const WORKLET = `class Mic extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(4096); this.n = 0 }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0]
+    if (ch) for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = ch[i]
+      if (this.n === this.buf.length) { this.port.postMessage(this.buf, [this.buf.buffer]); this.buf = new Float32Array(4096); this.n = 0 }
+    }
+    return true
+  }
+}
+registerProcessor('shepherdr-mic', Mic)`
+
+/** what reads the microphone into the socket: an AudioWorklet where the browser has one, else a ScriptProcessor */
+async function makeCapture(c: AudioContext): Promise<AudioNode> {
+  const send = (pcm: Float32Array) => {
+    if (muted || ws?.readyState !== WebSocket.OPEN) return
+    if (ws.bufferedAmount > 1024 * 1024) return dropped(ws)
+    ws.send(toPcm16(pcm, c.sampleRate))
+    sent++
+  }
+  if (c.audioWorklet && typeof AudioWorkletNode !== 'undefined' && typeof URL?.createObjectURL === 'function') {
+    const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }))
+    try {
+      await c.audioWorklet.addModule(url)
+      const n = new AudioWorkletNode(c, 'shepherdr-mic', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] })
+      n.port.onmessage = (e) => send(e.data as Float32Array)
+      n.connect(c.destination)
+      capture = 'worklet'
+      return n
+    } catch { /* an older browser: the ScriptProcessor */ } finally { URL.revokeObjectURL(url) }
+  }
+  const sp = c.createScriptProcessor(4096, 1, 1)
+  sp.onaudioprocess = (e) => send(e.inputBuffer.getChannelData(0))
+  sp.connect(c.destination)
+  capture = 'script'
+  return sp
 }
 
 /** the microphone, asked for (none: no microphone or no permission; the call shows, nothing is heard) */
@@ -221,26 +312,21 @@ const askMic = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancella
 async function takeMic(given?: MediaStream | null) {
   const c = ctx
   if (!c) return given?.getTracks().forEach((t) => t.stop())
-  const stream = given === undefined ? await askMic() : given
+  const again = given === undefined
+  const stream = again ? await askMic() : given
   if (ctx !== c) return stream?.getTracks().forEach((t) => t.stop())
+  // asked again and not given (out of sight, say): the old one stays, and it's asked again once the page is back
+  if (again && !stream) return report('mic-lost')
   mic?.getTracks().forEach((t) => t.stop())
   micIn?.disconnect()
   mic = stream
   if (!stream) return
-  for (const t of stream.getAudioTracks()) t.onended = () => { if (mic === stream && document.visibilityState === 'visible') void takeMic() }
+  for (const t of stream.getAudioTracks()) watchTrack(t, stream)
   micIn = c.createMediaStreamSource(stream)
   if (!yours) yours = meter(c)
   micIn.connect(yours)
-  if (!node) {
-    node = c.createScriptProcessor(4096, 1, 1)
-    node.onaudioprocess = (e) => {
-      if (muted || ws?.readyState !== WebSocket.OPEN) return
-      if (ws.bufferedAmount > 1024 * 1024) return dropped(ws)
-      ws.send(toPcm16(e.inputBuffer.getChannelData(0), c.sampleRate))
-    }
-    node.connect(c.destination)
-  }
-  micIn.connect(node)
+  if (node) micIn.connect(node)
+  if (again) report('mic-again')
 }
 
 /** where the agent's voice goes: a playing <audio> element when the browser lets it, else the AudioContext's output */
@@ -354,6 +440,9 @@ function dropped(sock: WebSocket) {
 function comeBack() {
   if (!on) return
   wakeAudio()
+  // SHEP-45: a track still muted a moment after the page is back: a fresh one
+  const stream = mic
+  setTimeout(() => { if (on && mic === stream && stream?.getAudioTracks().some((t) => t.muted && t.readyState === 'live')) retakeMic() }, 1000)
   if (!ws && phase === 'reconnecting') {
     if (retry) clearTimeout(retry)
     retry = null
@@ -361,7 +450,7 @@ function comeBack() {
   }
 }
 if (typeof document !== 'undefined') {
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && comeBack())
+  document.addEventListener('visibilitychange', () => { report(document.visibilityState === 'visible' ? 'visible' : 'hidden'); if (document.visibilityState === 'visible') comeBack() })
   addEventListener('online', comeBack)
   addEventListener('pageshow', comeBack)
   // fork: SHEP-29, a headset's button while the page has the focus (does nothing without a call)
@@ -390,10 +479,19 @@ export async function startCall(chatKey: string | null, onError: (message: strin
   const c = (ctx = new AudioContext())
   c.resume().catch(() => undefined)
   // a phone that locks or takes a call interrupts it: going again as soon as it may
-  c.onstatechange = () => { if (ctx === c && c.state !== 'running' && c.state !== 'closed') setTimeout(wakeAudio, 300) }
+  // (SHEP-45: at once, and again a moment later, as some phones refuse the first)
+  c.onstatechange = () => {
+    if (ctx !== c) return
+    report(`audio-${c.state}`)
+    if (c.state !== 'running' && c.state !== 'closed') { wakeAudio(); setTimeout(wakeAudio, 300) }
+  }
   theirs = meter(c)
+  const reader = await makeCapture(c)
+  if (on !== h || ctx !== c) { reader.disconnect(); return stream?.getTracks().forEach((t) => t.stop()) }
+  node = reader
   await takeMic(stream)
   if (on !== h) return
+  report('start')
   await voiceOut(c, theirs)
   if (on !== h) return
   setLockScreen(controls, muted)
@@ -465,6 +563,7 @@ export function stopCall() {
   if (retry) clearTimeout(retry)
   retry = null
   node?.disconnect()
+  if (node && 'port' in node) (node as AudioWorkletNode).port.onmessage = null
   micIn?.disconnect()
   mic?.getTracks().forEach((t) => t.stop())
   // what it was still saying stops; the chime plays, then the audio closes
@@ -482,6 +581,10 @@ export function stopCall() {
   closing?.close()
   if (was) { setLockScreen(null); setSession(false) }
   node = null
+  capture = null
+  sent = 0
+  taking = false
+  takenAt = 0
   micIn = null
   mic = null
   out = null

@@ -32,8 +32,21 @@ class FakeSocket {
 }
 
 const node = () => ({ connected: [] as unknown[], connect(to: unknown) { this.connected.push(to) }, disconnect() {}, fftSize: 0, getFloatTimeDomainData() {} })
+/** SHEP-45: an AudioWorklet, where a test turns it on (else the ScriptProcessor, as an older browser) */
+class FakeWorkletNode {
+  static last: FakeWorkletNode | null = null
+  port = { onmessage: null as ((e: { data: unknown }) => void) | null }
+  connected: unknown[] = []
+  constructor(public ctx: unknown, public name: string) { FakeWorkletNode.last = this }
+  connect(to: unknown) { this.connected.push(to) }
+  disconnect() {}
+}
+let worklets = false
 class FakeContext {
   static last: FakeContext
+  modules: string[] = []
+  get audioWorklet() { return worklets ? { addModule: async (url: string) => { this.modules.push(url) } } : undefined }
+  sp: { onaudioprocess: ((e: unknown) => void) | null } | null = null
   state = 'running'
   currentTime = 0
   sampleRate = 48000
@@ -46,7 +59,7 @@ class FakeContext {
   close() { this.state = 'closed'; return Promise.resolve() }
   createAnalyser() { return node() }
   createMediaStreamSource() { return node() }
-  createScriptProcessor() { return { ...node(), onaudioprocess: null } }
+  createScriptProcessor() { return (this.sp = { ...node(), onaudioprocess: null }) }
   createMediaStreamDestination() { return this.dest }
   createBuffer(_c: number, n: number) { const data = new Float32Array(n); return { duration: n / 16000, getChannelData: () => data } }
   played: { buffer: { duration: number; getChannelData: () => Float32Array } | null; connected: unknown[]; started: boolean }[] = []
@@ -76,12 +89,14 @@ const mediaSession = { metadata: null as unknown, playbackState: 'none', mic: nu
   setActionHandler(a: string, f: (() => void) | null) { handlers[a] = f },
   setMicrophoneActive(on: boolean) { this.mic = on; return Promise.resolve() } }
 const audioSession = { type: 'auto', state: 'active', onstatechange: null as (() => void) | null }
-const track = () => ({ readyState: 'live', onended: null as (() => void) | null, stop() { this.readyState = 'ended' } })
+const track = () => ({ readyState: 'live', muted: false, onended: null as (() => void) | null, onmute: null as (() => void) | null,
+  onunmute: null as (() => void) | null, stop() { this.readyState = 'ended' } })
 let mics = 0
 const tracks: ReturnType<typeof track>[] = []
 Object.assign(globalThis, {
   WebSocket: FakeSocket,
   AudioContext: FakeContext,
+  AudioWorkletNode: FakeWorkletNode,
   Audio: FakeAudio,
   MediaMetadata: class { constructor(public init: object) {} },
   navigator: {
@@ -94,7 +109,7 @@ Object.assign(globalThis, {
 const call = await import('./call.ts')
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
-beforeEach(() => { call.stopCall(); FakeSocket.all = []; FakeAudio.all = []; playRefused = false; mics = 0 })
+beforeEach(() => { call.stopCall(); FakeSocket.all = []; FakeAudio.all = []; playRefused = false; mics = 0; worklets = false; FakeWorkletNode.last = null; doc.visibilityState = 'visible' })
 
 const errors: string[] = []
 const endedWhy: (string | null)[] = []
@@ -457,3 +472,135 @@ test('SHEP-173: an end by itself says why (the limit, the line); after the perso
   await new Promise((r) => setTimeout(r, 400))
   expect(endedWhy).toEqual(['it reached the 2-hour limit', null])
 })
+
+// SHEP-45: an Android phone with another app in front or the screen off heard nothing. The microphone is read on the
+// audio thread, its track's mute and end are handled out of sight too, and the page tells the server its state.
+// That a real Android phone then keeps sending sound is not provable here: service.log on the phone's next call is.
+const diags = (ws: FakeSocket) => ws.sent.filter((m: any) => m?.type === 'diag') as any[]
+const frames = (ws: FakeSocket) => ws.sent.filter((m) => m instanceof ArrayBuffer) as ArrayBuffer[]
+
+test('SHEP-45: the microphone is read by an AudioWorklet where there is one, its frames sent as 16 kHz PCM', async () => {
+  worklets = true
+  const ws = await start()
+  const ctx = FakeContext.last
+  expect(ctx.modules).toHaveLength(1)
+  expect(ctx.modules[0]).toStartWith('blob:')
+  const n = FakeWorkletNode.last!
+  expect(n.name).toBe('shepherdr-mic')
+  // the microphone goes into it, not into a ScriptProcessor
+  expect(ctx.sp).toBeNull()
+  n.port.onmessage!({ data: new Float32Array(4096).fill(0.5) })
+  const [pcm] = frames(ws)
+  // 48 kHz to 16 kHz: a third of the samples, two bytes each
+  expect(pcm.byteLength).toBe(Math.floor(4096 / 3) * 2)
+  expect(new Int16Array(pcm)[0]).toBe(Math.floor(0.5 * 0x7fff))
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'start', capture: 'worklet', mic: 'live', ctx: 'running', vis: 'visible' })
+  // muted: nothing sent
+  call.muteCall(true)
+  n.port.onmessage!({ data: new Float32Array(4096) })
+  expect(frames(ws)).toHaveLength(1)
+})
+
+test("SHEP-45: the worklet's own code gathers the audio thread's 128-sample blocks into 4096-sample frames", () => {
+  let Proc: any
+  class Base { port = { got: [] as Float32Array[], postMessage(x: Float32Array) { this.got.push(x) } } }
+  new Function('AudioWorkletProcessor', 'registerProcessor', call.WORKLET)(Base, (name: string, p: unknown) => { expect(name).toBe('shepherdr-mic'); Proc = p })
+  const p = new Proc()
+  for (let i = 0; i < 64; i++) expect(p.process([[new Float32Array(128).fill(i / 64)]])).toBe(true)
+  expect(p.port.got).toHaveLength(2)
+  expect(p.port.got[0].length).toBe(4096)
+  expect(p.port.got[1][0]).toBe(32 / 64)
+  // no microphone connected (its track ended): no frames, and it stays alive
+  expect(p.process([[]])).toBe(true)
+  expect(p.process([])).toBe(true)
+  expect(p.port.got).toHaveLength(2)
+})
+
+test('SHEP-45: a browser without AudioWorklet reads it with the ScriptProcessor, as before', async () => {
+  const ws = await start()
+  const ctx = FakeContext.last
+  expect(FakeWorkletNode.last).toBeNull()
+  ctx.sp!.onaudioprocess!({ inputBuffer: { getChannelData: () => new Float32Array(4096) } })
+  expect(frames(ws)).toHaveLength(1)
+  expect(diags(ws).at(-1)).toMatchObject({ capture: 'script', sent: 0 })
+})
+
+test('SHEP-45: the phone ends the microphone out of sight: taken again at once, not only once the page is back', async () => {
+  const ws = await start()
+  doc.visibilityState = 'hidden'
+  fire('visibilitychange')
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'hidden', vis: 'hidden' })
+  const t = tracks.at(-1)!
+  t.readyState = 'ended'
+  t.onended!()
+  await settle()
+  expect(mics).toBe(2)
+  expect(diags(ws).map((d) => d.event).slice(-2)).toEqual(['mic-ended', 'mic-again'])
+  // a phone that ends it again at once: not again out of sight within RETAKE_MS (no loop)
+  tracks.at(-1)!.readyState = 'ended'
+  tracks.at(-1)!.onended!()
+  await settle()
+  expect(mics).toBe(2)
+  // back on screen: taken again then
+  doc.visibilityState = 'visible'
+  fire('visibilitychange')
+  await settle()
+  expect(mics).toBe(3)
+})
+
+test('SHEP-45: asked again and refused out of sight, the old microphone stays and the server hears why', async () => {
+  const ws = await start()
+  const nav = (globalThis.navigator as any).mediaDevices
+  const ask = nav.getUserMedia
+  nav.getUserMedia = async () => { throw new Error('NotAllowedError') }
+  doc.visibilityState = 'hidden'
+  const t = tracks.at(-1)!
+  t.readyState = 'ended'
+  t.onended!()
+  await settle()
+  nav.getUserMedia = ask
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'mic-lost', mic: 'ended' })
+  // once back on screen it is asked for again
+  doc.visibilityState = 'visible'
+  fire('visibilitychange')
+  await settle()
+  expect(tracks.at(-1)!.readyState).toBe('live')
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'mic-again', mic: 'live' })
+})
+
+test('SHEP-45: the track muted by the phone (frames of silence) and unmuted are told; still muted, a fresh one is tried', async () => {
+  const ws = await start()
+  doc.visibilityState = 'hidden'
+  const t = tracks.at(-1)!
+  t.muted = true
+  t.onmute!()
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'mic-mute', trackMuted: true, vis: 'hidden' })
+  await new Promise((r) => setTimeout(r, 3100))
+  expect(mics).toBe(2)
+  // the old one's unmute no longer counts; the new one's does
+  t.onunmute!()
+  expect(diags(ws).at(-1).event).toBe('mic-again')
+  tracks.at(-1)!.onunmute!()
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'mic-unmute', trackMuted: false })
+})
+
+test('SHEP-45: a suspended audio is resumed at once (not only once the page is back), and the server hears of it', async () => {
+  const ws = await start()
+  doc.visibilityState = 'hidden'
+  const ctx = FakeContext.last
+  const before = ctx.resumed
+  ctx.state = 'suspended'
+  ctx.onstatechange!()
+  expect(ctx.resumed).toBe(before + 1)
+  expect(ctx.state).toBe('running')
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'audio-suspended', ctx: 'suspended' })
+})
+
+test('SHEP-45: every few seconds the page tells its state, with the frames it sent since', async () => {
+  worklets = true
+  const ws = await start()
+  FakeWorkletNode.last!.port.onmessage!({ data: new Float32Array(4096) })
+  FakeWorkletNode.last!.port.onmessage!({ data: new Float32Array(4096) })
+  await new Promise((r) => setTimeout(r, call.REPORT_MS + 100))
+  expect(diags(ws).at(-1)).toMatchObject({ event: 'tick', sent: 2, capture: 'worklet', muted: false })
+}, 10_000)
