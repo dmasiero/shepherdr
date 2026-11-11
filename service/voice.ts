@@ -90,6 +90,49 @@ export function talking(pcm: Uint8Array) {
   for (let i = 0; i < s.length; i += 4) sum += s[i] * s[i];
   return Math.sqrt(sum / Math.max(1, s.length >> 2)) > SPEECH;
 }
+/** SHEP-45: how often a call writes its microphone's line in service.log (frames and level; no audio is kept) */
+export const DIAG_MS = 5000;
+const DIAG_EVENTS = new Set(["start", "tick", "visible", "hidden", "mic-mute", "mic-unmute", "mic-ended", "mic-again", "mic-lost", "audio-running", "audio-suspended", "audio-interrupted", "audio-closed"]);
+/** SHEP-45: the page's own word on its microphone ({ type: "diag" }), checked: only states, never audio or words */
+export function pageDiag(m: any) {
+  const one = <T extends string>(v: unknown, of: readonly T[]) => (of.includes(v as T) ? (v as T) : "?");
+  return {
+    event: DIAG_EVENTS.has(m?.event) ? String(m.event) : "tick",
+    vis: one(m?.vis, ["visible", "hidden"] as const),
+    mic: one(m?.mic, ["live", "ended", "none"] as const),
+    trackMuted: m?.trackMuted === true,
+    ctx: one(m?.ctx, ["running", "suspended", "interrupted", "closed", "none"] as const),
+    capture: one(m?.capture, ["worklet", "script", "none"] as const),
+    muted: m?.muted === true,
+    sent: Number.isFinite(m?.sent) ? Math.max(0, Math.min(1e6, Math.round(m.sent))) : null,
+  };
+}
+export type PageDiag = ReturnType<typeof pageDiag>;
+/** the page's state in a few words, for a log line */
+export const diagWords = (d: PageDiag) =>
+  `page ${d.vis}, mic ${d.mic}${d.trackMuted ? " (track muted)" : ""}, audio ${d.ctx}, ${d.capture}${d.muted ? ", person muted" : ""}${d.sent === null ? "" : `, page sent ${d.sent}`}`;
+/** SHEP-45: the microphone's frames over a stretch: how many came, and how loud (RMS and peak, % of full scale) */
+export function micStats() {
+  let frames = 0, samples = 0, sum = 0, peak = 0;
+  return {
+    add(pcm: Uint8Array) {
+      const b = pcm.byteOffset % 2 ? pcm.slice() : pcm;
+      const s = new Int16Array(b.buffer, b.byteOffset, b.length >> 1);
+      frames++;
+      samples += s.length;
+      for (let i = 0; i < s.length; i++) { const v = s[i]; sum += v * v; const a = v < 0 ? -v : v; if (a > peak) peak = a; }
+    },
+    /** this stretch in words, and a fresh one starts */
+    line(secs: number) {
+      const pct = (v: number) => `${((v / 32768) * 100).toFixed(1)}%`;
+      const out = frames
+        ? `${frames} frames (${(frames / Math.max(0.1, secs)).toFixed(1)}/s, ${(samples / 16000).toFixed(1)} s of sound), level ${pct(Math.sqrt(sum / Math.max(1, samples)))} peak ${pct(peak)}`
+        : "no frames";
+      frames = samples = sum = peak = 0;
+      return out;
+    },
+  };
+}
 export type CallDeps = {
   io: VoiceIO;
   /** what the call hears: chats it sent to or the one on screen, and needs anywhere (voice-hear.ts) */
@@ -104,6 +147,10 @@ export type CallDeps = {
   holdMs?: number;
   /** who called (a page comes back only as them) */
   who?: string;
+  /** where its diagnostic lines go (default: service.log through the console) */
+  log?: (line: string) => void;
+  /** how often it writes them (ms) */
+  diagMs?: number;
 };
 
 /** The voice agent's socket: a signed address for the "Herdr chat" agent of the person's key. */
@@ -161,6 +208,7 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
     calls.delete(id);
     if (hold) clearTimeout(hold);
     clearInterval(watch);
+    clearInterval(stats);
     if (saying) clearTimeout(saying);
     if (closing) clearInterval(closing);
     hear.stop();
@@ -184,6 +232,19 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
   tell({ type: "call", id });
   // what the call hears (the chats it follows, needs anywhere), said once nobody is talking
   hear.onScreen(where);
+  // SHEP-45: every few seconds, how many microphone frames came and how loud, with what the page last said of its
+  // microphone: "no frames" and "frames of silence" are told apart (an Android phone in the background)
+  const log = deps.log ?? ((line: string) => console.log(line));
+  const tag = `voice call ${id.slice(0, 8)}`;
+  const mic = micStats();
+  let diag: PageDiag | null = null, diagAt = 0, statsAt = Date.now();
+  const diagLine = () => (diag ? `${diagWords(diag)}, said ${Math.round((Date.now() - diagAt) / 1000)} s ago` : "page said nothing yet");
+  const stats = setInterval(() => {
+    if (ended) return;
+    const t = Date.now();
+    log(`${tag}: ${mic.line((t - statsAt) / 1000)}; ${page ? diagLine() : "page's socket down (holding)"}`);
+    statsAt = t;
+  }, deps.diagMs ?? DIAG_MS);
   const watch = setInterval(() => {
     if (ended) return;
     hear.onScreen(where);
@@ -301,6 +362,13 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
         }
         // the person ended the call (End, or the lock screen's hang up): no holding for the page
         if (m?.type === "end") return end();
+        // SHEP-45: the page's microphone state; a change (hidden, the track muted, the audio suspended) is logged at once
+        if (m?.type === "diag") {
+          diag = pageDiag(m);
+          diagAt = Date.now();
+          if (diag.event !== "tick") log(`${tag}: ${diag.event}; ${diagWords(diag)}`);
+          return;
+        }
         if (m?.type !== "where") return;
         where = { ...where, ...pageWhere(m) };
         // told once it settles (a tap through a few screens is one note)
@@ -308,9 +376,10 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
         saying = setTimeout(() => { saying = null; const now = here(); if (now && now !== said && ws?.readyState === WebSocket.OPEN) { said = now; toVoice(whereLine(now)); } }, 1500);
         return;
       }
-      if (ws?.readyState !== WebSocket.OPEN) return;
       const pcm = Buffer.from(data as ArrayBuffer);
       if (pcm.length > 256 * 1024 || pcm.length % 2) return;
+      mic.add(pcm);
+      if (ws?.readyState !== WebSocket.OPEN) return;
       if (talking(pcm)) heardAt = Date.now();
       ws.send(JSON.stringify({ user_audio_chunk: pcm.toString("base64") }));
     },
