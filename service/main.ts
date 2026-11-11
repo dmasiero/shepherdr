@@ -44,6 +44,7 @@ import { browserRelay } from "./browser.ts";
 import { voiceCall, callToResume, callsOn, pageWhere, type ChatView } from "./voice.ts";
 import { hearing, type HearIO, type Hearing } from "./voice-hear.ts";
 import { voiceTool, type VoiceIO, type Where } from "./voice-tools.ts";
+import { phoneSwitch, vaultPin } from "./phone.ts";
 import { Artifacts } from "./artifacts.ts";
 import { TaskLogs } from "./task-logs.ts";
 import { Settings, onWritten, PUSH, pushBody } from "./settings.ts";
@@ -945,6 +946,15 @@ const server = Bun.serve<{ who: string }>({
     // SHEP-173: a muted call sends nothing for minutes (Bun's default closes a quiet socket after 120 s); pages ping too
     idleTimeout: 600,
   },
+});
+
+// SHEP-44: phone calls through the person's Asterisk PBX (AudioSocket), off unless <config>/phone.json says on: the same
+// call as the web's, with no screen; its "here" is this machine's Home Assistant (docs/phone.md)
+phoneSwitch({
+  voiceOn: () => !offList().includes("voice"),
+  pin: async () => vaultPin(where().vault),
+  where: () => ({ client: "phone", machine: me?.host ?? null, call: compat.last?.places.find((p: any) => p.home && !String(p.id).includes("/"))?.chat ?? null }),
+  start: (w, page) => { noteUsage("feature", { from: "phone", type: "voice-call" }); return voiceCall(hub, { io: voiceIO, hear: hearIO, where: w, who: "phone" }, page); },
 });
 
 console.log(`Shepherdr ${VERSION} on http://127.0.0.1:${server.port} (data ${DATA})${ownLink() && webOn() ? `, ${ownLink()}` : ""}`);
