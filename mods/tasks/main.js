@@ -209,10 +209,17 @@ export default class Tasks extends View {
   }
 
   // A task's agents now: live terminals labelled with its key, on the folder's machine.
+  // Once a task a render (place(), shelved() and every queued row's queueReason() ask again).
   live(list, task) {
     const key = `${list.slug}#${task.id}`;
     const m = list.machine ?? null;
     const f = this.frame ?? {};
+    const seen = (f.live ??= new Map()), at = `${m ?? ""} ${key}`;
+    if (!seen.has(at)) seen.set(at, this.liveNow(key, m, f));
+    return seen.get(at);
+  }
+
+  liveNow(key, m, f) {
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
     return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
       .filter((k) => k.program?.key !== "shell" && !k.program?.shell && !helper(k))
@@ -236,7 +243,8 @@ export default class Tasks extends View {
   place(list, task) {
     const st = task.state;
     const live = st === "running" || st === "ready" ? this.live(list, task) : [];
-    const loaded = machines().find((m) => (m.name ?? null) === (list.machine ?? null))?.layout !== "loading";
+    const ms = this.frame ? (this.frame.machines ??= machines()) : machines();
+    const loaded = ms.find((m) => (m.name ?? null) === (list.machine ?? null))?.layout !== "loading";
     return place(list, task, { live, loaded, helpers: live.length ? this.helpers(list, task, live) : [] });
   }
 
@@ -255,11 +263,15 @@ export default class Tasks extends View {
 
   // Why a queued task waits (core/tasks.js): the tasks it comes after, else the folder is full.
   queueReason(list, task) {
-    return queueReason(list, task, list.tasks.filter((x) => x.state === "running" && this.live(list, x).length).length);
+    const busy = () => list.tasks.filter((x) => x.state === "running" && this.live(list, x).length).length;
+    const f = this.frame;
+    const n = f ? (f.busy ??= new Map()).get(list) ?? f.busy.set(list, busy()).get(list) : busy();
+    return queueReason(list, task, n);
   }
 
   // Herdr cuts off a render that takes too long ("interrupted"): one render reads terminals(),
-  // agents(), panes() and each space's coordinator tab once (this.frame, live.js), not once per row.
+  // agents(), panes(), machines(), the layout and each space's coordinator tab once (this.frame, live.js), not once
+  // per row (SHEP-43: each row's target() walked the whole layout).
   render(cx) {
     this.frame = {};
     try { return inRender(() => this.draw(cx)); } finally { this.frame = null; }
@@ -851,7 +863,7 @@ export default class Tasks extends View {
   // alone too); else its last agent's conversation, read from that agent's own log, with Resume
   // (mods/chat); a task that never started says why it waits. Nowhere in a layout without the view.
   target(p) {
-    if (!threads()) return null;
+    if (!threads(this.frame)) return null;
     const { list, task } = p;
     const m = list.machine ?? null;
     const key = { machine: m, folder: list.folder, slug: list.slug, id: task.id };
@@ -1008,7 +1020,8 @@ function agentName(address) {
 // last one; null: never started), task (its id), title, key ({ machine, folder, slug, id }), log
 // ({ path, kind }: an ended agent's own log), note (why one never started waits), at }.
 const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
-const threads = () => hasNode(layout(), "tasks-thread");
+// In a render, once (frame: the render's this.frame); a click or a timer reads the layout now.
+const threads = (frame = null) => (frame ? (frame.threads ??= hasNode(layout(), "tasks-thread")) : hasNode(layout(), "tasks-thread"));
 function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
   setShared("tasks.thread", { terminal, task, title, key, log, note, at: Date.now() });
   run("layout.select", { stack: "tasks", child: "tasks-thread" });
