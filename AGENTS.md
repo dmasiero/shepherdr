@@ -109,6 +109,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
 - Claude Code trusts /tmp, so a scratch folder there never shows its trust screen: reproduce trust-screen bugs in a
   fresh folder under /var/tmp, and remove its `~/.claude.json` entry after.
+- Viewer CSS: `web/src/styles.css` must list `./screens` (`@source`) or the artifact viewer build drops `Recipe.tsx`
+  classes such as `@lg:`.
 - Before/after web screenshots: build main's version of the changed files into a scratch dist (`git checkout main --
   <files>`, `bun run build`, copy `web/dist`, `git checkout HEAD -- web`) and run one stub per dist on different ports.
 - Crash recovery for real: a throwaway core, `HC_SESSION=<name> hc ...` with `HC_TERMINAL_SOCKET` and Claude's
