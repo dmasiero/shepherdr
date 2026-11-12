@@ -100,6 +100,8 @@ const assistant = (k) => k?.labels?.["herdr.role"] === "coordinator";
 // The composer's round buttons (Send, Call, End call, mic, Mute), and the height of its text row
 // (one line of the box), which the call's row keeps so nothing moves when a call starts.
 const ROUND = 28, TEXT_ROW = 34;
+// The box's measurer grows to one row past the 8 the box shows, so it still tells when the words pass 8 (sizeBox()).
+const METER_ROWS = 9;
 // Image thumbnails: the box's files are squares this many px, this far apart; under sent
 // messages each image keeps its shape, fitted in THUMB_ONE (one image) or THUMB_MANY (w, h).
 const THUMB = 56, THUMB_GAP = 6;
@@ -305,6 +307,10 @@ export default class Chat extends View {
     // Its placeholder is drawn by composer(): it changes while a card asks ("Reply instead…").
     this.box = TextareaState.new({ placeholder: "" });
     this.box.set_rows(1);
+    // The box's words again in an unseen textarea of its own kind that grows with them (boxMeter()): its height
+    // is the rows the box's own wrap gives them (SHEP-46).
+    this.meter = TextareaState.new({ placeholder: "" });
+    this.meter.set_auto_grow(1, METER_ROWS);
     // Ctrl+Enter (the textarea's secondary submit): held until the agent is free.
     this.box.on("submit", (e, cx) => { if (!e?.shift) this.enter(cx, Boolean(e?.secondary)); });
     this.box.on("focus", (_e, cx) => { this.focused = true; this.textSel = null; noteChatArea(this.areaKey(), { focus: true, at: Date.now() }); holdKeys(this.areaKey()); cx.notify(); });
@@ -610,6 +616,7 @@ export default class Chat extends View {
   async close(cx) {
     if (this.host) return this.host.close(cx);
     this.box.release();
+    this.meter.release();
     this.findBox.release();
     this.scroll.release();
     this.dict.cancel();
@@ -4038,7 +4045,7 @@ export default class Chat extends View {
       props: { images, index: Math.max(0, Math.min(images.length - 1, i)), width, height } });
   }
 
-  // The box's height. A hidden copy of the words at the box's width (composer()) says how many
+  // The box's height. A hidden copy of the words at the box's width (boxMeter()) says how many
   // rows they take; the textarea gets one row more than that, the spare one tucked under the
   // toolbar, so its words never overflow it: no scrollbar and no nudge while they fit (8
   // rows). Past 8 it shows 8 and scrolls, with its bar. A taller box shortens the list above
@@ -4054,6 +4061,20 @@ export default class Chat extends View {
     this.boxSpare = spare;
     this.box.set_rows(spare ? want + 1 : want);
     if (this.pinned) this.stick = true;
+  }
+
+  // The words' height at the box's width, unseen (sizeBox()). Measured by a textarea like the box (this.meter,
+  // auto-grow), not by the words as plain text: the box wraps by its own rules, and the plain copy kept a line the
+  // box had already wrapped (after "ping.properties … etc -" it fit about 6 more letters), so the new line was drawn
+  // over the + and Send row until those letters were typed (SHEP-46). Same width, size and wrap as the box: the
+  // row it's under has the box's padding, and this sits in it at the same insets.
+  boxMeter() {
+    const v = this.box.value();
+    if (this.meter.value() !== v) this.meter.set_value(v);
+    return div().absolute().top(0).left(12).right(12).h(0).overflow_hidden().opacity(0)
+      .child(div().id("chat-text-h").w_full().flex_none()
+        .child(Textarea.new(this.meter).w_full().text_size(13).tab_stop(false))
+        .on_size_change((size, cx) => { if (Math.abs((this.textH ?? 0) - size.height) > 0.1) { this.textH = size.height; this.sizeBox(); cx.notify(); } }));
   }
 
   // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
@@ -4237,10 +4258,7 @@ export default class Chat extends View {
         // Measured, unseen: a line's height, and the words' height at the box's width (sizeBox()).
         .child(div().id("chat-line-h").absolute().top(0).left(0).opacity(0).text_size(13).child("Xg")
           .on_size_change((size, cx) => { if (Math.abs((this.lineH ?? 0) - size.height) > 0.1) { this.lineH = size.height; this.sizeBox(); cx.notify(); } }))
-        .child(div().absolute().top(0).left(12).right(12).h(0).overflow_hidden().opacity(0)
-          .child(div().id("chat-text-h").w_full().text_size(13)
-            .child(/\n$/.test(this.box.value()) || !this.box.value() ? `${this.box.value()} ` : this.box.value())
-            .on_size_change((size, cx) => { if (Math.abs((this.textH ?? 0) - size.height) > 0.1) { this.textH = size.height; this.sizeBox(); cx.notify(); } })))
+        .child(this.boxMeter())
         .child(Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
           .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-this.lineH)))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
