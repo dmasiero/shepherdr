@@ -615,7 +615,7 @@ async function doAction(body: any): Promise<Response> {
     await store.set("usage.deletedAt", Date.now());
     return json(missed.length ? { ok: false, error: SC.INSIGHTS.missed(missed.join(", ")) } : { ok: true });
   }
-  if (body?.type === "setting" && typeof body.key === "string" && /^(window|addon)\./.test(body.key)) {
+  if (body?.type === "setting" && typeof body.key === "string" && /^(window|addon|voice)\./.test(body.key)) {
     try { await setWindow(body.key, typeof body.value === "string" ? body.value : null, (k, v) => store.set(k, v)); return json({ ok: true }); }
     catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }

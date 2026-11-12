@@ -59,6 +59,7 @@ addons.js: chat pane-chat shepherdr-settings tabs-tasks artifacts jump accept-ca
 live.js: chat coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks tasks workspace-status-chat
 core/bg-jobs.js: chat
 core/audio.js: chat
+core/duck.js: chat shepherdr-settings
 usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 core/usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 dirs.js: accept-card artifacts chat chat-models coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks task-browser tasks toasts workspace-status-chat

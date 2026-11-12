@@ -43,6 +43,7 @@ drops the space's own, and it inherits again. A few settings are one for every s
 | Machines | Home Assistant | Machine only | One per machine |
 | Window | Tabs, sidebar, counts, filters, subagents, Assistant in new spaces | Everywhere only | How the screen looks; the last is about spaces not made yet |
 | Window | Add-ons | Everywhere only | Which mods run: the window's, for every space |
+| Window | Muffle other audio during calls (under Voice and dictation: Off, 10%, 25%, 50%; [voice.md](voice.md)) | Everywhere only | The machine's sound, not a space's |
 | Web | Serve from, link | Everywhere only | One web app for every machine |
 
 **No Machine level for the rest.** A space already lives on one machine, so a space's own covers "this machine's
