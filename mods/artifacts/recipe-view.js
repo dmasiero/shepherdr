@@ -20,9 +20,29 @@ export default class RecipeView extends View {
     this.tab = new Map();      // a tabs block's picked tab
     this.open = new Set();     // details blocks unfolded
     this.sent = new Map();     // a choice's or form's words, once sent
-    this.inputs = new Map();   // a form field's InputState
+    this.inputs = new Map();   // a form field's InputState, made here: never during render (#1026)
     this.checks = new Map();   // a form checkbox's value
+    this.picks = new Map();    // a form select's picked option
     try { this.recipe = withIds(data); } catch { this.error = "This artifact's recipe can't be read."; }
+    if (this.recipe) this.makeInputs(this.recipe.blocks);
+  }
+
+  // Every text field's InputState, in every form (the ones in columns, tabs and details too). A republish installs the
+  // artifact afresh (new recipe-data.js), so a changed form gets its fields from a new init.
+  makeInputs(blocks) {
+    for (const b of blocks ?? []) {
+      if (b?.type === "form") {
+        for (const f of b.fields ?? []) {
+          const kind = f.kind ?? "text";
+          const k = `${b.id}:${f.name}`;
+          if ((kind === "text" || kind === "textarea") && !this.inputs.has(k))
+            this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, ...(kind === "textarea" ? { multi_line: true } : {}) }));
+        }
+      }
+      if (b?.type === "columns") for (const c of b.columns ?? []) this.makeInputs(c);
+      if (b?.type === "tabs") for (const x of b.tabs ?? []) this.makeInputs(x?.blocks);
+      if (b?.type === "details") this.makeInputs(b.blocks);
+    }
   }
 
   md(id, text, t) {
@@ -37,9 +57,31 @@ export default class RecipeView extends View {
   }
 
   input(b, f) {
+    return this.inputs.get(`${b.id}:${f.name}`);
+  }
+
+  // A form's field below its label: a text box (its InputState from init), or a select's options to pick one of.
+  field(b, f, t) {
     const k = `${b.id}:${f.name}`;
-    if (!this.inputs.has(k)) this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, ...(f.kind === "textarea" ? { multi_line: true } : {}) }));
-    return this.inputs.get(k);
+    if (f.kind === "select") {
+      const on = this.picks.get(k);
+      return h_flex().flex_wrap().gap(6).children((f.options ?? []).map((o, i) => div().id(`sel-${b.id}-${f.name}-${i}`)
+        .h(26).px(10).flex().items_center().rounded(6).cursor_pointer().border_1()
+        .bg(on === o ? t.surface : t.background).border_color(on === o ? t.accent : t.border)
+        .on_click((_e, cx) => { if (on === o) this.picks.delete(k); else this.picks.set(k, o); cx.notify(); })
+        .child(div().text_size(13).text_color(on === o ? t.foreground : t.muted).child(String(o)))));
+    }
+    const state = this.input(b, f);
+    return div().px(8).py(5).rounded(6).border_1().border_color(t.border)
+      .child(state ? Input.new(state).w_full().text_size(13) : div().text_size(13).text_color(t.muted).child(" "));
+  }
+
+  // What a field holds, for its form's reply.
+  value(b, f) {
+    const k = `${b.id}:${f.name}`;
+    if (f.kind === "checkbox") return !!this.checks.get(k);
+    if (f.kind === "select") return this.picks.get(k) ?? "";
+    return this.input(b, f)?.value() ?? "";
   }
 
   chart(b, t) {
@@ -153,10 +195,10 @@ export default class RecipeView extends View {
               .child(div().size(14).rounded(3).border_1().border_color(t.border).when(!!this.checks.get(`${b.id}:${f.name}`), (e) => e.bg(t.accent)))
               .child(div().text_size(13).child(f.label ?? f.name))
             : v_flex().gap(4).child(div().text_size(12).text_color(t.muted).child(f.label ?? f.name))
-              .child(div().px(8).py(5).rounded(6).border_1().border_color(t.border).child(Input.new(this.input(b, f)).w_full().text_size(13)))))
+              .child(this.field(b, f, t))))
           .child(div().id(`fs-${b.id}`).self_start().px(12).py(6).rounded(6).bg(t.solid).text_color(t.solid_foreground).text_size(13)
             .when(!sent, (e) => e.cursor_pointer()).on_click((_e, cx) => {
-              const values = Object.fromEntries(b.fields.map((f) => [f.name, f.kind === "checkbox" ? !!this.checks.get(`${b.id}:${f.name}`) : this.input(b, f).value()]));
+              const values = Object.fromEntries(b.fields.map((f) => [f.name, this.value(b, f)]));
               this.send(b.id, formReply(b, values), cx);
             }).child(sent ? "Sent" : b.submit ?? "Send"));
       }

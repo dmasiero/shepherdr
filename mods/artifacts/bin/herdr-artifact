@@ -631,7 +631,7 @@ def write_mod(src, files, art, mod, agent, machine=None):
         f.write(helper(art, mod, agent, machine, not is_recipe(files)))
     with open(os.path.join(tmp, ".version"), "w") as f:
         # The version, and which Mark up it carries (a newer one reinstalls it on the next open).
-        f.write(f"{art['version']} {markup_hash() if os.path.isfile(os.path.join(tmp, 'artifact-markup.js')) else ''}".strip() + "\n")
+        f.write(f"{art['version']} {markup_hash(is_recipe(files)) if os.path.isfile(os.path.join(tmp, 'artifact-markup.js')) else ''}".strip() + "\n")
     dst = os.path.join(mods, mod)
     old = None
     if os.path.exists(dst):
@@ -1159,11 +1159,21 @@ def cmd_pack(o):
     return subprocess.call(["tar", "-C", d, "-cf", "-", "."])
 
 
-def markup_hash():
-    """Which Mark up an install carries: all its copied parts, as installed (a change to any reinstalls on next open)."""
+def markup_hash(recipe=False):
+    """Which Mark up an install carries: all its copied parts, as installed (a change to any reinstalls on next open).
+    For a recipe artifact, the shared recipe view it carries too (recipe-view.js, recipe.js): a fixed view (#1026)
+    reaches every installed recipe the next time it's opened."""
     parts = markup_files()
     if not parts:
         return ""
+    if recipe:
+        parts = dict(parts)
+        for src, name in ((RECIPE_VIEW, "recipe-view.js"), (RECIPE_CORE, "recipe.js")):
+            try:
+                with open(src, encoding="utf-8") as f:
+                    parts[name] = f.read()
+            except OSError:
+                pass
     h = hashlib.sha1()
     for name in sorted(parts):
         h.update(name.encode() + b"\0" + parts[name].encode() + b"\0")
@@ -1171,13 +1181,13 @@ def markup_hash():
 
 
 def current(mod, version):
-    """Whether the installed mod is this version with this app's Mark up."""
+    """Whether the installed mod is this version with this app's Mark up (and, a recipe, its recipe view)."""
     try:
         with open(os.path.join(APP, "mods", mod, ".version")) as f:
             got = f.read().split()
     except OSError:
         return False
-    h = markup_hash()
+    h = markup_hash(os.path.isfile(os.path.join(APP, "mods", mod, "recipe-view.js")))
     return got == [str(version), h] if h else got[:1] == [str(version)]
 
 
