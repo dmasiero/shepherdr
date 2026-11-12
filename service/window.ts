@@ -9,6 +9,8 @@ import { HOME } from "./paths.ts";
 import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 // the switches' words and an add-on's line: core/settings.js, the window's own (mods/shepherdr-settings/layout.js)
 import * as C from "../core/settings.js";
+// SHEP-51: the window call's muffle, under Voice and dictation (core/duck.js; the window's call reads it)
+import { MUFFLE, MUFFLE_CHOICES, muffleLevel, muffleFromWord } from "../core/duck.js";
 
 const { SWITCHES: CORE_SWITCHES, ADDONS, SECTIONS, INSIGHTS, addonAbout } = C as any;
 // the repo's lib/addons.json, installed beside the service
@@ -46,6 +48,8 @@ export function windowSection(value: (key: string) => unknown): SettingSection {
     rows.push({ label: a.title, key: `addon.${a.id}`, value: now ? "on" : "off", options: ["on", "off"], hint: addonAbout(a.about, now, names(stop)),
       group: ADDONS, ...(stop.length ? { disabled: true } : {}) });
     // Usage insights: its Delete, right under its switch (service/usage.ts deleteAll)
+    if (a.id === "voice") rows.push({ label: MUFFLE.title, key: "voice.muffle", value: MUFFLE.word(muffleLevel(readFile())),
+      options: MUFFLE_CHOICES.map(MUFFLE.word), hint: MUFFLE.about, group: ADDONS, ...(now ? {} : { disabled: true }) });
     if (a.id === "insights") rows.push({ label: INSIGHTS.title, key: "insights.delete", value: "", button: INSIGHTS.button, hint: INSIGHTS.about, group: ADDONS });
   }
   return { name: SECTIONS.find((s: any) => s.id === "window").title, global: true, rows };
@@ -53,6 +57,14 @@ export function windowSection(value: (key: string) => unknown): SettingSection {
 
 /** A switch flipped on the web. setShared: the service's shared document (the bridge brings it to the window). */
 export async function setWindow(key: string, word: string | null, setShared: (k: string, v: unknown) => Promise<unknown>) {
+  if (key === "voice.muffle") {
+    const v = muffleFromWord(word);
+    if (v === null) throw new Error("That isn't one of the choices.");
+    const file = readSettings();
+    (file.everywhere ??= {}).voice = { ...(file.everywhere.voice ?? {}), muffle: v };
+    writeSettings(file);
+    return;
+  }
   const on = word !== "off";
   const sw = SWITCHES.find((s) => `window.${s.id}` === key);
   if (sw) { await setShared(sw.key, on); return; }

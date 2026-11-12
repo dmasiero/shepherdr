@@ -18,7 +18,9 @@
 
 import { v_flex } from "gpui-base";
 import { shared, setShared, exec, machines } from "herdr";
-import { toggleSwitch, button } from "./ui.js";
+import { toggleSwitch, button, segmented } from "./ui.js";
+// SHEP-51: the window call's muffle, under Voice and dictation (core/duck.js: its choices and words)
+import { MUFFLE, MUFFLE_CHOICES, muffleLevel } from "./core/duck.js";
 import { DELETE } from "./core/usage.js";
 import { on, blockers, flip } from "./addons.js";
 // The switches, their words and an add-on's line: core/settings.js, shared with the web app.
@@ -63,6 +65,10 @@ export function layoutSection(view, t) {
           const list = flip(a.id, next);
           view.change((cfg) => { const e = (cfg.everywhere ??= {}); if (list.length) e.off = list; else delete e.off; }, cx);
         }, { disabled: stop.length > 0 }));
+        if (a.id === "voice") return [row, view.row(t, MUFFLE.title, MUFFLE.about,
+          segmented("voice-muffle", MUFFLE_CHOICES.map((v) => [v, MUFFLE.word(v)]), muffleLevel(view.cfg), (v, _e, cx) =>
+            view.change((cfg) => { const e = (cfg.everywhere ??= {}); e.voice = { ...(e.voice ?? {}), muffle: v }; }, cx),
+          { disabled: !now }))];
         if (a.id !== "insights") return [row];
         return [row, view.row(t, INSIGHTS.title, deleted && deleted !== "…" ? deleted : INSIGHTS.about,
           button("insights-delete", INSIGHTS.button, { disabled: deleted === "…", onClick: (_e, cx) => deleteUsage(cx) }))];

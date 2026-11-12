@@ -14,6 +14,8 @@ const SRC = join(import.meta.dir, "mac-audio.swift");
 const DATA = join(import.meta.dir, "..", "..", "data", "chat-audio");
 
 export type Audio = { kind: "pipewire" | "mac"; mic: (rate: number) => string[]; speaker: (rate: number) => string[];
+  /** A call's own sound (never muffled: core/duck.js). */
+  callSpeaker: (rate: number) => string[];
   /** On a Mac: asks for the microphone (macOS's prompt the first time); exits 3 when it isn't allowed. */
   access: string[] | null;
   /** On a Mac: a call's mic and speaker in one, echo-free (core/audio.js callArgs); null elsewhere. */
@@ -25,6 +27,7 @@ export async function audio(): Promise<Audio> {
   if (!kind) throw new Error(audioWords("mic", "pipewire"));
   const helper = kind === "mac" ? await built() : HELPER;
   return { kind, mic: (rate) => micArgs(kind, rate, helper), speaker: (rate) => speakerArgs(kind, rate, helper),
+    callSpeaker: (rate) => speakerArgs(kind, rate, helper, true),
     access: kind === "mac" ? [helper, "access"] : null,
     call: kind === "mac" ? (i, o) => callArgs(kind, i, o, helper)! : null };
 }
@@ -77,7 +80,7 @@ export function callAudio(tools: Audio, inRate: number, outRate: number,
   }
 
   function startPlayer() {
-    const p = Bun.spawn(tools.speaker(outRate), { stdin: "pipe", stdout: "ignore", stderr: mac ? "pipe" : "ignore" });
+    const p = Bun.spawn((tools.callSpeaker ?? tools.speaker)(outRate), { stdin: "pipe", stdout: "ignore", stderr: mac ? "pipe" : "ignore" });
     player = p;
     // a speaker that can't play ends the call with why (one killed for talking over isn't that)
     if (mac) void p.exited.then(async (code) => {
