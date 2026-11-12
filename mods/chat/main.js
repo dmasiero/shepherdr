@@ -50,6 +50,7 @@ import { taskDot, ownProgress } from "./dot.js";
 import * as attach from "./attach.js";
 import * as slash from "./slash.js";
 import * as mentions from "./core/mentions.js";
+import * as paths from "./core/path-pick.js";
 import { SH } from "./core/paths.js";
 import { dirsReady } from "./dirs.js";
 import * as agent from "./agent.js";
@@ -339,6 +340,9 @@ export default class Chat extends View {
         this.box.set_value(v.split("\n").filter((l) => !/^file:\/\/\S+$/.test(l.trim())).join("\n"));
       }
       this.slashSel = 0;
+      // "@~/": the folder typed so far, listed on the agent's machine (core/path-pick.js).
+      const tp = paths.typingPath(this.box.value());
+      if (tp) this.loadDir(tp.dir, cx);
       // Editing a recalled message makes it a new one: arrows move in it again.
       if (this.recall >= 0 && this.box.value() !== this.recalled) this.recall = -1;
       this.sizeBox();
@@ -390,6 +394,8 @@ export default class Chat extends View {
     this.picked = [];
     // "@": the tasks picked into the box (core/mentions.js taskToken at send)
     this.pickedTasks = [];
+    // "@~/": the folders listed so far, on this agent's machine: dir -> { at, entries }
+    this.dirs = new Map();
     this.copied = null;
     this.note = null;
     this.dflt = null;
@@ -1436,7 +1442,7 @@ export default class Chat extends View {
     const list = this.suggestions();
     if (list.length) {
       const c = list[Math.min(this.slashSel, list.length - 1)];
-      if (c.task || c.space) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
+      if (c.task || c.space || c.path !== undefined) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
       if (this.box.value().trim() !== `/${c.name}`) { this.pick(c, cx); cx.timer.after(30, () => this.box.set_value(`/${c.name} `)); return; }
     }
     this.send(cx, hold);
@@ -1619,6 +1625,10 @@ export default class Chat extends View {
       const sp = mentions.match(this.reach?.spaces ?? [], h.toLowerCase()).map((x) => ({ space: x, name: `#${x.name}`, about: x.route ? x.machine : "This machine", key: `space-${x.id}` }));
       if (sp.length) return sp;
     }
+    // "@~/" at the end: the entries of the folder typed so far, on this agent's machine (a path, never a task).
+    const tp = paths.typingPath(v);
+    if (tp) return paths.matchPaths(this.dirs.get(tp.dir)?.entries ?? [], tp.part)
+      .map((e) => ({ path: e, name: e, about: "", key: `path-${e}` }));
     // "@" at the end: the tasks on this agent's machine (herdr-task), by ID or title; a pick names
     // the exact one (its folder when not this one's).
     const at = mentions.typingTask(v);
@@ -1633,6 +1643,11 @@ export default class Chat extends View {
   }
 
   pick(c, cx) {
+    if (c.path !== undefined) {
+      const tp = paths.typingPath(this.box.value());
+      if (tp) this.pathTo(paths.take(tp, c.path), cx);
+      return;
+    }
     if (c.space) {
       const next = mentions.pickInto(this.box.value(), c.space);
       this.picked = [...this.picked.filter((x) => x.name !== c.space.name), c.space];
@@ -1651,6 +1666,40 @@ export default class Chat extends View {
     }
     this.box.focus();
     cx.notify();
+  }
+
+  // Tab on a list: a path fills in what its matches share, else takes the chosen one; any other list takes it.
+  tabTake(list, sel, cx) {
+    if (list[0]?.path === undefined) return this.pick(list[sel], cx);
+    const tp = paths.typingPath(this.box.value());
+    const r = tp && paths.tab(tp, list.map((c) => c.path), sel, sel > 0);
+    if (r) this.pathTo(r, cx);
+  }
+
+  // The box after a path is taken: into a folder, the list stays open on it (listed now); a file, its plain path.
+  pathTo(r, cx) {
+    const next = paths.pathInto(this.box.value(), r);
+    this.box.set_value(next);
+    this.lastValue = next;
+    this.slashSel = 0;
+    if (r.open) this.loadDir(paths.typingPath(next)?.dir ?? r.path, cx);
+    else this.slashOff = next.replace(/\n+$/, "");
+    this.box.focus();
+    this.saveSoon(cx);
+    cx.notify();
+  }
+
+  // A folder's entries on this agent's machine, kept a few seconds (each key typed in it reuses them).
+  loadDir(dir, cx) {
+    const was = this.dirs.get(dir);
+    if (was && (was.loading || Date.now() - was.at < 5000)) return;
+    this.dirs.set(dir, { at: Date.now(), entries: was?.entries ?? [], loading: true });
+    cx.spawn(async (cx) => {
+      const r = await exec("sh", ["-c", paths.LIST, "x", paths.under(dir)], { on: this.machine }).catch(() => null);
+      this.dirs.set(dir, { at: Date.now(), entries: r?.code === 0 ? paths.entriesOf(r.stdout) : [] });
+      if (this.dirs.size > 40) this.dirs.delete(this.dirs.keys().next().value);
+      cx.notify();
+    });
   }
 
   // ---- a chat with no agent yet (Coordinator tab) --------------------------------------------
@@ -3815,12 +3864,15 @@ export default class Chat extends View {
   slashList(t, list) {
     if (!list.length) return null;
     const sel = Math.min(this.slashSel, list.length - 1);
-    return v_flex().w_full().p(4).gap(1).border_b(1).border_color(t.border).children(list.map((c, i) =>
+    // Paths: a window of them, the chosen one in it (a folder can hold hundreds).
+    const { from, rows } = list[0].path !== undefined ? paths.windowOf(list, sel) : { from: 0, rows: list };
+    return v_flex().w_full().p(4).gap(1).border_b(1).border_color(t.border).children(rows.map((c, j) => [c, from + j]).map(([c, i]) =>
       h_flex().id(`slash-${c.key ?? c.name}`).h(28).px(8).gap(10).items_center().rounded(6).cursor_pointer()
         .when(i === sel, (el) => el.bg(t.selected))
         .hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => { cx.stop_propagation(); this.pick(c, cx); })
-        .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(c.task || c.space ? c.name : `/${c.name}`))
+        .when(c.path !== undefined, (el) => el.child(svg(c.path.endsWith("/") ? "mods/chat/folder.svg" : "mods/chat/file.svg").size(13).flex_none().text_color(t.dim)))
+        .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(c.task || c.space || c.path !== undefined ? c.name : `/${c.name}`))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.task ? t.muted : t.dim).child(c.about))
         .when(Boolean(c.state), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(c.state)))));
   }
@@ -4229,7 +4281,7 @@ export default class Chat extends View {
       .on_action("chat_stop", take((cx) => this.stop(cx)))
       .on_action("chat_slash_up", take(() => { this.slashSel = (sel + list.length - 1) % list.length; }))
       .on_action("chat_slash_down", take(() => { this.slashSel = (sel + 1) % list.length; }))
-      .on_action("chat_slash_take", take((cx) => this.pick(list[sel], cx)))
+      .on_action("chat_slash_take", take((cx) => this.tabTake(list, sel, cx)))
       .on_action("chat_slash_close", take(() => { this.slashOff = this.box.value().replace(/\n+$/, ""); }))
       .on_action("chat_recall_up", take(() => this.recallStep(1)))
       .on_action("chat_recall_down", take(() => this.recallStep(-1)))
@@ -4239,7 +4291,7 @@ export default class Chat extends View {
         if (list.length) {
           const sel = Math.min(this.slashSel, list.length - 1);
           if (k === "down" || k === "up") { this.slashSel = (sel + (k === "down" ? 1 : list.length - 1)) % list.length; cx.stop_propagation(); cx.notify(); return; }
-          if (k === "tab") { cx.stop_propagation(); this.pick(list[sel], cx); return; }
+          if (k === "tab") { cx.stop_propagation(); this.tabTake(list, sel, cx); return; }
           if (k === "escape") { this.slashOff = this.box.value().replace(/\n+$/, ""); cx.stop_propagation(); cx.notify(); return; }
         }
         // Up in an empty box: earlier messages; Down: back again.
