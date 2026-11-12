@@ -151,7 +151,7 @@ class Publish(unittest.TestCase):
         with open(os.path.join(mod, "artifact-markup.js")) as f:
             self.assertIn('from "./artifact-dirs.js"', f.read())
         with open(os.path.join(mod, ".version")) as f:
-            self.assertEqual(f.read().split(), ["1", A.markup_hash()])
+            self.assertEqual(f.read().split(), ["1", A.markup_hash(True)])
 
     def test_a_custom_panel_has_everything_it_imports(self):
         """The same for a custom panel, whose own dirs.js and core/ can't collide with Mark up's."""
@@ -193,6 +193,25 @@ class Publish(unittest.TestCase):
         parts = [A.MARKUP_PARTS[0], (alt,) + tuple(A.MARKUP_PARTS[1][1:]), A.MARKUP_PARTS[2]]
         with mock.patch.object(A, "MARKUP_PARTS", parts):
             self.assertFalse(A.current(mod, 1))
+
+    def test_a_new_recipe_view_reaches_installed_recipes(self):
+        """#1026: a fixed recipe view (forms drew their fields' state during render) must reach every installed recipe
+        on its next open, not only on a republish: the install's stamp follows recipe-view.js and recipe.js too."""
+        os.makedirs(os.path.join(self.dir, "app", "mods"))
+        out = self.publish(self.recipe())
+        mod = out["mod"]
+        self.assertTrue(A.current(mod, 1))
+        self.assertNotEqual(A.markup_hash(True), A.markup_hash())
+        for name in ("RECIPE_VIEW", "RECIPE_CORE"):
+            alt = os.path.join(self.dir, f"{name}.js")
+            with open(getattr(A, name)) as f, open(alt, "w") as g:
+                g.write(f.read() + "\n// changed\n")
+            with mock.patch.object(A, name, alt):
+                self.assertFalse(A.current(mod, 1), name)
+                A.local_mod(out["id"])
+                self.assertTrue(A.current(mod, 1), name)
+                with open(os.path.join(self.dir, "app", "mods", mod, "recipe-view.js" if name == "RECIPE_VIEW" else "recipe.js")) as f:
+                    self.assertTrue(f.read().endswith("// changed\n"), name)
 
     def test_markup_importing_what_is_not_copied_lays_no_markup(self):
         """A Mark up that imports something not copied in isn't laid over (the artifact still loads, unwrapped)."""
