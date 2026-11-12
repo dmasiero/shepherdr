@@ -1442,8 +1442,8 @@ export default class Chat extends View {
     const list = this.suggestions();
     if (list.length) {
       const c = list[Math.min(this.slashSel, list.length - 1)];
-      if (c.task || c.space || c.path !== undefined) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
-      if (this.box.value().trim() !== `/${c.name}`) { this.pick(c, cx); cx.timer.after(30, () => this.box.set_value(`/${c.name} `)); return; }
+      if (c.task || c.space || c.path !== undefined) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.fill(v)); return; }
+      if (this.box.value().trim() !== `/${c.name}`) { this.pick(c, cx); cx.timer.after(30, () => this.fill(`/${c.name} `)); return; }
     }
     this.send(cx, hold);
   }
@@ -1651,21 +1651,27 @@ export default class Chat extends View {
     if (c.space) {
       const next = mentions.pickInto(this.box.value(), c.space);
       this.picked = [...this.picked.filter((x) => x.name !== c.space.name), c.space];
-      this.box.set_value(next);
+      this.fill(next);
       this.slashOff = next.replace(/\n+$/, "");
     } else if (c.task) {
       const own = (this.t?.foreground?.cwd ?? this.t?.cwd) === c.task.folder;
       const t = { ref: taskRef(c.task), route: "", folder: own ? "" : c.task.folder ?? "" };
       const next = mentions.pickTaskInto(this.box.value(), t);
       this.pickedTasks = [...this.pickedTasks.filter((x) => x.ref !== t.ref), t];
-      this.box.set_value(next);
+      this.fill(next);
       this.slashOff = next.replace(/\n+$/, "");
     } else {
-      this.box.set_value(`/${c.name} `);
+      this.fill(`/${c.name} `);
       this.slashOff = `/${c.name} `;
     }
     this.box.focus();
     cx.notify();
+  }
+
+  // The box's words set by a pick, the caret after them (set_value alone leaves it at the start).
+  fill(v) {
+    this.box.set_value(v);
+    this.box.set_selected_range({ start: v.length, end: v.length });
   }
 
   // Tab on a list: a path fills in what its matches share, else takes the chosen one; any other list takes it.
@@ -1679,7 +1685,7 @@ export default class Chat extends View {
   // The box after a path is taken: into a folder, the list stays open on it (listed now); a file, its plain path.
   pathTo(r, cx) {
     const next = paths.pathInto(this.box.value(), r);
-    this.box.set_value(next);
+    this.fill(next);
     this.lastValue = next;
     this.slashSel = 0;
     if (r.open) this.loadDir(paths.typingPath(next)?.dir ?? r.path, cx);

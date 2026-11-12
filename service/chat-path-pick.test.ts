@@ -53,12 +53,13 @@ const settle = async () => { while (waits.length) await waits.shift(); };
 function chat(machine: string | null = "vm-b") {
   const c: any = Object.create(Chat.prototype);
   let value = "";
-  const box = { value: () => value, set_value(v: string) { value = v; }, focus() {} };
+  // As gpui's: set_value leaves the caret at the start; set_selected_range moves it.
+  const box = { caret: 0, value: () => value, set_value(v: string) { value = v; box.caret = 0; }, set_selected_range(r: { start: number; end: number }) { box.caret = r.start; }, focus() {} };
   Object.assign(c, { box, machine, dirs: new Map(), slashSel: 0, slashOff: null, cmds: [{ name: "help", about: "" }],
     reach: { spaces: [] }, tasks: [{ ref: "SHEP-4", folder: "/f", title: "A task", status: "work" }], spaceTasks: [], picked: [], pickedTasks: [] });
   c.saveSoon = () => {};
   // As the box's change handler: the folder typed so far is listed.
-  c.type = async (v: string) => { value = v; c.slashSel = 0; const tp = (await import("../core/path-pick.js")).typingPath(v); if (tp) c.loadDir(tp.dir, cx()); await settle(); };
+  c.type = async (v: string) => { value = v; box.caret = v.length; c.slashSel = 0; const tp = (await import("../core/path-pick.js")).typingPath(v); if (tp) c.loadDir(tp.dir, cx()); await settle(); };
   c.names = () => c.suggestions().map((x: any) => x.name);
   return c;
 }
@@ -152,5 +153,23 @@ describe('"@~/" in the window\'s box (SHEP-50)', () => {
     await c.type("@~/dev/");
     key("escape");
     expect(c.suggestions()).toEqual([]);
+  });
+
+  test("after Tab, Enter or a pick the caret is at the end of the box, not its start", async () => {
+    const c = chat();
+    await c.type("look at @~/de");
+    c.tabTake(c.suggestions(), 0, cx()); await settle();
+    expect(c.box.value()).toBe("look at @~/dev/");
+    expect(c.box.caret).toBe("look at @~/dev/".length);
+    c.slashSel = 2;
+    c.enter(cx(), false); await settle();
+    expect(c.box.value()).toBe("look at ~/dev/todo.md ");
+    expect(c.box.caret).toBe("look at ~/dev/todo.md ".length);
+    await c.type("ask @SHEP");
+    c.tabTake(c.suggestions(), 0, cx());
+    expect(c.box.caret).toBe(c.box.value().length);
+    await c.type("/he");
+    c.tabTake(c.suggestions(), 0, cx());
+    expect(c.box.caret).toBe("/help ".length);
   });
 });
