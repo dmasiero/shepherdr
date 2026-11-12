@@ -68,6 +68,8 @@ const { withEverywhere, withSpace } = NF as any;
 
 import * as MN from "../core/mentions.js";
 const { REACH_FILE, reachable } = MN as any;
+import * as PP from "../core/path-pick.js";
+const { LIST: PATH_LIST, under, entriesOf } = PP as any;
 
 // A machine's reach map, as its spaces: kept a minute (its scheduler redraws it every 5)
 const reaches = new Map<string, { at: number; got: Promise<{ from: string | null; spaces: any[]; checked: number | null }> }>();
@@ -815,6 +817,16 @@ const server = Bun.serve<{ who: string }>({
       const sp = !a ? compat.allSpaces().find((s) => placeKey(s.id) === key) : null;
       const machine = a ? (a.includes("/") ? a.split("/")[0] : null) : sp?.machine ?? null;
       return json(await reachOf(machine));
+    }
+    if (path === "/api/paths") {
+      // the "@~/" list above the box (core/path-pick.js): a folder's entries under home, on the machine running this
+      // chat's agent (a chat with no agent yet: its space's machine)
+      const key = url.searchParams.get("chat") ?? "", a = compat.addrOf(key), dir = url.searchParams.get("dir") ?? "~/";
+      const sp = !a ? compat.allSpaces().find((s) => placeKey(s.id) === key) : null;
+      const machine = a ? (a.includes("/") ? a.split("/")[0] : null) : sp?.machine ?? null;
+      if (!dir.startsWith("~/")) return json({ entries: [] }, 400);
+      const r = await sh(hub, PATH_LIST, ["x", under(dir)], machine).catch(() => null);
+      return json({ entries: r?.code === 0 ? entriesOf(r.stdout) : [] });
     }
     if (path === "/api/folders") {
       const m = url.searchParams.get("machine"), machine = !m || m === hereName() ? null : m;

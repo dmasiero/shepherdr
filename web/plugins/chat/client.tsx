@@ -33,6 +33,7 @@ import { AgentLine, openModelMenu, openRestart, RestartSheet } from '@client/res
 import { Sheet, SheetClose } from '@client/Stack.tsx'
 import { expandPicked, forMarkdown, mentionItems, MentionList, pickable, takeItem, useReach, withChips, type Item } from './mentions.tsx'
 import * as MNc from '@core/mentions.js'
+import { PathList, pathInto, tabPath, takePath, typingPath, usePaths, type Took } from './paths.tsx'
 const mentionTyping = (text: string): string | null => (MNc as any).typingTask(text) ?? (MNc as any).typing(text)
 
 /* ---------- messages ---------- */
@@ -1997,6 +1998,14 @@ function Composer({ chatKey, placeholder, cli, suggest = null }: { chatKey: stri
   const [msel, setMsel] = useState(0)
   useEffect(() => setMsel(0), [word, (MNc as any).typingTask(text) === null])
   const takeMention = (i: Item) => { setText(takeItem(chatKey, text, i)); ref.current?.focus() }
+  // the "@~/" list: the folder typed so far on this chat's agent's machine (paths.tsx), keys as the "@" list's
+  const typedPath = typingPath(text)
+  const [pclosed, setPclosed] = useState<string | null>(null)
+  const pathsAll = usePaths(chatKey, typedPath)
+  const pathItems = pclosed !== text ? pathsAll : []
+  const [psel, setPsel] = useState(0)
+  useEffect(() => setPsel(0), [typedPath?.dir, typedPath?.part])
+  const takePathTo = (r: Took | null) => { if (r) { setText(pathInto(text, r)); ref.current?.focus() } }
   const send = (hold = false, words = text) => {
     const t = expandPicked(chatKey, words.trim())
     if (!t && !files.length) return
@@ -2046,6 +2055,7 @@ function Composer({ chatKey, placeholder, cli, suggest = null }: { chatKey: stri
       <ComposerAbove chatKey={chatKey} cli={cli} />
       <SlashList chatKey={chatKey} text={text} pick={(name) => { setText(`/${name} `); ref.current?.focus() }} />
       <MentionList items={mentions} sel={msel} from={reach?.from ?? null} pick={takeMention} />
+      <PathList t={typedPath} items={pathItems} sel={psel} pick={(e) => typedPath && takePathTo(takePath(typedPath, e))} />
       {/* the window's box: the words across its full width, then a row in it of attach on the left and on the right
           what the agent runs on (the model menu), the mic and Send; nothing under it. Its corners are half a
           round button and the padding, so the buttons sit in the bottom ones with the same curve round them */}
@@ -2097,6 +2107,13 @@ function Composer({ chatKey, placeholder, cli, suggest = null }: { chatKey: stri
                     setSpent(ghost.id)
                     setText(ghost.text)
                     return
+                  }
+                  if (typedPath && pathItems.length && !e.nativeEvent.isComposing) {
+                    const n = pathItems.length, at = Math.min(psel, n - 1)
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); return setPsel((at + (e.key === 'ArrowDown' ? 1 : n - 1)) % n) }
+                    if (e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); return takePathTo(tabPath(typedPath, pathItems, at)) }
+                    if (sendsNow(e, getState().ui.keyboard)) { e.preventDefault(); return takePathTo(takePath(typedPath, pathItems[at])) }
+                    if (e.key === 'Escape') { e.preventDefault(); return setPclosed(text) }
                   }
                   if (choosable.length && !e.nativeEvent.isComposing) {
                     const n = choosable.length, at = Math.min(msel, n - 1)
