@@ -109,7 +109,7 @@ export function drop(f) {
   if (f.temp && f.path.startsWith(`${appHome()}/data/chat-attach/`)) exec("rm", ["-f", f.path]);
 }
 export function prune() {
-  exec("sh", ["-c", 'find "$1" -name "pasted-*" -mmin +1440 -delete 2>/dev/null; true', "x", `${appHome()}/data/chat-attach`]);
+  exec("sh", ["-c", 'find "$1" -name "pasted-*" -mmin +1440 -delete 2>/dev/null; find "$1/remote" -type f -mmin +10080 -delete 2>/dev/null; true', "x", `${appHome()}/data/chat-attach`]);
 }
 
 // Images shown in the chat (thumbnails, the viewer): `image()` loads from the app's folder, so
@@ -138,6 +138,87 @@ export async function viewable(list) {
     if (p && n && w && h) out[p] = { rel: `data/chat-attach/view/${n}`, w, h };
   }
   return out;
+}
+
+// Images in a chat whose agent is on another machine (SHEP-47): VIEW ran here, where those paths don't exist, so each
+// was a grey box. They're copied here once, into data/chat-attach/remote (named after the machine and path, kept a week),
+// through herdr-core in base64 pieces (exec's output stops at 8 MiB), and shown from there. A picture pasted here
+// first is still in data/chat-attach under the same name: that one is used as it is. Resolves { views, failed }:
+// `failed` are the paths the machine couldn't be asked about (unreachable), to ask again later.
+export const REMOTE_MAX = 64 * 1024 * 1024;   // bigger: left a quiet box
+export const PIECE = 4 * 1024 * 1024;         // raw bytes per exec (base64: under 6 MiB)
+// There: "<path>\t<bytes>\t<w> <h>" for each that is a file and an image (a "~/" path is in that machine's home).
+export const REMOTE_PROBE = `
+for p in "$@"; do
+  f=$p; case $f in "~/"*) f="$HOME/\${f#??}";; esac
+  [ -f "$f" ] || continue
+  b=$(wc -c < "$f" | tr -d ' ')
+  s=$(magick identify -format '%w %h' "$f[0]" 2>/dev/null) || s=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$f" 2>/dev/null | head -n 1 | tr ',' ' ')
+  [ -n "$s" ] || continue
+  printf '%s\\t%s\\t%s\\n' "$p" "$b" "$s"
+done
+true`;
+// There: <count> bytes of the file from byte <from> (1-based), in base64.
+export const REMOTE_PIECE = `f=$1; case $f in "~/"*) f="$HOME/\${f#??}";; esac
+tail -c +"$2" "$f" | head -c "$3" | base64`;
+// Here: a piece (base64 in $1) added to the copy being made ($2); then $1 goes.
+const ADD_PIECE = '{ base64 -d < "$1" > "$1.raw" 2>/dev/null || base64 -D < "$1" > "$1.raw"; } && cat "$1.raw" >> "$2"; c=$?; rm -f "$1" "$1.raw"; exit $c';
+// Here: $1 has $2 bytes.
+const SAME = '[ -f "$1" ] && [ "$(wc -c < "$1" | tr -d \' \')" = "$2" ]';
+// Here: the copy ($1) done when it has every byte ($2), moved to its name ($3).
+const DONE = '[ "$(wc -c < "$1" | tr -d \' \')" = "$2" ] && mv -f "$1" "$3"';
+
+// A short steady name for a path on a machine (FNV-1a).
+export function remoteName(machine, p) {
+  let h = 0x811c9dc5;
+  for (const ch of `${machine}\0${p}`) { h ^= ch.codePointAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]/g, "_");
+  return `${safe(machine)}-${h.toString(16).padStart(8, "0")}-${safe(base(p))}`;
+}
+
+export async function remoteViewable(list, machine, { piece = PIECE, max = REMOTE_MAX } = {}) {
+  const home = appHome(), dir = `${home}/data/chat-attach/remote`;
+  const views = {}, failed = [];
+  if (!list.length) return { views, failed };
+  // Here already: a copy made before, or the pasted original.
+  const here = new Map();
+  for (const p of list) {
+    here.set(`${dir}/${remoteName(machine, p)}`, p);
+    if (/^pasted-[\w.-]+$/.test(base(p))) here.set(`${home}/data/chat-attach/${base(p)}`, p);
+  }
+  for (const [at, v] of Object.entries(await viewable([...here.keys()]))) {
+    const p = here.get(at);
+    if (p && !views[p]) views[p] = { ...v, copy: true };
+  }
+  const want = list.filter((p) => !views[p]);
+  if (!want.length) return { views, failed };
+  const probe = await exec("sh", ["-c", REMOTE_PROBE, "probe", ...want], { on: machine, timeout: 60_000 }).catch(() => null);
+  if (!probe || probe.code !== 0) return { views, failed: want };
+  await exec("mkdir", ["-p", dir]).catch(() => null);
+  for (const line of probe.stdout.split("\n")) {
+    const [p, bytes, size] = line.split("\t");
+    const b = Number(bytes), [w, h] = (size ?? "").split(" ").map(Number);
+    if (!p || !want.includes(p) || !w || !h || !(b > 0) || b > max) continue;
+    const name = remoteName(machine, p), part = `${dir}/.${name}.part`;
+    // (copied before, though not sized here: no ImageMagick or ffprobe on this machine)
+    if ((await exec("sh", ["-c", SAME, "same", `${dir}/${name}`, String(b)]).catch(() => null))?.code === 0) {
+      views[p] = { rel: `data/chat-attach/remote/${name}`, w, h, copy: true };
+      continue;
+    }
+    let ok = (await exec("rm", ["-f", part]).catch(() => null)) !== null;
+    for (let from = 0; ok && from < b; from += piece) {
+      const r = await exec("sh", ["-c", REMOTE_PIECE, "piece", p, String(from + 1), String(piece)], { on: machine, timeout: 120_000 }).catch(() => null);
+      ok = !!r && r.code === 0 && r.stdout.length > 0;
+      if (!ok) break;
+      const b64 = `${dir}/.${name}.b64`;
+      try { await fs.writeFile(b64, r.stdout); } catch { ok = false; break; }
+      ok = (await exec("sh", ["-c", ADD_PIECE, "add", b64, part]).catch(() => null))?.code === 0;
+    }
+    ok = ok && (await exec("sh", ["-c", DONE, "done", part, String(b), `${dir}/${name}`]).catch(() => null))?.code === 0;
+    if (ok) views[p] = { rel: `data/chat-attach/remote/${name}`, w, h, copy: true };
+    else { exec("rm", ["-f", part]).catch(() => null); failed.push(p); }
+  }
+  return { views, failed };
 }
 
 // A w×h image covering a size×size square: its drawn size and offset (the middle shows).

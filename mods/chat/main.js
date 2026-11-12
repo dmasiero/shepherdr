@@ -3885,14 +3885,21 @@ export default class Chat extends View {
       .child(div().absolute().inset_0().rounded(8).border_1().border_color(t.foreground + "1a"));
   }
 
-  // The images the chat shows, linked where image() can load them, with their sizes. Asked once each.
-  needViews(paths, cx) {
-    const want = [...new Set(paths)].filter((p) => p && !this.views[p] && !this.viewAsked.has(p));
+  // The images the chat shows, linked where image() can load them, with their sizes. Asked once each. `on`: they're on
+  // that machine (the agent's), copied here first (SHEP-47); asked again in 30 s when it couldn't be reached.
+  needViews(paths, cx, on = null) {
+    const key = (p) => `${on ?? ""}\0${p}`;
+    const want = [...new Set(paths)].filter((p) => p && !this.views[p] && !this.viewAsked.has(key(p)));
     if (!want.length) return;
-    for (const p of want) this.viewAsked.add(p);
+    for (const p of want) this.viewAsked.add(key(p));
     // Asked from render: start it right after.
     cx.timer.after(0, (cx) => cx.spawn(async (cx) => {
-      Object.assign(this.views, await attach.viewable(want));
+      if (!on) Object.assign(this.views, await attach.viewable(want));
+      else {
+        const { views, failed } = await attach.remoteViewable(want, on);
+        Object.assign(this.views, views);
+        if (failed.length) cx.timer.after(30_000, (cx) => { for (const p of failed) this.viewAsked.delete(key(p)); cx.notify(); });
+      }
       cx.notify();
     }));
   }
@@ -4032,7 +4039,8 @@ export default class Chat extends View {
 
   // The viewer (mods/chat-image) on these images, from the i-th.
   openImages(paths, i) {
-    const all = paths.map((p) => this.views[p] ? { ...this.views[p], name: p.split("/").pop(), path: p } : null);
+    // (a copy from another machine: copy / open / show in folder use the copy, here)
+    const all = paths.map((p) => this.views[p] ? { ...this.views[p], name: p.split("/").pop(), path: this.views[p].copy ? `${appHome()}/${this.views[p].rel}` : p } : null);
     const images = all.filter(Boolean);
     if (!images.length) return;
     i = images.indexOf(all[i] ?? images[0]);
@@ -4540,7 +4548,10 @@ export default class Chat extends View {
     const current = found.length ? this.findRow(found) : null;
     if (this.findJump && current) { this.findJump = false; this.pinned = false; this.scroll.scroll_to_item(current.index, "center"); }
     const lit = new Set(found.map((m) => m.id));
-    this.needViews([...this.files.filter((f) => f.image).map((f) => f.path), ...rows.flatMap((r) => (r.kind === "imgs" ? r.paths : r.kind === "artifact" && r.peek ? r.peek.paths : []))], cx);
+    // The box's own files are here; the messages' are where the agent is.
+    const shown = rows.flatMap((r) => (r.kind === "imgs" ? r.paths : r.kind === "artifact" && r.peek ? r.peek.paths : []));
+    this.needViews([...this.files.filter((f) => f.image).map((f) => f.path), ...(this.machine ? [] : shown)], cx);
+    if (this.machine) this.needViews(shown, cx, this.machine);
     this.needPeeks(rows, cx);
     // What sits under the list (an ask card, the working line) changes its height: stay on the newest.
     const below = `${this.asks.length}|${this.sasks.map((a) => a.name + (a.kept ? "+" : "")).join(",")}|${this.wasks.map((a) => a.id).join(",")}|${[this.addr, ...this.workerTasks().keys()].map((a) => openCard(a)?.id ?? "").join("")}|${st}|${this.focused}|${this.queue.length}|${Boolean(this.call)}|${this.files.length}|${Boolean(this.quote)}`;
