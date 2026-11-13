@@ -87,11 +87,37 @@ const same = (a, b) => norm(a) === norm(b);
 // The person's words into the agent's terminal: plain input from them, here and on another machine (core/person.js).
 const personHc = asPerson({ hc, exec });
 // This machine's name in herdr-core, once known: another machine's agent writes our terminals as "<it>/t75" (SHEP-12).
-let ownName = null, askedName = false;
+// Kept in localStorage too, so a chat made as the window starts knows it at once (SHEP-57: ownAddr()).
+// Asked once; again 30 s after an answer without it.
+let ownName = null, askedName = false, nameAt = 0;
 const coreName = () => {
-  if (!askedName) { askedName = true; hc(["server", "status"]).then((r) => { ownName = JSON.parse(r.stdout || "{}")?.core?.name || null; }).catch(() => { askedName = false; }); }
+  if (ownName === null) try { ownName = localStorage.getItem("chat.coreName") || null; } catch {}
+  if (!askedName && Date.now() - nameAt > 30000) {
+    askedName = true;
+    hc(["server", "status"]).then((r) => {
+      const n = JSON.parse(r.stdout || "{}")?.core?.name || null;
+      if (n) { ownName = n; try { localStorage.setItem("chat.coreName", n); } catch {} } else { askedName = false; nameAt = Date.now(); }
+    }).catch(() => { askedName = false; nameAt = Date.now(); });
+  }
   return ownName;
 };
+
+// SHEP-57: one of this computer's own terminals, named with this computer's name in front ("nextgate/t89"), as its
+// bare id ("t89"), the way terminals() lists it. A chat pane can be saved so (its props' terminal, after a restart):
+// then nothing found its terminal, its pane (myPane()) was null, and the call button, the rail's wave and
+// Ctrl+Shift+Space were all for another chat. Another machine's address stays as it is. With this computer's name not
+// known yet: only a prefix that is no machine Herdr knows, for a terminal here that a chat pane shows.
+export function ownAddr(addr, name) {
+  const a = String(addr ?? ""), cut = a.indexOf("/");
+  if (cut <= 0) return addr;
+  const m = a.slice(0, cut), id = a.slice(cut + 1);
+  if (name === undefined) name = coreName();
+  if (name) return m === name ? id : addr;
+  const ts = terminals();
+  if ((machines() ?? []).some((x) => x?.name === m) || ts.some((x) => String(x.address).startsWith(`${m}/`))) return addr;
+  const pane = chatPane(ts.find((x) => x.address === id));
+  return pane && panes().some((p) => p.pane === pane && p.mod === "chat") ? id : addr;
+}
 // When an ask was made: its id is <terminal>.<seconds>.<pid> (ask-hook.sh), taken at the end of
 // that second so it sits after what was said in it.
 const askAt = (id) => { const p = String(id).split("."); const sec = Number(p[p.length - 2]); return Number.isFinite(sec) && sec > 1e9 ? sec * 1000 + 999 : Date.now(); };
@@ -266,7 +292,8 @@ export default class Chat extends View {
     this.inner = _props?.inner === true;
     if (this.inner) inner.chat = this;
     const P = this.inner ? _props : props();
-    this.origin = P?.terminal ?? null;
+    // (this computer's own terminal as itself: "nextgate/t89" is "t89" here, SHEP-57)
+    this.origin = P?.terminal ? ownAddr(P.terminal) : null;
     this.addr = this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
     this.role = P?.role ?? null;
@@ -2718,6 +2745,17 @@ export default class Chat extends View {
     if (pid) exec("sh", ["-c", 'sleep 1; kill "$1" 2>/dev/null; true', "x", String(pid)]);
   }
 
+  // The brand row's call button, the rail's wave and the call bar (mods/workspace-chrome-shepherdr, mods/spaces-chat,
+  // mods/chat-call) start, mute and end the call it runs here through shared "chat.callreq" = { pane, at, action:
+  // "start" | "mute" | "end" } (none: start or end). mine: this chat's pane (myPane()). From render.
+  takeCallReq(mine, cx) {
+    const req = shared("chat.callreq");
+    if (!req || !mine || req.pane !== mine || req.at === this.callReqAt || Date.now() - req.at >= 5000) return;
+    this.callReqAt = req.at;
+    if (req.action === "mute") { if (this.call) cx.timer.after(0, (cx) => { this.callMute(cx); }); }
+    else if (req.action === "end" ? this.call : req.action === "start" ? !this.call : true) cx.timer.after(0, (cx) => { this.toggleCall(cx); cx.notify(); });
+  }
+
   // The call for the sidebar's call card (mods/spaces-chat voiceRow): shared "chat.calls" =
   // { <chat pane>: { phase, who, muted, started, beat, name, tab, said } }.
   callShared() {
@@ -4422,7 +4460,9 @@ export default class Chat extends View {
     if (!this.addr && this.role) return this.slotPane();
     // A thread's pane is the one its opener recorded for this worker (openThread()).
     if (this.thread) return threadOf(this.addr);
-    const c = chatPane(terminals().find((x) => x.address === this.addr));
+    // (an address with this computer's name in front, learned only after this chat was made: as its bare id, SHEP-57)
+    const own = this.addr?.includes("/") ? ownAddr(this.addr) : this.addr;
+    const c = chatPane(terminals().find((x) => x.address === own));
     if (c && panes().some((p) => p.pane === c && p.mod === "chat")) this.lastPane = c;
     return c || (this.swapping ? this.lastPane : null);
   }
@@ -4470,14 +4510,7 @@ export default class Chat extends View {
     this.wasFocused = paneFocused;
     this.hadBox = showsBox;
     this.paneFocused = paneFocused;
-    // The sidebar's Shepherdr row (mods/spaces-chat voiceRow, SHEP-105) starts, mutes and ends the call it runs here
-    // through shared "chat.callreq" = { pane, at, action: "start" | "mute" | "end" } (none: start or end).
-    const req = shared("chat.callreq");
-    if (req && req.pane === mine && req.at !== this.callReqAt && Date.now() - req.at < 5000) {
-      this.callReqAt = req.at;
-      if (req.action === "mute") { if (this.call) cx.timer.after(0, (cx) => { this.callMute(cx); }); }
-      else if (req.action === "end" ? this.call : req.action === "start" ? !this.call : true) cx.timer.after(0, (cx) => { this.toggleCall(cx); cx.notify(); });
-    }
+    this.takeCallReq(mine, cx);
     // The model picker's Restart (mods/chat-models): shared "chat.restartreq" = { pane, at, pick }.
     const rr = shared("chat.restartreq"), pk = this.pickKey();
     if (rr && pk && rr.pane === pk && rr.at !== this.restartReqAt && Date.now() - rr.at < 5000) {
