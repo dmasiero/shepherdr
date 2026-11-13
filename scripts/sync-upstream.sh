@@ -1,11 +1,11 @@
 #!/bin/sh
 # The fork's sync with upstream (FORK.md, "Syncing with upstream"): merges upstream's main into a
-# `sync/upstream-<version>` branch made from the fork's 3.x line, in a worktree of its own, runs the fork's checks and
-# opens a pull request to 3.x. `renix full` runs it in the dev shell (flake.nix) and merges the pull request. By hand:
+# `sync/upstream-<version>` branch made from the fork's line (its own main), in a worktree of its own, runs the fork's
+# checks and opens a pull request to it. `renix full` runs it in the dev shell (flake.nix) and merges the pull request. By hand:
 #   nix develop --command sh scripts/sync-upstream.sh              fetch, merge, check, push, open the pull request
 #   nix develop --command sh scripts/sync-upstream.sh --no-pr      the same, but push and open nothing
 #   nix develop --command sh scripts/sync-upstream.sh --continue --dir <worktree>   after resolving or fixing there
-# Options: --ref <upstream ref> (default upstream/main), --base <fork ref> (default origin/3.x), --dir <worktree>.
+# Options: --ref <upstream ref> (default upstream/main), --base <fork ref> (default origin/main), --dir <worktree>.
 # --continue merges the upstream commit the first run saved (in <worktree's git dir>/sync-upstream), whatever --ref says.
 # Exit: 0 done or nothing new, 1 an error, 3 conflicts to resolve, 4 the check failed. Never pushes to upstream.
 set -e
@@ -33,8 +33,8 @@ run_checks() {
   for t in $(python3 scripts/fork_layer.py tests); do bun test "./$t"; done
   exit 0
 }
-# The fork's branch this script syncs and opens pull requests to.
-line=3.x
+# The fork's branch this script syncs and opens pull requests to: the fork's own main (origin's), not upstream's.
+line=main
 ref=upstream/main; base="origin/$line"; dir=""; pr=1; cont=0
 while [ $# -gt 0 ]; do
   case "$1" in

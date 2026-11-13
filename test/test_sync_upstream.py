@@ -27,7 +27,8 @@ class Layer(unittest.TestCase):
         self.assertFalse([t for t in tests if t.endswith(".py")], "Python tests run with the whole unittest suite")
 
     def test_the_check_workflow_runs_on_the_fork_line(self):
-        # task and sync pull requests to 3.x, and each merge into it, get GitHub's whole Check (SHEP-25)
+        # task and sync pull requests to the fork's line, main, and each merge into it, get GitHub's whole Check
+        # (SHEP-25); 3.x, the line before it (SHEP-56), stays listed until it's deleted
         workflow = read(os.path.join(ROOT, ".github", "workflows", "check.yml"))
         self.assertIn("  pull_request:\n    branches: [main, 3.x]\n", workflow)
         self.assertIn("  push:\n    branches: [main, 3.x]\n", workflow)
@@ -84,7 +85,7 @@ def read(path):
 
 
 class Sync(unittest.TestCase):
-    """A fork (origin, with 3.x) and an upstream (main) as local repos, and renix's clone of the fork."""
+    """A fork (origin, its line on its own main) and an upstream (main) as local repos, and renix's clone of the fork."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="sync-upstream-")
@@ -106,18 +107,18 @@ class Sync(unittest.TestCase):
         self.up = os.path.join(t, "up")
         self.commit(self.up, {"package.json": '{\n  "version": "1.0.0"\n}\n', "a.txt": "one\ntwo\n"}, "1.0.0")
         git(self.up, "push", "--quiet", "origin", "HEAD:main")
-        # the fork: upstream's 1.0.0 plus its layer, on 3.x
+        # the fork: upstream's 1.0.0 plus its layer, on its own main
         git(t, "clone", "--quiet", os.path.join(t, "origin.git"), "fork")
         fork = os.path.join(t, "fork")
         git(fork, "fetch", "--quiet", os.path.join(t, "upstream.git"), "main")
-        git(fork, "checkout", "--quiet", "-b", "3.x", "FETCH_HEAD")
+        git(fork, "checkout", "--quiet", "-B", "main", "FETCH_HEAD")
         self.commit(fork, {"fork.txt": "the layer\n"}, "[fork] the layer")
-        git(fork, "push", "--quiet", "origin", "3.x")
-        # renix's clone: origin and upstream remotes, detached on origin/3.x, the script in it
+        git(fork, "push", "--quiet", "origin", "main")
+        # renix's clone: origin and upstream remotes, detached on origin/main, the script in it
         git(t, "clone", "--quiet", os.path.join(t, "origin.git"), "repo")
         self.repo = os.path.join(t, "repo")
         git(self.repo, "remote", "add", "upstream", os.path.join(t, "upstream.git"))
-        git(self.repo, "checkout", "--quiet", "--detach", "origin/3.x")
+        git(self.repo, "checkout", "--quiet", "--detach", "origin/main")
         os.makedirs(os.path.join(self.repo, "scripts"))
         shutil.copy(SCRIPT, os.path.join(self.repo, "scripts", "sync-upstream.sh"))
         self.wt = os.path.join(t, "worktree")
@@ -150,7 +151,7 @@ class Sync(unittest.TestCase):
         self.assertEqual(git(self.tmp + "/origin.git", "rev-parse", "sync/upstream-1.1.0"), git(self.wt, "rev-parse", "HEAD"))
         create = [c for c in self.gh_calls() if c.startswith("pr create")]
         self.assertEqual(len(create), 1, self.gh_calls())
-        self.assertIn("--base 3.x --head sync/upstream-1.1.0 --title Sync with upstream 1.1.0", create[0])
+        self.assertIn("--base main --head sync/upstream-1.1.0 --title Sync with upstream 1.1.0", create[0])
 
     def test_nothing_new_makes_no_worktree(self):
         p = self.sync()
@@ -166,8 +167,8 @@ class Sync(unittest.TestCase):
         self.assert_merged(sha)
         self.assertEqual(git(self.wt, "rev-parse", "--abbrev-ref", "HEAD"), "sync/upstream-1.1.0")
         self.assertEqual(read(os.path.join(self.wt, "fork.txt")), "the layer\n")
-        self.assertNotEqual(git(self.tmp + "/origin.git", "rev-parse", "3.x"), git(self.wt, "rev-parse", "HEAD"),
-                            "3.x itself is never pushed")
+        self.assertNotEqual(git(self.tmp + "/origin.git", "rev-parse", "main"), git(self.wt, "rev-parse", "HEAD"),
+                            "the fork's main itself is never pushed")
         body = read(os.path.join(git(self.wt, "rev-parse", "--absolute-git-dir"), "sync-upstream.pr.md"))
         self.assertIn("GitHub's Check workflow runs on this pull request", body)
         self.assertNotIn("main only", body)
@@ -175,7 +176,7 @@ class Sync(unittest.TestCase):
     def test_conflicts_stop_with_3_then_continue_commits_the_merge(self):
         fork = os.path.join(self.tmp, "fork")
         self.commit(fork, {"a.txt": "one\nfork's two\n"}, "[fork] hook in a.txt")
-        git(fork, "push", "--quiet", "origin", "3.x")
+        git(fork, "push", "--quiet", "origin", "main")
         sha = self.upstream_release("1.1.0", a="one\nupstream's two\n")
         p = self.sync()
         self.assertEqual(p.returncode, 3, p.stderr)
