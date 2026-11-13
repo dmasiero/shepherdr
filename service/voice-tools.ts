@@ -12,7 +12,8 @@ import { SOURCES, scrub, render, at, search, segments, type SourceArgs } from ".
 /** Where a call comes from: its app, the chat it started from (if any), and what that app shows now (sent by the page or
  *  the window). SHEP-105: a call is with Shepherdr itself, not that chat: "here" is what the screen shows. */
 export type Where = {
-  client: "web" | "window";
+  /** phone: a call through the person's PBX (service/phone.ts): no screen */
+  client: "web" | "window" | "phone";
   /** phone, tablet or desktop (web) */
   device?: string | null;
   /** the machine whose window it is (window), or the one serving the web app */
@@ -294,8 +295,10 @@ function taskLine(snap: Snapshot, t: Task, withPlace = true) {
 
 /** Where the call is and what the app shows, in words (look here, and the call's opening). */
 export function lookHere(snap: Snapshot, where: Where) {
-  const from = where.client === "web" ? `the web app${where.device ? ` on a ${where.device}` : ""}` : `the Herdr window${where.machine ? ` on ${where.machine}` : ""}`;
-  const out = [`The call runs in ${from}. It is with Shepherdr, not one agent.`];
+  const from = where.client === "web" ? `runs in the web app${where.device ? ` on a ${where.device}` : ""}` : where.client === "phone" ? "is a phone call" : `runs in the Herdr window${where.machine ? ` on ${where.machine}` : ""}`;
+  const out = [`The call ${from}. It is with Shepherdr, not one agent.`];
+  // SHEP-44: a phone call through the person's PBX has nothing to show things on
+  if (where.client === "phone") out.push("The person is on the phone, with no screen: open, screen and call_view can't show anything, so say what you find instead.");
   const shows: string[] = [];
   if (where.settings) shows.push("Settings");
   const t = where.task ? snap.tasks.find((x) => x.id === where.task) : null;
@@ -622,6 +625,7 @@ export async function voiceTool(name: string, params: any, where: Where, io: Voi
       }
       return fail(`look can read: here, chat, spaces, machines, tasks, task, needs, news, autopilot, automations, settings, secrets, artifacts, data.`);
     }
+    if (where.client === "phone" && (name === "open" || name === "screen" || name === "call_view")) return fail("This is a phone call: there's no screen to show it on. Say it instead.");
     if (name === "open") return open(snap, where, io, String(p.what ?? ""), id, typeof p.tab === "string" ? p.tab : "", query);
     if (name === "send") {
       const text = typeof p.text === "string" ? p.text.trim() : "";
