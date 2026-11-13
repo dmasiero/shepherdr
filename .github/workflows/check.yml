@@ -10,7 +10,7 @@ name: Check
 
 on:
   # no paths-ignore here: a docs-only pull request must report a check too, or it could never merge
-  # fork: and the fork's line, 3.x: its task and upstream sync pull requests, and each merge (FORK.md)
+  # fork: 3.x, the fork's line before main (FORK.md): its pull requests still open get a check until it's deleted
   pull_request:
     branches: [main, 3.x]
   push:

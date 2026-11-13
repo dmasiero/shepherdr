@@ -2,7 +2,7 @@
   # The fork's dev shell (FORK.md): what scripts/sync-upstream.sh and its checks need. renix runs the script in it
   # (`nix develop --command sh scripts/sync-upstream.sh …`) on every `renix full`. nixos-unstable for a Bun as new as
   # the Check workflow's (.github/workflows/check.yml).
-  description = "Shepherdr (the dmasiero fork, 3.x line): dev shell";
+  description = "Shepherdr (the dmasiero fork): dev shell";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

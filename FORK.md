@@ -1,20 +1,23 @@
 # This fork
 
 [dmasiero/shepherdr](https://github.com/dmasiero/shepherdr) is a GitHub fork of
-[eliasstravik/shepherdr](https://github.com/eliasstravik/shepherdr) ("upstream"). Its line is `3.x`, cut clean from
-upstream's tag v3.1.14 (`45521918`) and following upstream's `main`. `main` mirrors upstream's.
+[eliasstravik/shepherdr](https://github.com/eliasstravik/shepherdr) ("upstream"). Its line is `main`: upstream's
+`main` plus the fork's layer below, cut clean from upstream's tag v3.1.14 (`45521918`) and following upstream's `main` by merge
+(below, "Syncing with upstream"). Its `main` is not a mirror of upstream's: it's upstream's history with the layer on
+top, and `git diff upstream/main main` is the layer. Until SHEP-56 the line was `3.x` (and `main` an old mirror of
+upstream's); `main` was then fast-forwarded to `3.x`, and `3.x` stays only until nothing pins it.
 
-renix (Doug's NixOS config) pins and builds `3.x` (`pkgs/shepherdr.nix`, `pkgs/forks.nix`) and runs it on nextgate:
+renix (Doug's NixOS config) pins and builds `main` (`pkgs/shepherdr.nix`, `pkgs/forks.nix`) and runs it on nextgate:
 the Herdr window plus the service and its web app at https://board.masiero.internal.
 
 ## The layer
 
-Sixteen changes. Everything else is upstream's; `git diff upstream/main 3.x` shows all of it.
+Sixteen changes. Everything else is upstream's; `git diff upstream/main main` shows all of it.
 
 | File | What |
 | --- | --- |
 | `FORK.md` | This page. |
-| `flake.nix`, `flake.lock`, `scripts/sync-upstream.sh`, `scripts/fork_layer.py`, `test/test_sync_upstream.py`; hook in `.github/workflows/check.yml` (`on`) | Upstream comes in by itself: `renix full` runs the sync script in the dev shell and merges its pull request (below, "Syncing with upstream"). GitHub's Check workflow runs on pull requests to `3.x` and pushes to it as well as upstream's `main` (SHEP-25), so the sync pull requests and the tasks' pull requests are checked in full. The dev shell has what the script and its checks need (Bun pinned at the Check workflow's 1.4.2, Node, Python, git, gh, jq); `scripts/fork_layer.py` reads this table for the layer's tests and checks that every hook below still has its `fork:` comment. |
+| `flake.nix`, `flake.lock`, `scripts/sync-upstream.sh`, `scripts/fork_layer.py`, `test/test_sync_upstream.py`; hook in `.github/workflows/check.yml` (`on`) | Upstream comes in by itself: `renix full` runs the sync script in the dev shell and merges its pull request (below, "Syncing with upstream"). GitHub's Check workflow runs on pull requests to `main` and pushes to it (SHEP-25), and on `3.x`, the old line, until it's deleted (SHEP-56), so the sync pull requests and the tasks' pull requests are checked in full. The dev shell has what the script and its checks need (Bun pinned at the Check workflow's 1.4.2, Node, Python, git, gh, jq); `scripts/fork_layer.py` reads this table for the layer's tests and checks that every hook below still has its `fork:` comment. |
 | `service/proxy.ts`, `service/proxy.test.ts`; hooks in `service/auth.ts`, `service/main.ts`, `service/settings.ts`, `core/settings.js` (and its copies in the mods) | Proxy mode, below: a reverse proxy on this machine instead of Tailscale. Upstream's tailnet HTTPS port (#876, `httpsPort`) works beside it; Live takes upstream's arguments, with a stand-in for Tailscale's `me` (the host name) in proxy mode. |
 | `mods/chat/termblock.js`, `core/termblock.test.js`; hook in `mods/chat/panel.js` (`renderHead`) | Task Terminal: the task view's terminal is one layout block that keeps the last terminal it showed, and a task opened from the Tasks list kept the view on Terminal, so it showed the previous task's agent under the new task's header (SHEP-7 showing TIC-2's). A task now opens on its chat, and the header goes back to the chat whenever the block shows anything but the task's own live agent. |
 | `core/tabs-tasks-waits.test.js`; hooks in `mods/tabs-tasks/main.js` (the command loop), `lib/inbox.js` (`startInbox`, and its copies) | Endless waits: the tab bar's command loop (every 5 s) and the inbox engine's watch of new asks (every 4 s) each raced the same pending promise round after round, and each race left a listener on it until a command or an ask came: about 6,500 promise records over 4 quiet hours. The promise now wakes the wait itself, one listener for good (SHEP-9). The window's 17:02 crash itself ("out of memory", then a heap-corruption abort) was Herdr's: herdr-app 0.1.13 loads a mod afresh for every popup, dialog, toast, pane and hot reload and never frees a load, so its one 256 MiB QuickJS heap filled (256 loads alive in the core dump). That needs a Herdr fix. |
@@ -61,11 +64,11 @@ run agents on this machine as you: the proxy (its source filter, a login in fron
 
 ## Syncing with upstream
 
-`renix full` (on nextgate) does it, once renix's `pkgs/forks.nix` names this script (`syncScript`): when `3.x` is
-behind upstream's `main` it runs `scripts/sync-upstream.sh` in the dev shell from its clone of the fork, and merges
+`renix full` (on nextgate) does it, once renix's `pkgs/forks.nix` names this script (`syncScript`): when the fork's
+`main` is behind upstream's `main` it runs `scripts/sync-upstream.sh` in the dev shell from its clone of the fork, and merges
 the pull request the script opens. The script merges upstream's main into a `sync/upstream-<version>` branch made from
-`origin/3.x`, in a worktree of its own, runs the fork's checks at the lowest priority and opens the sync pull request
-to `3.x`:
+`origin/main` (the fork's), in a worktree of its own, runs the fork's checks at the lowest priority and opens the sync
+pull request to the fork's `main`:
 
 - the layer is intact: every file the table above names is there, and every upstream file it hooks into still has a
   `fork:` comment (`python3 scripts/fork_layer.py check`);
@@ -75,9 +78,9 @@ to `3.x`:
   `*.test.*` the table names; Bun's module mocks would clash in one run).
 
 Not the whole Bun suite and the build: GitHub's Check workflow runs those, on the sync pull request itself (it runs on
-pull requests to `3.x` and on each merge into it); by hand on any branch: `gh workflow run check.yml --repo
-dmasiero/shepherdr --ref <branch>`. Merge a sync pull request once its Check is green: `3.x` has no branch protection,
-so GitHub doesn't stop an earlier merge.
+pull requests to `main` and on each merge into it); by hand on any branch: `gh workflow run check.yml --repo
+dmasiero/shepherdr --ref <branch>`. Merge a sync pull request once its Check is green: `main`'s branch protection requires
+the `check` job, so GitHub holds a merge until it passes.
 
 A conflict stops it with exit 3, a failed check with exit 4 (its log: `<worktree's git dir>/sync-upstream.check.log`).
 renix's agent then resolves the conflicts (below) or commits a fix in the worktree, and renix runs the script again
@@ -97,10 +100,10 @@ nix develop --command sh scripts/sync-upstream.sh --continue --dir <worktree>
 
 # without the script:
 git fetch upstream
-git switch -c sync/upstream-<version> origin/3.x
+git switch -c sync/upstream-<version> origin/main
 git merge upstream/main          # conflicts: below
 bun install --frozen-lockfile && bun run typecheck && python3 scripts/fork_layer.py check
-gh pr create --base 3.x          # merge it with "Create a merge commit"
+gh pr create --base main         # merge it with "Create a merge commit"
 ```
 
 A new piece of the layer needs a row in the table above: the sync checks that its files are there, runs the Bun tests
