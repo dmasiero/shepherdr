@@ -88,10 +88,14 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `cd test && python3 -m unittest test_herdr_task.ClassName` (from the repo root the module import fails).
 - Tests that run accept or merge with the real `finish()` must stub `github.live_agents` and `live_helpers` (hc is
   refused under test).
+- test/test_ask_hook.py runs mods/chat/ask-hook.sh with a fake hc; a killed test can orphan the hook (it waits up to a
+  week): find it with ps by the worktree's ask-hook.sh path and kill that pid.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
 - Window-mod render tests: `bun test` in service/ with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
+- herdr-app's overlay width/height are at zoom 1, but on_size_change, presses and wheel deltas are in pixels at the
+  zoom: unzoom them (see service/chat-image-zoom.test.ts).
 - No herdr-app window runs on the dev VM: window-mod UI can only be syntax-checked here, not screenshot. No ImageMagick,
   PIL or lsof either: stop a background stub by the pid `ss -ltnp` shows for its port, never `pkill -f` on its path
   (it matches the calling shell). A stub can bridge `/api/terminal` to a real bash with `new Hub(<hc wrapper setting
