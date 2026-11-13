@@ -9,7 +9,7 @@ import { connect, type Socket } from "node:net";
 import { voiceCall } from "./voice.ts";
 import { voiceTool, type VoiceIO, type Where } from "./voice-tools.ts";
 import type { HearIO } from "./voice-hear.ts";
-import { T, frame, framer, uuidOf, up8to16, down16to8, phoneServer, phoneSwitch, readPhone, vaultPin, plain, PIN_NAME, type PhoneDeps } from "./phone.ts";
+import { T, frame, framer, uuidOf, up8to16, down16to8, phoneServer, phoneSwitch, readPhone, plain, type PhoneDeps } from "./phone.ts";
 
 const snap: any = {
   host: "box", name: "Shepherdr", user: "You", machines: [{ id: "m:box", machine: "box", name: "This computer", status: "idle", here: true }],
@@ -35,13 +35,11 @@ const eleven = Bun.serve({
 const UUID = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
 const uuidBytes = (u: string) => Buffer.from(u.replace(/-/g, ""), "hex");
 const logs: string[] = [];
-let pin: string | null = "4321";
 const deps: PhoneDeps = {
-  pin: async () => pin,
   where: () => ({ client: "phone", machine: "box", call: "p:h1" }),
   start: (w, page) => voiceCall({} as any, { io, hear, where: w, who: "phone", dial: async () => `ws://127.0.0.1:${eleven.port}/` }, page),
   log: (l) => logs.push(l),
-  pinWait: 3000,
+  uuidWait: 1000,
 };
 const pbx = phoneServer({ hostname: "127.0.0.1", port: 0, pbx: ["127.0.0.1"] }, deps);
 afterAll(() => { pbx.stop(true); eleven.stop(true); });
@@ -110,16 +108,9 @@ test("the setting: off with no file, off without a PBX address; bind defaults to
   writeFileSync(f, JSON.stringify({ on: false, pbx: ["100.64.0.9"] }));
   expect(readPhone(f).on).toBe(false);
   expect(plain("::ffff:100.64.0.9")).toBe("100.64.0.9");
-  // the PIN: Everywhere's, digits or a uuid; anything else is no PIN
-  const v = (value: string, scope = "everywhere") => () => JSON.stringify({ secrets: [{ name: PIN_NAME, scope, value }] });
-  expect(vaultPin("x", v("4321"))).toBe("4321");
-  expect(vaultPin("x", v(UUID))).toBe(UUID);
-  expect(vaultPin("x", v("12"))).toBeNull();
-  expect(vaultPin("x", v("4321", "space"))).toBeNull();
-  expect(vaultPin("x", () => { throw new Error("none"); })).toBeNull();
 });
 
-test("an address that isn't the PBX is refused at once: no PIN, no call", async () => {
+test("an address that isn't the PBX is refused at once: no call, nothing said", async () => {
   const other = phoneServer({ hostname: "127.0.0.1", port: 0, pbx: ["100.64.0.9"] }, deps);
   const before = dialled;
   const c = dial(other.port);
@@ -132,43 +123,28 @@ test("an address that isn't the PBX is refused at once: no PIN, no call", async 
   other.stop(true);
 });
 
-test("a wrong PIN three times: a low tone, then hung up; the voice agent is never dialled", async () => {
-  const before = dialled;
-  const c = dial();
-  c.send(T.UUID, uuidBytes(UUID));
-  await until(() => c.audio().length > 0);
-  // the "type your PIN" tone came; meanwhile the caller's voice goes nowhere
-  c.send(T.AUDIO, sine(400, 8000, 160));
-  c.digits("1111"); await Bun.sleep(100);
-  c.digits("2222"); await Bun.sleep(100);
-  c.digits("99#");
-  await until(() => c.closed, 300);
-  expect(c.got.at(-1)!.type).toBe(T.HANGUP);
-  expect(dialled).toBe(before);
-  expect(logs).toContain("wrong PIN too often: hung up");
-  // no PIN digits or audio in the log
-  expect(logs.join("\n")).not.toMatch(/1111|2222|4321/);
-});
-
-test("the right PIN on the keys: the call starts; the caller's voice reaches the agent at 16 kHz, its voice comes back at 8 kHz in 20 ms frames; the PBX hangs up, the call ends", async () => {
-  const c = dial();
-  c.send(T.UUID, uuidBytes(UUID));
-  await until(() => c.audio().length > 0);
+test("an allowed PBX goes straight into the call (no PIN): the caller's voice reaches the agent at 16 kHz, its voice comes back at 8 kHz in 20 ms frames; keys go nowhere and aren't logged; the PBX hangs up, the call ends", async () => {
   agent = null;
-  c.digits("4321");
+  const c = dial();
+  c.send(T.UUID, uuidBytes(UUID));
   await until(() => !!agent);
   expect(agent).not.toBeNull();
+  // nothing was played before the agent: no tone, no prompt
+  expect(c.audio()).toEqual([]);
   // the opening says it's a phone call, with no screen, with Shepherdr
   await until(() => heard.some((m) => m.type === "conversation_initiation_client_data"));
   const open = heard.findLast((m) => m.type === "conversation_initiation_client_data");
-  expect(open.conversation_config_override.agent.prompt.prompt).toContain("The call runs in a phone call. It is with Shepherdr");
+  expect(open.conversation_config_override.agent.prompt.prompt).toContain("The call is a phone call. It is with Shepherdr");
   expect(open.conversation_config_override.agent.prompt.prompt).toContain("no screen");
   await Bun.sleep(100);
   const n = heard.length;
+  c.digits("4321#");
   c.send(T.AUDIO, sine(400, 8000, 160));
   await until(() => heard.slice(n).some((m) => m.user_audio_chunk));
-  const chunk = Buffer.from(heard.slice(n).find((m) => m.user_audio_chunk).user_audio_chunk, "base64");
-  expect(chunk.length).toBe(640);
+  const chunks = heard.slice(n).filter((m) => m.user_audio_chunk);
+  expect(chunks).toHaveLength(1);
+  expect(Buffer.from(chunks[0].user_audio_chunk, "base64").length).toBe(640);
+  expect(logs.join("\n")).not.toMatch(/4321/);
   // 100 ms of the agent's voice at 16 kHz: five 20 ms frames at 8 kHz
   const was = c.audio().length;
   agent.send(JSON.stringify({ type: "audio", audio_event: { audio_base_64: Buffer.from(sine(300, 16000, 1600)).toString("base64") } }));
@@ -184,8 +160,7 @@ test("the right PIN on the keys: the call starts; the caller's voice reaches the
   expect(c.closed).toBe(true);
 });
 
-test("a PIN that is the dialplan's uuid: the call starts with no keys; the agent ends it, the PBX is hung up", async () => {
-  pin = UUID;
+test("the agent ends the call: the PBX is sent a hangup and the line closes", async () => {
   agent = null;
   const c = dial();
   c.send(T.UUID, uuidBytes(UUID));
@@ -194,26 +169,31 @@ test("a PIN that is the dialplan's uuid: the call starts with no keys; the agent
   await Bun.sleep(100);
   agent.close(1000, "Conversation has exceeded maximum duration");
   await until(() => c.closed, 300);
+  expect(c.closed).toBe(true);
   expect(c.got.at(-1)!.type).toBe(T.HANGUP);
-  // another uuid: refused
-  const before = dialled;
-  const d = dial();
-  d.send(T.UUID, uuidBytes("00000000-0000-0000-0000-000000000000"));
-  await until(() => d.closed, 300);
-  expect(d.got.at(-1)!.type).toBe(T.HANGUP);
-  expect(dialled).toBe(before);
-  pin = "4321";
 });
 
-test("no PIN kept: every call is refused", async () => {
-  pin = null;
-  const before = dialled;
+test("the line drops (no hangup frame): the call ends", async () => {
+  agent = null;
   const c = dial();
   c.send(T.UUID, uuidBytes(UUID));
-  await until(() => c.closed, 300);
+  await until(() => !!agent);
+  await Bun.sleep(100);
+  const closed = agentClosed;
+  c.end();
+  await until(() => agentClosed > closed);
+  expect(agentClosed).toBe(closed + 1);
+});
+
+test("a connection that never sends its uuid is hung up; the agent is never dialled", async () => {
+  const before = dialled;
+  const c = dial();
+  c.send(T.AUDIO, sine(400, 8000, 160));
+  await until(() => c.closed, 150);
+  expect(c.closed).toBe(true);
+  expect(c.got.at(-1)!.type).toBe(T.HANGUP);
   expect(dialled).toBe(before);
-  expect(logs.some((l) => l.includes(`no ${PIN_NAME} kept`))).toBe(true);
-  pin = "4321";
+  expect(logs).toContain("no AudioSocket uuid in time: hung up");
 });
 
 test("a phone call's tools: nothing to open or show, said so", async () => {
