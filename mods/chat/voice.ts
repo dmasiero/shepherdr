@@ -32,8 +32,6 @@ import { API, opening, replyLine, statusLine, whereLine, apiError, ensureAgent, 
 import { screenWords } from "./core/screen.js";
 import { SECRETS, keyFor, envFile, shepPaths } from "./key.ts";
 import { audio, callAudio, ended as audioEnded, type Audio, type CallSound } from "./audio.ts";
-import { startMuffle } from "./muffle.ts";
-import { speechGate, HOLD_MS } from "./core/duck.js";
 
 const [dir, addr, name] = process.argv.slice(2);
 if (!dir || !addr) { console.error("usage: bun voice.ts <call folder> <agent address> <agent name>"); process.exit(2); }
@@ -83,19 +81,16 @@ function end(why: string | null = null) {
   sound?.stop(); asking?.kill();
   if (hears) void serviceCall("DELETE", `/api/voice/hear?call=${encodeURIComponent(callId)}`);
   state();
-  // SHEP-51: other apps' sound back to where it was (at most 2 s); then the end chime, at the system's volume,
-  // whatever ended it (SHEP-173); then this helper goes
-  void Promise.race([muffle?.release(), Bun.sleep(2000)]).finally(() => {
-    const chimed = chime();
-    setTimeout(() => process.exit(0), chimed ? 900 : 100);
-  });
+  // SHEP-173: the end chime, at the system's volume, whatever ended it; then this helper goes
+  const chimed = chime();
+  setTimeout(() => process.exit(0), chimed ? 900 : 100);
 }
 
 /** The end chime through the speaker (audio.ts), when this machine has one: true when it plays. */
 function chime() {
   if (!tools) return false;
   try {
-    const p = Bun.spawn(tools.callSpeaker(16000), { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+    const p = Bun.spawn(tools.speaker(16000), { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
     const pcm = chimePcm(16000) as Int16Array;
     p.stdin.write(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
     p.stdin.end();
@@ -104,7 +99,6 @@ function chime() {
 }
 process.on("SIGTERM", () => end());
 process.on("SIGINT", () => end());
-process.on("SIGHUP", () => end());
 
 // ---- secrets: key.ts ----------------------------------------------------------------------
 
@@ -208,17 +202,6 @@ function loud(pcm: Uint8Array) {
 let heard: { at: number; level: number }[] = [];
 let micLevel = 0;
 
-// SHEP-51: other apps' sound muffled while the agent's voice plays and while the person speaks (core/duck.js), on
-// Linux; null where it can't (muffle.ts). The person speaking: the mic well over the room's own level (speechGate).
-let muffle: Awaited<ReturnType<typeof startMuffle>> = null;
-const gate = speechGate();
-let spokeAt = 0;
-// speech the gate heard that no words came of yet (its start): music leaking in, once the call has had time to say
-let unheard = 0;
-function muffleWanted(now: number) {
-  return now < playEnd + HOLD_MS || (!muted && now - spokeAt < HOLD_MS);
-}
-
 function play(pcm: Uint8Array) {
   if (!sound) return;
   const now = Date.now();
@@ -261,13 +244,7 @@ function startSound() {
         const pcm = new Int16Array(piece.buffer, piece.byteOffset, piece.length >> 1);
         let sum = 0;
         for (let i = 0; i < pcm.length; i += 4) sum += pcm[i] * pcm[i];
-        const rms = Math.sqrt(sum / Math.max(1, pcm.length >> 2));
-        if (rms > 650 && !hushed) heardAt = Date.now();
-        // the room's level is learned only while the music is at its own volume and the agent is quiet
-        if (!hushed && !muted && gate.feed(rms, Date.now(), (muffle?.gain ?? 1) < 1 || Date.now() < playEnd + 350)) {
-          spokeAt = Date.now();
-          unheard ||= spokeAt;
-        }
+        if (Math.sqrt(sum / Math.max(1, pcm.length >> 2)) > 650 && !hushed) heardAt = Date.now();
         micLevel = loud(piece);
         if (muted || hushed) piece = new Uint8Array(chunk);
         if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ user_audio_chunk: Buffer.from(piece).toString("base64") }));
@@ -374,7 +351,6 @@ async function main() {
   // The mic and speaker first: on a Mac, macOS asks for the microphone now (the first time), before the voice agent
   // starts talking; not allowed, or nothing to record or play with, ends the call with why.
   try { tools = await audio(); } catch (err: any) { return end(String(err?.message ?? err)); }
-  if (tools.kind === "pipewire") muffle = await startMuffle().catch(() => null);
   if (tools.access) {
     const p = asking = Bun.spawn(tools.access, { stdout: "ignore", stderr: "pipe" });
     const why = audioEnded("mic", await p.exited, await new Response(p.stderr).text().catch(() => ""));
@@ -409,11 +385,7 @@ async function main() {
       state();
       try { startSound(); } catch (err: any) { end(`The microphone didn't start: ${err?.message ?? err}`); }
     }
-    else if (m.type === "user_transcript") {
-      // words: what the gate heard was the person
-      if (String(m.user_transcription_event?.user_transcript ?? "").trim()) unheard = 0;
-      turn.seen("user_transcript"); guard.seen("user_transcript"); phase = "thinking"; thinkingAt = Date.now(); state();
-    }
+    else if (m.type === "user_transcript") { turn.seen("user_transcript"); guard.seen("user_transcript"); phase = "thinking"; thinkingAt = Date.now(); state(); }
     else if (m.type === "agent_response") {
       turn.seen("agent_response");
       guard.seen("agent_response", m.agent_response_event?.agent_response);
@@ -480,15 +452,6 @@ async function main() {
     setTimeout(() => end(why), Math.max(0, Math.min(10000, playEnd - Date.now() + 300)));
   };
 }
-
-// The muffle's tick: twenty times a second while the call is on (each waits for the last one's pactl calls)
-setInterval(() => {
-  if (ended || !sound) return;
-  const now = Date.now();
-  // what the gate took for speech gave no words within 5 s of its end: not the person (music in the mic)
-  if (unheard && now - spokeAt > 5000) { unheard = 0; gate.doubt(); }
-  muffle?.tick(muffleWanted(now));
-}, 50);
 
 // The level the chat's wave shows, ten times a second, beside the call folder (so writing it
 // doesn't wake the chat's watch on the folder): the agent's voice while it plays, else the mic.

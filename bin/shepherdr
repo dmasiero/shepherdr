@@ -1156,6 +1156,27 @@ def browser_off(root):
     return isinstance(off, list) and "browser" in off
 
 
+def unmuffle(r):
+    """SHEP-55: SHEP-51's call muffle is gone. A call that died while muffling left a guard
+    (<app home>/data/call-muffle/<pid>.json) holding other apps' own volumes: put them back (mods/chat/muffle.ts
+    restore) so none stays lowered, and the folder goes. Never stops the install."""
+    d = r.p(f"{APP}/data/call-muffle")
+    if r.dry or not os.path.isdir(d):
+        return
+    script, bun = r.p(f"{APP}/mods/chat/muffle.ts"), bun_path()
+    if bun and os.path.isfile(script) and any(f.endswith(".json") for f in os.listdir(d)):
+        try:
+            subprocess.run([bun, script, "restore"], capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
+                           env={**os.environ, "HERDR_APP_HOME": r.p(APP)})
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if os.path.isdir(d) and not os.listdir(d):
+        try:
+            os.rmdir(d)
+        except OSError:
+            pass
+
+
 def ensure_agent_browser(r, home):
     """A working agent-browser and Chrome for the task browser: the one already here when it fits, else Shepherdr's
     own copy (installed, or updated when the pin changed). Never stops the install: a failure is a note with the fix.
@@ -1385,6 +1406,7 @@ def cmd_install(a, update=False):
     install_service(r, rec, home)
     say_web(root, home, a, started)
     ensure_agent_browser(r, home)
+    unmuffle(r)
     if a.guard:
         install_guard(r, src, rec)
     if not a.no_hooks:

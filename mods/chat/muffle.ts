@@ -1,43 +1,61 @@
-// SHEP-51: a window call's muffle (core/duck.js) on this machine: pactl for the streams and their volumes, the guard
-// file that says what to put back, and the putting back after a call that died while muffling.
-//   bun muffle.ts restore    puts back what calls that are gone left muffled (their guards); the watcher a call
-//                            starts runs it once the call's process is gone, and each call runs it first
-// Linux with PipeWire or PulseAudio, and pactl 16 or later (its JSON). Elsewhere: nothing.
+// SHEP-55: what is left of SHEP-51's "Muffle other audio during calls", rolled back. That window call (Linux) lowered
+// other apps' playback streams and kept a guard file per call (<app home>/data/call-muffle/<pid>.json: each stream's
+// own volume and the one it set), with a watcher that ran `bun muffle.ts restore` once the call's process was gone.
+// Nothing muffles now; this only puts back what such a call left lowered:
+//   bun muffle.ts restore    each guard whose call is gone: a stream still at the muffled volume back to its own (one
+//                            changed since is left), an ended stream's app's remembered volume healed; then the guard
+//                            and its folder go
+// The installer runs it on an update when guards are there; a call that was running across the update still has its
+// watcher, which runs this file by its path. It can go once no install can hold a guard any more.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, renameSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
-import { parseStreams, ducker, recover, muffleLevel } from "./core/duck.js";
-import { HOME, shepPaths } from "./key.ts";
+import { HOME } from "./key.ts";
 
 const GUARDS = join(HOME, "data", "call-muffle");
 // (the tests' fakes)
 const PACTL = process.env.HERDR_PACTL || "pactl";
 const PAPLAY = process.env.HERDR_PAPLAY || "paplay";
-const ONLY = process.env.HERDR_MUFFLE_ONLY ? new RegExp(process.env.HERDR_MUFFLE_ONLY) : null;
-const guardFile = (pid: number) => join(GUARDS, `${pid}.json`);
+// A stream changed by someone else by more than this (of 65536, the full volume) is theirs.
+const SLACK = 700;
 
-type Stream = { id: number; vols: number[]; key: string; name: string; skip: boolean };
-export type Io = { list: () => Promise<Stream[] | null>; set: (id: number, vols: number[]) => Promise<void>;
-  heal: (key: string, vols: number[]) => Promise<void>; save: (guard: unknown) => Promise<void> };
+type Stream = { id: number; vols: number[]; key: string; ours: boolean };
+type Kept = { orig?: unknown; set?: unknown; key?: unknown };
 
-async function run(argv: string[], input?: Uint8Array): Promise<{ code: number; out: string }> {
+async function run(argv: string[]): Promise<{ code: number; out: string }> {
   try {
-    const p = Bun.spawn(argv, { stdin: input ? "pipe" : "ignore", stdout: "pipe", stderr: "ignore" });
-    if (input) { (p.stdin as any).write(input); (p.stdin as any).end(); }
+    const p = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
     const out = await new Response(p.stdout).text();
     return { code: await p.exited, out };
   } catch { return { code: -1, out: "" }; }
 }
 
-/** Is pactl here, and does it speak JSON (16 or later)? */
-export async function canMuffle() {
-  if (process.platform !== "linux" || !Bun.which(PACTL)) return false;
+async function raw(): Promise<any[]> {
   const r = await run([PACTL, "-f", "json", "list", "sink-inputs"]);
-  return r.code === 0 && r.out.trim().startsWith("[");
+  try { const l = JSON.parse(r.out); return Array.isArray(l) ? l : []; } catch { return []; }
 }
 
-/** PipeWire remembers an app's volume by its stream-restore key; a moment of silence as that app, set to its old
- *  volume, puts it back (the stream is marked as the call's own, so no muffle takes it). */
+/** The playback streams now: id, each channel's volume, the key PipeWire remembers its volume by. */
+async function streams(): Promise<Stream[]> {
+  const out: Stream[] = [];
+  for (const s of await raw()) {
+    const id = Number(s?.index);
+    const vols = Object.values(s?.volume ?? {}).map((c: any) => Number(c?.value));
+    if (!Number.isInteger(id) || !vols.length || vols.some((v) => !Number.isFinite(v))) continue;
+    const p = s.properties ?? {};
+    out.push({ id, vols, key: String(p["module-stream-restore.id"] ?? ""), ours: p["herdr.call"] === true || p["herdr.call"] === "true" });
+  }
+  return out;
+}
+
+const nums = (v: unknown): number[] | null =>
+  Array.isArray(v) && v.length && v.every((x) => Number.isFinite(x)) ? (v as number[]) : null;
+const near = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) <= SLACK);
+const same = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === b[i]);
+const setVolume = (id: number, vols: number[]) => run([PACTL, "set-sink-input-volume", String(id), ...vols.map(String)]);
+
+/** PipeWire remembers an app's volume by its stream-restore key: a moment of silence played as that app, set to its
+ *  own volume, puts it back. */
 async function heal(key: string, vols: number[]) {
   const m = /^sink-input-by-(media-role|application-name|application-id):(.*)$/.exec(key);
   if (!m || !m[2] || !Bun.which(PAPLAY)) return;
@@ -51,95 +69,60 @@ async function heal(key: string, vols: number[]) {
   (p.stdin as any).flush?.();
   for (let i = 0; i < 15; i++) {
     await Bun.sleep(100);
-    const r = await run([PACTL, "-f", "json", "list", "sink-inputs"]);
-    let raw: any[] = [];
-    try { raw = JSON.parse(r.out); } catch {}
-    const s = raw.find((x) => String(x?.properties?.["module-stream-restore.id"] ?? "") === key && x?.properties?.["herdr.call"] === "true");
+    const s = (await raw()).find((x) => String(x?.properties?.["module-stream-restore.id"] ?? "") === key && x?.properties?.["herdr.call"] === "true");
     if (!s) continue;
     const n = Object.keys(s.volume ?? {}).length;
-    await run([PACTL, "set-sink-input-volume", String(s.index), ...(n === vols.length ? vols : Array(n).fill(vols[0])).map(String)]);
+    await setVolume(Number(s.index), n === vols.length ? vols : Array(n).fill(vols[0]));
     await Bun.sleep(300);
     break;
   }
   try { p.kill(); } catch {}
 }
 
-/** pactl as the duck controller's io; the guard kept for pid. */
-export function pactlIo(pid = process.pid): Io {
-  return {
-    async list() {
-      const r = await run([PACTL, "-f", "json", "list", "sink-inputs"]);
-      if (r.code !== 0) return null;
-      const all = parseStreams(r.out) as Stream[];
-      // (a live try on a machine whose own sound must stay as it is: only the apps named so)
-      return ONLY ? all.filter((s) => ONLY.test(s.name)) : all;
-    },
-    async set(id, vols) { await run([PACTL, "set-sink-input-volume", String(id), ...vols.map(String)]); },
-    heal,
-    async save(guard) {
-      const f = guardFile(pid);
-      try {
-        if (!guard) { rmSync(f, { force: true }); return; }
-        mkdirSync(GUARDS, { recursive: true });
-        writeFileSync(`${f}.tmp`, JSON.stringify(guard));
-        renameSync(`${f}.tmp`, f);
-      } catch {}
-    },
-  };
-}
-
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; } };
-
-/** What calls that are gone left muffled, put back (each guard whose process isn't running). */
-export async function restoreLeft(except = process.pid) {
-  let files: string[] = [];
-  try { files = readdirSync(GUARDS).filter((f) => /^\d+\.json$/.test(f)); } catch { return 0; }
+/** One guard put back: how many streams or apps it touched. */
+async function recover(guard: any, now: Stream[]) {
+  if (!guard || typeof guard !== "object") return 0;
   let n = 0;
-  for (const f of files) {
-    const pid = Number(f.split(".")[0]);
-    if (pid === except || alive(pid)) continue;
-    let guard: unknown = null;
-    try { guard = JSON.parse(readFileSync(join(GUARDS, f), "utf8")); } catch {}
-    n += await recover(guard, pactlIo(pid));
-    try { rmSync(join(GUARDS, f), { force: true }); } catch {}
+  const left = new Map<string, Kept>(Object.entries(guard.gone ?? {}) as [string, Kept][]);
+  for (const [id, s] of Object.entries(guard.streams ?? {}) as [string, Kept][]) {
+    const orig = nums(s?.orig), set = nums(s?.set);
+    if (!orig || !set || same(set, orig)) continue;
+    const here = now.find((x) => x.id === Number(id));
+    if (here) { if (near(here.vols, set)) { await setVolume(here.id, orig); n++; } }
+    else if (typeof s.key === "string" && s.key) left.set(s.key, { orig, set });
+  }
+  for (const [key, s] of left) {
+    const orig = nums(s?.orig), set = nums(s?.set);
+    if (!orig) continue;
+    // a new stream of that app, at the muffled volume PipeWire gave it: back to its own too
+    const again = set && now.find((x) => !x.ours && x.key === key && near(x.vols, set) && x.vols.length === orig.length);
+    if (again) await setVolume(again.id, orig);
+    else await heal(key, orig);
+    n++;
   }
   return n;
 }
 
-/** The level Settings picks now (0..1; 0 off). */
-export function levelNow() {
-  try { return muffleLevel(JSON.parse(readFileSync(shepPaths().settings, "utf8"))) / 100; } catch { return muffleLevel(null) / 100; }
-}
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; } };
 
-/** A call's muffle: null when this machine can't. tick(want) once a tick (each waits for the last), release() at the
- *  end. Starts a watcher that puts things back if this process dies without it. */
-export async function startMuffle() {
-  if (!(await canMuffle())) return null;
-  await restoreLeft();
-  const io = pactlIo();
-  const d = ducker(io);
-  try {
-    Bun.spawn(["sh", "-c", 'command -v setsid >/dev/null 2>&1 && exec setsid sh -c "$0" x "$@" || exec sh -c "$0" x "$@"',
-      'while kill -0 "$1" 2>/dev/null; do sleep 2; done; [ -s "$3" ] && exec bun "$2" restore; exit 0',
-      String(process.pid), join(import.meta.dir, "muffle.ts"), guardFile(process.pid)],
-    { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
-  } catch {}
-  let busy: Promise<void> | null = null;
-  let level = levelNow(), readAt = Date.now();
-  return {
-    get gain() { return d.gain; },
-    tick(want: boolean) {
-      if (busy) return;
-      const now = Date.now();
-      // a change in Settings applies within a couple of seconds
-      if (now - readAt > 2000) { readAt = now; level = levelNow(); }
-      busy = d.step(want, level, now).catch(() => {}).finally(() => { busy = null; });
-    },
-    async release() {
-      try { await busy; } catch {}
-      await d.release().catch(() => {});
-    },
-  };
+/** Every guard whose call is gone, put back and removed; the folder too once empty. */
+export async function restoreLeft() {
+  let files: string[] = [];
+  try { files = readdirSync(GUARDS).filter((f) => /^\d+\.json$/.test(f)); } catch { return 0; }
+  let n = 0;
+  const now = files.length ? await streams() : [];
+  for (const f of files) {
+    const pid = Number(f.split(".")[0]);
+    if (pid !== process.pid && alive(pid)) continue;
+    let guard: unknown = null;
+    try { guard = JSON.parse(readFileSync(join(GUARDS, f), "utf8")); } catch {}
+    try { n += await recover(guard, now); } catch {}
+    try { rmSync(join(GUARDS, f), { force: true }); } catch {}
+  }
+  for (const f of (() => { try { return readdirSync(GUARDS); } catch { return []; } })())
+    if (/^\d+\.json\.tmp$/.test(f) && !alive(Number(f.split(".")[0]))) try { rmSync(join(GUARDS, f), { force: true }); } catch {}
+  try { rmdirSync(GUARDS); } catch {}
+  return n;
 }
 
 if (import.meta.main && process.argv[2] === "restore") {

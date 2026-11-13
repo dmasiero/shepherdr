@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHEPHERDR = os.path.join(ROOT, "bin", "shepherdr")
@@ -72,6 +73,27 @@ class Install(unittest.TestCase):
         asks = json.load(open(self.p(".claude/settings.json")))["hooks"]["PermissionRequest"]
         self.assertEqual(len(asks), 1)
         self.assertEqual(asks[0]["hooks"][0]["timeout"], 604800)
+
+    @unittest.skipUnless(shutil.which("bun"), "needs bun")
+    def test_an_update_puts_back_what_a_muffling_call_left_lowered(self):
+        # SHEP-55: SHEP-51's call muffle is gone; a call that died muffling left a guard with each stream's own volume
+        guards = self.p(APP, "data", "call-muffle")
+        os.makedirs(guards)
+        p = subprocess.Popen(["true"])
+        p.wait()
+        with open(os.path.join(guards, f"{p.pid}.json"), "w") as f:
+            json.dump({"streams": {"7": {"orig": [65536, 65536], "set": [16384, 16384], "key": ""}}, "gone": {}}, f)
+        fake, log = self.p("fake-pactl"), self.p("pactl.log")
+        streams = [{"index": 7, "volume": {"l": {"value": 16384}, "r": {"value": 16384}}, "properties": {}}]
+        with open(fake, "w") as f:
+            f.write(f"#!/bin/sh\nif [ \"$1\" = -f ]; then echo '{json.dumps(streams)}'; else echo \"$*\" >> '{log}'; fi\n")
+        os.chmod(fake, 0o755)
+        with mock.patch.dict(os.environ, {"HERDR_PACTL": fake}):
+            run("install", "--root", self.root, "--yes")
+        with open(log) as f:
+            self.assertEqual(f.read().strip(), "set-sink-input-volume 7 65536 65536")
+        self.assertFalse(os.path.exists(guards))
+        self.assertTrue(os.path.isfile(self.p(APP, "mods", "chat", "muffle.ts")))   # old calls' watchers run it
 
     def test_install_again_update_uninstall(self):
         os.makedirs(self.p(".codex"))

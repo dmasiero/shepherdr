@@ -49,9 +49,7 @@ connection it came on). A page from anywhere else can't change anything: writes 
   the window's call runs the mic and speaker in one helper with Apple's echo cancellation (`herdr-audio call`,
   `mods/chat/mac-audio.swift`; other apps' sound dips slightly meanwhile). Where that can't run (Linux, no voice
   processing, the helper failing), the call goes on with the mic hushed while the agent speaks (`mods/chat/audio.ts`
-  callAudio). On Linux the window's call also muffles other apps' sound while the voice or you speak (Settings ›
-  Window, under Voice and dictation; [voice.md](voice.md)); the web call can't (a browser can't change other apps'
-  volume). Dictation writes the words while you speak (realtime Scribe: the page with a single-use token from
+  callAudio). Dictation writes the words while you speak (realtime Scribe: the page with a single-use token from
   `/api/dictate/live`, the window's `record.ts` with the key in memory), so Done lands them in about 0.2 s; the
   recording is uploaded to `/api/dictate` only when the live words can't come. The voice agent has four Shepherdr tools (`core/voice.js` TOOLS), answered by the service with the web app's
   reach (`service/voice-tools.ts`): `look` reads anything (the call's context, any chat or a search in it, spaces,
