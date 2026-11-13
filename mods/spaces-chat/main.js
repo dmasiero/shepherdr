@@ -142,12 +142,7 @@ export default class Spaces extends View {
     // SHEP-135: the brand row's voice button (mods/workspace-chrome-shepherdr) asks for a call through shared
     // "voice.startreq" = { at }: started here, where the spaces and chats are read. One from before this ran is old.
     this.voiceReqAt = shared("voice.startreq")?.at ?? null;
-    cx.timer.every(250, () => {
-      const req = shared("voice.startreq");
-      if (!req || req.at === this.voiceReqAt) return;
-      this.voiceReqAt = req.at;
-      if (Date.now() - req.at < 5000 && addonOn("voice") && !this.liveCall()) this.startCall();
-    });
+    cx.timer.every(250, () => this.takeVoiceReq());
     // Each machine's health and plan limits (machines.js): read every 45 s / 10 min, not per render.
     startPolling(cx);
     // spaces-chat.machine (a key, or `herdr-app do`): the details of the shown space's machine.
@@ -198,6 +193,14 @@ export default class Spaces extends View {
   liveCall() {
     for (const [pane, c] of Object.entries(shared("chat.calls") ?? {})) if (Date.now() - (c.beat ?? 0) < 45000) return { pane, ...c };
     return null;
+  }
+
+  // The brand row's voice button asked for a call (shared "voice.startreq"): each ask once, a fresh one only.
+  takeVoiceReq() {
+    const req = shared("voice.startreq");
+    if (!req || req.at === this.voiceReqAt) return;
+    this.voiceReqAt = req.at;
+    if (Date.now() - req.at < 5000 && addonOn("voice") && !this.liveCall()) this.startCall();
   }
 
   // the chat a new call runs in: the shown space's Assistant's, its tab shown so the chat can take the request

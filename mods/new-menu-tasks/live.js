@@ -23,10 +23,11 @@ const once = (name, read) => () => {
   return f.lists[name];
 };
 
-export const agents = once("agents", liveAgents);
-export const panes = once("panes", livePanes);
-export const terminals = once("terminals", liveTerminals);
-export const spaces = once("spaces", liveSpaces);
+// (Herdr's functions read when called, not when this loads: a test's stand-in for "herdr" can change them, SHEP-57)
+export const agents = once("agents", () => liveAgents());
+export const panes = once("panes", () => livePanes());
+export const terminals = once("terminals", () => liveTerminals());
+export const spaces = once("spaces", () => liveSpaces());
 
 // Runs fn (a render) with one copy of each list; a render inside another uses the outer one's.
 export function inRender(fn) {

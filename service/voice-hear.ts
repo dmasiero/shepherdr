@@ -2,7 +2,7 @@
 // during the call and the one on screen (their replies said briefly, their status as quiet notes), and says anything new
 // anywhere that needs the person (a question, a secret, a task Ready) in one short line. Updates wait in a queue: the
 // call takes them once the person and the voice are both quiet, several as one (core/voice.js batchLines). The web's
-// call (voice.ts) and the window's (POST /api/voice/hear, from mods/chat/voice.ts) both use it.
+// call (voice.ts) uses it, from the web app and the window alike (SHEP-57).
 import type { Snapshot } from "../web/shared/types.ts";
 import * as V from "../core/voice.js";
 import { chatName, screenChat, type Where } from "./voice-tools.ts";

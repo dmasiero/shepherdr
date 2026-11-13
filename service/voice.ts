@@ -1,6 +1,7 @@
-// A voice call from the web (2.1's call: the page streams its microphone here as 16 kHz PCM and plays what comes
-// back), as the window's call (mods/chat/voice.ts) with the phone's microphone and speaker: the same ElevenLabs voice
-// agent (core/voice.js), the same key and agent id (<app home>/secrets), its tools answered here (voice-tools.ts:
+// A voice call with Shepherdr, from the web app or the Herdr window (SHEP-57: one call, two ends): the page, or the
+// window's call helper (mods/chat/voice.ts, this machine's microphone and speaker), streams its microphone here as
+// 16 kHz PCM and plays what comes back. The ElevenLabs voice agent (core/voice.js) with the person's key and agent id
+// (<app home>/secrets) is held here, its tools answered here (voice-tools.ts:
 // look, open, send, act, with the reach of the person's web app). SHEP-105: the call is with Shepherdr itself, not a
 // chat: it hears the chats it sent to and the one on screen, and what needs the person anywhere (voice-hear.ts), as
 // [Update]s held until the person and the voice are quiet. The page tells where it is (what it shows) as it moves; an
@@ -76,8 +77,8 @@ export function callToResume(id: string, who: string) {
   return c && c.who === who ? c.call : null;
 }
 /** the words the voice agent gets when the page is back: say so, and say again what was cut */
-export const backLine = (secs: number) => ({ type: "user_message",
-  text: `[Update] The person's phone lost the call's connection for about ${Math.max(1, Math.round(secs))} s and is back now: they heard nothing of what you said meanwhile. Say you're back in a few words, then repeat briefly anything they missed.` });
+export const backLine = (secs: number, client: Where["client"] = "web") => ({ type: "user_message",
+  text: `[Update] The person's ${client === "window" ? "Herdr window" : "phone"} lost the call's connection for about ${Math.max(1, Math.round(secs))} s and is back now: they heard nothing of what you said meanwhile. Say you're back in a few words, then repeat briefly anything they missed.` });
 /** how long the person and the voice must both be quiet before the call says its updates (ms) */
 export const QUIET_MS = 1200;
 /** loud enough to be speech: RMS of 16-bit samples above ~2% of full scale */
@@ -168,6 +169,19 @@ async function dialElevenLabs(hub: Hub) {
 export function pageWhere(m: any): Partial<Where> {
   const s = (v: unknown, n = 200) => (typeof v === "string" && v.length <= n ? v : null);
   return { device: s(m.device, 20), place: s(m.place), task: s(m.task), tab: s(m.tab, 40), artifact: s(m.artifact), settings: m.settings === true, ...(typeof m.full === "boolean" ? { full: m.full } : {}) };
+}
+
+/** What a call's socket asked for (/api/voice's query): resume, a dropped page's call id (SHEP-102); key, the chat
+ *  whose call button started it (checked by the caller). SHEP-57: the Herdr window's call (mods/chat/voice.ts), from
+ *  this machine only (local): client=window, addr (the agent whose chat started it, as its chat's key) and where (what
+ *  the window shows, { place, task, tab }). */
+export function voiceAsked(q: URLSearchParams, local: boolean, key: string | null, chatOf: (addr: string) => string | null) {
+  const resume = (q.get("resume") ?? "").slice(0, 64);
+  if (q.get("client") !== "window" || !local) return { key, resume, window: false, at: {} as Partial<Where> };
+  const addr = (q.get("addr") ?? "").slice(0, 300);
+  let at: Partial<Where> = {};
+  try { at = pageWhere(JSON.parse(q.get("where") ?? "{}") ?? {}); } catch {}
+  return { key: addr ? chatOf(addr) : null, resume, window: true, at };
 }
 
 /** One call: the page's audio to the voice agent and back. message(): a frame from the page; end(): the page went. */
@@ -342,7 +356,7 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
       page = to;
       if (old && old !== to) try { old.close(); } catch {}
       tell({ type: "resumed", id });
-      if (gone) { toVoice(backLine((Date.now() - gone) / 1000)); gone = 0; }
+      if (gone) { toVoice(backLine((Date.now() - gone) / 1000, where.client)); gone = 0; }
       return true;
     },
     /** the page's microphone: 16 kHz PCM (the page cancels its own speaker's echo, so the person can talk over it);
