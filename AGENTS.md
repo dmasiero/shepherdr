@@ -91,7 +91,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - test/test_ask_hook.py runs mods/chat/ask-hook.sh with a fake hc; a killed test can orphan the hook (it waits up to a
   week): find it with ps by the worktree's ask-hook.sh path and kill that pid.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
-- Window-mod render tests: `bun test` in service/ with `mock.module` for gpui-kit/gpui-base and herdr via
+- Service tests run from the repo root (`bun test service`): the root bunfig.toml preload points Herdr's app home away;
+  from service/ app-home-guard.test.ts fails.
+- Window-mod render tests: `bun test service` (from the root) with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
 - herdr-app's overlay width/height are at zoom 1, but on_size_change, presses and wheel deltas are in pixels at the
