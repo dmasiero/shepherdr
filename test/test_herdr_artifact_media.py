@@ -196,5 +196,55 @@ class Spans(unittest.TestCase):
         self.assertEqual(A.span("bytes=200-", 100), "bad")
 
 
+class PictureSizes(unittest.TestCase):
+    """SHEP-53: the window's recipe view gives each picture a box of its own shape, from its size in pixels, which
+    herdr-artifact reads from the picture's header as it installs (recipe-data.js's sizes)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="shepherdr-picture-sizes-")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def png(self, name, w, h):
+        import struct
+        import zlib
+        raw = b"".join(b"\x00" + b"\x00\x00\x00" * w for _ in range(h))
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        with open(os.path.join(self.dir, name), "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                    + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+    def test_a_png_and_a_gif_by_their_headers(self):
+        self.png("a.png", 37, 21)
+        self.assertEqual(A.image_size(os.path.join(self.dir, "a.png")), (37, 21))
+        with open(os.path.join(self.dir, "b.gif"), "wb") as f:
+            f.write(b"GIF89a" + (300).to_bytes(2, "little") + (200).to_bytes(2, "little") + b"\x00" * 20)
+        self.assertEqual(A.image_size(os.path.join(self.dir, "b.gif")), (300, 200))
+        with open(os.path.join(self.dir, "c.png"), "wb") as f:
+            f.write(b"not a picture")
+        self.assertIsNone(A.image_size(os.path.join(self.dir, "c.png")))
+
+    @unittest.skipUnless(HAS_FFMPEG, "needs ffmpeg")
+    def test_a_jpeg_and_webps_as_ffmpeg_writes_them(self):
+        for name, extra in (("d.jpg", []), ("e.webp", []), ("f.webp", ["-lossless", "1"])):
+            p = os.path.join(self.dir, name)
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=641x359", "-frames:v", "1", *extra, p], check=True)
+            self.assertEqual(A.image_size(p), (641, 359), name)
+
+    def test_the_recipe_view_gets_every_pictures_size(self):
+        with open(os.path.join(self.dir, "recipe.json"), "w") as f:
+            json.dump({"recipe": 1, "blocks": [{"type": "image", "src": "shots/a.png"}]}, f)
+        os.makedirs(os.path.join(self.dir, "shots"))
+        self.png("shots/a.png", 1280, 800)
+        self.png("b.png", 400, 300)
+        A.recipe_parts(self.dir)
+        with open(os.path.join(self.dir, "recipe-data.js")) as f:
+            text = f.read()
+        line = next(x for x in text.splitlines() if x.startswith("export const sizes = "))
+        self.assertEqual(json.loads(line[len("export const sizes = "):].rstrip(";")), {"shots/a.png": [1280, 800], "b.png": [400, 300]})
+
+
 if __name__ == "__main__":
     unittest.main()

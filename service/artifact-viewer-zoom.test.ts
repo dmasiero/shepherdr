@@ -133,7 +133,7 @@ describe("where the viewer opens and how big (SHEP-53)", () => {
       built.length = 0;
       v.render(cx);
       const box = { x: 1500, y: 120, width: 380 * z, height: 600 * z };
-      handler(byId("task-artifacts"), "on_mouse_down")({ position: { x: 1600, y: 300 }, bounds: box }, cx);
+      handler(byId("task-artifacts"), "on_mouse_down")!({ position: { x: 1600, y: 300 }, bounds: box }, cx);
       v.open({ id: "x", title: "Proof", v: 1 }, null, cx);
       await tick(); await tick();
       expect([opened[0].width, opened[0].height]).toEqual([380, 600]);
@@ -183,7 +183,7 @@ describe("a recipe's pictures fill their boxes at any zoom (SHEP-53)", () => {
       // The window reports each box's width in pixels at the zoom.
       for (const k of ["wide", "small", "pr-Before", "pr-After", "unknown"]) {
         const room = k.startsWith("pr-") ? 409 : 828;
-        handler(byId(`pic-${k}`), "on_size_change")({ width: room * z, height: 10 }, cx);
+        handler(byId(`pic-${k}`), "on_size_change")!({ width: room * z, height: 10 }, cx);
       }
       built.length = 0;
       v.render(cx);
@@ -212,7 +212,7 @@ describe("a recipe's pictures fill their boxes at any zoom (SHEP-53)", () => {
     v.init();
     built.length = 0;
     v.render(cx);
-    handler(byId("recipe"), "on_size_change")({ width: 1400 * 2.1, height: 900 * 2.1 }, cx);
+    handler(byId("recipe"), "on_size_change")!({ width: 1400 * 2.1, height: 900 * 2.1 }, cx);
     built.length = 0;
     v.render(cx);
     expect(picture("wide").w).toBe(828);
