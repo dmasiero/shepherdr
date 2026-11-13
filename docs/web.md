@@ -59,9 +59,11 @@ connection it came on). A page from anywhere else can't change anything: writes 
   in the call folder and answers `navved/*.json`). The agent hears it's on screen only after that answer, else why
   not (`navWords`). Spaces are found with their machine's names, the serving one's key too ("Mac mini Home" while it
   calls itself This computer); several that fit make it ask which. `send` writes as the person to any chat, and `act` runs one of the web app's
-  actions only after the person said yes out loud (`confirmed`). The window's call asks its own machine's service
-  (`POST /api/voice/tool`, local token); without it only its own chat works. Both sides tell the call what the app shows
-  (the page's `where` message, the window's `where.json`). The agent's spec carries a fingerprint (`SPEC`): an agent
+  actions only after the person said yes out loud (`confirmed`). The window's call is the same call (SHEP-57): its
+  helper (`mods/chat/voice.ts`) opens `/api/voice?client=window&addr=<the chat's agent>` on its own machine's service
+  with the local token and only carries the sound both ways (pw-record and pw-play, or `herdr-audio` on a Mac); without
+  the service there is no window call, and the window says so. Both ends tell the call what the app shows (the page's
+  `where` message; the window's `where.json`, sent on as the same message). The agent's spec carries a fingerprint (`SPEC`): an agent
   made from an older one is PATCHed on the next call (`ensureAgent`).
   It speaks briefly (one or two short sentences), stays quiet through silence (`turn_timeout` -1; only 15 minutes
   of silence or an hour-long call ends it) and ends the call itself with ElevenLabs' `end_call` after the person's
@@ -95,7 +97,7 @@ connection it came on). A page from anywhere else can't change anything: writes 
   action that itself made the call full screen isn't minimized again (`stepsAside`). `/api/voice` takes
   no chat. What it hears (`service/voice-hear.ts`): the replies and status of every chat it sent to and of the one on
   screen, and anything new anywhere that needs the person (a question, a secret, a task Ready), queued until the
-  person and the voice are both quiet, several said as one. The window's call asks `POST /api/voice/hear` for the same.
+  person and the voice are both quiet, several said as one, for the window's call too.
   What the voice opens gets an "Opened by voice" tag for a few seconds.
 - Keys: 3.0's keys work in the web app too (Settings → Keyboard shortcuts on a desktop).
 

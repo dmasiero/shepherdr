@@ -1315,7 +1315,6 @@ export default class Chat extends View {
     }
     this.settlePending();
     this.stick = true;
-    if (this.call) this.callRecent();
     cx.notify();
   }
 
@@ -2488,9 +2487,9 @@ export default class Chat extends View {
     const dir = this.callDir;
     const keyFile = `${appHome()}/secrets/elevenlabs.env`;
     const ok = await exec("sh", ["-c", 'grep -q "^[[:space:]]*\\(export[[:space:]]*\\)\\{0,1\\}ELEVENLABS_API_KEY=." "$1" 2>/dev/null && echo yes', "x", keyFile]);
-    // Or kept in Settings › Secrets (Everywhere), here or on the machine that keeps the secrets: voice.ts reads it
-    // itself. The help only when that machine truly has none: one that can't be asked now (entries() fails) lets the
-    // call try, and voice.ts says it can't reach it.
+    // Or kept in Settings › Secrets (Everywhere), here or on the machine that keeps the secrets: Shepherdr's service
+    // reads it itself (the call is its, as the web app's: SHEP-57). The help only when that machine truly has none: one
+    // that can't be asked now (entries() fails) lets the call try, and the service says it can't reach it.
     const list = ok.stdout.trim() === "yes" ? null : await secrets.entries().catch(() => null);
     const kept = !list || list.some((e) => e.name === "ELEVENLABS_API_KEY" && e.scope === "everywhere");
     if (!kept) {
@@ -2505,7 +2504,6 @@ export default class Chat extends View {
     this.callScreen = new CallScreen(this);
     const name = `${agent.NAMES[this.kind] ?? "the agent"}`;
     await exec("sh", ["-c", 'rm -rf "$1" "$1.level" && mkdir -p "$1/in" && touch "$1/alive"', "x", dir]);
-    this.callRecent();
     this.callWhereWas = null;
     // The helper runs beside the app (setsid: not tied to this mod's exec; macOS has no setsid: its own process group
     // and no hangup instead); it ends itself when the chat stops touching `alive`.
@@ -2546,7 +2544,7 @@ export default class Chat extends View {
   async followCall(cx) {
     const dir = this.callDir;
     const call = this.call;
-    let touched = 0, lastStatus = null, seen = new Set((this.conv?.items ?? []).map((x) => x.id));
+    let touched = 0;
     while (this.call === call) {
       const s = await readTextFile(`${dir}/state.json`).catch(() => null);
       let st = null;
@@ -2570,22 +2568,7 @@ export default class Chat extends View {
       if (Date.now() - (call.beat ?? 0) > 15000) { call.beat = Date.now(); this.callShared(); }
       cx.notify();
       if (Date.now() - touched > 4000) { touched = Date.now(); exec("touch", [`${dir}/alive`]); }
-      // The agent's status and its finished replies go to the voice agent.
-      const now = this.status();
-      if (now !== lastStatus) {
-        const prev = lastStatus;
-        lastStatus = now;
-        this.callSay({ type: "status", status: now, asking: now === "blocked" ? (this.asks[0]?.words?.title ?? this.asking()) : null });
-        if (prev === "working" && now !== "working") {
-          const fresh = (this.conv?.items ?? []).filter((x) => x.kind === "agent" && !seen.has(x.id));
-          if (fresh.length) this.callSay({ type: "reply", text: fresh.slice(-2).map((x) => x.text).join("\n\n") });
-        }
-        seen = new Set((this.conv?.items ?? []).map((x) => x.id));
-      } else if (now !== "working") {
-        // A reply written while it wasn't marked working (a quick answer).
-        const fresh = (this.conv?.items ?? []).filter((x) => x.kind === "agent" && !seen.has(x.id));
-        if (fresh.length) { this.callSay({ type: "reply", text: fresh.slice(-2).map((x) => x.text).join("\n\n") }); fresh.forEach((x) => seen.add(x.id)); }
-      }
+      // (what the agent says and does reaches the call through Shepherdr's service, as the web app's: SHEP-57)
       // One watch at a time (a new one each second would pile up while the folder is quiet).
       if (this.callWatch?.dir !== dir) {
         const w = { dir, next: watchFolder(dir).catch(() => null).finally(() => { if (this.callWatch === w) this.callWatch = null; }) };
@@ -2716,15 +2699,6 @@ export default class Chat extends View {
     const dir = this.callDir;
     const name = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}.json`;
     fs.writeFile(`${dir}/in/${name}`, JSON.stringify(m)).catch(() => {});
-  }
-
-  // What read_chat tells the voice agent: the status and the last messages.
-  callRecent() {
-    const items = (this.conv?.items ?? []).filter((x) => x.kind === "user" || x.kind === "agent" || x.kind === "ask").slice(-10);
-    const st = this.status();
-    const text = [`The coding agent is ${st === "blocked" ? "waiting for the person" : st ?? "idle"}.${this.conv?.doing ? ` Now: ${this.conv.doing}.` : ""}`,
-      ...items.map((x) => `${x.kind === "user" ? "Person" : "Agent"}: ${String(x.text).slice(0, 1500)}`)].join("\n\n");
-    fs.writeFile(`${this.callDir}/recent.txt`, text).catch(() => {});
   }
 
   callMute(cx) {

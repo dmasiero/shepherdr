@@ -41,9 +41,9 @@ import { worktree } from "./worktree.ts";
 import * as W from "../core/worktree.js";
 import * as SPm from "../core/spaces.js";
 import { browserRelay } from "./browser.ts";
-import { voiceCall, callToResume, callsOn, pageWhere, type ChatView } from "./voice.ts";
-import { hearing, type HearIO, type Hearing } from "./voice-hear.ts";
-import { voiceTool, type VoiceIO, type Where } from "./voice-tools.ts";
+import { voiceCall, voiceAsked, callToResume, callsOn, pageWhere, type ChatView } from "./voice.ts";
+import { type HearIO } from "./voice-hear.ts";
+import { type VoiceIO, type Where } from "./voice-tools.ts";
 import { Artifacts } from "./artifacts.ts";
 import { TaskLogs } from "./task-logs.ts";
 import { Settings, onWritten, PUSH, pushBody } from "./settings.ts";
@@ -473,18 +473,6 @@ const hearIO: HearIO = {
   follow: (key) => { const addr = compat.addrOf(key); return addr ? follow(addr) : { stop: () => {} }; },
 };
 
-/** The window's calls' hearing (POST /api/voice/hear, mods/chat/voice.ts), by the call's id: let go once a call stops
- *  asking for half a minute. */
-const windowCalls = new Map<string, { hear: Hearing; at: number }>();
-setInterval(() => { for (const [id, c] of windowCalls) if (Date.now() - c.at > 30_000) { c.hear.stop(); windowCalls.delete(id); } }, 10_000);
-const windowCall = (id: unknown) => {
-  if (typeof id !== "string" || !/^[\w.-]{1,120}$/.test(id)) return null;
-  let c = windowCalls.get(id);
-  if (!c) windowCalls.set(id, (c = { hear: hearing(hearIO), at: Date.now() }));
-  c.at = Date.now();
-  return c.hear;
-};
-
 /** What a voice call's tools reach (service/voice-tools.ts): what the web app shows and does. */
 const voiceIO: VoiceIO = {
   snap: () => compat.last,
@@ -730,9 +718,8 @@ const server = Bun.serve<{ who: string }>({
       if (offList().includes("voice")) return new Response("no calls here", { status: 404 });
       const asked = (url.searchParams.get("chat") ?? "").slice(0, 300), addr = asked ? compat.addrOf(asked) : null;
       const key = addr && !addr.startsWith("log:") ? asked : null;
-      // SHEP-102: a page whose socket dropped (a locked phone) comes back to its call with the call's id
-      const resume = (url.searchParams.get("resume") ?? "").slice(0, 64);
-      return srv.upgrade(req, { data: { who: pass.who, voice: { key, resume } } as any }) ? undefined : new Response("upgrade failed", { status: 400 });
+      const voice = voiceAsked(url.searchParams, pass.via === "local", key, chatOfAddress);
+      return srv.upgrade(req, { data: { who: pass.who, voice } as any }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
     if (socket) return srv.upgrade(req, { data: { who: pass.who } }) ? undefined : new Response("upgrade failed", { status: 400 });
     if (path === "/api/me") return json({ login: pass.who, via: pass.via, machine: hereName(), link: ownLink(), version: VERSION, off: offPlugins() });
@@ -898,38 +885,6 @@ const server = Bun.serve<{ who: string }>({
       return json(await activity(r, id));
     }
     if (path === "/api/action" && req.method === "POST") return doAction(await req.json().catch(() => null));
-    if (path === "/api/voice/tool" && req.method === "POST") {
-      // the window's voice call (mods/chat/voice.ts) asks its tools here, from this machine only
-      if (pass.via !== "local") return json({ error: "not here" }, 403);
-      const b = await req.json().catch(() => null);
-      const key = typeof b?.addr === "string" ? chatOfAddress(b.addr) : null;
-      if (typeof b?.tool !== "string") return json({ error: "no such call" }, 400);
-      const where: Where = { client: "window", call: key, machine: me?.host ?? null, ...pageWhere(b.where ?? {}) };
-      const asked = Date.now();
-      const a = await voiceTool(b.tool, b.params ?? {}, where, voiceIO);
-      // a send: that window call follows the chat from now on (SHEP-105)
-      if (a.sent) windowCall(b.call)?.sentTo(a.sent, asked);
-      return json(a);
-    }
-    if (path === "/api/voice/hear" && req.method === "POST") {
-      // the window's voice call asks what it should be told, about once a second: the updates it hears (voice-hear.ts)
-      if (pass.via !== "local") return json({ error: "not here" }, 403);
-      const b = await req.json().catch(() => null);
-      const hear = windowCall(b?.call);
-      if (!hear) return json({ error: "no such call" }, 400);
-      const key = typeof b.addr === "string" ? chatOfAddress(b.addr) : null;
-      hear.onScreen({ client: "window", call: key, ...pageWhere(b.where ?? {}) });
-      hear.tick();
-      // held while the person or the voice talks (the window's call says when it's quiet)
-      return json({ lines: b.quiet === true ? hear.take() : [] });
-    }
-    if (path === "/api/voice/hear" && req.method === "DELETE") {
-      if (pass.via !== "local") return json({ error: "not here" }, 403);
-      const id = url.searchParams.get("call") ?? "";
-      windowCalls.get(id)?.hear.stop();
-      windowCalls.delete(id);
-      return json({ ok: true });
-    }
     if (path.startsWith("/api/")) return json({ error: "not found" }, 404);
     return file(path);
   },
@@ -944,8 +899,10 @@ const server = Bun.serve<{ who: string }>({
         if (!d.bridge?.attach(page)) { d.bridge = null; ws.send(JSON.stringify({ type: "ended", why: "the connection was lost" })); ws.close(); }
         return;
       }
-      if (d.voice) noteUsage("feature", { from: "web", type: "voice-call" });
-      if (d.voice) d.bridge = voiceCall(hub, { io: voiceIO, hear: hearIO, where: { client: "web", call: d.voice.key, machine: me?.host ?? null },
+      // (the window's call: its chat notes the feature itself)
+      if (d.voice && !d.voice.window) noteUsage("feature", { from: "web", type: "voice-call" });
+      if (d.voice) d.bridge = voiceCall(hub, { io: voiceIO, hear: hearIO,
+        where: { client: d.voice.window ? "window" : "web", call: d.voice.key, machine: me?.host ?? null, ...(d.voice.at ?? {}) },
         who: String(d.who ?? "") }, page);
       else if (d.term) d.bridge = terminalBridge(hub, d.term, page);
       else if (d.browser) d.bridge = browserRelay(d.browser, page);
