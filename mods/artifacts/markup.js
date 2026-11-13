@@ -10,11 +10,15 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { theme, shared, setShared, props, exec, appHome, home, agents } from "herdr";
+import { theme, shared, setShared, props, exec, appHome, home, agents, settings } from "herdr";
 import * as A from "./artifact.js";
 import { dirs } from "./dirs.js";
 
 const KEY = "artifacts.markup";
+// Herdr's zoom: the press, the spot and the panel's size are kept as the window reports them (pixels at the zoom,
+// what the picture is cut by), while the layer draws at zoom 1: the spot's mark comes back to zoom 1 (SHEP-53).
+const zoomOf = () => Number(settings()?.zoom) || 1;
+const unzoomRect = (r) => { const z = zoomOf(); return { x: r.x / z, y: r.y / z, w: r.w / z, h: r.h / z }; };
 const MOD = A.dir.slice("mods/".length);
 const CLI = () => `${appHome()}/mods/artifacts/bin/herdr-artifact`;
 
@@ -120,7 +124,8 @@ function pick(m, cx) {
   cx.notify();
 }
 
-function mark(r, t) {
+function mark(spot, t) {
+  const r = unzoomRect(spot);
   const tint = /^#[0-9a-f]{6}$/i.test(t.accent) ? `${t.accent}1f` : "#2f81f71f";
   const badge = (x, y) => div().absolute().left(x).top(y).size(20).rounded(10).flex().items_center().justify_center()
     .bg(t.accent).text_color(t.accent_foreground).text_size(11).font_semibold().child("1");
@@ -190,7 +195,9 @@ function send(m, cx) {
   if (!text || m.sending) return;
   const args = ["note", A.id, "--text", text, "--version", String(A.version), "--json"];
   if (m.spot) {
-    args.push("--spot", describe(m.spot, m.size));
+    // In words at zoom 1, the sizes the artifact was made at.
+    const z = zoomOf();
+    args.push("--spot", describe(unzoomRect(m.spot), m.size && { width: m.size.width / z, height: m.size.height / z }));
     if (m.shot && m.origin && m.size) {
       const o = m.origin, s = m.spot;
       args.push("--shot", m.shot, "--panel", [o.x, o.y, m.size.width, m.size.height].join(","), "--area", [o.x + s.x, o.y + s.y, s.w, s.h].join(","));

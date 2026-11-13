@@ -6,7 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, shared } from "herdr";
-import { openViewer } from "./artview.js";
+import { openViewer, areaFits, zoomOf } from "./artview.js";
 import { titleInTask } from "./core/task-artifacts.js";
 import { TEXT, RADIUS } from "./ui.js";
 
@@ -36,8 +36,11 @@ export default class TaskArtifacts extends View {
     if (this.opening) return;
     this.opening = a.id;
     cx.notify();
-    // over the task's chat when its place is known (as its card there opens), else the whole window
-    const area = shared("chat.areas")?.thread?.area ?? null;
+    // Over this list's own place (the task's chat's, in the Tasks panel), from the press that opened it: in the
+    // window's pixels at this zoom (artview.js viewerPlace). Else the task's chat's when noted at this zoom, else the
+    // whole window.
+    const thread = shared("chat.areas")?.thread?.area ?? null;
+    const area = areaFits(this.area) ? this.area : areaFits(thread) ? thread : null;
     cx.spawn(async (cx) => {
       await openViewer({ id: a.id, title: a.title, version: a.v, latest: a.v, machine }, area);
       this.opening = null;
@@ -69,7 +72,9 @@ export default class TaskArtifacts extends View {
 
   render(_cx) {
     const t = theme();
-    const root = v_flex().id("task-artifacts").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13);
+    const root = v_flex().id("task-artifacts").size_full().min_h(0).overflow_hidden().bg(t.background).text_color(t.foreground).text_size(13)
+      // Where this list is in the window (a press's bounds: the root's own box), for the viewer a row opens.
+      .on_mouse_down("left", (e) => { const b = e.bounds; if (b) this.area = { x: b.x, y: b.y, width: b.width, height: b.height, zoom: zoomOf() }; });
     const w = shared("tasks.thread");
     if (!w) return root.child(this.note(t, "No task open."));
     const a = mine();

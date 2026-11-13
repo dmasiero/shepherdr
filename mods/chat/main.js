@@ -4036,7 +4036,8 @@ export default class Chat extends View {
     const p = this.pressWin, local = this.press;
     if (!p || local?.rx === undefined) return null;
     const z = zoomOf();
-    return { x: p.x - local.rx, y: p.y - (local.ry ?? 0), width: Math.round(this.width * z), height: Math.round((this.height ?? 700) * z) };
+    // All in the window's pixels at this zoom (its zoom): the viewers size themselves back to zoom 1 (artview.js viewerPlace).
+    return { x: p.x - local.rx, y: p.y - (local.ry ?? 0), width: Math.round(this.width * z), height: Math.round((this.height ?? 700) * z), zoom: z };
   }
 
   // Where this chat is and whether its box has the keyboard, for Ctrl+K's artifacts (artview.js
@@ -4045,9 +4046,9 @@ export default class Chat extends View {
   areaKey() { return this.inner || this.thread ? "thread" : this.myPane(); }
 
   noteArea(b) {
-    if (b && this.area && ["x", "y", "width", "height"].every((k) => Math.abs(this.area[k] - b[k]) < 1)) return;
+    if (b && this.area && this.area.zoom === zoomOf() && ["x", "y", "width", "height"].every((k) => Math.abs(this.area[k] - b[k]) < 1)) return;
     if (!b && !this.area) return;
-    this.area = b ? { x: b.x, y: b.y, width: b.width, height: b.height } : null;
+    this.area = b ? { x: b.x, y: b.y, width: b.width, height: b.height, zoom: zoomOf() } : null;
     noteChatArea(this.areaKey(), { area: this.area });
   }
 

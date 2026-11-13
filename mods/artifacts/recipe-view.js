@@ -6,12 +6,18 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, TextView, InputState, Input } from "gpui-base";
 import { image } from "gpui-kit";
-import { theme } from "herdr";
+import { theme, settings } from "herdr";
 import { asset, reply } from "./artifact.js";
-import data from "./recipe-data.js";
+import * as recipeData from "./recipe-data.js";
 import { chartShapes, choiceReply, formReply, isLink, mediaKind, withIds } from "./recipe.js";
 
 const TONE = { info: "surface", good: "done", warn: "working", bad: "blocked" };
+const data = recipeData.default;
+// Each picture's size in pixels, read by herdr-artifact as it installs (none from an older one).
+const SIZES = recipeData.sizes ?? {};
+
+// Herdr's zoom: on_size_change reports pixels at the zoom, while the view lays out at zoom 1 (SHEP-53).
+const zoomOf = () => Number(settings()?.zoom) || 1;
 
 export default class RecipeView extends View {
   init() {
@@ -23,6 +29,7 @@ export default class RecipeView extends View {
     this.inputs = new Map();   // a form field's InputState, made here: never during render (#1026)
     this.checks = new Map();   // a form checkbox's value
     this.picks = new Map();    // a form select's picked option
+    this.boxW = new Map();     // a picture's room (its box's width at zoom 1), as laid out
     try { this.recipe = withIds(data); } catch { this.error = "This artifact's recipe can't be read."; }
     if (this.recipe) this.makeInputs(this.recipe.blocks);
   }
@@ -119,11 +126,37 @@ export default class RecipeView extends View {
   // where to play it: the web app (the same artifact on the phone and in a browser plays it).
   media(b, t, mark, what, poster) {
     return v_flex().w_full().min_w(0).gap(4)
-      .child(poster ? image(asset(poster)).w_full().rounded(6).border_1().border_color(t.border)
+      .child(poster ? this.pic(`poster-${b.id ?? poster}`, poster, null, t)
         : v_flex().w_full().h(96).rounded(6).bg(t.surface).items_center().justify_center().gap(2)
           .child(div().text_size(17).text_color(t.muted).child(mark))
           .child(div().text_size(12).text_color(t.muted).child(what)))
       .child(div().text_size(12).text_color(t.muted).whitespace_normal().child(`${String(b.caption ?? b.src ?? what)} · plays in the web app`));
+  }
+
+  // A picture as big as its room allows, never past its own size, in a box of its own shape: its room (the width a
+  // full-width box gets there) is measured, so the picture fills its box at any zoom and width (SHEP-53: a box as wide
+  // as the column but only as tall as the image's height in pixels drew it small in the middle). Without its size
+  // (an older herdr-artifact, a picture it can't read) it takes the room's width, as before.
+  pic(key, src, wh, t) {
+    const nat = wh ?? SIZES[String(src ?? "").replace(/^\.\//, "")] ?? null;
+    const room = this.boxW.get(key);
+    let shown;
+    if (nat && nat[0] > 0 && nat[1] > 0) {
+      // Before the room is measured: the column's (the first frame only).
+      const w = Math.max(1, Math.floor(Math.min(room ?? this.roomGuess(), nat[0])));
+      shown = image(asset(src)).w(w).h(Math.round(((w - 2) * nat[1]) / nat[0]) + 2);
+    } else shown = image(asset(src)).w_full();
+    return div().id(`pic-${key}`).w_full().min_w(0)
+      .on_size_change((size, cx) => {
+        const w = size.width / zoomOf();
+        if (Math.abs((this.boxW.get(key) ?? -1) - w) > 0.5) { this.boxW.set(key, w); cx.notify(); }
+      })
+      .child(shown.rounded(6).border_1().border_color(t.border));
+  }
+
+  // The column's width for a picture not measured yet: the view's, less its padding, up to its 860.
+  roomGuess() {
+    return Math.max(120, Math.min(this.width ?? 600, 860) - 32);
   }
 
   block(b, t, cx) {
@@ -147,11 +180,11 @@ export default class RecipeView extends View {
       case "audio": return this.media(b, t, "♪", "Sound", null);
       case "pdf": return this.media(b, t, "PDF", "PDF", null);
       case "image": return v_flex().gap(4)
-        .child(image(asset(b.src)).w_full().when(!!b.w && !!b.h, (e) => e.max_w(b.w)).rounded(6).border_1().border_color(t.border))
+        .child(this.pic(b.id, b.src, b.w && b.h ? [b.w, b.h] : null, t))
         .when(!!b.caption, (e) => e.child(div().text_size(12).text_color(t.muted).whitespace_normal().child(b.caption)));
       case "pair": return h_flex().flex_wrap().gap(10).children([["Before", b.before], ["After", b.after]].map(([w, x]) => v_flex().flex_1().min_w(240).gap(4)
-        .child(mediaKind(x.src) === "video" ? this.media(x, t, "▶", "Clip", x.poster ?? null)
-          : image(asset(x.src)).w_full().rounded(6).border_1().border_color(t.border))
+        .child(mediaKind(x.src) === "video" ? this.media({ ...x, id: `${b.id}-${w}` }, t, "▶", "Clip", x.poster ?? null)
+          : this.pic(`${b.id}-${w}`, x.src, null, t))
         .child(div().text_size(12).text_color(t.muted).child(x.caption ?? w))));
       case "code": return div().w_full().p(10).rounded(8).bg(t.surface).font_family("JetBrains Mono").text_size(12).whitespace_normal().child(b.text);
       case "callout": return v_flex().gap(4).p(12).rounded(8).bg(t[TONE[b.tone ?? "info"]] ? t.surface : t.surface).border_l(3).border_color(t[TONE[b.tone ?? "info"]] ?? t.border)
@@ -229,6 +262,7 @@ export default class RecipeView extends View {
     const body = this.error ? [div().text_size(13).text_color(t.muted).child(this.error)]
       : !this.recipe ? [] : this.recipe.blocks.map((b) => v_flex().id(`blk-${b.id}`).w_full().min_w(0).child(this.block(b, t, cx)));
     return v_flex().id("recipe").size_full().overflow_y_scrollbar().bg(t.background).text_color(t.foreground)
-      .child(v_flex().p(16).gap(14).max_w(860).children(body));
+      .on_size_change((size, cx) => { const w = size.width / zoomOf(); if (Math.abs((this.width ?? 0) - w) > 0.5) { this.width = w; cx.notify(); } })
+      .child(v_flex().w_full().p(16).gap(14).max_w(860).children(body));
   }
 }
