@@ -835,6 +835,37 @@ class OldCopies(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("--take: not a file Shepherdr installs", p.stderr)
 
+    def test_a_kept_layouts_brand_row_gets_the_voice_button(self):
+        """SHEP-54: the brand row named Herdr's own workspace-chrome (no voice call button). A layout Herdr wrote the
+        person's sizes into is kept on update, Shepherdr's beside it as .new: only its brand block's mod changes."""
+        def find(n, id_):
+            if isinstance(n, dict):
+                if n.get("id") == id_:
+                    return n
+                n = n.get("children", [])
+            for c in n if isinstance(n, list) else []:
+                hit = find(c, id_)
+                if hit:
+                    return hit
+        rel = "layouts/shepherdr.json"
+        self.assertEqual(find(json.load(open(self.p(APP, rel))), "brand")["content"], {"mod": "workspace-chrome-shepherdr"},
+                         "a new install's brand row is Shepherdr's")
+        lay = json.load(open(self.p(APP, rel)))
+        find(lay, "brand")["content"] = {"mod": "workspace-chrome"}   # an older Shepherdr's layout
+        find(lay, "sidebar")["size"] = {"px": 333}                   # the person's width, written by Herdr
+        self.write(rel, json.dumps(lay, indent=2) + "\n")
+        up = run("update", "--root", self.root).stdout
+        self.assertIn("its brand block now shows Shepherdr's own mod", up)
+        now = json.load(open(self.p(APP, rel)))
+        self.assertEqual(find(now, "brand")["content"], {"mod": "workspace-chrome-shepherdr"})
+        self.assertEqual(find(now, "sidebar")["size"], {"px": 333}, "the person's sizes stay")
+        self.assertTrue(os.path.exists(self.p(APP, rel + ".new")))
+        # again: nothing more to change, and a brand row the person pointed elsewhere is theirs
+        find(now, "brand")["content"] = {"mod": "my-own-brand"}
+        self.write(rel, json.dumps(now, indent=2) + "\n")
+        self.assertNotIn("its brand block now shows", run("update", "--root", self.root).stdout)
+        self.assertEqual(find(json.load(open(self.p(APP, rel))), "brand")["content"], {"mod": "my-own-brand"})
+
     def test_doctor_notes_a_layout_naming_missing_mods(self):
         lay = json.load(open(self.p(APP, "layouts/shepherdr.json")))
         lay["children"].append({"id": "x", "type": "block", "content": {"mod": "someones-gone-mod"}})

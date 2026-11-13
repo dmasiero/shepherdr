@@ -332,6 +332,40 @@ def read(path):
         return None
 
 
+# Layout blocks an older Shepherdr's layout pointed at another mod: {block id: (old mod, Shepherdr's)}. A layout the
+# person keeps (Herdr writes their sizes into it, so updates only land beside it as .new) gets just that block's mod
+# changed, its sizes and the rest left as they are. SHEP-54: the brand row named Herdr's own workspace-chrome, which
+# has no voice call button beside Search.
+REPOINT_BLOCKS = {"brand": ("workspace-chrome", "workspace-chrome-shepherdr")}
+
+
+def repoint_blocks(b):
+    """A kept layout with REPOINT_BLOCKS' blocks on Shepherdr's mods -> (new bytes, [block ids changed]), or (None, [])
+    when there's nothing to change (or it isn't JSON)."""
+    try:
+        d = json.loads(b)
+    except (ValueError, TypeError):
+        return None, []
+    changed = []
+
+    def walk(n):
+        if isinstance(n, dict):
+            want = REPOINT_BLOCKS.get(n.get("id"))
+            c = n.get("content")
+            if want and isinstance(c, dict) and c.get("mod") == want[0]:
+                c["mod"] = want[1]
+                changed.append(n["id"])
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(d)
+    if not changed:
+        return None, []
+    return (json.dumps(d, indent=2, ensure_ascii=False) + "\n").encode(), changed
+
+
 def layout_bytes(b):
     """A layout as compared: its live blocks blanked (see LIVE_BLOCKS)."""
     try:
@@ -1317,6 +1351,10 @@ def cmd_install(a, update=False):
         if how == "keep":
             atomic_write(r.p(rel) + ".new", data, mode)
             r.notes.append(f"kept your {rel}; Shepherdr's is beside it as {os.path.basename(rel)}.new")
+            fixed, ids = repoint_blocks(read(r.p(rel))) if rel.startswith(f"{APP}/layouts/") else (None, [])
+            if fixed is not None:   # SHEP-54: just those blocks' mods, the person's sizes kept
+                atomic_write(r.p(rel), fixed, os.stat(r.p(rel)).st_mode & 0o777)
+                r.notes.append(f"{rel}: its {', '.join(ids)} block now shows Shepherdr's own mod (the voice call button)")
         elif how == "old":
             dest_b = r.backup(rel)
             if os.path.lexists(r.p(rel) + ".new"):   # fork: its .new goes too (SHEP-34)
