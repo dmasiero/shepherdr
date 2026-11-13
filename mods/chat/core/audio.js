@@ -14,8 +14,6 @@ export const FAILED = 5;
 /** A call's echo cancellation (Apple's voice processing) isn't there: the call records and plays apart instead. */
 export const NO_VOICE_PROCESSING = 6;
 
-import { CALL_PROPS } from "./duck.js";
-
 const PRIVACY = "System Settings › Privacy & Security › Microphone";
 
 /** The words for a mic or speaker that can't work. what: "mic" | "speaker"; why: an exit code above, or a kind:
@@ -45,12 +43,10 @@ export function micArgs(kind, rate, helper = HELPER) {
   return ["pw-record", "--rate", String(rate), "--channels", "1", "--format", "s16", "--raw", "-"];
 }
 
-/** The command that plays raw 16-bit mono at rate from stdin on the default speaker. call: a voice call's own sound,
- *  marked so its muffle (core/duck.js) never lowers it, with a phone call's role (PipeWire keeps its volume apart). */
-export function speakerArgs(kind, rate, helper = HELPER, call = false) {
+/** The command that plays raw 16-bit mono at rate from stdin on the default speaker. */
+export function speakerArgs(kind, rate, helper = HELPER) {
   if (kind === "mac") return [helper, "play", String(rate)];
-  return ["pw-play", "--rate", String(rate), "--channels", "1", "--format", "s16", "--raw",
-    ...(call ? ["--media-role", "Communication", "-P", CALL_PROPS] : []), "-"];
+  return ["pw-play", "--rate", String(rate), "--channels", "1", "--format", "s16", "--raw", "-"];
 }
 
 /** A voice call's mic and speaker in one, with echo cancellation, so the mic stays open while the agent speaks: the mic

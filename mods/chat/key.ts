@@ -30,7 +30,7 @@ export async function output(argv: string[]) {
 const secretBin = () => [join(HOME, "bin", "herdr-secret"), join(process.env.HOME ?? "", ".local", "bin", "herdr-secret")].find(existsSync) ?? "herdr-secret";
 
 export function envFile(file: string): Record<string, string> {
-  try { return envLines(readFileSync(file, "utf8")) as Record<string, string>; } catch { return {}; }
+  try { return envLines(readFileSync(file, "utf8")); } catch { return {}; }
 }
 
 // The key: the old file here, the vault here, or the machine that keeps the secrets (in memory only).
