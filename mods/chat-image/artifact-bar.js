@@ -10,7 +10,7 @@ import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { props, closeOverlay, shared, setShared, theme } from "herdr";
 import { showInSidebar, hasSidebarView } from "./artifact-sidebar.js";
-import { artifactCli as cli, showViewer } from "./artview.js";
+import { artifactCli as cli, showViewer, areaFits } from "./artview.js";
 import { toast, plainError, TEXT, RADIUS } from "./ui.js";
 
 const MARKUP = "artifacts.markup";
@@ -61,6 +61,18 @@ function step(view, a, v, cx) {
   });
 }
 
+// Herdr zoomed (Ctrl +/-) with the viewer open over a chat pane: the pane moved and resized in the window's pixels,
+// while the viewer kept its place there and its size at zoom 1, so it no longer covered the pane (SHEP-53). Its
+// place in the window can't be known again without a press there, so it opens again over the whole window.
+function rezoom(view, a, cx) {
+  if (!a.area || a.modal || areaFits(a.area) || view.art.rezoomed) return;
+  view.art.rezoomed = true;
+  cx.timer.after(0, () => {
+    closeOverlay(props().overlay);
+    showViewer({ ...a, area: null });
+  });
+}
+
 // ---- drawing ---------------------------------------------------------------------------------
 
 function iconBtn(id, icon, act, t, off = false) {
@@ -102,6 +114,8 @@ export function artifactBar(view, a, handle) {
   // the sidebar": the dialog under it covers the sidebar.
   return h_flex().id("bar").size_full().pl(16).pr(8).gap(2).items_center().bg(a.modal ? t.popover : `${t.background}f2`)
     .track_focus(handle)
+    // The bar's size in pixels changes with the zoom, even without the pointer: the viewer's cue to re-place itself.
+    .on_size_change((_s, cx) => rezoom(view, a, cx))
     .child(h_flex().flex_1().min_w(0).gap(8).items_center().text_size(TEXT.body)
       .child(svg("mods/artifacts/artifacts.svg").size(14).flex_none().text_color(t.muted))
       .child(div().min_w(0).truncate().font_medium().text_color(t.foreground).child(title))

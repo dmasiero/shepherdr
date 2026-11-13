@@ -56,16 +56,31 @@ function showModal(artifact) {
       { type: "block", background: "background", content: { mod: artifact.mod } }] } });
 }
 
-// Shows an artifact whose mod is already in this app: over artifact.area ({ x, y, width, height }
-// in the window: a chat pane, as the image viewer opens) when it has one, else the whole window;
-// a modal when artifact.modal. The area and modal stay in the toolbar's props, so stepping
-// versions reopens it in the same place.
+// Herdr's zoom (View › Zoom). Where things are in the window (a press's place, an element's
+// bounds: an area's x, y, width and height) is in pixels at the zoom, while an overlay's width
+// and height are at zoom 1 and only its `at` is in the window's pixels (SHEP-42, SHEP-53).
+export const zoomOf = () => Number(settings()?.zoom) || 1;
+
+// An area ({ x, y, width, height, zoom }: in the window's pixels at that zoom) still where it was
+// noted: the same zoom as now. Another zoom moved and resized everything (Ctrl +/-), so it isn't.
+export const areaFits = (a) => Boolean(a) && Math.abs((Number(a.zoom) || 0) - zoomOf()) < 0.001;
+
+// Where the viewer opens and how big: over the area (its top left in the window's pixels, its
+// size back at zoom 1, so it covers exactly that area at any zoom), or the whole window (shares
+// of it) without one, or when it was noted at another zoom.
+export function viewerPlace(area) {
+  if (!areaFits(area)) return { width: 1, height: 1, at: { x: 0, y: 0 } };
+  const z = zoomOf();
+  return { width: Math.round(area.width / z), height: Math.round(area.height / z), at: { x: Math.round(area.x), y: Math.round(area.y) } };
+}
+
+// Shows an artifact whose mod is already in this app: over artifact.area (a chat pane, as the
+// image viewer opens; see viewerPlace) when it has one, else the whole window; a modal when
+// artifact.modal. The area and modal stay in the toolbar's props, so stepping versions reopens it
+// in the same place.
 export function showViewer(artifact) {
   if (artifact.modal) return showModal(artifact);
-  const a = artifact.area;
-  const at = a ? { x: Math.round(a.x), y: Math.round(a.y) } : { x: 0, y: 0 };
-  const size = a ? { width: Math.round(a.width), height: Math.round(a.height) } : { width: 1, height: 1 };
-  openOverlay({ kind: "popup", frame: "none", ...size, at, layout: viewerLayout(artifact) });
+  openOverlay({ kind: "popup", frame: "none", ...viewerPlace(artifact.area), layout: viewerLayout(artifact) });
 }
 
 // Opens a: { id, title, version, latest?, machine, modal? }: its mod made in this app first (pulled
@@ -85,10 +100,11 @@ export function openViewer(a, area = null, show = showViewer) {
 // chat inside the Tasks panel), so Ctrl+K opens an artifact over the chat it was pressed in, as a
 // card there would. A chat notes its area from the pointer (a move or press on it, the event's
 // bounds), only when it changed, and forgets it on a resize (null) until the pointer is back; it
-// notes its box getting or losing the keyboard (focus, at: when).
+// notes its box getting or losing the keyboard (focus, at: when). An area is in the window's
+// pixels at the zoom it was noted at (its zoom): one from another zoom isn't used (areaFits).
 const AREAS = "chat.areas";
-const KEYS = ["x", "y", "width", "height"];
-const same = (a, b) => (a && b ? KEYS.every((k) => Math.abs(a[k] - b[k]) < 1) : a === b);
+const KEYS = ["x", "y", "width", "height", "zoom"];
+const same = (a, b) => (a && b ? KEYS.every((k) => Math.abs((a[k] ?? 0) - (b[k] ?? 0)) < (k === "zoom" ? 0.001 : 1)) : a === b);
 
 export function noteChatArea(key, patch) {
   const all = shared(AREAS) ?? {}, was = all[key] ?? {};
@@ -96,7 +112,8 @@ export function noteChatArea(key, patch) {
   const live = panes().filter((p) => p.mod === "chat").map((p) => p.pane);
   if (key !== "thread" && !live.includes(key)) return;
   const now = { area: was.area ?? null, focus: was.focus ?? false, at: was.at ?? 0, ...patch };
-  if (now.area) now.area = Object.fromEntries(KEYS.map((k) => [k, Math.round(now.area[k])]));
+  // A new area is at this zoom; one kept from before has its own (none: from before zooms were noted, never fits).
+  if (patch.area) now.area = { ...Object.fromEntries(KEYS.slice(0, 4).map((k) => [k, Math.round(patch.area[k])])), zoom: patch.area.zoom ?? zoomOf() };
   if (same(now.area ?? null, was.area ?? null) && now.focus === (was.focus ?? false) && now.at === (was.at ?? 0)) return;
   const next = Object.fromEntries(Object.entries(all).filter(([k]) => k === "thread" || live.includes(k)));
   next[key] = now;
@@ -106,7 +123,7 @@ export function noteChatArea(key, patch) {
 // The chat an artifact opens over from Ctrl+K (opened at `since`): the focused pane when it's a
 // chat (the zoomed pane only, when one is), or the task's chat in the Tasks panel when the
 // keyboard was there instead (its box let go of it as Ctrl+K opened, after the pane's did). null
-// when the keyboard was in no chat, or its place isn't known yet.
+// when the keyboard was in no chat, or its place isn't known yet (or was noted at another zoom).
 export function chatArea(since = Date.now()) {
   const all = shared(AREAS) ?? {}, f = focused();
   const tab = panes().filter((p) => p.tab === f?.tab);
@@ -114,6 +131,6 @@ export function chatArea(since = Date.now()) {
   const pane = shown.some((p) => p.pane === f?.pane && p.mod === "chat") ? all[f.pane] : null;
   const th = all.thread;
   const thread = th && (th.focus || th.at >= since - 1500) ? th : null;
-  const pick = [pane, thread].filter((x) => x?.area).sort((a, b) => (b.focus - a.focus) || (b.at - a.at))[0];
+  const pick = [pane, thread].filter((x) => areaFits(x?.area)).sort((a, b) => (b.focus - a.focus) || (b.at - a.at))[0];
   return pick?.area ?? null;
 }
