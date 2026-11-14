@@ -4156,6 +4156,14 @@ export default class Chat extends View {
         .on_size_change((size, cx) => { if (Math.abs((this.textH ?? 0) - size.height) > 0.1) { this.textH = size.height; this.sizeBox(); cx.notify(); } }));
   }
 
+  // The box itself. Its spare row (sizeBox()) is tucked under the + and Send row by one line. lineH is measured,
+  // so it's in pixels at Herdr's zoom, while .mb() takes zoom 1 and scales it again: at zoom 2.4 the tuck was 2.4
+  // lines, and the box's last line of words was drawn over that row (SHEP-59). Back to zoom 1 here.
+  boxArea(t) {
+    return Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
+      .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-unzoom(this.lineH)));
+  }
+
   // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
   // the message as tiles, as a drop or a paste makes them.
   pickFiles(cx) {
@@ -4338,8 +4346,7 @@ export default class Chat extends View {
         .child(div().id("chat-line-h").absolute().top(0).left(0).opacity(0).text_size(13).child("Xg")
           .on_size_change((size, cx) => { if (Math.abs((this.lineH ?? 0) - size.height) > 0.1) { this.lineH = size.height; this.sizeBox(); cx.notify(); } }))
         .child(this.boxMeter())
-        .child(Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
-          .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-this.lineH)))
+        .child(this.boxArea(t))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
           .child(this.asks.length || st === "blocked" ? WORDS.replyInstead : this.placeholder()))))
       // While recording: the recording row. Else one row, on the right: what the agent runs on
