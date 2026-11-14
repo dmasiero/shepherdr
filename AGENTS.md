@@ -98,7 +98,10 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   service/spaces-sidebar.test.ts.
 - herdr-app's overlay width/height are at zoom 1, but on_size_change, presses and wheel deltas are in pixels at the
   zoom: unzoom them (see service/chat-image-zoom.test.ts).
-- No herdr-app window runs on the dev VM: window-mod UI can only be syntax-checked here, not screenshot. No ImageMagick,
+- The person's herdr-app window runs on nextgate: `herdr-app shot <abs path>.png` grabs a read-only frame of it (never
+  start another window). gpui-base tests (real font shaping, textarea layout) build in herdr-app's vendor/gpui-kit under
+  `nix-shell -p cargo rustc pkg-config fontconfig freetype libxkbcommon wayland libxcb clang`.
+- Elsewhere (a dev VM) no herdr-app window runs: window-mod UI can only be syntax-checked there, not screenshot. No ImageMagick,
   PIL or lsof either: stop a background stub by the pid `ss -ltnp` shows for its port, never `pkill -f` on its path
   (it matches the calling shell). A stub can bridge `/api/terminal` to a real bash with `new Hub(<hc wrapper setting
   HC_SESSION>)` + `terminalBridge` from `service/` (a throwaway core).
