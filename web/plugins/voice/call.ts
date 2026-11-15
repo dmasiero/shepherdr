@@ -10,7 +10,7 @@
 // server holds the call (service/voice.ts HOLD_MS) and the page goes back to it on its own, then the agent says it's
 // back; nothing said before is lost.
 //
-// SHEP-45, an Android phone with another app in front or the screen off: the call went on but heard nothing. The
+// fork: SHEP-45, an Android phone with another app in front or the screen off: the call went on but heard nothing. The
 // microphone now goes through an AudioWorklet (the audio thread, not the page's own, which Chrome slows down for a page
 // out of sight), its track's mute, unmute and end are watched whether the page shows or not (an ended one is taken
 // again at once), a suspended audio is resumed at once, and every few seconds the page tells the server its state
@@ -25,7 +25,7 @@ let ctx: AudioContext | null = null
 let node: AudioNode | null = null
 /** how the microphone is read: an AudioWorklet (the audio thread) or, where there is none, a ScriptProcessor */
 let capture: 'worklet' | 'script' | null = null
-/** SHEP-45: microphone frames sent since the page last told the server its state */
+/** fork: SHEP-45: microphone frames sent since the page last told the server its state */
 let sent = 0
 /** a microphone being taken again now, and when it last was */
 let taking = false
@@ -228,7 +228,7 @@ function wakeAudio() {
   if (mic && mic.getAudioTracks().every((t) => t.readyState === 'ended')) retakeMic()
 }
 
-/** SHEP-45: the microphone again. Out of sight, at most once in RETAKE_MS (a phone that keeps ending it can't make
+/** fork: SHEP-45: the microphone again. Out of sight, at most once in RETAKE_MS (a phone that keeps ending it can't make
  *  it loop); on screen, whenever asked. */
 export const RETAKE_MS = 5000
 function retakeMic() {
@@ -239,7 +239,7 @@ function retakeMic() {
   void takeMic().finally(() => { taking = false })
 }
 
-/** SHEP-45: the page's microphone, as the server logs it (states only, never sound): why a call hears nothing */
+/** fork: SHEP-45: the page's microphone, as the server logs it (states only, never sound): why a call hears nothing */
 function report(event: string) {
   if (!on || ws?.readyState !== WebSocket.OPEN) return
   const t = mic?.getAudioTracks()[0]
@@ -253,7 +253,7 @@ function report(event: string) {
 export const REPORT_MS = 5000
 setInterval(() => report('tick'), REPORT_MS)
 
-/** SHEP-45: a track the phone mutes (frames of silence), unmutes or ends, whether the page shows or not */
+/** fork: SHEP-45: a track the phone mutes (frames of silence), unmutes or ends, whether the page shows or not */
 function watchTrack(t: MediaStreamTrack, stream: MediaStream) {
   t.onmute = () => {
     if (mic !== stream) return
@@ -440,7 +440,7 @@ function dropped(sock: WebSocket) {
 function comeBack() {
   if (!on) return
   wakeAudio()
-  // SHEP-45: a track still muted a moment after the page is back: a fresh one
+  // fork: SHEP-45: a track still muted a moment after the page is back: a fresh one
   const stream = mic
   setTimeout(() => { if (on && mic === stream && stream?.getAudioTracks().some((t) => t.muted && t.readyState === 'live')) retakeMic() }, 1000)
   if (!ws && phase === 'reconnecting') {
@@ -479,7 +479,7 @@ export async function startCall(chatKey: string | null, onError: (message: strin
   const c = (ctx = new AudioContext())
   c.resume().catch(() => undefined)
   // a phone that locks or takes a call interrupts it: going again as soon as it may
-  // (SHEP-45: at once, and again a moment later, as some phones refuse the first)
+  // (fork: SHEP-45: at once, and again a moment later, as some phones refuse the first)
   c.onstatechange = () => {
     if (ctx !== c) return
     report(`audio-${c.state}`)

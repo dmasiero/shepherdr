@@ -70,7 +70,7 @@ class Repo(unittest.TestCase):
 
     def test_shipped_json_has_no_duplicate_keys(self):
         # Python's json keeps the last of two equal keys, but Herdr refuses the file and falls back to its default
-        # layout (SHEP-41: a merge kept both the fork's and upstream's "size" and "resizable" lines).
+        # layout (fork: SHEP-41: a merge kept both the fork's and upstream's "size" and "resizable" lines).
         def no_dups(where):
             def hook(pairs):
                 names = [k for k, _ in pairs]
@@ -347,7 +347,7 @@ class Repo(unittest.TestCase):
         self.assertTrue(os.path.exists(J("mods", "workspace-chrome-shepherdr", "audio-lines.svg")))
 
     def test_brand_row_is_shepherdrs_chrome(self):
-        """SHEP-54: the open sidebar's brand row is Shepherdr's workspace-chrome-shepherdr (the voice button beside
+        """fork: SHEP-54: the open sidebar's brand row is Shepherdr's workspace-chrome-shepherdr (the voice button beside
         Search), not Herdr's own workspace-chrome, which has none; the installer repoints it in a kept layout."""
         def blocks(n):
             if isinstance(n, dict):

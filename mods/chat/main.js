@@ -87,7 +87,7 @@ const same = (a, b) => norm(a) === norm(b);
 // The person's words into the agent's terminal: plain input from them, here and on another machine (core/person.js).
 const personHc = asPerson({ hc, exec });
 // This machine's name in herdr-core, once known: another machine's agent writes our terminals as "<it>/t75" (SHEP-12).
-// Kept in localStorage too, so a chat made as the window starts knows it at once (SHEP-57: ownAddr()).
+// Kept in localStorage too, so a chat made as the window starts knows it at once (fork: SHEP-57: ownAddr()).
 // Asked once; again 30 s after an answer without it.
 let ownName = null, askedName = false, nameAt = 0;
 const coreName = () => {
@@ -102,7 +102,7 @@ const coreName = () => {
   return ownName;
 };
 
-// SHEP-57: one of this computer's own terminals, named with this computer's name in front ("nextgate/t89"), as its
+// fork: SHEP-57: one of this computer's own terminals, named with this computer's name in front ("nextgate/t89"), as its
 // bare id ("t89"), the way terminals() lists it. A chat pane can be saved so (its props' terminal, after a restart):
 // then nothing found its terminal, its pane (myPane()) was null, and the call button, the rail's wave and
 // Ctrl+Shift+Space were all for another chat. Another machine's address stays as it is. With this computer's name not
@@ -292,7 +292,7 @@ export default class Chat extends View {
     this.inner = _props?.inner === true;
     if (this.inner) inner.chat = this;
     const P = this.inner ? _props : props();
-    // (this computer's own terminal as itself: "nextgate/t89" is "t89" here, SHEP-57)
+    // (this computer's own terminal as itself: "nextgate/t89" is "t89" here, fork: SHEP-57)
     this.origin = P?.terminal ? ownAddr(P.terminal) : null;
     this.addr = this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
@@ -336,7 +336,7 @@ export default class Chat extends View {
     this.box = TextareaState.new({ placeholder: "" });
     this.box.set_rows(1);
     // The box's words again in an unseen textarea of its own kind that grows with them (boxMeter()): its height
-    // is the rows the box's own wrap gives them (SHEP-46).
+    // is the rows the box's own wrap gives them (fork: SHEP-46).
     this.meter = TextareaState.new({ placeholder: "" });
     this.meter.set_auto_grow(1, METER_ROWS);
     // Ctrl+Enter (the textarea's secondary submit): held until the agent is free.
@@ -2488,7 +2488,7 @@ export default class Chat extends View {
     const keyFile = `${appHome()}/secrets/elevenlabs.env`;
     const ok = await exec("sh", ["-c", 'grep -q "^[[:space:]]*\\(export[[:space:]]*\\)\\{0,1\\}ELEVENLABS_API_KEY=." "$1" 2>/dev/null && echo yes', "x", keyFile]);
     // Or kept in Settings › Secrets (Everywhere), here or on the machine that keeps the secrets: Shepherdr's service
-    // reads it itself (the call is its, as the web app's: SHEP-57). The help only when that machine truly has none: one
+    // reads it itself (the call is its, as the web app's: fork: SHEP-57). The help only when that machine truly has none: one
     // that can't be asked now (entries() fails) lets the call try, and the service says it can't reach it.
     const list = ok.stdout.trim() === "yes" ? null : await secrets.entries().catch(() => null);
     const kept = !list || list.some((e) => e.name === "ELEVENLABS_API_KEY" && e.scope === "everywhere");
@@ -2568,7 +2568,7 @@ export default class Chat extends View {
       if (Date.now() - (call.beat ?? 0) > 15000) { call.beat = Date.now(); this.callShared(); }
       cx.notify();
       if (Date.now() - touched > 4000) { touched = Date.now(); exec("touch", [`${dir}/alive`]); }
-      // (what the agent says and does reaches the call through Shepherdr's service, as the web app's: SHEP-57)
+      // (what the agent says and does reaches the call through Shepherdr's service, as the web app's: fork: SHEP-57)
       // One watch at a time (a new one each second would pile up while the folder is quiet).
       if (this.callWatch?.dir !== dir) {
         const w = { dir, next: watchFolder(dir).catch(() => null).finally(() => { if (this.callWatch === w) this.callWatch = null; }) };
@@ -3956,7 +3956,7 @@ export default class Chat extends View {
   }
 
   // The images the chat shows, linked where image() can load them, with their sizes. Asked once each. `on`: they're on
-  // that machine (the agent's), copied here first (SHEP-47); asked again in 30 s when it couldn't be reached.
+  // that machine (the agent's), copied here first (fork: SHEP-47); asked again in 30 s when it couldn't be reached.
   needViews(paths, cx, on = null) {
     const key = (p) => `${on ?? ""}\0${p}`;
     const want = [...new Set(paths)].filter((p) => p && !this.views[p] && !this.viewAsked.has(key(p)));
@@ -4116,7 +4116,7 @@ export default class Chat extends View {
     if (!images.length) return;
     i = images.indexOf(all[i] ?? images[0]);
     // Over this chat pane, at its size (a popup's root needs its size spelled out). An overlay's size is at zoom 1,
-    // as the chat's own; only `at` is in the window's pixels (SHEP-42: times the zoom, it ran past the window).
+    // as the chat's own; only `at` is in the window's pixels (fork: SHEP-42: times the zoom, it ran past the window).
     const a = this.paneArea();
     const at = a ? { x: a.x, y: a.y } : "pointer";
     const width = Math.round(this.width), height = Math.round(this.height ?? 700);
@@ -4145,7 +4145,7 @@ export default class Chat extends View {
   // The words' height at the box's width, unseen (sizeBox()). Measured by a textarea like the box (this.meter,
   // auto-grow), not by the words as plain text: the box wraps by its own rules, and the plain copy kept a line the
   // box had already wrapped (after "ping.properties … etc -" it fit about 6 more letters), so the new line was drawn
-  // over the + and Send row until those letters were typed (SHEP-46). Same width, size and wrap as the box: the
+  // over the + and Send row until those letters were typed (fork: SHEP-46). Same width, size and wrap as the box: the
   // row it's under has the box's padding, and this sits in it at the same insets.
   boxMeter() {
     const v = this.box.value();
@@ -4158,7 +4158,7 @@ export default class Chat extends View {
 
   // The box itself. Its spare row (sizeBox()) is tucked under the + and Send row by one line. lineH is measured,
   // so it's in pixels at Herdr's zoom, while .mb() takes zoom 1 and scales it again: at zoom 2.4 the tuck was 2.4
-  // lines, and the box's last line of words was drawn over that row (SHEP-59). Back to zoom 1 here.
+  // lines, and the box's last line of words was drawn over that row (fork: SHEP-59). Back to zoom 1 here.
   boxArea(t) {
     return Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
       .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-unzoom(this.lineH)));
@@ -4441,7 +4441,7 @@ export default class Chat extends View {
     if (!this.addr && this.role) return this.slotPane();
     // A thread's pane is the one its opener recorded for this worker (openThread()).
     if (this.thread) return threadOf(this.addr);
-    // (an address with this computer's name in front, learned only after this chat was made: as its bare id, SHEP-57)
+    // (an address with this computer's name in front, learned only after this chat was made: as its bare id, fork: SHEP-57)
     const own = this.addr?.includes("/") ? ownAddr(this.addr) : this.addr;
     const c = chatPane(terminals().find((x) => x.address === own));
     if (c && panes().some((p) => p.pane === c && p.mod === "chat")) this.lastPane = c;

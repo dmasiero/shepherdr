@@ -65,7 +65,7 @@ class Install(unittest.TestCase):
         return os.path.join(self.root, *rel)
 
     def test_an_older_installs_30_minute_wait_is_raised(self):
-        # SHEP-40: the question card closed after 30 minutes; an install raises the old entry's timeout, still one entry
+        # fork: SHEP-40: the question card closed after 30 minutes; an install raises the old entry's timeout, still one entry
         old = {"hooks": [{"type": "command", "command": f"sh '{self.p(APP)}/mods/chat/ask-hook.sh'", "timeout": 1800}]}
         with open(self.p(".claude", "settings.json"), "w") as f:
             json.dump({"model": "x", "hooks": {"PermissionRequest": [old]}}, f)
@@ -76,7 +76,7 @@ class Install(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("bun"), "needs bun")
     def test_an_update_puts_back_what_a_muffling_call_left_lowered(self):
-        # SHEP-55: SHEP-51's call muffle is gone; a call that died muffling left a guard with each stream's own volume
+        # fork: SHEP-55: SHEP-51's call muffle is gone; a call that died muffling left a guard with each stream's own volume
         guards = self.p(APP, "data", "call-muffle")
         os.makedirs(guards)
         p = subprocess.Popen(["true"])
@@ -858,7 +858,7 @@ class OldCopies(unittest.TestCase):
         self.assertIn("--take: not a file Shepherdr installs", p.stderr)
 
     def test_a_kept_layouts_brand_row_gets_the_voice_button(self):
-        """SHEP-54: the brand row named Herdr's own workspace-chrome (no voice call button). A layout Herdr wrote the
+        """fork: SHEP-54: the brand row named Herdr's own workspace-chrome (no voice call button). A layout Herdr wrote the
         person's sizes into is kept on update, Shepherdr's beside it as .new: only its brand block's mod changes."""
         def find(n, id_):
             if isinstance(n, dict):

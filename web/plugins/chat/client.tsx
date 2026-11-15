@@ -1998,7 +1998,7 @@ function Composer({ chatKey, placeholder, cli, suggest = null }: { chatKey: stri
   const [msel, setMsel] = useState(0)
   useEffect(() => setMsel(0), [word, (MNc as any).typingTask(text) === null])
   const takeMention = (i: Item) => { setText(takeItem(chatKey, text, i)); ref.current?.focus() }
-  // the "@~/" list: the folder typed so far on this chat's agent's machine (paths.tsx), keys as the "@" list's
+  // fork: SHEP-50. the "@~/" list: the folder typed so far on this chat's agent's machine (paths.tsx), keys as the "@" list's
   const typedPath = typingPath(text)
   const [pclosed, setPclosed] = useState<string | null>(null)
   const pathsAll = usePaths(chatKey, typedPath)

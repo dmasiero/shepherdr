@@ -36,7 +36,7 @@ export default class TaskArtifacts extends View {
     if (this.opening) return;
     this.opening = a.id;
     cx.notify();
-    // Over this list's own place (the task's chat's, in the Tasks panel), from the press that opened it: in the
+    // fork: SHEP-53. Over this list's own place (the task's chat's, in the Tasks panel), from the press that opened it: in the
     // window's pixels at this zoom (artview.js viewerPlace). Else the task's chat's when noted at this zoom, else the
     // whole window.
     const thread = shared("chat.areas")?.thread?.area ?? null;

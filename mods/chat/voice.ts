@@ -1,4 +1,4 @@
-// A voice call from the Herdr window: the same call as the web app's (SHEP-57), held by this machine's Shepherdr service
+// A voice call from the Herdr window: the same call as the web app's (fork: SHEP-57), held by this machine's Shepherdr service
 // (service/voice.ts over /api/voice: the ElevenLabs voice agent, its tools, what it hears, the person's yes before
 // it hangs up), with this machine's microphone and speaker instead of a phone's. This helper only carries the sound
 // both ways and links the call to the chat that started it; the window shows the call (Mute, End, the wave). Started

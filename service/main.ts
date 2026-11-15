@@ -44,7 +44,7 @@ import { browserRelay } from "./browser.ts";
 import { voiceCall, voiceAsked, callToResume, callsOn, pageWhere, type ChatView } from "./voice.ts";
 import { type HearIO } from "./voice-hear.ts";
 import { type VoiceIO, type Where } from "./voice-tools.ts";
-import { phoneSwitch } from "./phone.ts";
+import { phoneSwitch } from "./phone.ts"; // fork: SHEP-58, the phone calls (below, after Bun.serve)
 import { Artifacts } from "./artifacts.ts";
 import { TaskLogs } from "./task-logs.ts";
 import { Settings, onWritten, PUSH, pushBody } from "./settings.ts";
@@ -719,6 +719,7 @@ const server = Bun.serve<{ who: string }>({
       if (offList().includes("voice")) return new Response("no calls here", { status: 404 });
       const asked = (url.searchParams.get("chat") ?? "").slice(0, 300), addr = asked ? compat.addrOf(asked) : null;
       const key = addr && !addr.startsWith("log:") ? asked : null;
+      // fork: SHEP-57: the window's call comes here too (client=window, local only)
       const voice = voiceAsked(url.searchParams, pass.via === "local", key, chatOfAddress);
       return srv.upgrade(req, { data: { who: pass.who, voice } as any }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
@@ -807,7 +808,7 @@ const server = Bun.serve<{ who: string }>({
       return json(await reachOf(machine));
     }
     if (path === "/api/paths") {
-      // the "@~/" list above the box (core/path-pick.js): a folder's entries under home, on the machine running this
+      // fork: SHEP-50. the "@~/" list above the box (core/path-pick.js): a folder's entries under home, on the machine running this
       // chat's agent (a chat with no agent yet: its space's machine)
       const key = url.searchParams.get("chat") ?? "", a = compat.addrOf(key), dir = url.searchParams.get("dir") ?? "~/";
       const sp = !a ? compat.allSpaces().find((s) => placeKey(s.id) === key) : null;
@@ -917,7 +918,7 @@ const server = Bun.serve<{ who: string }>({
   },
 });
 
-// SHEP-44, SHEP-58: phone calls through the person's Asterisk PBX (AudioSocket), off unless <config>/phone.json says on: the same
+// fork: SHEP-44, SHEP-58: phone calls through the person's Asterisk PBX (AudioSocket), off unless <config>/phone.json says on: the same
 // call as the web's, with no screen; its "here" is this machine's Home Assistant (docs/phone.md)
 /** this machine's Home Assistant's chat (its space in the home folder, "~"): a phone call's "here", having no screen */
 const homeChat = () => compat.last?.places.find((p: any) => !String(p.id).includes("/") && p.where === "~")?.chat ?? null;

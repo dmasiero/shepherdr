@@ -12,7 +12,7 @@ import { SOURCES, scrub, render, at, search, segments, type SourceArgs } from ".
 /** Where a call comes from: its app, the chat it started from (if any), and what that app shows now (sent by the page or
  *  the window). SHEP-105: a call is with Shepherdr itself, not that chat: "here" is what the screen shows. */
 export type Where = {
-  /** phone: a call through the person's PBX (service/phone.ts): no screen */
+  /** phone: a call through the person's PBX (service/phone.ts): no screen (fork: SHEP-58) */
   client: "web" | "window" | "phone";
   /** phone, tablet or desktop (web) */
   device?: string | null;
@@ -297,7 +297,7 @@ function taskLine(snap: Snapshot, t: Task, withPlace = true) {
 export function lookHere(snap: Snapshot, where: Where) {
   const from = where.client === "web" ? `runs in the web app${where.device ? ` on a ${where.device}` : ""}` : where.client === "phone" ? "is a phone call" : `runs in the Herdr window${where.machine ? ` on ${where.machine}` : ""}`;
   const out = [`The call ${from}. It is with Shepherdr, not one agent.`];
-  // SHEP-44: a phone call through the person's PBX has nothing to show things on
+  // fork: SHEP-44: a phone call through the person's PBX has nothing to show things on
   if (where.client === "phone") out.push("The person is on the phone, with no screen: open, screen and call_view can't show anything, so say what you find instead.");
   const shows: string[] = [];
   if (where.settings) shows.push("Settings");

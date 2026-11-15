@@ -1,4 +1,4 @@
-// A voice call with Shepherdr, from the web app or the Herdr window (SHEP-57: one call, two ends): the page, or the
+// A voice call with Shepherdr, from the web app or the Herdr window (fork: SHEP-57: one call, two ends): the page, or the
 // window's call helper (mods/chat/voice.ts, this machine's microphone and speaker), streams its microphone here as
 // 16 kHz PCM and plays what comes back. The ElevenLabs voice agent (core/voice.js) with the person's key and agent id
 // (<app home>/secrets) is held here, its tools answered here (voice-tools.ts:
@@ -91,7 +91,7 @@ export function talking(pcm: Uint8Array) {
   for (let i = 0; i < s.length; i += 4) sum += s[i] * s[i];
   return Math.sqrt(sum / Math.max(1, s.length >> 2)) > SPEECH;
 }
-/** SHEP-45: how often a call writes its microphone's line in service.log (frames and level; no audio is kept) */
+/** fork: SHEP-45: how often a call writes its microphone's line in service.log (frames and level; no audio is kept) */
 export const DIAG_MS = 5000;
 const DIAG_EVENTS = new Set(["start", "tick", "visible", "hidden", "mic-mute", "mic-unmute", "mic-ended", "mic-again", "mic-lost", "audio-running", "audio-suspended", "audio-interrupted", "audio-closed"]);
 /** SHEP-45: the page's own word on its microphone ({ type: "diag" }), checked: only states, never audio or words */
@@ -172,7 +172,7 @@ export function pageWhere(m: any): Partial<Where> {
 }
 
 /** What a call's socket asked for (/api/voice's query): resume, a dropped page's call id (SHEP-102); key, the chat
- *  whose call button started it (checked by the caller). SHEP-57: the Herdr window's call (mods/chat/voice.ts), from
+ *  whose call button started it (checked by the caller). fork: SHEP-57: the Herdr window's call (mods/chat/voice.ts), from
  *  this machine only (local): client=window, addr (the agent whose chat started it, as its chat's key) and where (what
  *  the window shows, { place, task, tab }). */
 export function voiceAsked(q: URLSearchParams, local: boolean, key: string | null, chatOf: (addr: string) => string | null) {

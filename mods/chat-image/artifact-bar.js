@@ -62,7 +62,7 @@ function step(view, a, v, cx) {
 }
 
 // Herdr zoomed (Ctrl +/-) with the viewer open over a chat pane: the pane moved and resized in the window's pixels,
-// while the viewer kept its place there and its size at zoom 1, so it no longer covered the pane (SHEP-53). Its
+// while the viewer kept its place there and its size at zoom 1, so it no longer covered the pane (fork: SHEP-53). Its
 // place in the window can't be known again without a press there, so it opens again over the whole window.
 function rezoom(view, a, cx) {
   if (!a.area || a.modal || areaFits(a.area) || view.art.rezoomed) return;

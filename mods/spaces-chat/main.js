@@ -195,7 +195,7 @@ export default class Spaces extends View {
     return null;
   }
 
-  // The brand row's voice button asked for a call (shared "voice.startreq"): each ask once, a fresh one only.
+  // fork: SHEP-57 (a method a test drives). The brand row's voice button asked for a call (shared "voice.startreq"): each ask once, a fresh one only.
   takeVoiceReq() {
     const req = shared("voice.startreq");
     if (!req || req.at === this.voiceReqAt) return;
