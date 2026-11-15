@@ -140,7 +140,7 @@ export async function viewable(list) {
   return out;
 }
 
-// Images in a chat whose agent is on another machine (SHEP-47): VIEW ran here, where those paths don't exist, so each
+// Images in a chat whose agent is on another machine (fork: SHEP-47): VIEW ran here, where those paths don't exist, so each
 // was a grey box. They're copied here once, into data/chat-attach/remote (named after the machine and path, kept a week),
 // through herdr-core in base64 pieces (exec's output stops at 8 MiB), and shown from there. A picture pasted here
 // first is still in data/chat-attach under the same name: that one is used as it is. Resolves { views, failed }:

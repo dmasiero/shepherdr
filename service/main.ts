@@ -30,7 +30,7 @@ import { windowSection, setWindow, offList, offPlugins } from "./window.ts";
 import { record, deleteAll, note as noteUsage, followSwitch, isOn as insightsOn, logLines } from "./usage.ts";
 import { insightsSummary } from "./voice-data.ts";
 import { Chats } from "./chats.ts";
-import { act, hc as hcRun } from "./actions.ts";
+import { act, findMachines, hc as hcRun } from "./actions.ts";
 import { AgentWatch } from "./watch.ts";
 import { Compat, activity, newsKey, placeKey } from "./compat.ts";
 import { keep, served as fileResponse, smaller } from "./media.ts";
@@ -44,6 +44,7 @@ import { browserRelay } from "./browser.ts";
 import { voiceCall, voiceAsked, callToResume, callsOn, pageWhere, type ChatView } from "./voice.ts";
 import { type HearIO } from "./voice-hear.ts";
 import { type VoiceIO, type Where } from "./voice-tools.ts";
+import { phoneSwitch } from "./phone.ts"; // fork: SHEP-58, the phone calls (below, after Bun.serve)
 import { Artifacts } from "./artifacts.ts";
 import { TaskLogs } from "./task-logs.ts";
 import { Settings, onWritten, PUSH, pushBody } from "./settings.ts";
@@ -236,6 +237,8 @@ setInterval(() => {
   void moveSecrets(null).catch(() => {});
 }, 30_000);
 const settings = new Settings();
+// a space's Assistant started from the web runs the agent Settings › Agents chooses for it, as the window's (#1051)
+compat.assistantPick = (space) => settings.role(space, "coordinator");
 // Settings › Agents' model menu and buttons (core/settings.js choicesFrom), from each CLI's own settings here, read
 // again every ten minutes; a CLI herdr-task's check finds missing here isn't offered
 const readDefaults = async () => {
@@ -641,7 +644,7 @@ async function doAction(body: any): Promise<Response> {
   if (body?.type === "limits-check") { await machines.checkNow(); return json({ ok: true }); }
   if (body?.type === "secrets-move") {
     // Settings › Secrets › Kept on: the vault moves (shepherdr secrets move-to); the page sees it as it goes
-    const m = typeof body.machine === "string" && body.machine && body.machine !== home.me?.name ? body.machine : null;
+    const m = HCORE.pickedMachine(body.machine, home.me?.name);
     if (m !== null && !home.machines.has(m)) return json({ ok: false, error: "That machine isn't linked." });
     if (secretsMoving && !secretsMoving.error) return json({ ok: false, error: `Already moving them to ${secretsMoving.to}.` });
     void moveSecrets(m).catch(() => {});
@@ -649,7 +652,7 @@ async function doAction(body: any): Promise<Response> {
   }
   if (body?.type === "serve-from") {
     // Settings › Web's Serve from: the move runs on (the page sees it in Settings › Web as it goes)
-    const m = typeof body.machine === "string" && body.machine && body.machine !== host.me?.name ? body.machine : null;
+    const m = HCORE.pickedMachine(body.machine, host.me?.name);
     if (m !== null && !host.machines.has(m)) return json({ ok: false, error: "That machine isn't linked." });
     if (moving && !moving.error) return json({ ok: false, error: `Already moving it to ${moving.to}.` });
     void serveFrom(m).catch(() => {});
@@ -718,6 +721,7 @@ const server = Bun.serve<{ who: string }>({
       if (offList().includes("voice")) return new Response("no calls here", { status: 404 });
       const asked = (url.searchParams.get("chat") ?? "").slice(0, 300), addr = asked ? compat.addrOf(asked) : null;
       const key = addr && !addr.startsWith("log:") ? asked : null;
+      // fork: SHEP-57: the window's call comes here too (client=window, local only)
       const voice = voiceAsked(url.searchParams, pass.via === "local", key, chatOfAddress);
       return srv.upgrade(req, { data: { who: pass.who, voice } as any }) ? undefined : new Response("upgrade failed", { status: 400 });
     }
@@ -806,7 +810,7 @@ const server = Bun.serve<{ who: string }>({
       return json(await reachOf(machine));
     }
     if (path === "/api/paths") {
-      // the "@~/" list above the box (core/path-pick.js): a folder's entries under home, on the machine running this
+      // fork: SHEP-50. the "@~/" list above the box (core/path-pick.js): a folder's entries under home, on the machine running this
       // chat's agent (a chat with no agent yet: its space's machine)
       const key = url.searchParams.get("chat") ?? "", a = compat.addrOf(key), dir = url.searchParams.get("dir") ?? "~/";
       const sp = !a ? compat.allSpaces().find((s) => placeKey(s.id) === key) : null;
@@ -815,6 +819,7 @@ const server = Bun.serve<{ who: string }>({
       const r = await sh(hub, PATH_LIST, ["x", under(dir)], machine).catch(() => null);
       return json({ entries: r?.code === 0 ? entriesOf(r.stdout) : [] });
     }
+    if (path === "/api/machines/find") return json(await findMachines(req.method === "POST"));
     if (path === "/api/folders") {
       const m = url.searchParams.get("machine"), machine = !m || m === hereName() ? null : m;
       const home = (await exec(hub, ["sh", "-c", 'printf %s "$HOME"'], machine).catch(() => ({ stdout: "" }))).stdout;
@@ -831,7 +836,7 @@ const server = Bun.serve<{ who: string }>({
       try {
         const machine = !b?.machine || b.machine === hereName() ? null : String(b.machine);
         const icon = typeof b?.icon === "string" && b.icon ? b.icon.slice(0, 16) : null;
-        const place = await newSpace(hub, { machine, path: String(b?.path ?? ""), makeRepo: !!b?.makeRepo, icon, store: compat.shared! });
+        const place = await newSpace(hub, { machine, path: String(b?.path ?? ""), makeRepo: !!b?.makeRepo, icon, store: compat.shared!, pick: compat.assistantPick });
         // the page opens it once the sidebar has it: in the snapshot before the answer, not at the next 10 s read
         await model.waitSpace(place);
         return json({ place });
@@ -914,6 +919,16 @@ const server = Bun.serve<{ who: string }>({
     // SHEP-173: a muted call sends nothing for minutes (Bun's default closes a quiet socket after 120 s); pages ping too
     idleTimeout: 600,
   },
+});
+
+// fork: SHEP-44, SHEP-58: phone calls through the person's Asterisk PBX (AudioSocket), off unless <config>/phone.json says on: the same
+// call as the web's, with no screen; its "here" is this machine's Home Assistant (docs/phone.md)
+/** this machine's Home Assistant's chat (its space in the home folder, "~"): a phone call's "here", having no screen */
+const homeChat = () => compat.last?.places.find((p: any) => !String(p.id).includes("/") && p.where === "~")?.chat ?? null;
+phoneSwitch({
+  voiceOn: () => !offList().includes("voice"),
+  where: () => ({ client: "phone", machine: me?.host ?? null, call: homeChat() }),
+  start: (w, page) => { noteUsage("feature", { from: "phone", type: "voice-call" }); return voiceCall(hub, { io: voiceIO, hear: hearIO, where: w, who: "phone" }, page); },
 });
 
 console.log(`Shepherdr ${VERSION} on http://127.0.0.1:${server.port} (data ${DATA})${ownLink() && webOn() ? `, ${ownLink()}` : ""}`);

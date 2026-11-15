@@ -197,7 +197,7 @@ class Spans(unittest.TestCase):
 
 
 class PictureSizes(unittest.TestCase):
-    """SHEP-53: the window's recipe view gives each picture a box of its own shape, from its size in pixels, which
+    """fork: SHEP-53: the window's recipe view gives each picture a box of its own shape, from its size in pixels, which
     herdr-artifact reads from the picture's header as it installs (recipe-data.js's sizes)."""
 
     def setUp(self):

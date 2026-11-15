@@ -58,7 +58,7 @@ function showModal(artifact) {
 
 // Herdr's zoom (View › Zoom). Where things are in the window (a press's place, an element's
 // bounds: an area's x, y, width and height) is in pixels at the zoom, while an overlay's width
-// and height are at zoom 1 and only its `at` is in the window's pixels (SHEP-42, SHEP-53).
+// and height are at zoom 1 and only its `at` is in the window's pixels (fork: SHEP-42, SHEP-53).
 export const zoomOf = () => Number(settings()?.zoom) || 1;
 
 // An area ({ x, y, width, height, zoom }: in the window's pixels at that zoom) still where it was

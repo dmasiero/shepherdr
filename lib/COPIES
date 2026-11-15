@@ -38,6 +38,7 @@ core/machine-add.js: machine-add-chat
 core/keys.js: keybinds
 core/machines.js: spaces-chat shepherdr-settings
 core/slash.js: chat
+# fork: SHEP-50, the @~/ path list
 core/path-pick.js: chat
 core/mentions.js: chat
 core/agents.js: chat chat-models newspace shepherdr-settings coordinator
@@ -64,3 +65,4 @@ usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 core/usage.js: tabs-tasks chat shepherdr-settings artifacts jump accept-card toasts
 dirs.js: accept-card artifacts chat chat-models coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks task-browser tasks toasts workspace-status-chat
 core/paths.js: accept-card artifacts chat chat-models coordinator jump menu-tasks new-menu-tasks newspace pane-chat shepherdr-settings spaces-chat tabs-tasks task-browser tasks toasts workspace-status-chat
+core/pending.js: tasks accept-card tasks-menu chat

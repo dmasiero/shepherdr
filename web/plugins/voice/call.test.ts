@@ -32,7 +32,7 @@ class FakeSocket {
 }
 
 const node = () => ({ connected: [] as unknown[], connect(to: unknown) { this.connected.push(to) }, disconnect() {}, fftSize: 0, getFloatTimeDomainData() {} })
-/** SHEP-45: an AudioWorklet, where a test turns it on (else the ScriptProcessor, as an older browser) */
+/** fork: SHEP-45: an AudioWorklet, where a test turns it on (else the ScriptProcessor, as an older browser) */
 class FakeWorkletNode {
   static last: FakeWorkletNode | null = null
   port = { onmessage: null as ((e: { data: unknown }) => void) | null }
@@ -473,7 +473,7 @@ test('SHEP-173: an end by itself says why (the limit, the line); after the perso
   expect(endedWhy).toEqual(['it reached the 2-hour limit', null])
 })
 
-// SHEP-45: an Android phone with another app in front or the screen off heard nothing. The microphone is read on the
+// fork: SHEP-45: an Android phone with another app in front or the screen off heard nothing. The microphone is read on the
 // audio thread, its track's mute and end are handled out of sight too, and the page tells the server its state.
 // That a real Android phone then keeps sending sound is not provable here: service.log on the phone's next call is.
 const diags = (ws: FakeSocket) => ws.sent.filter((m: any) => m?.type === 'diag') as any[]

@@ -34,10 +34,11 @@ class Area {
   set_rows(n: number) { this.rows.push(n); }
   set_auto_grow(a: number, b: number) { this.grow = [a, b]; }
 }
+let zoom = 1;
 const textareaOf = new Map<any, Area>();
 const Textarea = { new: (s: Area) => { const e = el("Textarea"); textareaOf.set(e.rec, s); return e; } };
 mock.module("herdr", () => fakeHerdr({
-  settings: () => ({ zoom: 1 }), theme: () => theme, shared: () => undefined, setShared: () => {}, agents: () => [], panes: () => [],
+  settings: () => ({ zoom }), theme: () => theme, shared: () => undefined, setShared: () => {}, agents: () => [], panes: () => [],
   terminals: () => [], spaces: () => [], machines: () => [], knownAgents: () => [], props: () => ({}), window: () => ({ platform: "linux" }),
   home: () => "/nonexistent-home", appHome: () => "/nonexistent-app",
   exec: async () => ({ code: 1, stdout: "", stderr: "" }), hc: async () => ({ code: 1, stdout: "", stderr: "" }),
@@ -115,5 +116,78 @@ describe("the window chat's box at the wrap point (SHEP-46)", () => {
     c.box.set_value(WORDS);
     measure(c).size({ width: 600 * 2.3, height: 3 * LINE * 2.3 }, cx);
     expect(c.box.rows.at(-1)).toBe(4);
+  });
+});
+
+// SHEP-59: at Herdr's zoom (2.4 here) the box's last line of words was drawn over the + and Send row. The rows were
+// right; the spare row's tuck under that row (a negative bottom margin of one line) was lineH, measured in pixels at
+// the zoom, given to .mb(), which takes zoom 1 and scales it again: 2.4 lines pulled under the row instead of one.
+// The message in the person's screenshot: two short lines, a blank one, then one long line.
+const SHOT = "can remove zoey.moeny.ai from web01\ncan remove fassnachtlaw.com from web01\n\ncan delete fassnachtlaw.com route53 zone if it still exists, includings all the records inside it - client migrated DNS already";
+const Z = 2.4, LH = 50.4; // a line at zoom 2.4, as the window reports it
+const fakeTheme: any = new Proxy({}, { get: () => "#000000" });
+// What sizeBox() and boxArea() give the box for words the measurer finds `rows` lines tall, at the zoom set.
+function boxAt(words: string, rows: number) {
+  const c = chat();
+  c.lineH = LH;
+  c.box.set_value(words);
+  measure(c).size({ width: 700 * Z, height: rows * LH }, cx);
+  built.length = 0;
+  const area = c.boxArea(fakeTheme).rec as Built;
+  const mb = area.calls.filter(([n]) => n === "mb").map(([, a]) => a[0]).pop() ?? 0;
+  // Lines of the box above the + and Send row, in the window's pixels: its height less the tuck (.mb() scales by Z).
+  const shown = (c.box.rows.at(-1) * LH + mb * zoom) / LH;
+  return { c, mb, shown };
+}
+
+describe("the window chat's box at Herdr's zoom (SHEP-59)", () => {
+  test("a blank line, then a long line: every line of words sits above the + and Send row", () => {
+    zoom = Z;
+    try {
+      // Two lines, the blank one, the long one (it fits the box's width, or wraps onto a 5th: both are counted).
+      for (const rows of [4, 5]) {
+        const { c, mb, shown } = boxAt(SHOT, rows);
+        expect(c.box.rows.at(-1)).toBe(rows + 1);
+        expect(mb * Z).toBeCloseTo(-LH, 5);
+        expect(shown).toBeCloseTo(rows, 5);
+      }
+    } finally { zoom = 1; }
+  });
+
+  test("several long lines: the box grows a row for each, up to 8, and none is under the row", () => {
+    zoom = Z;
+    try {
+      const long = SHOT.split("\n").at(-1)!;
+      const words = [long, long, long].join("\n");
+      for (const rows of [3, 4, 5, 6, 7, 8]) expect(boxAt(words, rows).shown).toBeCloseTo(rows, 5);
+      // Past 8: 8 shown and the box scrolls, nothing tucked.
+      const past = boxAt(words, 11);
+      expect(past.c.box.rows.at(-1)).toBe(8);
+      expect(past.mb).toBe(0);
+    } finally { zoom = 1; }
+  });
+
+  test("a paste: the words arrive at once and are measured as they are, the box sized on that one change", () => {
+    zoom = Z;
+    try {
+      const c = chat();
+      c.lineH = LH;
+      c.box.set_value("");
+      measure(c).size({ width: 700 * Z, height: LH }, cx);
+      c.box.set_value(SHOT);
+      measure(c).size({ width: 700 * Z, height: 5 * LH }, cx);
+      expect(c.meter.value()).toBe(SHOT);
+      expect(c.box.rows.at(-1)).toBe(6);
+      built.length = 0;
+      const mb = (c.boxArea(fakeTheme).rec as Built).calls.find(([n]) => n === "mb")![1][0];
+      expect(mb).toBeCloseTo(-LH / Z, 5);
+    } finally { zoom = 1; }
+  });
+
+  test("at zoom 1 the tuck is one line, as before", () => {
+    const { c, mb, shown } = boxAt(SHOT, 4);
+    expect(c.box.rows.at(-1)).toBe(5);
+    expect(mb).toBeCloseTo(-LH, 5);
+    expect(shown).toBeCloseTo(4, 5);
   });
 });

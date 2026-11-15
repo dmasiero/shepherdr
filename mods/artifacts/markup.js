@@ -16,7 +16,7 @@ import { dirs } from "./dirs.js";
 
 const KEY = "artifacts.markup";
 // Herdr's zoom: the press, the spot and the panel's size are kept as the window reports them (pixels at the zoom,
-// what the picture is cut by), while the layer draws at zoom 1: the spot's mark comes back to zoom 1 (SHEP-53).
+// what the picture is cut by), while the layer draws at zoom 1: the spot's mark comes back to zoom 1 (fork: SHEP-53).
 const zoomOf = () => Number(settings()?.zoom) || 1;
 const unzoomRect = (r) => { const z = zoomOf(); return { x: r.x / z, y: r.y / z, w: r.w / z, h: r.h / z }; };
 const MOD = A.dir.slice("mods/".length);

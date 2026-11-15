@@ -52,6 +52,7 @@ import * as slash from "./slash.js";
 import * as mentions from "./core/mentions.js";
 import * as paths from "./core/path-pick.js";
 import { SH } from "./core/paths.js";
+import { settle } from "./core/pending.js";
 import { dirsReady } from "./dirs.js";
 import * as agent from "./agent.js";
 import { cleanCommand } from "./core/clean-env.js";
@@ -87,7 +88,7 @@ const same = (a, b) => norm(a) === norm(b);
 // The person's words into the agent's terminal: plain input from them, here and on another machine (core/person.js).
 const personHc = asPerson({ hc, exec });
 // This machine's name in herdr-core, once known: another machine's agent writes our terminals as "<it>/t75" (SHEP-12).
-// Kept in localStorage too, so a chat made as the window starts knows it at once (SHEP-57: ownAddr()).
+// Kept in localStorage too, so a chat made as the window starts knows it at once (fork: SHEP-57: ownAddr()).
 // Asked once; again 30 s after an answer without it.
 let ownName = null, askedName = false, nameAt = 0;
 const coreName = () => {
@@ -102,7 +103,7 @@ const coreName = () => {
   return ownName;
 };
 
-// SHEP-57: one of this computer's own terminals, named with this computer's name in front ("nextgate/t89"), as its
+// fork: SHEP-57: one of this computer's own terminals, named with this computer's name in front ("nextgate/t89"), as its
 // bare id ("t89"), the way terminals() lists it. A chat pane can be saved so (its props' terminal, after a restart):
 // then nothing found its terminal, its pane (myPane()) was null, and the call button, the rail's wave and
 // Ctrl+Shift+Space were all for another chat. Another machine's address stays as it is. With this computer's name not
@@ -292,7 +293,7 @@ export default class Chat extends View {
     this.inner = _props?.inner === true;
     if (this.inner) inner.chat = this;
     const P = this.inner ? _props : props();
-    // (this computer's own terminal as itself: "nextgate/t89" is "t89" here, SHEP-57)
+    // (this computer's own terminal as itself: "nextgate/t89" is "t89" here, fork: SHEP-57)
     this.origin = P?.terminal ? ownAddr(P.terminal) : null;
     this.addr = this.origin;
     // No agent yet (a Coordinator tab): it may have started one already (this slot's label).
@@ -336,7 +337,7 @@ export default class Chat extends View {
     this.box = TextareaState.new({ placeholder: "" });
     this.box.set_rows(1);
     // The box's words again in an unseen textarea of its own kind that grows with them (boxMeter()): its height
-    // is the rows the box's own wrap gives them (SHEP-46).
+    // is the rows the box's own wrap gives them (fork: SHEP-46).
     this.meter = TextareaState.new({ placeholder: "" });
     this.meter.set_auto_grow(1, METER_ROWS);
     // Ctrl+Enter (the textarea's secondary submit): held until the agent is free.
@@ -499,6 +500,7 @@ export default class Chat extends View {
     // subagents, its background shells) count seconds for their first minute, then minutes.
     let ticks = 0;
     cx.timer.every(1000, (cx) => {
+      this.forgetHidden();
       if (this.call) return;
       ticks++;
       const rows = [...this.helpers(), ...this.jobs()];
@@ -1376,12 +1378,15 @@ export default class Chat extends View {
         if (this.phase === "ended" && !this.swapping) {
           // A thread stays open on its notice; ✕ closes it.
           if (this.thread) return;
+          // An Assistant that ran and ended (its /exit, GitHub #1039): its tab stays, with Restart Assistant (the same
+          // conversation, resumed) where its chat was. Closing it is the person's call.
+          if (this.resumable()) { this.endedAssistant = true; cx.notify(); return; }
           // A Coordinator tab's chat stays: empty again, ready to start the next one. One that ended before it ever
           // ran (its CLI not found on another machine, GitHub #839) says why, and the message goes back in the box.
           if (this.role) {
             const lost = !this.path ? this.pending.filter((p) => p.msg || p.text) : [];
             const why = lost.length ? await this.endedWhy(this.addr) : "";
-            this.addr = null; this.path = null; this.reset(); this.phase = "fresh";
+            this.startFresh();
             if (lost.length) {
               this.pending = this.pending.filter((p) => !lost.includes(p));
               if (!this.box.value().trim()) this.box.set_value(lost.map((p) => p.msg?.text ?? p.text).filter(Boolean).join("\n\n"));
@@ -2220,6 +2225,47 @@ export default class Chat extends View {
     run("pane-chat.toggle");
   }
 
+  // An Assistant whose agent ended after it ran: its session can be resumed (restartAssistant()).
+  resumable() {
+    return Boolean(!this.thread && !this.inner && this.assistant() && this.addr && this.path && agent.sessionOf(this.kind, this.path));
+  }
+
+  // The Coordinator tab's chat empty again, ready to start the next Assistant.
+  startFresh() {
+    this.endedAssistant = false;
+    this.addr = null; this.path = null; this.reset(); this.phase = "fresh";
+  }
+
+  // Restart Assistant, after its agent ended (GitHub #1039): the same conversation resumed, with its flags, parked
+  // behind this chat, which follows it (as the model picker's restart does).
+  restartAssistant(cx) {
+    const mine = this.myPane() ?? this.lastPane;
+    if (this.restarting || !mine || !this.addr) return;
+    this.restarting = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await hc(["get", this.addr, "--json"]);
+        let t = null;
+        try { t = JSON.parse(r.stdout || "null"); } catch {}
+        if (!t || t.error) throw new Error("Its old terminal is gone. Start a new Assistant instead.");
+        const argv = agent.resumeArgv(this.kind, this.argv ?? t.argv ?? [this.kind], agent.sessionOf(this.kind, this.path));
+        this.swapping = true;
+        const next = await agent.restart(t, { argv, resume: true, base: argv }, mine);
+        this.endedAssistant = false;
+        this.follow_to(next);
+        this.note = { id: `note-${Date.now()}`, text: "Restarted. The conversation continues." };
+        cx.timer.after(6000, (cx) => { this.note = null; cx.notify(); });
+        cx.spawn(async (cx) => this.follow(cx));
+      } catch (e) {
+        toast({ title: "The Assistant didn't restart", body: plainError(e), level: "error" });
+      }
+      this.swapping = false;
+      this.restarting = false;
+      cx.notify();
+    });
+  }
+
   // The agent ended: its pane would have closed, so this one does.
   closeSelf() {
     if (this.inner) { backToTasks(); return; }
@@ -2402,7 +2448,15 @@ export default class Chat extends View {
     const tab = panes().find((p) => p.pane === this.myPane())?.tab;
     const space = spaces().find((s) => s.tabs.some((x) => x.id === tab));
     const folder = this.t?.foreground?.cwd ?? this.t?.cwd ?? undefined;
-    run("tab.new", { space: space?.id, folder, argv: agent.forkArgv(this.kind, this.argv, session) });
+    const args = { space: space?.id, folder, argv: agent.forkArgv(this.kind, this.argv, session) };
+    // #1050: the task's agent still runs in that folder: a fork would be a second agent there, so ask first
+    if (agent.liveTaskAgent(this.t, terminals())) {
+      const ask = agent.FORK_LIVE;
+      openOverlay({ mod: "confirm-chat", kind: "dialog", width: 420, height: 188, props: { title: ask.title, detail: ask.detail,
+        verb: ask.verb, cancel: ask.cancel, command: { name: "tab.new", args } } });
+      return;
+    }
+    run("tab.new", args);
   }
 
   // ---- dictation ----------------------------------------------------------------------------
@@ -2488,7 +2542,7 @@ export default class Chat extends View {
     const keyFile = `${appHome()}/secrets/elevenlabs.env`;
     const ok = await exec("sh", ["-c", 'grep -q "^[[:space:]]*\\(export[[:space:]]*\\)\\{0,1\\}ELEVENLABS_API_KEY=." "$1" 2>/dev/null && echo yes', "x", keyFile]);
     // Or kept in Settings › Secrets (Everywhere), here or on the machine that keeps the secrets: Shepherdr's service
-    // reads it itself (the call is its, as the web app's: SHEP-57). The help only when that machine truly has none: one
+    // reads it itself (the call is its, as the web app's: fork: SHEP-57). The help only when that machine truly has none: one
     // that can't be asked now (entries() fails) lets the call try, and the service says it can't reach it.
     const list = ok.stdout.trim() === "yes" ? null : await secrets.entries().catch(() => null);
     const kept = !list || list.some((e) => e.name === "ELEVENLABS_API_KEY" && e.scope === "everywhere");
@@ -2568,7 +2622,7 @@ export default class Chat extends View {
       if (Date.now() - (call.beat ?? 0) > 15000) { call.beat = Date.now(); this.callShared(); }
       cx.notify();
       if (Date.now() - touched > 4000) { touched = Date.now(); exec("touch", [`${dir}/alive`]); }
-      // (what the agent says and does reaches the call through Shepherdr's service, as the web app's: SHEP-57)
+      // (what the agent says and does reaches the call through Shepherdr's service, as the web app's: fork: SHEP-57)
       // One watch at a time (a new one each second would pile up while the folder is quiet).
       if (this.callWatch?.dir !== dir) {
         const w = { dir, next: watchFolder(dir).catch(() => null).finally(() => { if (this.callWatch === w) this.callWatch = null; }) };
@@ -2872,8 +2926,9 @@ export default class Chat extends View {
         const built = agent.argvFor(pick, { agent: this.kind, argv: t.foreground?.argv ?? [] });
         const on = k?.machine ?? this.machine;
         this.swapping = true;
-        const r = await exec(`${appHome()}/mods/tasks/bin/herdr-task`, [...(on ? ["--on", on] : []), "switch", ref, "--folder", folder,
-          "--argv", JSON.stringify(built.base), "--json"]);
+        const cli = (a) => exec(`${appHome()}/mods/tasks/bin/herdr-task`, a);
+        const r = await settle(cli, await cli([...(on ? ["--on", on] : []), "switch", ref, "--folder", folder,
+          "--argv", JSON.stringify(built.base), "--json"]));
         let out = null;
         try { out = JSON.parse(r.stdout || "null"); } catch {}
         if (r.code !== 0 || !out?.terminal) throw new Error(out?.error || r.stderr?.trim().split("\n").pop() || "Its agent didn't start.");
@@ -2898,7 +2953,8 @@ export default class Chat extends View {
     this.resuming = true;
     cx.spawn(async (cx) => {
       try {
-        const r = await exec(`${appHome()}/mods/tasks/bin/herdr-task`, [...(k.machine ? ["--on", k.machine] : []), "resume", String(k.id), "--json", "--folder", k.folder]);
+        const cli = (a) => exec(`${appHome()}/mods/tasks/bin/herdr-task`, a);
+        const r = await settle(cli, await cli([...(k.machine ? ["--on", k.machine] : []), "resume", String(k.id), "--json", "--folder", k.folder]));
         let out = null;
         try { out = JSON.parse(r.stdout || "null"); } catch {}
         if (r.code !== 0 || !out?.terminal) throw new Error(out?.error || r.stderr?.trim().split("\n").pop() || "Its agent didn't start.");
@@ -3956,7 +4012,7 @@ export default class Chat extends View {
   }
 
   // The images the chat shows, linked where image() can load them, with their sizes. Asked once each. `on`: they're on
-  // that machine (the agent's), copied here first (SHEP-47); asked again in 30 s when it couldn't be reached.
+  // that machine (the agent's), copied here first (fork: SHEP-47); asked again in 30 s when it couldn't be reached.
   needViews(paths, cx, on = null) {
     const key = (p) => `${on ?? ""}\0${p}`;
     const want = [...new Set(paths)].filter((p) => p && !this.views[p] && !this.viewAsked.has(key(p)));
@@ -4116,7 +4172,7 @@ export default class Chat extends View {
     if (!images.length) return;
     i = images.indexOf(all[i] ?? images[0]);
     // Over this chat pane, at its size (a popup's root needs its size spelled out). An overlay's size is at zoom 1,
-    // as the chat's own; only `at` is in the window's pixels (SHEP-42: times the zoom, it ran past the window).
+    // as the chat's own; only `at` is in the window's pixels (fork: SHEP-42: times the zoom, it ran past the window).
     const a = this.paneArea();
     const at = a ? { x: a.x, y: a.y } : "pointer";
     const width = Math.round(this.width), height = Math.round(this.height ?? 700);
@@ -4145,7 +4201,7 @@ export default class Chat extends View {
   // The words' height at the box's width, unseen (sizeBox()). Measured by a textarea like the box (this.meter,
   // auto-grow), not by the words as plain text: the box wraps by its own rules, and the plain copy kept a line the
   // box had already wrapped (after "ping.properties … etc -" it fit about 6 more letters), so the new line was drawn
-  // over the + and Send row until those letters were typed (SHEP-46). Same width, size and wrap as the box: the
+  // over the + and Send row until those letters were typed (fork: SHEP-46). Same width, size and wrap as the box: the
   // row it's under has the box's padding, and this sits in it at the same insets.
   boxMeter() {
     const v = this.box.value();
@@ -4154,6 +4210,14 @@ export default class Chat extends View {
       .child(div().id("chat-text-h").w_full().flex_none()
         .child(Textarea.new(this.meter).w_full().text_size(13).tab_stop(false))
         .on_size_change((size, cx) => { if (Math.abs((this.textH ?? 0) - size.height) > 0.1) { this.textH = size.height; this.sizeBox(); cx.notify(); } }));
+  }
+
+  // The box itself. Its spare row (sizeBox()) is tucked under the + and Send row by one line. lineH is measured,
+  // so it's in pixels at Herdr's zoom, while .mb() takes zoom 1 and scales it again: at zoom 2.4 the tuck was 2.4
+  // lines, and the box's last line of words was drawn over that row (fork: SHEP-59). Back to zoom 1 here.
+  boxArea(t) {
+    return Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
+      .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-unzoom(this.lineH)));
   }
 
   // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
@@ -4338,8 +4402,7 @@ export default class Chat extends View {
         .child(div().id("chat-line-h").absolute().top(0).left(0).opacity(0).text_size(13).child("Xg")
           .on_size_change((size, cx) => { if (Math.abs((this.lineH ?? 0) - size.height) > 0.1) { this.lineH = size.height; this.sizeBox(); cx.notify(); } }))
         .child(this.boxMeter())
-        .child(Textarea.new(this.box).w_full().text_size(13).text_color(t.foreground)
-          .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-this.lineH)))
+        .child(this.boxArea(t))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
           .child(this.asks.length || st === "blocked" ? WORDS.replyInstead : this.placeholder()))))
       // While recording: the recording row. Else one row, on the right: what the agent runs on
@@ -4434,7 +4497,7 @@ export default class Chat extends View {
     if (!this.addr && this.role) return this.slotPane();
     // A thread's pane is the one its opener recorded for this worker (openThread()).
     if (this.thread) return threadOf(this.addr);
-    // (an address with this computer's name in front, learned only after this chat was made: as its bare id, SHEP-57)
+    // (an address with this computer's name in front, learned only after this chat was made: as its bare id, fork: SHEP-57)
     const own = this.addr?.includes("/") ? ownAddr(this.addr) : this.addr;
     const c = chatPane(terminals().find((x) => x.address === own));
     if (c && panes().some((p) => p.pane === c && p.mod === "chat")) this.lastPane = c;
@@ -4466,6 +4529,17 @@ export default class Chat extends View {
       this.refocusAt = Date.now();
       cx.timer.after(0, () => this.box.focus());
     }
+  }
+
+  // A copy in a tab the window doesn't show (another space or tab) isn't drawn, so the wasFocused of its last draw
+  // stayed true and coming back to it never counted as the pane newly focused: its box stayed without the keyboard
+  // whenever another area held it (#1059). Forgotten while hidden (the 1 s timer runs for hidden copies too), so the
+  // first draw back puts the keyboard in the box. A task's chat in the Tasks panel has no tab of its own: left alone.
+  forgetHidden(ps = panes(), tab = focused()?.tab) {
+    if (!this.wasFocused || this.thread || this.inner || !tab) return;
+    const mine = this.myPane();
+    const p = mine && ps.find((x) => x.pane === mine);
+    if (p?.tab && p.tab !== tab) this.wasFocused = false;
   }
 
   render(cx) {
@@ -4574,6 +4648,11 @@ export default class Chat extends View {
     if (this.phase === "ended" && this.thread) return root.child(this.notice(t, WORDS.taskEnded, null, [
       ...(this.taskKey ? [this.button("chat-resume", this.resuming ? WORDS.resuming : "Resume",null, "primary", t, (cx) => this.resumeTask(cx))] : []),
       this.button("chat-close", this.inner ? "Back to tasks" : "Close", null, "secondary", t, () => this.closeSelf())]));
+    if (this.phase === "ended" && !this.swapping && this.endedAssistant) return root.child(this.notice(t, WORDS.assistantEnded, WORDS.assistantEndedBody, [
+      this.button("chat-restart-assistant", this.restarting ? WORDS.restarting : "Restart Assistant", null, "primary", t, (cx) => this.restartAssistant(cx)),
+      this.role
+        ? this.button("chat-new-assistant", "Start a new one", null, "secondary", t, (cx) => { this.startFresh(); cx.notify(); })
+        : this.button("chat-close", "Close chat", null, "secondary", t, () => this.closeSelf())]));
     if (this.phase === "ended" && !this.swapping) return root.child(this.notice(t, WORDS.agentEnded, null, [
       this.button("chat-close", "Close chat", null, "secondary", t, () => this.closeSelf())]));
     const open = this.button("chat-open-terminal", WORDS.openTerminal,"mods/workspace-chrome/terminal.svg", "primary", t, () => this.toTerminal());

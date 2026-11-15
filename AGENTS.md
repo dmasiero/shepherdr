@@ -70,6 +70,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `?task=<id>`. Answer the client's `watch` message with `{type:'chat',chat}` per key; `sections: []` lists places
   under their machine in the sidebar. A stub chat message can carry any Message field (brief, activity, news) to
   screenshot quiet rows without a real log.
+- Two throwaway cores on one VM: `herdr-task --on <it>` installs its bundle into the real `~/.local/bin/herdr-task` unless
+  `$HERDR_TASK_STORE/.remote/<machine>` already says `source`; write that first.
 - A cross-machine send without ssh: two throwaway cores (`HC_SESSION=a`/`b`, clean `env -i`) and
   `hc machine add --via 'sh -c' --name vmb --session b` on a; the wrap only shows with a real agent (e.g.
   `claude --model haiku`) as the target.
@@ -86,13 +88,19 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Python tests: each `test/test_*.py` imports `home_guard` first (a throwaway HOME for the run; touching the real home
   fails the test). Run them with `discover -s test` or from `test/`; one class from `test/` with
   `cd test && python3 -m unittest test_herdr_task.ClassName` (from the repo root the module import fails).
+- herdr-task tests that need a real task list on disk plus a faked `begin()`: reuse Scheduled's setUp/run_cmd/tick_at as class
+  attributes (see DoubleStart) instead of subclassing, which reruns Scheduled's tests.
+- Before-checks against main: `git archive origin/main | tar -x -C <scratch>`, copy the branch's new tests in, run there
+  (installer: `SHEPHERDR_HANDED_OVER=1`; a git worktree of main fails, it's checked out in ~/dev/shepherdr). Patch new names
+  with `mock.patch.object(..., create=True)` so the same test runs on both.
 - Tests that run accept or merge with the real `finish()` must stub `github.live_agents` and `live_helpers` (hc is
   refused under test).
 - test/test_ask_hook.py runs mods/chat/ask-hook.sh with a fake hc; a killed test can orphan the hook (it waits up to a
   week): find it with ps by the worktree's ask-hook.sh path and kill that pid.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
-- Service tests run from the repo root (`bun test service`): the root bunfig.toml preload points Herdr's app home away;
-  from service/ app-home-guard.test.ts fails.
+- `bun test` from service/ alone skips bunfig's preload (2 false failures): run `bun test service core web` from the repo root.
+- Window-mod methods that need `cx.spawn`'s result in a bun test: give the stub cx a spawn that keeps the promise (see the
+  #1010 tests in service/spaces-sidebar.test.ts). ShepherdrSettings menus go through `mods/shepherdr-settings/over.js`.
 - Window-mod render tests: `bun test service` (from the root) with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
@@ -118,10 +126,14 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
 - Claude Code trusts /tmp, so a scratch folder there never shows its trust screen: reproduce trust-screen bugs in a
   fresh folder under /var/tmp, and remove its `~/.claude.json` entry after.
+- `herdr-artifact preview` with a branch's viewer: copy mods/artifacts into a scratch folder with `web/dist/artifact-viewer.html`
+  beside it as viewer.html, and run that copy with `HOME=<scratch>` so it uses a throwaway store.
 - Viewer CSS: `web/src/styles.css` must list `./screens` (`@source`) or the artifact viewer build drops `Recipe.tsx`
   classes such as `@lg:`.
 - Before/after web screenshots: build main's version of the changed files into a scratch dist (`git checkout main --
   <files>`, `bun run build`, copy `web/dist`, `git checkout HEAD -- web`) and run one stub per dist on different ports.
+- Real Codex in a throwaway hc session: `env -i HOME PATH TERM HC_SESSION=x CODEX_HOME=<scratch with auth.json symlinked> hc run --bg ...`;
+  herdr-task's own code refuses hc under a changed HC_SESSION, so feed it saved `hc ls`/`hc get` JSON instead.
 - Crash recovery for real: a throwaway core, `HC_SESSION=<name> hc ...` with `HC_TERMINAL_SOCKET` and Claude's
   `CLAUDE_*` env unset (`CLAUDE_CODE_CHILD_SESSION` turns off transcripts).
 - Service code against a throwaway core (`HC_SESSION=x`): Hub ignores `HC_SESSION`, so pass `new Hub(<wrapper script
@@ -139,6 +151,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   herdr-task against other machines spreads that branch fleet-wide until the next update. Prefer local tests.
 - herdr-task's scheduler re-execs itself within 15 s when its code changes. Its live code is either the zipapp
   `mods/tasks/bin/herdr-task` or the `herdr_task/` folder beside it (`zipfile.is_zipfile` says which).
+- Reach map tests: `test/test_reach.py` puts logging fake ssh/tailscale/hc on PATH and runs the real probe; reuse it for
+  anything that might contact other hosts.
 
 ## Add-ons
 
