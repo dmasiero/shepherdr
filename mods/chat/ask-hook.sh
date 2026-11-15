@@ -40,7 +40,7 @@ command -v hc >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && watch=1
 # A task worker runs its own hook too (herdr-task _allow: Codex's in its argv, Claude's in its
 # --settings, SHEP-139), which hands this what it doesn't allow itself ($HERDR_ASK_CHAINED): the
 # agent waits for both, so this copy steps aside. herdr-task labels such a worker herdr.asks=chained
-# (SHEP-40): its argv is no sure sign, as a fish shell gets the agent's whole command as one string.
+# (fork: SHEP-40): its argv is no sure sign, as a fish shell gets the agent's whole command as one string.
 # Workers started before the label: Codex's hook is inside a -c value (hooks.PermissionRequest=...),
 # never a word of its own (matching only a bare "_allow" put two cards up for each ask, #866), and
 # Claude's is the --settings after the flag, or inside a shell's one-string command (fish).
@@ -61,7 +61,7 @@ done_() { rm -f "$req" "$req.tmp" "$ans"; exit 0; }
 # Over without a decision from here: why, for the card's quiet line, then go.
 ended() { printf '%s\n' "$1" > "$end.tmp" 2>/dev/null && mv "$end.tmp" "$end" 2>/dev/null; done_; }
 # Claude stops the hook itself when its prompt is refused or interrupted in the terminal, and when
-# the hook's timeout runs out: a machine whose settings.json still says 30 minutes (SHEP-40: both
+# the hook's timeout runs out: a machine whose settings.json still says 30 minutes (fork: SHEP-40: both
 # cards then read "Declined" while Claude's prompt still waited in the terminal).
 start=$(date +%s)
 stopped() {
@@ -92,7 +92,7 @@ how() {
 }
 armed=0
 
-# Until it's answered (SHEP-40: the card closed after 30 minutes, leaving the person the terminal):
+# Until it's answered (fork: SHEP-40: the card closed after 30 minutes, leaving the person the terminal):
 # up to a week, the hook's timeout in settings.json and herdr-task's ASK_TIMEOUT, less a minute so
 # it says why itself. Every 0.3 s for two minutes, then every 2 s.
 until=$((start + ${HERDR_ASK_WAIT:-604740}))

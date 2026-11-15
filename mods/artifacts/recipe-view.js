@@ -16,7 +16,7 @@ const data = recipeData.default;
 // Each picture's size in pixels, read by herdr-artifact as it installs (none from an older one).
 const SIZES = recipeData.sizes ?? {};
 
-// Herdr's zoom: on_size_change reports pixels at the zoom, while the view lays out at zoom 1 (SHEP-53).
+// Herdr's zoom: on_size_change reports pixels at the zoom, while the view lays out at zoom 1 (fork: SHEP-53).
 const zoomOf = () => Number(settings()?.zoom) || 1;
 
 export default class RecipeView extends View {
@@ -28,7 +28,7 @@ export default class RecipeView extends View {
     this.sent = new Map();     // a choice's or form's words, once sent
     this.inputs = new Map();   // a form field's InputState, made here: never during render (#1026)
     this.checks = new Map();   // a form checkbox's value
-    this.picks = new Map();    // a form select's picked option
+    this.picks = new Map();    // a form select's picked option (fork: SHEP-48)
     this.boxW = new Map();     // a picture's room (its box's width at zoom 1), as laid out
     try { this.recipe = withIds(data); } catch { this.error = "This artifact's recipe can't be read."; }
     if (this.recipe) this.makeInputs(this.recipe.blocks);
@@ -36,6 +36,7 @@ export default class RecipeView extends View {
 
   // Every text field's InputState, in every form (the ones in columns, tabs and details too). A republish installs the
   // artifact afresh (new recipe-data.js), so a changed form gets its fields from a new init.
+  // (fork: SHEP-48; upstream's 3.1.35 makes them in init too, its own walk)
   makeInputs(blocks) {
     for (const b of blocks ?? []) {
       if (b?.type === "form") {
@@ -134,7 +135,7 @@ export default class RecipeView extends View {
   }
 
   // A picture as big as its room allows, never past its own size, in a box of its own shape: its room (the width a
-  // full-width box gets there) is measured, so the picture fills its box at any zoom and width (SHEP-53: a box as wide
+  // full-width box gets there) is measured, so the picture fills its box at any zoom and width (fork: SHEP-53: a box as wide
   // as the column but only as tall as the image's height in pixels drew it small in the middle). Without its size
   // (an older herdr-artifact, a picture it can't read) it takes the room's width, as before.
   pic(key, src, wh, t) {

@@ -30,10 +30,10 @@ from .browsers import browser_line, browser_path
 # anything else to the chat's card: ask_card).
 
 # How long the agent waits on the permission hook: as the chat's card waits (ask-hook.sh), until
-# it's answered, up to a week (SHEP-40: after 30 minutes the card closed while the question still
+# it's answered, up to a week (fork: SHEP-40: after 30 minutes the card closed while the question still
 # waited in the terminal). The terminal stays a way to answer meanwhile.
 ASK_TIMEOUT = 604800
-# The label a worker with its own hook gets (SHEP-40): ask-hook.sh's global copy steps aside for it
+# The label a worker with its own hook gets (fork: SHEP-40): ask-hook.sh's global copy steps aside for it
 # (its argv is no sure sign: a fish shell gets the agent's command as one string).
 ASKS_LABEL = "herdr.asks=chained"
 OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where"]
@@ -268,7 +268,7 @@ def ask_card(raw):
         return ""
 
     # The agent stops this hook (its prompt answered in the terminal, its timeout run out): the card's
-    # hook stops too and says why, never a card left up that nobody waits on (SHEP-40).
+    # hook stops too and says why, never a card left up that nobody waits on (fork: SHEP-40).
     def stop(*_):
         p.terminate()
         try:

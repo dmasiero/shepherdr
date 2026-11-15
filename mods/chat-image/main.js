@@ -26,7 +26,7 @@ const MAX = 8;                       // 800%
 // The theme's own colors: its background, nearly opaque, behind; its text and hover on top.
 const backdrop = (t) => `${t.background}f2`;
 // Herdr's zoom: the window reports sizes and presses in pixels at the zoom, while the viewer lays out at zoom 1 (as
-// props' width and height). Every reported number comes back to zoom 1 here (SHEP-42: at zoom 2.3 the stage was 2.3x
+// props' width and height). Every reported number comes back to zoom 1 here (fork: SHEP-42: at zoom 2.3 the stage was 2.3x
 // too big and the picture centred off-screen).
 const zoomOf = () => Number(settings()?.zoom) || 1;
 const unzoom = (px) => (typeof px === "number" ? px / zoomOf() : px);

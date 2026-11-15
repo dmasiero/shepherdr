@@ -142,7 +142,7 @@ SKIP = {"__pycache__", ".DS_Store"}
 # Layout blocks Herdr's mods point at whatever is shown now (a task's terminal, an opened artifact):
 # compared without them, so a layout in use still counts as unchanged.
 LIVE_BLOCKS = ("tasks-thread-term", "artifacts-view-body")
-# The question card's hook waits until it's answered, up to a week (SHEP-40; herdr-task's ASK_TIMEOUT).
+# The question card's hook waits until it's answered, up to a week (fork: SHEP-40; herdr-task's ASK_TIMEOUT).
 ASK_TIMEOUT = 604800
 HOOKS = [  # (file under home, event, entry): the question and permission cards (the "needs" add-on)
     (".claude/settings.json", "SessionStart",
@@ -334,7 +334,7 @@ def read(path):
 
 # Layout blocks an older Shepherdr's layout pointed at another mod: {block id: (old mod, Shepherdr's)}. A layout the
 # person keeps (Herdr writes their sizes into it, so updates only land beside it as .new) gets just that block's mod
-# changed, its sizes and the rest left as they are. SHEP-54: the brand row named Herdr's own workspace-chrome, which
+# changed, its sizes and the rest left as they are. fork: SHEP-54: the brand row named Herdr's own workspace-chrome, which
 # has no voice call button beside Search.
 REPOINT_BLOCKS = {"brand": ("workspace-chrome", "workspace-chrome-shepherdr")}
 
@@ -1108,7 +1108,7 @@ def add_hooks(r, rec):
             lst = d.setdefault("hooks", {}).setdefault(event, [])
             have = [h for e in lst for h in e.get("hooks", []) if script in h.get("command", "") and "/mods/chat/" in h.get("command", "")]
             if have:
-                # an older install's shorter wait (30 minutes) closed the card too soon (SHEP-40): raised
+                # an older install's shorter wait (30 minutes) closed the card too soon (fork: SHEP-40): raised
                 want = entry["hooks"][0].get("timeout")
                 for h in have:
                     if isinstance(want, int) and isinstance(h.get("timeout"), (int, float)) and h["timeout"] < want:
@@ -1157,7 +1157,7 @@ def browser_off(root):
 
 
 def unmuffle(r):
-    """SHEP-55: SHEP-51's call muffle is gone. A call that died while muffling left a guard
+    """fork: SHEP-55: SHEP-51's call muffle is gone. A call that died while muffling left a guard
     (<app home>/data/call-muffle/<pid>.json) holding other apps' own volumes: put them back (mods/chat/muffle.ts
     restore) so none stays lowered, and the folder goes. Never stops the install."""
     d = r.p(f"{APP}/data/call-muffle")
@@ -1373,7 +1373,7 @@ def cmd_install(a, update=False):
             atomic_write(r.p(rel) + ".new", data, mode)
             r.notes.append(f"kept your {rel}; Shepherdr's is beside it as {os.path.basename(rel)}.new")
             fixed, ids = repoint_blocks(read(r.p(rel))) if rel.startswith(f"{APP}/layouts/") else (None, [])
-            if fixed is not None:   # SHEP-54: just those blocks' mods, the person's sizes kept
+            if fixed is not None:   # fork: SHEP-54: just those blocks' mods, the person's sizes kept
                 atomic_write(r.p(rel), fixed, os.stat(r.p(rel)).st_mode & 0o777)
                 r.notes.append(f"{rel}: its {', '.join(ids)} block now shows Shepherdr's own mod (the voice call button)")
         elif how == "old":

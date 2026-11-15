@@ -195,7 +195,7 @@ class Publish(unittest.TestCase):
             self.assertFalse(A.current(mod, 1))
 
     def test_a_new_recipe_view_reaches_installed_recipes(self):
-        """#1026: a fixed recipe view (forms drew their fields' state during render) must reach every installed recipe
+        """fork: SHEP-48, #1026: a fixed recipe view (forms drew their fields' state during render) must reach every installed recipe
         on its next open, not only on a republish: the install's stamp follows recipe-view.js and recipe.js too."""
         os.makedirs(os.path.join(self.dir, "app", "mods"))
         out = self.publish(self.recipe())

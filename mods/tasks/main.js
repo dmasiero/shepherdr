@@ -271,7 +271,7 @@ export default class Tasks extends View {
 
   // Herdr cuts off a render that takes too long ("interrupted"): one render reads terminals(),
   // agents(), panes(), machines(), the layout and each space's coordinator tab once (this.frame, live.js), not once
-  // per row (SHEP-43: each row's target() walked the whole layout).
+  // per row (fork: SHEP-43: each row's target() walked the whole layout).
   render(cx) {
     this.frame = {};
     try { return inRender(() => this.draw(cx)); } finally { this.frame = null; }
