@@ -100,7 +100,7 @@ class Install(unittest.TestCase):
         out = run("install", "--root", self.root, "--yes").stdout
         self.assertRegex(out, r"files: \d+ new\n")
         rec = json.load(open(self.p(APP, "data/shepherdr/installed.json")))
-        self.assertEqual(rec["version"], "3.1.34")
+        self.assertEqual(rec["version"], "3.1.35")
         self.assertTrue(os.path.isfile(self.p(APP, "mods/tasks/bin/herdr-task")))
         self.assertTrue(os.path.isfile(self.p(APP, "layouts/shepherdr.json")))
         self.assertEqual(os.path.realpath(self.p(".local/bin/herdr-task")), os.path.realpath(self.p(APP, "mods/tasks/bin/herdr-task")))
@@ -538,6 +538,68 @@ class Install(unittest.TestCase):
             sh.bun_path, sh.has_unit, sh.calls_on, sh.subprocess.run, sh.service_answers = saved
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_linked_unit_is_left_alone(self):
+        """GitHub #1048: a Nix home-manager unit is a link into /nix/store. An update leaves it a link (no file written,
+        none recorded, so uninstall never takes it), restarts the service without enabling it, and says so."""
+        from importlib.machinery import SourceFileLoader
+        sh = SourceFileLoader("shepherdr_cli", SHEPHERDR).load_module()
+        if sys.platform == "darwin":
+            self.skipTest("a systemd unit")
+        root = tempfile.mkdtemp(prefix="shepherdr-nix-")
+        ran = []
+        saved = (sh.bun_path, sh.calls_on, sh.subprocess.run, sh.service_answers)
+        try:
+            sh.bun_path = lambda: "/usr/bin/bun"
+            sh.calls_on = lambda r: 0
+            sh.service_answers = lambda r: (True, 7788)
+            sh.subprocess.run = lambda argv, **k: ran.append(argv) or subprocess.CompletedProcess(argv, 0, b"", b"")
+            store = os.path.join(root, "store-unit.service")   # stands in for /nix/store/<hash>-shepherdr.service
+            with open(store, "w") as f:
+                f.write("[Service]\nExecStart=nix's own\n")
+            unit = os.path.join(root, sh.UNIT)
+            os.makedirs(os.path.dirname(unit))
+            os.symlink(store, unit)
+            r, rec = sh.Run(root, False), {"files": {sh.UNIT: "an older sha"}}
+            sh.install_service(r, rec, True)
+            self.assertTrue(os.path.islink(unit))
+            self.assertEqual(open(store).read(), "[Service]\nExecStart=nix's own\n")
+            self.assertNotIn(sh.UNIT, rec["files"])
+            self.assertTrue(any("links to " + store in n and "left as it is" in n for n in r.notes), r.notes)
+            self.assertIn(["systemctl", "--user", "restart", "shepherdr.service"], ran)
+            self.assertNotIn(["systemctl", "--user", "enable", "shepherdr.service"], ran)
+            # a plain unit (ours) is still written and recorded as before
+            os.remove(unit)
+            r, rec, ran[:] = sh.Run(root, False), {}, []
+            sh.install_service(r, rec, True)
+            self.assertFalse(os.path.islink(unit))
+            self.assertIn(sh.UNIT, rec["files"])
+            self.assertIn(["systemctl", "--user", "enable", "shepherdr.service"], ran)
+        finally:
+            sh.bun_path, sh.calls_on, sh.subprocess.run, sh.service_answers = saved
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_unit_path_has_hc(self):
+        """GitHub #1048: the unit's PATH holds the folder hc was found in, wherever that is (a Nix profile, not
+        ~/.local/bin); a tool linked into the Nix store goes on by its profile's folder, which outlives an upgrade."""
+        from importlib.machinery import SourceFileLoader
+        sh = SourceFileLoader("shepherdr_cli", SHEPHERDR).load_module()
+        tmp = tempfile.mkdtemp(prefix="shepherdr-path-")
+        old = os.environ["PATH"]
+        try:
+            prof = os.path.join(tmp, "profile", "bin")
+            os.makedirs(prof)
+            with open(os.path.join(prof, "hc"), "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(os.path.join(prof, "hc"), 0o755)
+            os.environ["PATH"] = prof + os.pathsep + old
+            rel, text = sh.unit_text(tmp, "/usr/bin/bun", None)
+            path = next(l for l in text.splitlines() if "PATH" in l)
+            self.assertIn(prof, path)
+            self.assertEqual(sh.tool_dir("hc", "/home/u/.nix-profile/bin/hc"), "/home/u/.nix-profile/bin")
+        finally:
+            os.environ["PATH"] = old
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_update_web_only(self):
         """A web-only install updates web only (the record says so), and doctor says how; one whose source is gone says
         that instead of updating from itself."""
@@ -857,37 +919,6 @@ class OldCopies(unittest.TestCase):
         self.assertEqual(p.returncode, 1)
         self.assertIn("--take: not a file Shepherdr installs", p.stderr)
 
-    def test_a_kept_layouts_brand_row_gets_the_voice_button(self):
-        """fork: SHEP-54: the brand row named Herdr's own workspace-chrome (no voice call button). A layout Herdr wrote the
-        person's sizes into is kept on update, Shepherdr's beside it as .new: only its brand block's mod changes."""
-        def find(n, id_):
-            if isinstance(n, dict):
-                if n.get("id") == id_:
-                    return n
-                n = n.get("children", [])
-            for c in n if isinstance(n, list) else []:
-                hit = find(c, id_)
-                if hit:
-                    return hit
-        rel = "layouts/shepherdr.json"
-        self.assertEqual(find(json.load(open(self.p(APP, rel))), "brand")["content"], {"mod": "workspace-chrome-shepherdr"},
-                         "a new install's brand row is Shepherdr's")
-        lay = json.load(open(self.p(APP, rel)))
-        find(lay, "brand")["content"] = {"mod": "workspace-chrome"}   # an older Shepherdr's layout
-        find(lay, "sidebar")["size"] = {"px": 333}                   # the person's width, written by Herdr
-        self.write(rel, json.dumps(lay, indent=2) + "\n")
-        up = run("update", "--root", self.root).stdout
-        self.assertIn("its brand block now shows Shepherdr's own mod", up)
-        now = json.load(open(self.p(APP, rel)))
-        self.assertEqual(find(now, "brand")["content"], {"mod": "workspace-chrome-shepherdr"})
-        self.assertEqual(find(now, "sidebar")["size"], {"px": 333}, "the person's sizes stay")
-        self.assertTrue(os.path.exists(self.p(APP, rel + ".new")))
-        # again: nothing more to change, and a brand row the person pointed elsewhere is theirs
-        find(now, "brand")["content"] = {"mod": "my-own-brand"}
-        self.write(rel, json.dumps(now, indent=2) + "\n")
-        self.assertNotIn("its brand block now shows", run("update", "--root", self.root).stdout)
-        self.assertEqual(find(json.load(open(self.p(APP, rel))), "brand")["content"], {"mod": "my-own-brand"})
-
     def test_doctor_notes_a_layout_naming_missing_mods(self):
         lay = json.load(open(self.p(APP, "layouts/shepherdr.json")))
         lay["children"].append({"id": "x", "type": "block", "content": {"mod": "someones-gone-mod"}})
@@ -895,6 +926,52 @@ class OldCopies(unittest.TestCase):
         d = run("doctor", "--root", self.root)
         self.assertIn("names mods that aren't here (someones-gone-mod)", d.stdout)
         self.assertIn("whole", d.stdout)
+
+
+class LayoutBrandRow(unittest.TestCase):
+    """#1032: the sidebar's top row (layout block "brand") is Shepherdr's own, with the voice call button beside Search.
+    A layout from before, which the person's sizes made their own (kept on update), gets only that block changed."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="shepherdr-test-")
+        os.makedirs(os.path.join(self.root, APP))
+        self.src = tempfile.mkdtemp(prefix="shepherdr-src-")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.src, ignore_errors=True)
+
+    @staticmethod
+    def brand(d):
+        return next(c for c in d["children"][0]["children"] if c["id"] == "brand")
+
+    def test_the_shipped_layout_uses_shepherdrs_brand_row(self):
+        d = json.load(open(os.path.join(ROOT, "layouts", "shepherdr.json")))
+        self.assertEqual(self.brand(d)["content"]["mod"], "workspace-chrome-shepherdr")
+
+    def test_an_older_layout_the_person_resized_gets_only_its_brand_row_moved(self):
+        old = os.path.join(self.src, "s")
+        shutil.copytree(ROOT, old, ignore=shutil.ignore_patterns(".git", "node_modules"))
+        lay = os.path.join(old, "layouts", "shepherdr.json")
+        d = json.load(open(lay))
+        self.brand(d)["content"]["mod"] = "workspace-chrome"
+        with open(lay, "w") as f:
+            f.write(json.dumps(d, indent=2) + "\n")
+        run("install", "--root", self.root, "--yes", "--source", old)
+        mine = os.path.join(self.root, APP, "layouts", "shepherdr.json")
+        d = json.load(open(mine))
+        d["children"][0]["size"] = {"px": 312}
+        with open(mine, "w") as f:
+            f.write(json.dumps(d, indent=2) + "\n")
+        up = run("update", "--root", self.root, "--source", ROOT).stdout
+        d = json.load(open(mine))
+        self.assertEqual(self.brand(d)["content"]["mod"], "workspace-chrome-shepherdr")
+        self.assertEqual(d["children"][0]["size"], {"px": 312}, "the person's sidebar width stays")
+        self.assertIn("the voice call button beside Search", up)
+        self.assertTrue(os.path.exists(mine + ".new"))
+        # Again: nothing more to move.
+        again = run("update", "--root", self.root, "--source", ROOT).stdout
+        self.assertNotIn("the voice call button beside Search", again)
 
 
 class AudioTools(unittest.TestCase):
