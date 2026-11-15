@@ -34,6 +34,19 @@ esac
 """
 
 
+# fork: on NixOS (nextgate's envfs /usr/bin) a PATH narrowed to a fake bin and /usr/bin:/bin finds none of the tools
+# restart.sh runs: they go in the fake bin, from the caller's PATH (any "command not found" fails a test).
+TOOLS = ("bash", "cat", "tail", "jq", "mkdir", "date", "sort", "basename", "awk", "rm", "sed", "grep",
+         "head", "tr", "sleep", "mktemp", "dirname", "printf", "wc", "cut")
+
+
+def link_tools(d):
+    for tool in TOOLS:
+        found = shutil.which(tool)
+        if found and not os.path.lexists(os.path.join(d, "bin", tool)):
+            os.symlink(found, os.path.join(d, "bin", tool))
+
+
 class RemoteRestart(unittest.TestCase):
     def run_script(self, state, env=None):
         d = tempfile.mkdtemp()
@@ -42,12 +55,7 @@ class RemoteRestart(unittest.TestCase):
         with open(hc, "w") as f:
             f.write(FAKE_HC)
         os.chmod(hc, 0o755)
-        # fork: on NixOS (nextgate's envfs /usr/bin) this narrow PATH finds no tail or jq: the tools the script and
-        # the fake hc need go in the fake bin, from the caller's PATH.
-        for tool in ("bash", "cat", "tail", "jq"):
-            found = shutil.which(tool)
-            if found:
-                os.symlink(found, os.path.join(d, "bin", tool))
+        link_tools(d)  # fork: NixOS (TOOLS)
         e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "FAKE_DIR": d, "FAKE_STATE": state, **(env or {})}
         r = subprocess.run(["bash", SCRIPT, "vmb/t2", json.dumps(["claude", "--model", "sonnet"])], env=e,
                            capture_output=True, text=True, timeout=30)
@@ -122,6 +130,56 @@ class ChatLabel(unittest.TestCase):
         args = self.restart({})
         self.assertIn("herdr.chat=p7", args)
         self.assertNotIn("herdr.chat=vmb/p7", args)
+
+
+class NoTab(unittest.TestCase):
+    """GitHub #980: an Assistant the service started without the window (a web-only install, service/spaces.ts) has
+    a space but no tab or chat. restart.sh quit at its first guard without a word, and the remote side dropped its
+    stderr: all anyone saw was "It didn't restart". It restarts in the background under its space now, and a
+    restart that can't says why, across machines too."""
+
+    def restart(self, labels, env=None, argv=("claude", "--resume", "s1")):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "bin"))
+        hc = os.path.join(d, "bin", "hc")
+        rec = json.dumps({"address": "t2", "cwd": "/tmp", "template": "assistant", "labels": labels})
+        with open(hc, "w") as f:
+            f.write(LOCAL_HC.replace(LOCAL_HC.split("\n")[3], f"  get) echo '{rec}' ;;"))
+        os.chmod(hc, 0o755)
+        link_tools(d)  # fork: NixOS (TOOLS)
+        e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "HERDR_APP_HOME": d, "FAKE_DIR": d, "HERDR_RESTART_RESUME": "1", **(env or {})}
+        r = subprocess.run(["bash", SCRIPT, "t2", json.dumps(list(argv))], env=e, capture_output=True, text=True, timeout=30)
+        p = os.path.join(d, "run-args")
+        return r, (read(p).split("\n") if os.path.exists(p) else None)
+
+    def test_a_space_alone_restarts_in_the_background(self):
+        r, args = self.restart({"herdr.space": "sp1", "herdr.coordinator.space": "sp1", "herdr.role": "coordinator"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "t9")
+        self.assertIn("--keep", args)
+        for label in ("herdr.space=sp1", "herdr.coordinator.space=sp1", "herdr.role=coordinator"):
+            self.assertIn(label, args)
+        self.assertFalse(any(a.startswith("herdr.tab=") for a in args), "no empty tab label")
+
+    def test_nowhere_to_go_says_why(self):
+        r, args = self.restart({"herdr.role": "coordinator"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("t2 has no space, tab or chat to restart into.", r.stderr)
+        self.assertIsNone(args)
+
+    def test_the_other_machine_says_why(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "bin"))
+        hc = os.path.join(d, "bin", "hc")
+        with open(hc, "w") as f:
+            f.write(FAKE_HC.replace("    echo t9 ;;", '    [ -n "$FAKE_WHY" ] && { echo "$FAKE_WHY" >&2; exit 1; }\n    echo t9 ;;'))
+        os.chmod(hc, 0o755)
+        link_tools(d)  # fork: NixOS (TOOLS)
+        e = {"PATH": f"{d}/bin:/usr/bin:/bin", "HOME": d, "FAKE_DIR": d, "FAKE_STATE": "connected",
+             "FAKE_WHY": "t2 has no space, tab or chat to restart into."}
+        r = subprocess.run(["bash", SCRIPT, "vmb/t2", "[]"], env=e, capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stderr.strip(), "It didn't restart on vmb: t2 has no space, tab or chat to restart into.")
 
 
 class Bash32(unittest.TestCase):

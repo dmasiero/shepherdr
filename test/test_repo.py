@@ -106,8 +106,6 @@ class Repo(unittest.TestCase):
         for p in text_files():
             with open(p, encoding="utf-8", errors="replace") as f:
                 for n, line in enumerate(f, 1):
-                    # the project's own public repo page (the one-time star card links to it, SHEP-79) is no personal value
-                    line = line.replace("https://github.com/eliasstravik/shepherdr\"", "\"")
                     self.assertIsNone(bad.search(line), f"{os.path.relpath(p, ROOT)}:{n}: {line.strip()[:120]}")
 
     # Elements and components whose `title` is no hover popup: a dialog's or card's heading, a row's words, an
@@ -348,7 +346,7 @@ class Repo(unittest.TestCase):
 
     def test_brand_row_is_shepherdrs_chrome(self):
         """fork: SHEP-54: the open sidebar's brand row is Shepherdr's workspace-chrome-shepherdr (the voice button beside
-        Search), not Herdr's own workspace-chrome, which has none; the installer repoints it in a kept layout."""
+        Search), not Herdr's own workspace-chrome, which has none; the installer moves it in a kept layout (upstream's LAYOUT_MOVES)."""
         def blocks(n):
             if isinstance(n, dict):
                 yield n
@@ -358,8 +356,6 @@ class Repo(unittest.TestCase):
         self.assertEqual(lay["brand"]["content"], {"mod": "workspace-chrome-shepherdr"})
         self.assertEqual(lay["sidebar-footer"]["content"], {"mod": "workspace-chrome-shepherdr", "props": {"footer": True}})
         self.assertTrue(lay["brand"].get("window_drag"), "the brand row still drags the window (macOS traffic lights' row)")
-        shep = open(J("bin", "shepherdr")).read()
-        self.assertIn('REPOINT_BLOCKS = {"brand": ("workspace-chrome", "workspace-chrome-shepherdr")}', shep)
 
     def test_tab_bar_from_one_list(self):
         """The tab bar's + menu, a tab's menu, Switch agent, a tab's name and the window header's End agent are
@@ -418,7 +414,7 @@ class Repo(unittest.TestCase):
 
     def test_version_everywhere(self):
         v = re.search(r'^VERSION = "([^"]+)"', open(J("bin", "shepherdr")).read(), re.M).group(1)
-        self.assertEqual(v, "3.1.34")
+        self.assertEqual(v, "3.1.35")
         self.assertRegex(open(J("CHANGELOG.md")).read(), rf"(?m)^## {re.escape(v)}\b", "CHANGELOG's newest entry")
         self.assertIn(v, open(J("RECIPE.md")).read())
         self.assertIn(v, open(J("README.md")).read())
