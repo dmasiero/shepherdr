@@ -249,6 +249,10 @@ def cmd_show(args):
                     + (" (ready refused: out of rounds)" if v.get("review_out") else ""))
     if v.get("agents_md"):
         text.append(f"for AGENTS.md: {v['agents_md']}")
+    from .lessons import pending, SCOPE_WORDS, lessons_on  # fork: SHEP-64: drafts waiting for the person
+    if pending(v) and lessons_on(v.get("space")):
+        for x in pending(v):
+            text.append(f"lesson {x['id']} ({SCOPE_WORDS.get(x['scope'], x['scope'])}): {x['text']}")
     if v.get("pr"):
         text.append(f"pull request: #{v['pr']['number']} {v['pr']['url']}")
     if v.get("why") and v["status"] == "needs":
@@ -368,8 +372,11 @@ def ready_words(args):
 
 def cmd_ready(args):
     said, details = ready_words(args)
+    from .lessons import check as check_lessons  # fork: SHEP-64
     with open_store(args) as s:
         t = s.find(args.id)
+        # fork: SHEP-64: its drafted lessons, checked before anything changes (lessons off: ignored)
+        drafted, lesson_words = check_lessons(s, t, args)
         me = os.environ.get("HC_TERMINAL_ID")
         if me and any(a["address"] == me for a in t["agents"]):
             refresh_sessions(s, t, [k for k in live_agents(s.key(t)) if k["address"] == me])
@@ -408,6 +415,8 @@ def cmd_ready(args):
                 # "For AGENTS.md": what the next agent would need about setting up or testing this
                 # repo; the Assistant decides whether it goes into the repo's AGENTS.md.
                 t["agents_md"] = note[:300]
+            if drafted:
+                t.setdefault("lessons", []).extend(drafted)  # fork: SHEP-64: candidates, pending the person's Keep
             for k in ("attention", "attention_at", "handed_at", "fix_requested", "progress", "retry", "review_out", "back"):
                 t.pop(k, None)
             # Its agents' turns now: a later turn of theirs takes it back to work (busy_again()).
@@ -446,6 +455,8 @@ def cmd_ready(args):
         if jobs and t["state"] == "ready":
             msg += (f" {len(jobs)} background job{'s' if len(jobs) > 1 else ''} of yours still run{'' if len(jobs) > 1 else 's'}: "
                     "the task shows Working until they end, then Ready. Stop any you don't need (a server, a watcher).")
+        if lesson_words:
+            msg += f" {lesson_words}"  # fork: SHEP-64
         if proof:
             msg += f" Proof: {proof['title']}."
         elif asked:

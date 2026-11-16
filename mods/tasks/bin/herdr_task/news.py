@@ -72,7 +72,10 @@ def news_line(s, t, v, event, words=None):
     attr = lambda x: str(x).replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
     note = " ".join(str(t.get("agents_md") or "").split())
     said = " ".join(str(t.get("summary") or "").split())
-    text = {"ready": f"{ref} is ready: {title}" + (f" · {said}" if said else "") + (f" · For AGENTS.md: {note}" if note else ""),
+    from .lessons import count_words  # fork: SHEP-64: "2 lessons", its drafts waiting for the person
+    drafts = count_words(t)
+    text = {"ready": f"{ref} is ready: {title}" + (f" · {said}" if said else "") + (f" · {drafts}" if drafts else "")
+                     + (f" · For AGENTS.md: {note}" if note else ""),
             "needs-you": f"{ref} needs you: {v.get('why') or 'Needs you'} ({title})",
             "failed": f"{ref} failed: {v.get('why') or 'Agent stopped'} ({title})",
             "stalled": f"{ref} {words} ({title})",

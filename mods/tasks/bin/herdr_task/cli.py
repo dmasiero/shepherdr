@@ -28,6 +28,7 @@ from .assistant_settings import cmd_session_note
 from .feedback import cmd_feedback
 from .sandbox import cmd_sandbox
 from .touches import cmd_stats, cmd_touch  # fork: SHEP-63
+from .lessons import cmd_lessons, SCOPES as LESSON_SCOPES  # fork: SHEP-64
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -245,6 +246,11 @@ def main():
     c.add_argument("--proof", help="its proof artifact's id (herdr-artifact publish prints it); default: its newest artifact titled \"... · Proof\"")
     c.add_argument("--agents-md", help="\"For AGENTS.md\": one line about setting up or testing this repo that the next agent "
                                        "would need and AGENTS.md lacks; the Assistant decides whether to add it")
+    # fork: SHEP-64: lessons drafted from where the person stepped in (lessons.py); ignored while lessons are off
+    c.add_argument("--lesson", action="append", help="a lesson for later tasks: one short imperative rule (at most 200 "
+                                                     "characters), drafted only from where the person stepped in; up to 3, each followed by its --scope")
+    c.add_argument("--scope", action="append", choices=LESSON_SCOPES, help="the --lesson before it is for: repo (AGENTS.md), "
+                                                                          "space (this space), you (the person, every space) or shepherdr (Shepherdr's makers)")
     c = cmd("reviewed", cmd_reviewed, "a task's agent records one review round of its current commit (Review: on): ready then "
                                       "accepts that commit; uses one of its Review rounds")
     c.add_argument("--report", help="the round's findings in a line (levels, what was fixed)")
@@ -298,6 +304,11 @@ def main():
     c = cmd("stats", cmd_stats, "per space: tasks, touches by kind, done with no help, Ready to Accept, reopens", id=False)
     c.add_argument("--space", help="one space (its id or name)")
     c.add_argument("--weeks", type=int, help="only tasks started in the last N weeks")
+    # fork: SHEP-64: the switch for Lessons (Settings › Agents › Lessons)
+    c = cmd("lessons", cmd_lessons, "Lessons, drafted by workers from where you step in: on, off, or (a space) inherit "
+                                    "Everywhere's; no word: what it is now", id=False)
+    c.add_argument("what", nargs="?", choices=("on", "off", "inherit"))
+    c.add_argument("--space", help="one space's own (its id); default: Everywhere")
     cmd("unarchive", cmd_unarchive, "bring an archived task back into its list (only when the person asks; writing to it does too)")
     c = cmd("edit", cmd_edit, "change a task")
     c.add_argument("--title")

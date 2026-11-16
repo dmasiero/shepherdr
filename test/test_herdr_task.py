@@ -7202,3 +7202,237 @@ class Touches(unittest.TestCase):
             with self.redirect(out):
                 self.touches.cmd_stats(self.argparse.Namespace(json=True, space=None, weeks=None))
             self.assertEqual(json.loads(out.getvalue())["all"]["kinds"], {"message": 1})
+
+
+class Lessons(unittest.TestCase):
+    """fork: SHEP-64: a worker drafts lessons at ready (herdr_task/lessons.py): the `lessons.on` switch and its command,
+    the checks (length, how many, private words, a password in plain words, a secret's value, a word near the person's
+    "password"), repeats dropped, --agents-md as a repo lesson, the news line's count, and off leaving no trace in the
+    brief. Touches' throwaway store and settings; no program runs for real but a fake herdr-secret."""
+    run_cmd, task_list, tasks, log, user = Touches.run_cmd, Touches.task_list, Touches.tasks, Touches.log, staticmethod(Touches.user)
+
+    def setUp(self):
+        Touches.setUp(self)
+        import herdr_task.lessons as lessons
+        import herdr_task.settings as settings
+        import herdr_task.news as news
+        self.lessons, self.settings, self.news = lessons, settings, news
+        self.settings_path = settings.SETTINGS
+        from unittest import mock
+        for p in [mock.patch.object(self.commands, "review_refusal", lambda *a: None),
+                  mock.patch.object(self.commands, "find_proof", lambda *a: None),
+                  mock.patch.object(self.commands, "task_settings", lambda *a, **k: []),
+                  mock.patch.object(self.commands, "ready_turns", lambda *a: {}),
+                  mock.patch.object(lessons, "secret_names", lambda: []),
+                  mock.patch.object(lessons, "private_words", lambda: ["nextgate", "Ada Lovelace"], create=True),
+                  mock.patch("herdr_task.feedback.private_words", lambda: ["nextgate", "Ada Lovelace"])]:
+            p.start()
+            self.addCleanup(p.stop)
+        self.agent_log = self.log("w1", [self.user("Your task, APP-1: ...", "u0"),
+                                         self.user("the admin password is in the vault, use abcWEB-1234! for now", "u1"),
+                                         self.user("you don't have to confirm each receipt, now or later", "u2")])
+        self.task_list([{"id": 1, "title": "Receipts", "state": "running", "space": "sp1", "started": 1,
+                         "agents": [{"address": "t1", "agent": "claude", "log": self.agent_log}]},
+                        {"id": 2, "title": "Other", "state": "ready", "space": "sp1", "started": 1, "agents": [],
+                         "lessons": [{"id": "l-2-1", "text": "Say where the files are when you ask for a review.", "scope": "you",
+                                      "key": self.lessons.key_of("Say where the files are when you ask for a review."), "state": "pending"}]}])
+        with open(os.path.join(self.folder, "AGENTS.md"), "w") as f:
+            f.write("# Notes\n\n- Run the tests from test/ with unittest.\n")
+
+    def write_settings(self, d):
+        with open(self.settings_path, "w") as f:
+            json.dump(d, f)
+
+    def ready(self, lesson=None, scope=None, agents_md=None):
+        return self.run_cmd(self.commands.cmd_ready, id="APP-1", summary="Receipts are recorded.", details=None, proof=None,
+                            agents_md=agents_md, lesson=lesson, scope=scope)
+
+    def refused(self, **kw):
+        with self.assertRaises(self.lessons.Fail) as e:
+            self.ready(**kw)
+        t = self.tasks()[0]
+        self.assertEqual((t["state"], t.get("lessons"), t.get("summary")), ("running", None, None))  # nothing changed
+        return str(e.exception)
+
+    # ---- the switch
+
+    def test_the_switch_defaults_on_and_a_space_overrides_everywhere(self):
+        on = self.lessons.lessons_on
+        self.assertTrue(on())
+        self.assertEqual(self.settings.DEFAULTS["lessons"], {"on": True})
+        self.assertFalse(self.run_cmd(self.lessons.cmd_lessons, what="off", space=None)["on"])
+        self.assertEqual((on(), on("sp1")), (False, False))
+        self.assertTrue(self.run_cmd(self.lessons.cmd_lessons, what="on", space="sp1")["on"])
+        self.assertEqual((on(), on("sp1"), on("sp2")), (False, True, False))
+        self.run_cmd(self.lessons.cmd_lessons, what="inherit", space="sp1")
+        self.assertFalse(on("sp1"))
+        with open(self.settings_path) as f:
+            d = json.load(f)
+        self.assertEqual((d["everywhere"], d.get("spaces")), ({"lessons": {"on": False}}, {}))
+        # kept lessons beside the switch stay when it's switched (step 3 keeps them there)
+        d["everywhere"]["lessons"]["kept"] = [{"id": "l-9-1", "text": "Commit receipts without asking."}]
+        self.write_settings(d)
+        self.run_cmd(self.lessons.cmd_lessons, what="on", space=None)
+        with open(self.settings_path) as f:
+            self.assertEqual(json.load(f)["everywhere"]["lessons"], {"on": True, "kept": [{"id": "l-9-1", "text": "Commit receipts without asking."}]})
+        self.assertTrue(self.run_cmd(self.lessons.cmd_lessons, what=None, space=None)["on"])
+        # a copy the window pushed here is never written
+        self.write_settings({"pushed_from": "mac", "everywhere": {}})
+        with self.assertRaises(self.lessons.Fail):
+            self.lessons.write_on(None, False)
+
+    def test_the_cli_has_the_command_and_the_flags(self):
+        from herdr_task import cli
+        import inspect
+        src = inspect.getsource(cli)
+        for words in ('cmd("lessons", cmd_lessons', '"--lesson", action="append"', '"--scope", action="append", choices=LESSON_SCOPES'):
+            self.assertIn(words, src)
+        self.assertEqual(self.lessons.SCOPES, ("repo", "space", "you", "shepherdr"))
+
+    # ---- drafts at ready
+
+    def test_ready_keeps_its_drafts_as_pending_candidates(self):
+        out = self.ready(lesson=["Record and commit a paid receipt's row without asking first.", "Say which machine you ran it on."],
+                         scope=["space", "you"])
+        t = self.tasks()[0]
+        self.assertEqual(t["state"], "ready")
+        self.assertEqual([(x["id"], x["scope"], x["state"], x["from"]) for x in t["lessons"]],
+                         [("l-1-1", "space", "pending", "lesson"), ("l-1-2", "you", "pending", "lesson")])
+        self.assertEqual(t["lessons"][0]["key"], self.lessons.key_of("Record and commit a paid receipt's row without asking first."))
+        self.assertEqual(out["state"], "ready")
+        # the ready news line says how many
+        from herdr_task.store import Store, locate
+        with Store(locate(self.folder)) as s:
+            line = self.news.news_line(s, s.find("APP-1"), {}, "ready")
+        self.assertIn("APP-1 is ready: Receipts · Receipts are recorded. · 2 lessons", line)
+        # and show lists them
+        text = self.io.StringIO()
+        with self.redirect(text):
+            self.commands.cmd_show(self.argparse.Namespace(id="APP-1", folder=self.folder, json=False, evidence=False))
+        self.assertIn("lesson l-1-1 (this space): Record and commit", text.getvalue())
+        # a second ready adds its new ones after them; the same one again is a repeat
+        said = self.io.StringIO()
+        with self.redirect(said):
+            self.commands.cmd_ready(self.argparse.Namespace(id="APP-1", folder=self.folder, json=False, summary="Again.", details=None,
+                                                            proof=None, agents_md=None, scope=["space", "repo"],
+                                                            lesson=["Record and commit a paid receipt's row without asking first.",
+                                                                    "Link the proof in the summary."]))
+        self.assertIn("1 lesson drafted for the person to keep, edit or drop.", said.getvalue())
+        self.assertIn("is already drafted: dropped", said.getvalue())
+        self.assertEqual([x["id"] for x in self.tasks()[0]["lessons"]], ["l-1-1", "l-1-2", "l-1-3"])
+
+    def test_what_ready_refuses_and_changes_nothing(self):
+        self.assertIn("is 201 characters", self.refused(lesson=["x" * 201], scope=["repo"]))
+        self.assertIn("At most 3", self.refused(lesson=["One rule.", "Two rule.", "Three rule.", "Four rule."], scope=["you"] * 4))
+        self.assertIn("its own --scope", self.refused(lesson=["One rule.", "Two rule."], scope=["you"]))
+        self.assertIn("key, token or password", self.refused(lesson=["Use ghp_abcdefghijklmnopqrstuvwxyz0123 for the API."], scope=["repo"]))
+        self.assertIn("an e-mail address", self.refused(lesson=["Send the report to ops@example.com each week."], scope=["space"]))
+        self.assertIn("a machine's or person's name", self.refused(lesson=["Deploy from nextgate, never the laptop."], scope=["space"]))
+        # what redact() leaves (the design's proof): a password in plain words, a word from the person's line about one
+        self.assertIn("in plain words", self.refused(lesson=["The admin password is Hunter2x! for the web panel."], scope=["space"]))
+        self.assertIn("about a password", self.refused(lesson=["Log in to the web admin with abcWEB-1234! first."], scope=["space"]))
+        self.assertEqual(self.lessons.redact("Log in to the web admin with abcWEB-1234! first.", []),
+                         "Log in to the web admin with abcWEB-1234! first.")
+        # a home path is fine: made ~
+        from herdr_task.base import HOME
+        self.ready(lesson=[f"Keep scratch files under {HOME}/scratch, never in the repo."], scope=["repo"])
+        self.assertEqual(self.tasks()[0]["lessons"][0]["text"], "Keep scratch files under ~/scratch, never in the repo.")
+
+    def test_a_secret_this_agent_can_use_is_found_without_reading_it(self):
+        from unittest import mock
+        fake = os.path.join(self.tmp, "fakebin")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "herdr-secret"), "w") as f:
+            f.write("#!/bin/sh\n[ \"$1\" = run ] || exit 2\n[ \"$2\" = SHOP_KEY ] || exit 3\nsed 's/s3cretVALUE/[SHOP_KEY hidden]/g'\n")
+        os.chmod(os.path.join(fake, "herdr-secret"), 0o755)
+        with mock.patch.dict(os.environ, {"PATH": fake + os.pathsep + os.environ["PATH"]}):
+            self.assertEqual(self.lessons.holds_secret(["Use the shop's test mode.", "Its key s3cretVALUE works."], ["SHOP_KEY"]), {1})
+            self.assertEqual(self.lessons.holds_secret(["Use the shop's test mode."], ["SHOP_KEY"]), set())
+            with mock.patch.object(self.lessons, "secret_names", lambda: ["SHOP_KEY"]):
+                self.assertIn("value of a secret", self.refused(lesson=["Run the shop in test mode with s3cretVALUE."], scope=["space"]))
+        self.assertEqual(self.lessons.holds_secret(["anything"], []), set())
+
+    def test_repeats_are_dropped_not_refused(self):
+        self.write_settings({"spaces": {"sp1": {"lessons": {"on": True, "kept": [{"id": "l-7-1", "text": "Commit receipts without asking."}]}}}})
+        out = self.run_cmd(self.commands.cmd_ready, id="APP-1", summary="Done.", details=None, proof=None, agents_md=None,
+                           lesson=["Say where the files are when you ask for a review.",  # pending on APP-2
+                                   "Commit receipts without asking!",                     # kept in its space
+                                   "Run the tests from test/ with unittest."],            # in AGENTS.md
+                           scope=["you", "space", "repo"])
+        self.assertEqual(self.tasks()[0].get("lessons"), None)
+        self.tasks_reset()
+        out = self.run_cmd(self.commands.cmd_ready, id="APP-1", summary="Done.", details=None, proof=None, agents_md=None,
+                           lesson=["Name the receipt file after its date.", "Commit receipts without asking"], scope=["space", "you"])
+        self.assertEqual([x["text"] for x in self.tasks()[0]["lessons"]], ["Name the receipt file after its date."])
+        self.assertEqual(out["state"], "ready")
+
+    def test_agents_md_becomes_a_repo_lesson_and_keeps_its_line(self):
+        self.ready(agents_md="Run bun web/build-plugins.ts before bunx tsc in a fresh worktree.")
+        t = self.tasks()[0]
+        self.assertEqual(t["agents_md"], "Run bun web/build-plugins.ts before bunx tsc in a fresh worktree.")
+        self.assertEqual([(x["scope"], x["from"]) for x in t["lessons"]], [("repo", "agents-md")])
+        # one already in AGENTS.md, or one with something private, is no lesson, and ready isn't refused
+        self.tasks_reset()
+        self.ready(agents_md="Run the tests from test/ with unittest.")
+        self.assertEqual((self.tasks()[0].get("lessons"), self.tasks()[0]["state"]), (None, "ready"))
+        self.tasks_reset()
+        self.ready(agents_md="Ask ops@example.com for the staging login.")
+        self.assertEqual((self.tasks()[0].get("lessons"), self.tasks()[0]["agents_md"]), (None, "Ask ops@example.com for the staging login."))
+
+    def tasks_reset(self):
+        with open(self.path) as f:
+            d = json.load(f)
+        d["tasks"][0].update(state="running")
+        for k in ("lessons", "agents_md"):
+            d["tasks"][0].pop(k, None)
+        with open(self.path, "w") as f:
+            json.dump(d, f)
+
+    # ---- off leaves no trace
+
+    def test_off_ignores_lessons_and_leaves_no_trace_in_the_brief_or_news(self):
+        from herdr_task import launch, templates
+        words = templates.WORKER_MD
+        self.assertIn(self.lessons.RULE_HEAD, words)
+        self.write_settings({"everywhere": {"lessons": {"on": False}}})
+        # ready still accepts the flag, checks nothing and keeps nothing (even a draft it would refuse)
+        out = self.ready(lesson=["The admin password is Hunter2x!", "x" * 300], scope=["space", "repo"],
+                         agents_md="Run bun web/build-plugins.ts first.")
+        t = self.tasks()[0]
+        self.assertEqual((out["state"], t.get("lessons"), t["agents_md"]), ("ready", None, "Run bun web/build-plugins.ts first."))
+        self.assertNotIn("lesson", json.dumps(out).lower().replace("lessons\": null", ""))
+        # an older draft says nothing while it's off: no count in news, none in show
+        from herdr_task.store import Store, locate
+        with Store(locate(self.folder)) as s:
+            line = self.news.news_line(s, s.find("APP-2"), {}, "ready")
+        self.assertNotIn("lesson", line)
+        # the brief: no lessons line in worker.md's words, no --lesson in the closing line
+        from unittest import mock
+        task = {"id": 1, "title": "Receipts", "space": "sp1", "mode": "here", "agents": []}
+        with mock.patch.object(launch, "instructions", lambda role: words), \
+                mock.patch.object(launch, "review_limits", lambda *a: (False, 0)), \
+                mock.patch.object(launch, "secret_path", lambda: None), \
+                mock.patch.object(launch, "browser_line", lambda: ""):
+            s = type("S", (), {"loc": {"folder": self.folder}, "ref": lambda self, t: "APP-1"})()
+            here = launch.own_path()  # its folder's name may say "lessons"
+            off = (launch.worker_words(task) + launch.closing_line(s, task)).replace(here, "herdr-task")
+            self.write_settings({"everywhere": {"lessons": {"on": False}}, "spaces": {"sp1": {"lessons": {"on": True}}}})
+            on = (launch.worker_words(task) + launch.closing_line(s, task)).replace(here, "herdr-task")
+        for w in ("--lesson", "Lessons, when", "lesson"):
+            self.assertNotIn(w, off.lower() if w == "lesson" else off)
+            self.assertIn(w, on.lower() if w == "lesson" else on)
+        self.assertEqual(off.count("\n") + 1, on.count("\n"))  # only that one line goes
+        # and with the space on, the count is back on its news line
+        with Store(locate(self.folder)) as s:
+            self.assertIn("· 1 lesson", self.news.news_line(s, s.find("APP-2"), {}, "ready"))
+
+    def test_worker_md_teaches_when_and_how(self):
+        from herdr_task import templates
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            installed = f.read()
+        for words in (templates.WORKER_MD, installed):
+            self.assertIn(self.lessons.RULE.strip(), words)
+        self.assertIn(templates.WORKER_MD_BEFORE_LESSONS, templates.OLD_WORKERS)  # an unedited old one gets today's
+        for words in ("Only from those moments", "a go-ahead or a standing rule becomes a permission or a habit",
+                      "a one-off fact", "short and imperative", "--scope repo|space|you|shepherdr", "No stepping in, no lessons"):
+            self.assertIn(words, self.lessons.RULE)
