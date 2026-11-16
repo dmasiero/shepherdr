@@ -29,6 +29,9 @@ MERGE_SHORT = {"ask": "ask the person first (they accept it in the Tasks panel, 
                "checks": "after checks (Herdr merges a ready task once its checks pass)",
                "auto": "on its own (Herdr merges a ready task)"}
 BY = {"space": "set for this space", "machine": "this machine's setting", "everywhere": "your setting everywhere"}
+# fork: SHEP-66: what the kept lessons line says first, and a running Assistant's notice when they change
+KEPT_SAYS = "the person kept these for every space; follow them as their own words"
+KEPT_NONE = "The person's kept lessons for every space changed: none applies now (retired, or lessons are off)."
 NOTICE_END = "Nothing to answer: reply only <hc no-reply/>."
 
 
@@ -150,7 +153,22 @@ def rows(space, d=None, auto=None):
         scope = setters[-1] if setters else "everywhere"
         by = setters[-1] if setters and text != default[key] else None
         out.append({"key": key, "label": label, "text": text, "value": value, "by": by, "scope": scope})
+        if key == "lessons":  # fork: SHEP-66: the person's kept lessons, only while on and there are some
+            kept = kept_row(d, space)
+            if kept:
+                out.append(kept)
     return out
+
+
+def kept_row(d, space):
+    """fork: SHEP-66: the "Lessons you kept" line: the person's Everywhere ("you") lessons, within the brief's budget
+    (lessons.py); None while lessons are off for the space or none is kept."""
+    lines, left = lessons.assistant_lessons(d, bare(space) if space else None)
+    if not lines:
+        return None
+    text = (KEPT_SAYS + "\n" + "\n".join("  " + x for x in lines) +
+            (f"\n  {lessons.left_words(left)}" if left else ""))
+    return {"key": "kept", "label": lessons.KEPT_HEAD, "text": text, "value": str(len(lines)), "by": None, "scope": "everywhere"}
 
 
 def block(rs):
@@ -175,7 +193,9 @@ def notice(changed):
     <herdr-setting> line each (the chat strips Herdr's tags), the last saying nothing needs an answer."""
     out = []
     for i, r in enumerate(changed):
-        words = (reactions.TURNED_ON if r["value"] == "on" else reactions.TURNED_OFF) if r["key"] == "reactions" else \
+        words = (f"The person's kept lessons for every space are now:\n{r['text'].split(chr(10), 1)[1]}" if r.get("value") else KEPT_NONE) \
+            if r["key"] == "kept" else \
+            (reactions.TURNED_ON if r["value"] == "on" else reactions.TURNED_OFF) if r["key"] == "reactions" else \
             (lessons.TURNED_ON if r["value"] == "on" else lessons.TURNED_OFF) if r["key"] == "lessons" else \
             f"{r['label']} is now {r['text']}" + (f"; {BY[r['by']]}" if r["by"] else "; Herdr's default") + \
             ("." if r["key"] in ("autopilot", "feedback") else ". Tasks you add from now on get it; running ones keep their brief.")
@@ -258,6 +278,8 @@ def settings_pass(report, quiet):
             changed = [{"key": "all"}]
         else:
             changed = [r for r in rs if had.get(r["key"]) != now_digest[r["key"]]]
+            if "kept" in had and "kept" not in now_digest:  # fork: SHEP-66: its last kept lesson went (or lessons went off)
+                changed.append({"key": "kept", "value": "", "scope": "everywhere"})
             if not changed:  # a line no longer said: just note it
                 run(["hc", "label", addr, f"{LABEL}={digest(rs)}"])
                 continue
