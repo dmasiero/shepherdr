@@ -244,3 +244,22 @@ test("Feedback offers and its repo", () => {
   s.set("agents.feedback_repo", "", "all");
   expect(JSON.parse(readFileSync(file, "utf8")).everywhere?.agents).toBeUndefined();
 });
+
+// fork: SHEP-65: kept lessons (herdr-task's lessons.py) are a key the web's Settings don't know yet: a change keeps them,
+// and the push to another machine carries them, as the window's push does
+test("kept lessons stay through a web change and go with the push to their machine", async () => {
+  const { pushBody } = await import("./settings.ts");
+  const kept = [{ id: "l-4-1", text: "Commit a paid receipt's row without asking.", from: ["ACC-4"], kept_at: 1, edited: false, seen: 0, off: false }];
+  const f0 = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...f0, everywhere: { ...f0.everywhere, lessons: { on: true, kept } },
+    spaces: { ...f0.spaces, "pi/sp7": { name: "acc", lessons: { on: false, kept } } } }));
+  const s = new Settings();
+  s.start();
+  s.set("tasks.merge", "Right away");
+  const f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere.lessons).toEqual({ on: true, kept });
+  expect(f.spaces["pi/sp7"].lessons).toEqual({ on: false, kept });
+  const there = JSON.parse(pushBody(f, "pi"));
+  expect(there.everywhere.lessons.kept).toEqual(kept);
+  expect(there.spaces.sp7.lessons).toEqual({ on: false, kept });
+});

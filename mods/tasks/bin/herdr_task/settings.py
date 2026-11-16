@@ -90,6 +90,34 @@ def write_autopilot(space, values):
     os.replace(tmp, SETTINGS)
 
 
+def write_lessons(space, edit):
+    """fork: SHEP-65: changes `lessons` ({on, kept}) at one level of the settings file, as
+    write_autopilot does (space None: Everywhere's): edit(part) changes the dict in place; an empty one
+    goes. Refused on a copy the window pushed here: the window's machine would put its own back."""
+    d = read_settings()
+    if d.get("pushed_from"):
+        raise Fail("This machine's Shepherdr settings are a copy from the machine whose window sets them: "
+                   "change Lessons there (nothing changed here).")
+    layer = d.setdefault("spaces", {}).setdefault(bare(space), {}) if space else d.setdefault("everywhere", {})
+    part = dict(layer["lessons"]) if isinstance(layer.get("lessons"), dict) else {}
+    out = edit(part)
+    if part:
+        layer["lessons"] = part
+    else:
+        layer.pop("lessons", None)
+    if space and not layer:
+        d["spaces"].pop(bare(space), None)
+    d["version"] = 1
+    path = SETTINGS
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    return out
+
+
 def reactions_on(space=None, d=None):
     """Settings › Agents › Reactions in a space, for every agent there (reactions.py): the space's
     own, else Everywhere's, else on. A layer's agents.reactions, else what SHEP-42 kept as

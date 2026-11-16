@@ -247,9 +247,9 @@ def cmd_show(args):
         r = v["review_rounds"]
         text.append(f"review rounds: {r['used']} of {r['of']} used" + (f" ({r['added']} added by the assistant)" if r["added"] else "")
                     + (" (ready refused: out of rounds)" if v.get("review_out") else ""))
-    if v.get("agents_md"):
+    from .lessons import pending, SCOPE_WORDS, lessons_on, md_as_lesson  # fork: SHEP-64: drafts waiting for the person
+    if v.get("agents_md") and not md_as_lesson(v):  # fork: SHEP-65: else it's a repo lesson, below
         text.append(f"for AGENTS.md: {v['agents_md']}")
-    from .lessons import pending, SCOPE_WORDS, lessons_on  # fork: SHEP-64: drafts waiting for the person
     if pending(v) and lessons_on(v.get("space")):
         for x in pending(v):
             text.append(f"lesson {x['id']} ({SCOPE_WORDS.get(x['scope'], x['scope'])}): {x['text']}")

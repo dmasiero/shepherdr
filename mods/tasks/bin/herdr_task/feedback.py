@@ -406,6 +406,22 @@ def cmd_feedback(args):
                         ps.pop(key, None)
 
 
+def from_lesson(line, space, ref):
+    """fork: SHEP-65: a lesson for Shepherdr's makers the person kept (lessons.py) becomes a problem
+    to offer: noted "later", as on an Autopilot wake, so the Assistant offers it with `herdr-task
+    feedback --key <key>` and files it only on the person's yes. (key, state): state "later", or what
+    the person already did with it (declined, filed, offered...): never offered twice."""
+    line = one_line(line)
+    key = key_of(line)
+    with problems() as ps:
+        p = ps.get(key)
+        if p and p.get("state") in ("declined", "filed", "filing", "offered", "later"):
+            return key, p["state"]
+        ps[key] = {**(p or {}), "line": line, "state": "later", "at": now(), "space": space,
+                   "details": f"A lesson from {ref} the person kept for Shepherdr's makers.", "from": "lesson"}
+    return key, "later"
+
+
 def offer_or_tell(args, ps, key, p, line, k, addr, labels, assistant, space):
     """Not filing, under STATE's lock: an Assistant is told whether to offer; any other agent's
     report goes to its Assistant as news, once per problem."""
