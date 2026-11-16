@@ -6906,3 +6906,299 @@ class BarePathThere(unittest.TestCase):
         r = subprocess.run([os.path.join(core, "herdr-core"), "-c", '"$0" -c "$1" "$2"; true', sys.executable, code, BIN],
                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
         self.assertEqual(r.stdout.strip().splitlines(), [core, "hc-found ls"], r.stderr)
+
+
+class Touches(unittest.TestCase):
+    """fork: SHEP-63: where the person steps in, kept as touches on the task (herdr_task/touches.py): what a worker's log
+    line was, the commands that make one, the tick's look at new lines only, back-fill once, and `stats`. A real task
+    list in a throwaway store, logs written here; hc, herdr-app and the clock never run for real."""
+
+    def setUp(self):
+        import argparse
+        import contextlib
+        import io
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.commands as commands
+        import herdr_task.settings as settings
+        import herdr_task.store as store
+        import herdr_task.touches as touches
+        import herdr_task.autopilot as autopilot
+        self.commands, self.touches, self.store_mod = commands, touches, store
+        self.argparse, self.io, self.redirect = argparse, io, contextlib.redirect_stdout
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.folder = os.path.join(self.tmp, "app")
+        os.makedirs(self.folder)
+        self.store_dir = os.path.join(self.tmp, "tasks")
+        os.makedirs(self.store_dir)
+        self.hc = {}  # terminal -> hc get's record
+
+        def never(*a, **k):
+            raise AssertionError("ran a program")
+        for p in [mock.patch.object(store, "STORE", self.store_dir), mock.patch.object(touches, "STORE", self.store_dir),
+                  mock.patch.object(settings, "SETTINGS", os.path.join(self.tmp, "settings.json")),
+                  mock.patch.dict(os.environ, {"HC_TERMINAL_ID": ""}),
+                  mock.patch.object(touches, "hc_json", lambda *a: self.hc.get(a[1]) if a[:1] == ("get",) else None),
+                  mock.patch.object(autopilot, "window_spaces", lambda: None),
+                  mock.patch.object(commands, "run", never), mock.patch.object(commands, "live_agents", lambda key: [])]:
+            p.start()
+            self.addCleanup(p.stop)
+
+    # ---- helpers
+
+    def task_list(self, tasks):
+        slug, self.path = self.store_mod.store_path(self.folder)
+        with open(self.path, "w") as f:
+            json.dump({"version": 1, "folder": self.folder, "kind": "folder", "name": "app", "slug": slug, "prefix": "APP",
+                       "next": len(tasks) + 1, "tasks": tasks}, f)
+        self.slug = slug
+        return self.path
+
+    def tasks(self):
+        with open(self.path) as f:
+            return json.load(f)["tasks"]
+
+    def log(self, name, lines, mode="w"):
+        path = os.path.join(self.tmp, f"{name}.jsonl")
+        with open(path, mode) as f:
+            for d in lines:
+                f.write(json.dumps(d) + "\n")
+        return path
+
+    @staticmethod
+    def user(text, uuid, at="2026-11-16T10:00:00.000Z", **extra):
+        return {"type": "user", "uuid": uuid, "timestamp": at, "message": {"role": "user", "content": text}, **extra}
+
+    def run_cmd(self, fn, **kw):
+        args = self.argparse.Namespace(**{"folder": self.folder, "json": True, **kw})
+        out = self.io.StringIO()
+        with self.redirect(out):
+            fn(args)
+        return json.loads(out.getvalue().strip().splitlines()[-1])
+
+    # ---- what a line was
+
+    def test_each_line_a_worker_received_is_sorted_by_who_stepped_in(self):
+        c = self.touches.classify
+        tag = self.touches.tag
+        self.assertEqual(c("Send it"), ("message", "person", "chat"))
+        self.assertEqual(c('<hc reply-to="The draft"/> no, shorter'), ("message", "person", "chat"))
+        self.assertEqual(c("", images=True), ("message", "person", "chat"))
+        self.assertEqual(c("[Request interrupted by user for tool use]"), ("stop", "person", "chat"))
+        self.assertEqual(c('<hc from="t8k herdr-assistant-mw8">From the Assistant: use the staging box</hc>'), ("guide", "assistant", "assistant"))
+        self.assertEqual(c('<hc from="t61 assistant">Task TIC-9 "Gmail" can\'t merge yet: conflicts</hc>'), ("fix", "assistant", "assistant"))
+        self.assertEqual(c('<hc from="artifact" id="a1" version="2" title="Proof">make it bigger</hc>'), ("note", "person", "viewer"))
+        self.assertEqual(c('<hc from="person" secret="KEY">Kept: KEY</hc>'), ("message", "person", "secret"))
+        self.assertEqual(c('Task APP-3 "x" can\'t merge yet: checks'), ("fix", "person", "tasks"))
+        # Herdr's own words, tagged now and known by their first words from before: never anyone stepping in
+        for own in (tag("merge") + 'Merge task APP-1 "x" now:\n1. ...', '<pasted_content id="1">Merge task INF-13 "x" now:</pasted_content>',
+                    tag("resume") + "Shepherdr resumed your session", "Shepherdr restarted your session on a new agent",
+                    "Your Assistant added one review round to APP-1", "Review round 1 of 2 for APP-1 found",
+                    '<hc from="t4 herdr-assistant-x">' + tag("fix") + 'Task APP-1 "x" can\'t merge yet</hc>',
+                    "Your last turn was cut off by the model's provider (overloaded).",
+                    '<herdr-github task="APP-1" pr="2">news</herdr-github>', "<task-notification><task-id>b1</task-id></task-notification>",
+                    '<hc from="t9 app-1-review">findings</hc>', '<hc from="person" reaction="👍" to="Done"/>', "  "):
+            self.assertIsNone(c(own), own)
+        # the tag hides in the chat (core/chat-log.js drops a <herdr-…/> tag and shows the words after it)
+        self.assertRegex(tag("merge"), r'^<herdr-[\w-]+\b[^>]*/>\n$')
+
+    def test_the_commands_herdr_sends_a_worker_start_with_its_tag(self):
+        c = self.commands
+        self.assertTrue(c.RESUME_NUDGE.startswith(self.touches.tag("resume")))
+        self.assertTrue(c.SWITCH_NUDGE.startswith(self.touches.tag("switch")))
+        t = {"id": 1, "title": "x", "worktree": "/w", "branch": "b"}
+        self.assertTrue(c.local_merge_msg(type("S", (), {"loc": {"folder": "/f"}, "ref": lambda self, t: "APP-1"})(), t)
+                        .startswith(self.touches.tag("merge")))
+
+    # ---- reading a log
+
+    def test_a_log_is_read_once_new_lines_only_and_never_twice(self):
+        tg = self.touches
+        path = self.log("s1", [
+            self.user("Your brief: do the thing", "u0"),
+            self.user("Use the staging box", "u1", "2026-11-16T10:01:00.000Z"),
+            {"type": "user", "uuid": "m1", "isMeta": True, "timestamp": "2026-11-16T10:01:01.000Z", "message": {"content": "[Image: original]"}},
+            self.user("[Request interrupted by user]", "u2", "2026-11-16T10:02:00.000Z"),
+            self.user(tg.tag("merge") + "Merge task APP-1 now", "u3", "2026-11-16T10:03:00.000Z"),
+            self.user('<hc from="t5 herdr-assistant-a">The person says: yes</hc>', "u4", "2026-11-16T10:04:00.000Z"),
+            {"type": "assistant", "uuid": "a1", "timestamp": "2026-11-16T10:05:00.000Z",
+             "message": {"content": [{"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {}},
+                                     {"type": "tool_use", "id": "q2", "name": "AskUserQuestion", "input": {}}]}},
+            {"type": "user", "uuid": "r1", "timestamp": "2026-11-16T10:06:00.000Z",
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "q1", "content": "User has answered"}]}},
+            {"type": "user", "uuid": "r2", "timestamp": "2026-11-16T10:06:30.000Z",
+             "message": {"content": [{"type": "tool_result", "tool_use_id": "q2", "is_error": True, "content": "declined"}]}},
+            self.user("sidechain words", "u5", isSidechain=True),
+        ])
+        t = {"id": 1, "state": "running", "space": "sp1", "agents": [{"address": "t9", "log": path}]}
+        self.assertEqual(tg.read_logs(t), (4, True))
+        got = [(x["kind"], x["by"], x["log"]) for x in t["touches"]]
+        self.assertEqual(got, [("message", "person", "s1/u1"), ("stop", "person", "s1/u2"), ("guide", "assistant", "s1/u4"),
+                               ("ask", "person", "s1/r1")])
+        self.assertNotIn("Use the staging box", json.dumps(t), "a touch points at the words, never copies them")
+        self.assertEqual(tg.read_logs(t), (0, False), "nothing new: nothing read again")
+        # a line still being written waits; once whole, only it is new
+        with open(path, "a") as f:
+            f.write(json.dumps(self.user("one more thing", "u6", "2026-11-16T10:07:00.000Z"))[:-5])
+        self.assertEqual(tg.read_logs(t)[0], 0)
+        with open(path, "a") as f:
+            f.write(json.dumps(self.user("one more thing", "u6", "2026-11-16T10:07:00.000Z"))[-5:] + "\n")
+        self.assertEqual(tg.read_logs(t)[0], 1)
+        # its cursor lost (or the same session copied into a new log): the pointers keep it from counting twice
+        t.pop("touch_logs")
+        self.assertEqual(tg.read_logs(t)[0], 0)
+        self.assertEqual(len(t["touches"]), 5)
+
+    def test_codex_logs_too(self):
+        path = self.log("rollout-x", [
+            {"timestamp": "2026-11-16T10:00:00.000Z", "type": "event_msg", "payload": {"type": "user_message", "message": "brief"}},
+            {"timestamp": "2026-11-16T10:01:00.000Z", "type": "event_msg", "payload": {"type": "user_message", "message": "go on"}},
+            {"timestamp": "2026-11-16T10:02:00.000Z", "type": "event_msg", "payload": {"type": "turn_aborted", "reason": "interrupted"}},
+        ])
+        t = {"id": 1, "agents": [{"log": path}]}
+        self.touches.read_logs(t)
+        self.assertEqual([x["kind"] for x in t["touches"]], ["message", "stop"])
+
+    def test_the_assistant_on_an_autopilot_wake_is_autopilot(self):
+        at = 1794800000000
+        with open(os.path.join(self.store_dir, ".autopilot.json"), "w") as f:
+            json.dump({"spaces": {"sp1": {"wakes": [{"at": at, "outcome": "Delivered"}, {"at": at + 86400000, "outcome": "Missed: no Assistant"}]}}}, f)
+        self.assertEqual(self.touches.assistant_or_autopilot("sp1", at + 60000), "autopilot")
+        self.assertEqual(self.touches.assistant_or_autopilot("sp1", at + 86400000 + 60000), "assistant", "a missed wake answered nothing")
+        self.assertEqual(self.touches.assistant_or_autopilot("sp2", at + 60000), "assistant")
+
+    def test_a_card_or_note_told_two_ways_is_one_touch_and_old_ones_stay_counted(self):
+        tg = self.touches
+        t = {"id": 1}
+        self.assertTrue(tg.add(t, "ask", "person", "web", "ask:t5.100.1", 1000))
+        self.assertFalse(tg.add(t, "ask", "person", "log", "s1/r1", 30000), "the log's line of the same card")
+        self.assertEqual(t["touches"], [{"kind": "ask", "at": 1000, "by": "person", "from": "web", "log": "ask:t5.100.1"}])
+        self.assertTrue(tg.add(t, "ask", "person", "log", "s1/r2", 200000), "a later card is another")
+        self.assertFalse(tg.add(t, "ask", "person", "web", "ask:t5.100.1", 400000), "the same pointer again")
+        for i in range(60):
+            tg.add(t, "message", "person", "chat", f"s1/m{i}", 300000 + i)
+        tg.add(t, "back", "herdr", None, None, 1)
+        self.assertEqual(len(t["touches"]), tg.MAX)
+        self.assertEqual(sum(t["touches_older"].values()), 62 - tg.MAX)  # Herdr's own isn't kept as help
+        self.assertTrue(tg.add(t, "reopen", why="  it broke   the menu " + "x" * 300))
+        self.assertTrue(t["touches"][-1]["why"].startswith("it broke the menu"))
+        self.assertLessEqual(len(t["touches"][-1]["why"]), 200)
+
+    # ---- the commands that make one
+
+    def test_reopen_why_fix_review_more_and_working_again(self):
+        from unittest import mock
+        self.task_list([{"id": 1, "title": "x", "state": "done", "started": 5, "agents": [], "mode": "here"},
+                        {"id": 2, "title": "y", "state": "ready", "started": 5, "agents": [], "mode": "worktree", "worktree": "/w", "branch": "b"}])
+        self.run_cmd(lambda a: self.commands.cmd_state(a, "reopen"), id="1", why="the menu is still wrong")
+        t1 = self.tasks()[0]
+        self.assertEqual([(x["kind"], x["by"], x["why"]) for x in t1["touches"]], [("reopen", "person", "the menu is still wrong")])
+        sent = []
+        with mock.patch.object(self.commands, "tell", lambda s, t, msg, args: (sent.append(msg), ("t9", False))[1]):
+            self.run_cmd(self.commands.cmd_fix, id="2", reason="checks fail", agent=None, argv=None, space=None)
+        t2 = self.tasks()[1]
+        self.assertEqual([x["kind"] for x in t2["touches"]], ["fix"], "a fix is a fix, not also Working again")
+        self.assertTrue(sent[0].startswith(self.touches.tag("fix")))
+        # its agent at work again after ready: Herdr noticed (counted apart, never as help)
+        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
+            t = s.find("2")
+            t["state"] = "ready"
+            self.commands.back_to_work(s, t, "its agent is at work again", auto=True)
+        self.assertEqual([(x["kind"], x["by"]) for x in self.tasks()[1]["touches"]], [("fix", "person"), ("back", "herdr")])
+        # the Assistant's run of a command is the Assistant's
+        self.hc["t3"] = {"labels": {"herdr.role": "coordinator", "herdr.space": "sp1"}}
+        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t3"}):
+            self.assertEqual(self.touches.caller_by({"space": "sp1"}), "assistant")
+        self.hc["t4"] = {"labels": {"herdr.task": f"{self.slug}#2"}}
+        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t4"}):
+            self.assertEqual(self.touches.caller_by(), "agent")
+
+    def test_touch_by_terminal_for_the_service_and_herdr_artifact(self):
+        self.task_list([{"id": 4, "title": "x", "state": "running", "started": 5, "agents": [{"address": "t7"}]}])
+        self.hc["t7"] = {"labels": {"herdr.task": f"{self.slug}#4"}}
+        base = dict(id=None, kind="ask", by="person", source="web", log="ask:t7.100.1", at=None, why=None)
+        out = self.run_cmd(self.touches.cmd_touch, terminal="t7", **base)
+        self.assertEqual(out, {"task": "APP-4", "touched": True})
+        self.assertFalse(self.run_cmd(self.touches.cmd_touch, terminal="t7", **base)["touched"], "told twice: once")
+        self.assertFalse(self.run_cmd(self.touches.cmd_touch, terminal="t8", **base)["touched"], "an Assistant's card: no task")
+        out = self.run_cmd(self.touches.cmd_touch, terminal=None, **{**base, "id": "APP-4", "kind": "note", "log": "note:a1:5"})
+        self.assertTrue(out["touched"])
+        self.assertEqual([x["kind"] for x in self.tasks()[0]["touches"]], ["ask", "note"])
+        with self.assertRaises(Exception):
+            self.run_cmd(self.touches.cmd_touch, terminal="t7", **{**base, "kind": "words"})
+
+    def test_a_pull_request_comment_with_a_persons_words_is_a_touch(self):
+        from unittest import mock
+        import herdr_task.ghnews as ghnews
+        from herdr_task.base import now
+        t = {"id": 1, "state": "ready", "ready_at": now() - 1000, "summary": "Done", "pr": {"number": 7, "repo": "o/r", "url": "u"}}
+        at = now()
+        comments = [{"id": "i1", "at": at, "who": "doug", "body": "Rename it please", "url": "u1"},
+                    {"id": "i2", "at": at, "who": "github-actions[bot]", "body": "Coverage 90%", "url": "u2"},
+                    {"id": "i3", "at": at, "who": "doug", "body": "Done", "url": "u3"}]
+        with mock.patch.object(ghnews, "resting", lambda s, t: {"address": "t1"}), \
+                mock.patch.object(ghnews, "pr_comments", lambda repo, n: comments):
+            ghnews.pr_news(Store([t]), t, {"state": "OPEN", "headRefOid": "abc", "mergeable": "CONFLICTING"}, {})
+        self.assertEqual([(x["kind"], x["by"], x["from"], x["log"]) for x in t["touches"]], [("pr", "person", "github", "pr7/i1")],
+                         "a bot's comment, its own summary and the conflict aren't anyone stepping in")
+
+    # ---- back-fill, the tick, stats
+
+    def test_back_fill_once_then_the_tick_and_stats(self):
+        old = self.log("old", [self.user("brief", "o0"), self.user("you may commit without asking", "o1"),
+                               self.user('<hc from="artifact" id="a1" version="1" title="P">bigger</hc>', "o2")])
+        live = self.log("live", [self.user("brief", "l0")])
+        self.task_list([
+            {"id": 1, "title": "a", "state": "done", "started": 1000, "space": "sp1", "ready_at": 2000, "accepted_at": 2000 + 6 * 60000,
+             "done_at": 3000, "agents": [{"log": old}], "reopened_at": 2500},
+            {"id": 2, "title": "b", "state": "done", "started": 1000, "space": "sp1", "ready_at": 2000, "accepted_at": 2000 + 2 * 60000,
+             "done_at": 3000, "agents": [{"log": os.path.join(self.tmp, "gone.jsonl")}]},
+            {"id": 3, "title": "c", "state": "running", "started": 1000, "space": "sp2", "agents": [{"address": "t9", "log": live}]},
+            {"id": 4, "title": "d", "state": "todo"},
+        ])
+        with open(os.path.join(self.store_dir, ".autopilot.json"), "w") as f:
+            json.dump({"spaces": {"sp2": {"name": "web"}}}, f)  # sp1 the window can't name: its folder's name
+        report = {}
+        self.touches.touches_pass(report)
+        self.assertEqual(report["touches"], [{"folder": self.folder, "added": 3}])
+        ts = self.tasks()
+        self.assertEqual(sorted(x["kind"] for x in ts[0]["touches"]), ["message", "note", "reopen"])
+        self.assertNotIn("touches", ts[1], "its log is gone: nothing to count, no help")
+        with open(self.path) as f:
+            filled = json.load(f)["touches_filled"]
+        # the tick from then on: only working tasks' logs, new lines only; the back-fill never again
+        self.log("live", [self.user("[Request interrupted by user]", "l1"), self.user("use port 8080", "l2")], mode="a")
+        report = {}
+        self.touches.touches_pass(report)
+        self.assertEqual(report["touches"], [{"folder": self.folder, "added": 2}])
+        report = {}
+        self.touches.touches_pass(report)
+        self.assertNotIn("touches", report)
+        with open(self.path) as f:
+            self.assertEqual(json.load(f)["touches_filled"], filled)
+        out = self.io.StringIO()
+        with self.redirect(out):
+            self.touches.cmd_stats(self.argparse.Namespace(json=True, space=None, weeks=None))
+        st = json.loads(out.getvalue())
+        a = st["all"]
+        self.assertEqual((a["tasks"], a["done"], a["no_help"], a["no_words"], a["touches"], a["reopens"]), (3, 2, 1, 1, 5, 1))
+        self.assertEqual(a["kinds"], {"message": 2, "note": 1, "reopen": 1, "stop": 1})
+        self.assertEqual(a["ready_to_accept"], {"n": 2, "median_min": 4.0, "p90_min": 6.0})
+        self.assertEqual(sorted((r["name"], r["tasks"]) for r in st["spaces"]), [("app", 2), ("web", 1)])
+        # one space; the words never reach the stats
+        out = self.io.StringIO()
+        with self.redirect(out):
+            self.touches.cmd_stats(self.argparse.Namespace(json=False, space="web", weeks=None))
+        self.assertIn("web", out.getvalue())
+        self.assertNotIn("app ", out.getvalue())
+        self.assertNotIn("8080", out.getvalue())
+
+    def test_stats_back_fills_a_list_the_tick_hasnt(self):
+        old = self.log("old", [self.user("brief", "o0"), self.user("go ahead", "o1")])
+        self.task_list([{"id": 1, "title": "a", "state": "done", "started": 1000, "agents": [{"log": old}]}])
+        for _ in range(2):
+            out = self.io.StringIO()
+            with self.redirect(out):
+                self.touches.cmd_stats(self.argparse.Namespace(json=True, space=None, weeks=None))
+            self.assertEqual(json.loads(out.getvalue())["all"]["kinds"], {"message": 1})

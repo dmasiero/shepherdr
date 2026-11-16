@@ -253,3 +253,21 @@ class ReadOnlySandbox(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class NoteTouchesItsTask(unittest.TestCase):
+    """fork: SHEP-63: the person's note on a task's artifact is a touch on that task: herdr-task touch with the task, a
+    pointer and no words. A fake herdr-task (never the real one: it never runs on a changed HOME)."""
+
+    def test_a_note_on_a_tasks_artifact_is_a_touch(self):
+        calls = []
+        real_isfile = os.path.isfile
+        with mock.patch.object(A.os.path, "isfile", lambda p: False if p.endswith(os.path.join("tasks", "bin", "herdr-task")) else real_isfile(p)), \
+                mock.patch.object(A.shutil, "which", lambda name: "/fake/herdr-task" if name == "herdr-task" else None), \
+                mock.patch.object(A.subprocess, "run", lambda argv, **k: calls.append(argv)):
+            A.note_touch({"id": "a1", "task": "SHEP-7", "title": "P"}, "/proj")
+            A.note_touch({"id": "a2", "title": "no task"}, "/proj")
+            A.note_touch({"id": "a3", "task": "SHEP-7; rm -rf /"}, "/proj")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:10], ["/fake/herdr-task", "touch", "SHEP-7", "--folder", "/proj", "--kind", "note", "--by", "person", "--from"])
+        self.assertTrue(calls[0][calls[0].index("--log") + 1].startswith("note:a1:"))

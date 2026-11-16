@@ -16,6 +16,7 @@ def view(s, task, live=None):
     known, live = live is not None, live if live is not None else []
     running = [k for k in live if agent_running(k)]
     v = dict(task)
+    v.pop("touch_logs", None)  # fork: SHEP-63: where the tick stopped reading its logs (touches.py), Herdr's own
     v["key"] = s.key(task)
     v["folder"] = s.loc["folder"]
     v["status"], v["needs"], v["why"] = task_status(task, running)
