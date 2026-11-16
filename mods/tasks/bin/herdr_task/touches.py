@@ -54,7 +54,7 @@ def tag(kind):
 TAGGED = re.compile(r'^\s*<herdr-task\b[^>]*/>')
 # Herdr's own messages from before they were tagged (merge, fix, review, resume, switch, provider retry).
 HERDR_OWN = re.compile(r"^\s*(?:Merge task \S+ |Shepherdr (?:resumed|restarted) your session|Your Assistant added one review round"
-                       r"|Review round \d+ of \d+ for |Your last turn was cut off by the model's provider|Carry on where you left off)")
+                       r"|Review round \d+ of \d+ for |Your last turn was cut off by the model's provider)")
 FIX_OWN = re.compile(r'^\s*Task [A-Z]+-\d+ ".*" can\'t merge yet:', re.S)
 PASTED = re.compile(r"</?pasted_content\b[^>]*>")
 HC_FROM = re.compile(r'^\s*<hc\s+from="([^"]*)"[^>]*>([\s\S]*)</hc>\s*$')
@@ -313,16 +313,20 @@ def touches_pass(report, folder=None):
         live = [t for t in d.get("tasks") or [] if watched(t)]
         if not fill and not live:
             continue
-        with Store(locate(d["folder"])) as s:
-            n = fill_list(s) if fill else 0
-            for t in s.data["tasks"]:
-                if not fill and watched(t):
-                    got, moved = read_logs(t)
-                    if got or moved:
-                        s.dirty = True
-                    n += got
-            if fill:
-                report.setdefault("touches_filled", []).append(s.loc["folder"])
+        try:
+            with Store(locate(d["folder"])) as s:
+                n = fill_list(s) if fill else 0
+                for t in s.data["tasks"]:
+                    if not fill and watched(t):
+                        got, moved = read_logs(t)
+                        if got or moved:
+                            s.dirty = True
+                        n += got
+                if fill:
+                    report.setdefault("touches_filled", []).append(s.loc["folder"])
+        except Fail as e:  # one list it can't write (read-only, gone): the others still go
+            report.setdefault("touches_error", []).append(f"{d['folder']}: {e}")
+            continue
         if n:
             report.setdefault("touches", []).append({"folder": d["folder"], "added": n})
 
