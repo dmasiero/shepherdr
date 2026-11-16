@@ -167,6 +167,57 @@ def guard(args):
                    "HC_SESSION and HC_SOCKET: changed ones can reach the real window and wipe its spaces.")
 
 
+# fork: SHEP-61. hc when PATH lacks it: herdr-task run by a herdr-core that launchd or systemd started gets
+# PATH=/usr/bin:/bin:/usr/sbin:/sbin, and every bare "hc" it ran failed with FileNotFoundError. As the web service's
+# unit does (bin/shepherdr unit_text, #1048), the places hc lives go on PATH: the usual ones (layout.TOOL_DIRS:
+# ~/.local/bin, Homebrew's), then the folder of the herdr-core that runs this (hc sits beside it), last, so a PATH
+# that has them keeps its own order. Only while hc isn't found, and the running core only in the real environment.
+def core_dir(pid=None, depth=8):
+    """The folder of the herdr-core this process runs under (its nearest herdr-core ancestor), or None."""
+    pid = os.getppid() if pid is None else pid
+    for _ in range(depth):
+        if pid <= 1:
+            return None
+        try:
+            exe = os.readlink(f"/proc/{pid}/exe")
+            with open(f"/proc/{pid}/stat") as f:
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            try:   # macOS: no /proc; ps names the program by its full path
+                r = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, universal_newlines=True, timeout=5)
+                ppid, exe = r.stdout.strip().split(None, 1)
+                ppid = int(ppid)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return None
+        if os.path.basename(exe) == "herdr-core" and os.path.isabs(exe):
+            return os.path.dirname(exe)
+        pid = ppid
+    return None
+
+
+def find_tools(env=None):
+    """Adds where hc lives to env's PATH (os.environ: what every program herdr-task runs inherits) while hc isn't on it.
+    Returns the folders added."""
+    import shutil
+    env = os.environ if env is None else env
+    have = [p for p in (env.get("PATH") or "").split(os.pathsep) if p]
+    if shutil.which("hc", path=os.pathsep.join(have)):
+        return []
+    dirs = [d.replace("$HOME", os.path.expanduser("~")) for d in layout.TOOL_DIRS]
+    added = [d for d in dirs if d not in have and os.path.isdir(d)]
+    if not shutil.which("hc", path=os.pathsep.join(have + added)) and not not_real():
+        core = core_dir()
+        if core and core not in have + added:
+            added.append(core)
+    if added:
+        env["PATH"] = os.pathsep.join(have + added)
+    return added
+
+
+find_tools()
+
+
 def run(args, cwd=None, check=False, env=None):
     guard(args)
     r = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)

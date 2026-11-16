@@ -657,7 +657,7 @@ class OneTable(unittest.TestCase):
             a = text.index("# ---- SHEP:")
             a = text.index("\n", a) + 1
             b = text.index("# ---- end SHEP ----")
-            self.assertEqual(text[a:b], L.PY.lstrip("\n"), f"{f}: run bin/sync-shared (it writes layout.py's PY there)")
+            self.assertEqual(text[a:b], L.BLOCK.lstrip("\n"), f"{f}: run bin/sync-shared (it writes layout.py's BLOCK there)")   # fork: SHEP-61
 
     def test_js_says_the_same(self):
         if not BUN:

@@ -24,6 +24,7 @@ import re
 import subprocess
 import threading
 
+from . import layout
 from .base import APP_HOME, Fail, guard, HOME, hc_json, now, run, STORE, WHERE
 from .settings import LOCAL_MACHINE, SETTINGS
 from .output import say
@@ -256,7 +257,7 @@ def remote_report(machine, candidates, since, news_only, timeout=40):
         args += ["--since", str(since)]
     if news_only:
         args.append("--news-only")
-    cmd = 'exec "$HOME/.local/bin/herdr-task" "$@"'
+    cmd = layout.there('exec "$HOME/.local/bin/herdr-task" "$@"')   # fork: SHEP-61
     try:
         r = subprocess.run(["hc", "exec", "--on", machine, "--timeout", str(timeout), "--", "sh", "-c", cmd, "sh", *args],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=timeout + 15)

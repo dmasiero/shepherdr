@@ -941,8 +941,9 @@ def _hops(route_names, hows, inner):
     """argv that runs inner on the last machine of the route, through each hop as it allows."""
     argv = inner
     for to, how in reversed(list(zip(route_names, hows))):
-        argv = ["hc", "exec", "--on", to, "--", *argv] if how == "herdr-core" else \
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", to, shlex.join(argv)]
+        # fork: SHEP-61: hc (the next hop's, or `hc send`) found there even on a bare PATH (launchd's, ssh's)
+        argv = ["hc", "exec", "--on", to, "--", *layout.there_argv(argv)] if how == "herdr-core" else \
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", to, shlex.join(layout.there_argv(argv))]
     return argv
 
 

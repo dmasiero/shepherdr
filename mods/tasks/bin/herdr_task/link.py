@@ -19,6 +19,7 @@ import secrets
 import subprocess
 import time
 
+from . import layout
 from .base import run
 
 # What the person does from the window, the web app or a menu: run there whole, result read back.
@@ -31,13 +32,13 @@ STEP_MAX = 1.0
 
 # There: run herdr-task with its output and exit code in files, as hc exec would run it (no terminal's ids:
 # herdr-task would take the terminal for an agent's). Old results go after an hour.
-RUN = r'''d="${TMPDIR:-/tmp}/herdr-task-jobs-$(id -u)"; mkdir -p "$d" && chmod 700 "$d" || exit 1
+RUN = layout.there(r'''d="${TMPDIR:-/tmp}/herdr-task-jobs-$(id -u)"; mkdir -p "$d" && chmod 700 "$d" || exit 1
 j=$1; b=${2:-$HOME/.local/bin/herdr-task}; shift 2
 : > "$d/$j.out"
 find "$d" -type f -mmin +60 -exec rm -f {} + 2>/dev/null
 unset HC_TERMINAL_ID HC_TERMINAL_SOCKET TERM_PROGRAM
 "$b" "$@" > "$d/$j.out" 2> "$d/$j.err" < /dev/null
-echo $? > "$d/$j.rc.new" && mv "$d/$j.rc.new" "$d/$j.rc"'''
+echo $? > "$d/$j.rc.new" && mv "$d/$j.rc.new" "$d/$j.rc"''')   # fork: SHEP-61: hc and git found there (THERE_PATH)
 
 # There: "none" (never started), "running", or "done" and its {rc, out, err} on the next line. Kept: a reply lost
 # on the way back is read again.

@@ -11,6 +11,9 @@
 #                                   (herdr.chat label) instead of getting a pane in the tab.
 #   HERDR_RESTART_RESUME=1          argv resumes the same conversation: no handoff is sent.
 set -u
+# fork: SHEP-61: hc and jq found on a machine whose herdr-core runs with a bare PATH (launchd); this script runs
+# there too. layout.py's THERE_PATH, word for word (test/test_herdr_task.py checks).
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin${PATH:+:$PATH}"; export PATH;
 old=$1 argv=${2:-}
 # Another machine's agent (<machine>/<address>): this script runs there (its logs, templates and hc are
 # that machine's), carried over hc like any cross-machine command; the new address comes back as
