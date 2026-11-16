@@ -1056,6 +1056,31 @@ export interface SettingSection {
   /** Web: its QR code (an SVG picture's data URL) and the words over it */
   qr?: string
   qrTitle?: string
+  /** fork: SHEP-67: Agents › Lessons at its level (core/settings.js lessonsView), under its rows */
+  lessons?: LessonsView
+}
+
+/** fork: SHEP-67: the lessons kept at a level, and how much of a brief's budget they use there */
+export interface LessonsView {
+  on: boolean
+  /** lessons a brief there gets, and their lines' characters (of 12 and 1,500) */
+  n: number
+  chars: number
+  own: KeptLesson[]
+  /** a space's: Everywhere's, which it gets too */
+  inherited: KeptLesson[]
+  retired: number
+}
+export interface KeptLesson {
+  id: string
+  text: string
+  /** the tasks it came from (refs: SHEP-62) */
+  from: string[]
+  keptAt: number | null
+  seen: number
+  edited: boolean
+  /** left out of briefs here: over the budget, or the same as one this space keeps */
+  left?: 'budget' | 'same'
 }
 
 export interface Alert {

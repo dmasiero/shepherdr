@@ -15,6 +15,7 @@ import { Markdown } from '@plugins/chat/markdown.tsx'
 import { ArtifactFrame } from '@plugins/artifacts/client.tsx'
 // the card's words, the summary's cut and the details as bullets: the window's own (core/accept.js)
 import * as A from '@core/accept.js'
+import { LessonsChip, type Waiting } from '../Lessons.tsx' // fork: SHEP-67
 
 type Evidence = {
   summary?: string
@@ -29,7 +30,7 @@ type Evidence = {
   /** Accept merges its branch first (it has work to merge): the button says "Accept and merge" */
   merges?: boolean
 }
-type Shown = { ref: string; title: string; state: string; status_text?: string; accepted_at?: number; evidence?: Evidence }
+type Shown = { ref: string; title: string; state: string; status_text?: string; accepted_at?: number; evidence?: Evidence; lessons_waiting?: Waiting[] } // fork: SHEP-67: lessons_waiting
 
 // Which task's card is open (one at a time): a small store of its own, so any row or header can open it.
 let open: string | null = null
@@ -224,7 +225,11 @@ export function AcceptCard() {
         <div className="@container flex min-h-0 flex-1 flex-col pt-2 text-fg">
           <div className="min-h-0 flex-1 overflow-y-auto @3xl:overflow-hidden">
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 pb-1 @3xl:h-full @3xl:grid-cols-[minmax(0,1fr)_320px] @3xl:grid-rows-[auto_minmax(0,1fr)] @3xl:gap-x-6 @3xl:pb-0">
-              <p className={clsx('text-pretty @3xl:col-start-2 @3xl:row-start-1', !w.summary && 'text-fg3')}>{w.summary || A.ACCEPT.noSummary}</p>
+              <div className="flex min-w-0 flex-col gap-2.5 @3xl:col-start-2 @3xl:row-start-1">
+                <p className={clsx('text-pretty', !w.summary && 'text-fg3')}>{w.summary || A.ACCEPT.noSummary}</p>
+                {/* fork: SHEP-67: its drafted lessons, answered right here */}
+                <LessonsChip task={task} waiting={t.lessons_waiting ?? []} />
+              </div>
               <div className="@3xl:col-start-1 @3xl:row-start-1 @3xl:row-span-2 @3xl:flex @3xl:min-h-0 @3xl:flex-col"><InlineProof art={proofArt} /></div>
               <div className="flex min-w-0 flex-col gap-4 @3xl:col-start-2 @3xl:row-start-2 @3xl:min-h-0 @3xl:overflow-y-auto @3xl:pb-1">{rest}</div>
             </div>
@@ -233,6 +238,8 @@ export function AcceptCard() {
       ) : (
         <div className="flex max-h-[60dvh] min-w-0 flex-col gap-4 overflow-y-auto pt-2 pb-1 text-fg">
           <p className={clsx('max-w-[560px] text-pretty', !w.summary && 'text-fg3')}>{w.summary || A.ACCEPT.noSummary}</p>
+          {/* fork: SHEP-67: its drafted lessons, answered right here */}
+          <LessonsChip task={task} waiting={t.lessons_waiting ?? []} />
           {rest}
         </div>
       )}

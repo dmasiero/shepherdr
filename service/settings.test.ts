@@ -169,7 +169,7 @@ test("Agents and Tasks say the window's words: the model button, Other CLI, Must
   s.start();
   s.choices = C.choicesFrom({ claude: { model: "opus[1m]", effort: "high", per: {} }, codex: { models: [{ id: "gpt-5", label: "GPT-5", efforts: ["low", "high"] }] } });
   const agents = s.sections(null).find((x) => x.name === "Agents" && x.level === "all")!;
-  expect(agents.rows.map((r) => r.label)).toEqual(["Assistant", "Workers", "Reviewer", "Backup agent", "Reactions", "Suggested next message", "Feedback offers", "Feedback repo"]);
+  expect(agents.rows.map((r) => r.label)).toEqual(["Assistant", "Workers", "Reviewer", "Backup agent", "Reactions", "Suggested next message", "Feedback offers", "Feedback repo", "Lessons"]);
   expect(agents.rows[0].value).toBe("Opus 5.5 · 1M · High");
   expect(agents.rows[2]).toMatchObject({ value: "Other CLI (Codex)", agent: { unset: true, other: false } });
   const tasks = s.sections(null).find((x) => x.name === "Tasks" && x.level === "all")!;
@@ -262,4 +262,55 @@ test("kept lessons stay through a web change and go with the push to their machi
   const there = JSON.parse(pushBody(f, "pi"));
   expect(there.everywhere.lessons.kept).toEqual(kept);
   expect(there.spaces.sp7.lessons).toEqual({ on: false, kept });
+});
+
+// fork: SHEP-67: Agents › Lessons: the switch under its own heading at each level, and the kept lessons with the brief
+// budget they use there (lessons.py's within_budget: the space's own first, newest kept then most seen; 12 lessons and
+// 1,500 characters); turning it off keeps them saved, and on again at a space unsets it (it follows Everywhere)
+test("Lessons: the switch, the kept list and its budget at each level", () => {
+  const lesson = (id: string, text: string, kept_at: number, extra: object = {}) => ({ id, text, key: text.toLowerCase(), from: [`ACC-${id.slice(2)}`], kept_at, edited: false, seen: 0, off: false, ...extra });
+  const every = [lesson("l-1", "Say where the files are when you ask me to review.", 10, { seen: 3 }), lesson("l-2", "Never push without asking.", 20, { off: true })];
+  const own = [lesson("l-3", "Record and commit a paid receipt's row without asking.", 30, { edited: true }), lesson("l-4", "Say where the files are when you ask me to review.", 5)];
+  writeFileSync(file, JSON.stringify({ everywhere: { lessons: { kept: every } }, spaces: { sp7: { name: "acc", lessons: { on: false, kept: own } } } }));
+  const s = new Settings();
+  s.start();
+  const sp = { id: "sp7", name: "acc", machine: null, folder: "/acc" };
+  const page = (level: string) => s.sections(null, [sp]).find((x) => x.name === "Agents" && x.level === level)!;
+  expect(page("all").rows.at(-1)).toMatchObject({ label: "Lessons", key: "lessons.on", value: "on", options: ["on", "off"] });
+  expect(page("all").rows.at(-1)!.others).toEqual([{ id: "sp7", name: "acc" }]);
+  const all = page("all").lessons!;
+  expect(all).toMatchObject({ on: true, n: 1, chars: "- Say where the files are when you ask me to review.\n".length, retired: 1, inherited: [] });
+  expect(all.own).toEqual([{ id: "l-1", text: "Say where the files are when you ask me to review.", from: ["ACC-1"], keptAt: 10, seen: 3, edited: false }]);
+  // the space: off there (its own), its two first, Everywhere's that says the same as its own is left out
+  expect(page("sp7").rows.at(-1)).toMatchObject({ value: "off", inherits: { value: "on", from: "Everywhere" } });
+  const here = page("sp7").lessons!;
+  expect(here.on).toBe(false);
+  expect(here.n).toBe(2);
+  expect(here.own.map((x) => x.id)).toEqual(["l-3", "l-4"]);
+  expect(here.own[0].edited).toBe(true);
+  expect(here.inherited).toEqual([expect.objectContaining({ id: "l-1", left: "same" })]);
+  // on again at the space: the same as Everywhere's, so it follows again; the kept ones stay
+  s.set("lessons.on", "on", "sp7", sp);
+  let f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.spaces.sp7.lessons).toEqual({ kept: own });
+  s.set("lessons.on", "off", "all");
+  f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere.lessons).toEqual({ kept: every, on: false });
+  s.set("lessons.on", "on", "all");
+  expect(JSON.parse(readFileSync(file, "utf8")).everywhere.lessons).toEqual({ kept: every });
+  expect(() => s.set("lessons.on", "maybe", "all")).toThrow();
+});
+
+// over the budget: the newest kept go in up to 12 lessons and 1,500 characters; the rest say they're left out
+test("Lessons: over the brief's budget, the rest are marked left out", () => {
+  const long = "x".repeat(190);
+  const kept = Array.from({ length: 14 }, (_, i) => ({ id: `l-${i}`, text: i < 7 ? `${long} ${i}` : `short ${i}`, kept_at: i, seen: 0 }));
+  const v = CORE.lessonsView({ everywhere: { lessons: { kept } } }, null);
+  expect(v.n).toBe(12);
+  expect(v.chars).toBeLessThanOrEqual(1500);
+  const left = v.own.filter((x: any) => x.left).map((x: any) => x.id);
+  // the 7 shorts (newest) and as many long ones as fit (1,500 - 7 short lines) go in
+  expect(left.length).toBe(2);
+  expect(v.own[0].id).toBe("l-13");
+  expect(CORE.LESSONS.budget(v.n, 1234)).toBe("In briefs: 12 of 12 · 1,234 of 1,500 characters");
 });

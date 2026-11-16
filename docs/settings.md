@@ -24,6 +24,7 @@ drops the space's own, and it inherits again. A few settings are one for every s
 | Agents | Reviewer | Everywhere, space | The same |
 | Agents | Backup agent | Everywhere, space | A space whose work shouldn't move to the other CLI |
 | Agents | Reactions (every agent reacts with an emoji; on) | Everywhere, space | A space may want a plainer chat |
+| Agents | Lessons (on; the lessons you kept, Edit and Retire) | Everywhere, space | A space may not want agents learning there; a space's lessons are about its own work |
 | Agents | Instructions (assistant.md, worker.md, reviewer.md) | Everywhere only | Repo rules belong in the repo's AGENTS.md or CLAUDE.md, which every agent there reads |
 | Tasks | Merge, Review, Must fix, Proof | Everywhere, space | How much care a repo needs differs |
 | Tasks | Tasks at once | Everywhere, space | It counts per folder already |
@@ -107,6 +108,34 @@ Assistant's, a task's and an agent tab's, in the window and on the web (`core/ch
   teaches them too, but your messages rarely reach them, so they seldom react.
 - **A reaction only.** A reply of a `<hc react … />` line and `<hc no-reply/>` shows just the reaction on your
   message.
+
+<!-- fork: SHEP-67: Lessons is the fork's (FORK.md, Agents that learn) -->
+## Lessons
+
+Agents › Lessons, on by default: when you step into a task (a correction, a go-ahead, a standing rule, an answer it had
+to ask for), its agent drafts up to 3 short lessons at ready; nothing reaches a later brief until you keep one
+(`herdr_task/lessons.py`). At the foot of the Agents page, at the page's level:
+
+- **The switch** (`lessons.on`). Off, workers draft none, no lesson cards are raised, and briefs and the Assistant's
+  settings block carry no lessons at all. The kept ones stay saved (`lessons.kept` beside it) and come back when it's
+  on again. A space's own follows Everywhere's until it sets its own; setting what it would follow anyway unsets it.
+- **The budget line**: *In briefs: 6 of 12 · 640 of 1,500 characters*, how much of a brief's lesson budget the kept
+  lessons use at this level (a space: its own first, then Everywhere's). Off, it says so instead.
+- **Each kept lesson**: its words, the tasks it came from (chips that open the task while the app still has it), when
+  it was kept, how often it went into a brief (*seen*), *edited* if your words replaced the draft's. One a brief
+  wouldn't get says why: over the budget, or (Everywhere's, in a space) the space keeps one that says the same.
+  **Edit** takes new words, checked as a draft is (no secret, password or name); **Retire** asks first, then turns it
+  off: in no brief again and never drafted again, still saved (counted under the list). Both run
+  `herdr-task lessons edit|retire <id>` (the web through `service/actions.ts`, the window through
+  `mods/shepherdr-settings/lessons-section.js`), which changes it where it's kept, even under a space's full id.
+- **A space's page** lists its own, then folds Everywhere's under *Inherited from Everywhere (n)*: those reach every
+  space, so Edit or Retire there changes them everywhere.
+- **The web's Accept card** shows an *n lessons* chip under the summary when the task has drafts waiting (`herdr-task
+  show`'s `lessons_waiting`, none while off). It opens them with Keep, Edit and Drop, so you can answer while you're
+  already looking at the task; the Assistant's question card stays the fallback and never asks about one you answered.
+
+The words and the budget are `core/settings.js`'s (`LESSONS`, `lessonsView`, the same count as `lessons.py`'s
+`within_budget`), so the window and the web app say the same.
 
 ## What the Assistant is told
 
