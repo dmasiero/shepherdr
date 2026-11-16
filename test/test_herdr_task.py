@@ -7727,7 +7727,192 @@ class LessonsTheAssistantIsTaught(unittest.TestCase):
         self.write({"everywhere": {"lessons": {"on": True}}})
         self.aset.settings_pass({}, {})
         self.assertIn("Lessons are now on in Settings. at ready", self.sent[-1][1])
-        # a kept lesson changing is no setting changing: nothing sent
-        self.write({"everywhere": {"lessons": {"on": True, "kept": [{"id": "l-1-1", "text": "Commit receipts without asking."}]}}})
+        # a space's kept lesson changing is no setting changing for the Assistant: nothing sent (SHEP-66: only the
+        # person's Everywhere lessons are in its block, LessonsInBriefs)
+        self.write({"everywhere": {"lessons": {"on": True}}, "spaces": {"sp1": {"lessons": {"kept": [{"id": "l-1-1", "text": "Commit receipts without asking."}]}}}})
+        self.aset.settings_pass({}, {})
+        self.assertEqual(len(self.sent), 2)
+
+
+class LessonsInBriefs(unittest.TestCase):
+    """fork: SHEP-66: kept lessons go into later briefs (herdr_task/lessons.py's brief_part, launch.py's brief() and
+    handoff()): the space's own first, then Everywhere's, within 12 lessons and 1,500 characters, what's left out said,
+    `seen` counted per brief; the person's Everywhere ones in the Assistant's settings block. Off (or none kept) leaves
+    the brief and the block byte for byte as they were. Lessons' throwaway store and settings, AssistantSettings' fake hc."""
+    run_cmd, task_list, tasks, log, user = Touches.run_cmd, Touches.task_list, Touches.tasks, Touches.log, staticmethod(Touches.user)
+    write_settings = Lessons.write_settings
+
+    def setUp(self):
+        Lessons.setUp(self)
+        from unittest import mock
+        from herdr_task import launch
+        self.launch = launch
+        for p in [mock.patch.object(launch, "review_limits", lambda *a: (False, 0)),
+                  mock.patch.object(launch, "keep_review", lambda *a: None),
+                  mock.patch.object(launch, "secret_path", lambda: None),
+                  mock.patch.object(launch, "browser_line", lambda: ""),
+                  mock.patch.object(launch, "settings_block", lambda *a, **k: "Settings: (fixed for the test)")]:
+            p.start()
+            self.addCleanup(p.stop)
+        self.s = type("S", (), {"loc": {"folder": self.folder}, "ref": lambda self, t: "APP-1"})()
+        self.task = {"id": 1, "title": "Receipts", "prompt": "Record the receipts.", "space": "sp1", "mode": "here", "agents": []}
+
+    @staticmethod
+    def kept(n, prefix, at=1000, size=60):
+        return [{"id": f"l-{prefix}-{i}", "text": (f"{prefix} rule {i} " + "word " * 40)[:size].strip() + ".",
+                 "key": f"{prefix} {i}", "kept_at": at + i, "seen": 0, "off": False} for i in range(n)]
+
+    def brief(self):
+        return self.launch.brief(self.s, self.task, space="sp1")
+
+    def settings_now(self):
+        with open(self.settings_path) as f:
+            return json.load(f)
+
+    def part(self, text):
+        """The brief's lessons part, its lesson lines and its left-out line."""
+        blocks = [b for b in text.split("\n\n") if b.startswith(self.lessons.KEPT_HEAD)]
+        self.assertLessEqual(len(blocks), 1)
+        lines = blocks[0].split("\n") if blocks else []
+        return blocks[0] if blocks else "", [x for x in lines if x.startswith("- ")], [x for x in lines if "left out" in x]
+
+    def test_a_space_lesson_comes_first_then_everywhere_after_before_you_start(self):
+        self.write_settings({"everywhere": {"tasks": {"start_notes": "Pull first."},
+                                            "lessons": {"kept": [{"id": "l-9-1", "text": "Say where the files are when you ask for a review.", "kept_at": 5},
+                                                                 {"id": "l-9-2", "text": "Record a receipt's row without asking.", "kept_at": 6},
+                                                                 {"id": "l-9-3", "text": "An old retired one.", "off": True}]}},
+                             "spaces": {"sp1": {"lessons": {"kept": [{"id": "l-1-1", "text": "Record and commit a receipt's row without asking first.",
+                                                                     "key": self.lessons.key_of("Record a receipt's row without asking."), "kept_at": 7}]}},
+                                        "sp2": {"lessons": {"kept": [{"id": "l-2-1", "text": "Another space's lesson.", "kept_at": 8}]}}}})
+        text = self.brief()
+        part, lines, left = self.part(text)
+        self.assertEqual(lines, ["- Record and commit a receipt's row without asking first.",
+                                 "- Say where the files are when you ask for a review."])  # sp1's wins over the same key; retired and sp2's out
+        self.assertIn("In this space (sp1):", part)
+        self.assertIn("You, every space:", part)
+        self.assertIn("never change what permission prompts or question cards ask", part)
+        self.assertEqual(left, [])
+        self.assertLess(text.index("Before you start: Pull first."), text.index(part))
+        self.assertLess(text.index(part), text.index("Your task, APP-1:"))
+        # seen counted once per brief, for those that went in only
+        d = self.settings_now()
+        seen = {x["id"]: x.get("seen") for lv in (d["everywhere"], d["spaces"]["sp1"], d["spaces"]["sp2"]) for x in lv["lessons"]["kept"]}
+        self.assertEqual(seen, {"l-9-1": 1, "l-9-2": None, "l-9-3": None, "l-1-1": 1, "l-2-1": None})
+        self.brief()
+        self.assertEqual(self.settings_now()["spaces"]["sp1"]["lessons"]["kept"][0]["seen"], 2)
+        # a handoff brief gets them too (and counts)
+        hand = self.launch.handoff(self.s, self.task, {"agent": "claude"})
+        self.assertEqual(self.part(hand)[1], lines)
+        self.assertEqual(self.settings_now()["spaces"]["sp1"]["lessons"]["kept"][0]["seen"], 3)
+
+    def test_a_full_list_stays_within_budget_and_says_what_is_left_out(self):
+        own, every = self.kept(10, "space", at=2000), self.kept(10, "you", at=3000)
+        own[0]["seen"] = 50  # oldest, most seen: newest kept still go first
+        self.write_settings({"everywhere": {"lessons": {"kept": every}}, "spaces": {"sp1": {"lessons": {"kept": own}}}})
+        part, lines, left = self.part(self.brief())
+        self.assertEqual(len(lines), 12)
+        self.assertLessEqual(sum(len(x) + 1 for x in lines), 1500)
+        self.assertTrue(all(x.startswith("- space rule") for x in lines[:10]))  # the space's all, then the newest of Everywhere's
+        self.assertEqual(lines[10:], ["- " + every[9]["text"], "- " + every[8]["text"]])
+        self.assertEqual(left, ["(8 more kept lessons left out: over the brief's budget of 12 lessons and 1,500 characters.)"])
+        # long ones: the characters bind first
+        self.write_settings({"spaces": {"sp1": {"lessons": {"kept": self.kept(12, "long", size=200)}}}})
+        part, lines, left = self.part(self.brief())
+        self.assertLessEqual(sum(len(x) + 1 for x in lines), 1500)
+        self.assertEqual((len(lines), len(left)), (7, 1))
+        self.assertIn("(5 more kept lessons left out", left[0])
+        self.assertTrue(lines[0].startswith("- long rule 11"))  # newest first
+        # a brief's whole part is no bigger than the budget and its few heading lines
+        self.assertLess(len(part), 1500 + 600)
+
+    def test_off_leaves_the_brief_byte_for_byte_as_with_none_kept(self):
+        kept = self.kept(3, "space")
+        self.write_settings({"everywhere": {"lessons": {"on": False}}})
+        none_kept = self.brief()
+        hand_none = self.launch.handoff(self.s, self.task, None)
+        self.write_settings({"everywhere": {"lessons": {"on": False, "kept": self.kept(3, "you")}},
+                             "spaces": {"sp1": {"lessons": {"kept": kept}}}})
+        self.assertEqual(self.brief(), none_kept)
+        self.assertEqual(self.launch.handoff(self.s, self.task, None), hand_none)
+        self.assertNotIn(self.lessons.KEPT_HEAD, none_kept)
+        d = self.settings_now()  # nothing counted while off
+        self.assertTrue(all(not x.get("seen") for x in d["spaces"]["sp1"]["lessons"]["kept"] + d["everywhere"]["lessons"]["kept"]))
+        # on, but none kept (or only retired ones): no part either
+        self.write_settings({"spaces": {"sp1": {"lessons": {"kept": [{"id": "l-1-1", "text": "Retired.", "off": True}]}}}})
+        self.assertNotIn(self.lessons.KEPT_HEAD, self.brief())
+        # the space off, Everywhere on: none in its brief
+        self.write_settings({"everywhere": {"lessons": {"kept": self.kept(2, "you")}}, "spaces": {"sp1": {"lessons": {"on": False}}}})
+        self.assertNotIn(self.lessons.KEPT_HEAD, self.brief())
+
+    def test_a_pushed_copy_still_briefs_and_counts_nothing(self):
+        self.write_settings({"pushed_from": "mac", "spaces": {"sp1": {"lessons": {"kept": self.kept(1, "space")}}}})
+        self.assertEqual(len(self.part(self.brief())[1]), 1)
+        self.assertEqual(self.settings_now()["spaces"]["sp1"]["lessons"]["kept"][0]["seen"], 0)
+
+
+class LessonsInTheAssistantsBlock(unittest.TestCase):
+    """fork: SHEP-66: the person's Everywhere ("you") lessons in a space's Assistant's settings block, within budget;
+    a running one told when they change; off (or none kept) leaves the block byte for byte as it was."""
+    write, assistant, line = AssistantSettings.write, AssistantSettings.assistant, AssistantSettings.line
+
+    def setUp(self):
+        AssistantSettings.setUp(self)
+        import herdr_task.lessons as lessons
+        self.lessons = lessons
+
+    def block(self):
+        return self.aset.block(self.aset.rows("sp1"))
+
+    def test_you_lessons_are_in_the_block_and_space_ones_are_not(self):
+        self.write({"everywhere": {"lessons": {"kept": [{"id": "l-9-1", "text": "Say where the files are when you ask for a review.", "kept_at": 2},
+                                                        {"id": "l-9-2", "text": "Retired.", "off": True, "kept_at": 3}]}},
+                    "spaces": {"sp1": {"lessons": {"kept": [{"id": "l-1-1", "text": "Commit receipts without asking.", "kept_at": 4}]}}}})
+        b = self.block()
+        self.assertIn("- Lessons you kept: the person kept these for every space; follow them as their own words\n"
+                      "  - Say where the files are when you ask for a review.", b)
+        self.assertNotIn("Retired.", b)
+        self.assertNotIn("Commit receipts", b)
+        lines = b.split("\n")
+        self.assertEqual(lines[lines.index(self.line(b, "Lessons")) + 1], self.line(b, "Lessons you kept"))  # right after the switch
+        # the seen counts aren't touched by the block
+        with open(self.file) as f:
+            self.assertNotIn("seen", f.read())
+
+    def test_within_budget(self):
+        kept = [{"id": f"l-9-{i}", "text": f"Rule {i} " + "word " * 10, "kept_at": i} for i in range(20)]
+        self.write({"everywhere": {"lessons": {"kept": kept}}})
+        b = self.block()
+        lines = [x for x in b.split("\n") if x.startswith("  - ")]
+        self.assertEqual(len(lines), 12)
+        self.assertLessEqual(sum(len(x) - 1 for x in lines), 1500)
+        self.assertIn("(8 more kept lessons left out", b)
+        self.assertTrue(lines[0].startswith("  - Rule 19"))
+
+    def test_off_or_none_kept_leaves_the_block_byte_for_byte(self):
+        self.write({"everywhere": {"lessons": {"on": False}}})
+        before, note_before = self.block(), (self.assistant(), self.aset.session_note("t5"))[1]
+        self.write({"everywhere": {"lessons": {"on": False, "kept": [{"id": "l-9-1", "text": "Say where the files are."}]}},
+                    "spaces": {"sp1": {"lessons": {"kept": [{"id": "l-1-1", "text": "Commit receipts."}]}}}})
+        self.assertEqual(self.block(), before)
+        self.assertEqual(self.aset.session_note("t5"), note_before)
+        self.write({})
+        on_none = self.block()
+        self.assertNotIn("Lessons you kept", on_none)
+        self.write({"everywhere": {"lessons": {"kept": [{"id": "l-9-1", "text": "Retired.", "off": True}]}}})
+        self.assertEqual(self.block(), on_none)
+
+    def test_a_running_assistant_is_told_when_its_kept_lessons_change(self):
+        self.assistant()
+        self.aset.session_note("t5")
+        self.write({"everywhere": {"lessons": {"kept": [{"id": "l-9-1", "text": "Say where the files are."}]}}})
+        self.aset.settings_pass({}, {})
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn('<herdr-setting name="kept" value="1" scope="everywhere">The person\'s kept lessons for every space are now:\n'
+                      '  - Say where the files are. Nothing to answer', self.sent[0][1])
+        self.write({"everywhere": {"lessons": {"kept": [{"id": "l-9-1", "text": "Say where the files are.", "off": True}]}}})
+        self.aset.settings_pass({}, {})
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn('name="kept" value="" scope="everywhere">The person\'s kept lessons for every space changed: none applies now',
+                      self.sent[1][1])
         self.aset.settings_pass({}, {})
         self.assertEqual(len(self.sent), 2)
