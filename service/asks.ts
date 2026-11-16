@@ -37,6 +37,20 @@ const ENDS = join(DATA, "ask-ends.json");
 // When an ask was made: its id is <terminal>.<seconds>.<pid> (ask-hook.sh), at the end of that second (the window's askAt)
 const askAt = (id: string) => { const p = id.split("."); const s = Number(p[p.length - 2]); return Number.isFinite(s) && s > 1e9 ? s * 1000 + 999 : Date.now(); };
 
+// fork: SHEP-63: a question card answered (on the web, in a chat, in the terminal) is a touch on its task: herdr-task
+// touch by its agent's terminal (another machine's through --on), its id as the pointer, never its words. Under test only
+// with SHEPHERDR_HERDR_TASK (a fake): never the real task lists.
+const TOUCHED = /^(Answered|Left to talk over)\b/;
+export const touchFrom = (how: string) => /web/i.test(how) ? "web" : /terminal/i.test(how) ? "terminal" : /Assistant/i.test(how) ? "assistant-chat" : "chat";
+export function touchArgv(e: { id: string; how: string; kind: string }) {
+  if (e.kind !== "questions" || !TOUCHED.test(e.how)) return null;
+  const machine = e.id.includes("/") ? e.id.split("/")[0] : null;
+  const local = machine ? e.id.slice(machine.length + 1) : e.id;
+  if (!ID.test(local) || (machine && !MACHINE.test(machine))) return null;
+  return [process.env.SHEPHERDR_HERDR_TASK || "herdr-task", ...(machine ? ["--on", machine] : []), "touch", "--terminal", local.split(".")[0],
+    "--kind", "ask", "--by", "person", "--from", touchFrom(e.how), "--log", `ask:${local}`, "--json"];
+}
+
 export class Asks {
   open = new Map<string, Ask>();
   /** closed asks, newest last, the last 200 (kept across restarts in the service's data) */
@@ -45,15 +59,25 @@ export class Asks {
   private hub: Hub | null = null;
   private watched: () => string[] = () => [];
   private polling = false;
+  private touched = new Set<string>();  // fork: SHEP-63
 
   /** The closed asks of an agent, for its chat's quiet lines. */
   endsOf(terminal: string) { return this.ends.filter((e) => e.terminal === terminal); }
+
+  /** fork: SHEP-63: the touch of an answered question card, once (how may be learned a moment after it closed). */
+  private touch(e: AskEnd) {
+    const argv = touchArgv(e);
+    if (!argv || this.touched.has(e.id) || (process.env.NODE_ENV === "test" && !process.env.SHEPHERDR_HERDR_TASK)) return;
+    this.touched.add(e.id);
+    try { Bun.spawn(argv, { stdout: "ignore", stderr: "ignore", stdin: "ignore" }); } catch {}
+  }
 
   private ended(a: Ask, known?: string) {
     if (this.ends.some((e) => e.id === a.id)) return;
     let how = known ?? "";
     if (!a.machine) try { how = readFileSync(join(dir(), "end", a.id), "utf8").trim(); } catch {}
     this.ends = [...this.ends, { id: a.id, terminal: a.terminal, title: a.words?.title ?? "", how: how || "No longer waiting", at: askAt(a.id), kind: a.words?.kind ?? "" }].slice(-200);
+    this.touch(this.ends[this.ends.length - 1]);  // fork: SHEP-63
     // Usage insights (service/usage.ts): how long it waited, and whether it was answered in the agent's terminal
     noteUsage("ask", { type: a.words?.kind || undefined, ms: Math.max(0, Date.now() - askAt(a.id) + 999), ...(/terminal/i.test(how) ? { from: "terminal" } : {}) });
     try { writeFileSync(`${ENDS}.tmp`, JSON.stringify(this.ends)); renameSync(`${ENDS}.tmp`, ENDS); } catch {}
@@ -115,7 +139,7 @@ export class Asks {
           this.ended(a, ends.get(local));
           changed = true;
         }
-        for (const e of this.ends) if (recent(e) && e.id.startsWith(`${m}/`) && ends.get(e.id.slice(m.length + 1))) { e.how = ends.get(e.id.slice(m.length + 1))!; changed = true; }
+        for (const e of this.ends) if (recent(e) && e.id.startsWith(`${m}/`) && ends.get(e.id.slice(m.length + 1))) { e.how = ends.get(e.id.slice(m.length + 1))!; this.touch(e); changed = true; }  // fork: SHEP-63: touch
       }
       if (changed) for (const fn of this.listeners) fn();
     } finally {
@@ -144,7 +168,7 @@ export class Asks {
     for (const [id, a] of this.open) if (!next.has(id)) this.ended(a);
     // the hook writes how a moment after the request goes: a line still saying "No longer waiting" learns it
     for (const e of this.ends) if (e.how === "No longer waiting" && Date.now() - e.at < 120_000) {
-      try { const how = readFileSync(join(dir(), "end", e.id), "utf8").trim(); if (how) e.how = how; } catch {}
+      try { const how = readFileSync(join(dir(), "end", e.id), "utf8").trim(); if (how) { e.how = how; this.touch(e); } } catch {}  // fork: SHEP-63: touch
     }
     this.open = next;
     if (changed) for (const fn of this.listeners) fn();

@@ -1613,9 +1613,29 @@ def cmd_note(o):
     r = run(["hc", "send", to, body])
     if r.returncode != 0:
         raise Fail(r.stderr.strip() or r.stdout.strip() or f"Couldn't send it to {to}.")
+    note_touch(a, loc["folder"])  # fork: SHEP-63
     out = {"to": to, "why": why, "version": v, "image": image}
     print(json.dumps(out) if o.json else f"Sent to {to} ({why}).")
     return 0
+
+
+def note_touch(a, folder):
+    """fork: SHEP-63: the person's note on a task's artifact is a touch on that task (herdr-task touch: its kind, time
+    and a pointer, never the note's words). herdr-task beside this one (mods/tasks/bin), else the one on PATH. Best
+    effort: the note went either way."""
+    task = a.get("task")
+    if not task or not re.fullmatch(r"[A-Za-z]+-\d+", str(task)):
+        return
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))), "tasks", "bin", "herdr-task")
+    ht = here if os.path.isfile(here) else shutil.which("herdr-task")
+    if not ht:
+        return
+    try:
+        subprocess.run([ht, "touch", task, "--folder", folder, "--kind", "note", "--by", "person", "--from", "viewer",
+                        "--log", f"note:{a['id']}:{now()}", "--json"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 # ---- a custom artifact's picture (the web app shows it in its place) -------------------------------

@@ -467,10 +467,11 @@ def cmd_stats(args):
             if not t.get("started") or t["started"] < since:
                 continue
             sp = bare(t.get("space")) or ""
+            # By name: a space made again (a new id, the same name) is the same space to the person. One the
+            # window can't name (none runs here, or it's gone) goes by its folder's name.
             name = names.get(sp) or os.path.basename(d["folder"])
             if want and want not in (sp, name):
                 continue
-            # By name: a space made again (a new id, the same name) is the same space to the person.
             g = groups.setdefault(name, {"spaces": [], "name": name, "tasks": []})
             if sp and sp not in g["spaces"]:
                 g["spaces"].append(sp)

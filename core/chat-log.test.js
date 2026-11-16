@@ -283,3 +283,13 @@ test("an empty suggest line counts as none, and a suggest line inside a code blo
   expect(agents[1].suggest).toBeUndefined();
   expect(agents[1].text).toContain('<hc suggest="x"/>');
 });
+
+// fork: SHEP-63: Herdr's own messages to a worker start with <herdr-task kind="…"/> (herdr_task/touches.py tag()), so
+// a touch never counts them: the chat hides the tag and shows the words after it, as before.
+test("Herdr's own message tag hides in the chat, its words show", async () => {
+  const words = 'Merge task APP-1 "x" now:\n1. Rebase.';
+  const tagged = await read([{ ...person, uuid: "h1", message: { role: "user", content: `<herdr-task kind="merge"/>\n${words}` } }]);
+  const plain = await read([{ ...person, uuid: "h1", message: { role: "user", content: words } }]);
+  expect(tagged.items.map((x) => [x.kind, x.text])).toEqual([["user", words]]);
+  expect(tagged.items).toEqual(plain.items);
+});
