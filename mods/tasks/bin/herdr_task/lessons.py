@@ -489,7 +489,7 @@ def checked_text(text, t):
     text = " ".join(str(text or "").split())
     why = why_not(text, bool(holds_secret([text])), near_words(person_lines(t)))
     if why:
-        raise Fail(f"Not kept, and nothing changed: the words {why}.")
+        raise Fail(f"Not kept, and nothing changed: the lesson {why}.")
     return tilde(text)
 
 
@@ -587,7 +587,7 @@ def change_kept(lid, text=None, off=None):
         words = " ".join(str(text).split())
         why = why_not(words, bool(holds_secret([words])), set())
         if why:
-            raise Fail(f"Not changed: the words {why}.")
+            raise Fail(f"Not changed: the lesson {why}.")
         words = tilde(words)
 
     def edit(part):
