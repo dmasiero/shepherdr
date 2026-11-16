@@ -6723,3 +6723,186 @@ class LinkActions(unittest.TestCase):
         r = self.link.again("vmb", ["list"], lambda: subprocess.CompletedProcess([], *answers.pop(0)))
         self.assertEqual((r.returncode, r.stdout), (0, "[]"))
         self.assertFalse(self.link.lost(subprocess.CompletedProcess([], 1, "", "herdr-task: no such task")))
+
+
+class BarePathThere(unittest.TestCase):
+    """SHEP-61: a machine whose herdr-core runs with a bare PATH (launchd's /usr/bin:/bin:/usr/sbin:/sbin) has hc only
+    in ~/.local/bin. Every call that runs a Shepherdr helper there puts layout.THERE_PATH first, and herdr-task itself
+    finds hc there when its PATH lacks it. The calls' own scripts run for real in sh, on a throwaway home whose
+    "system" folder has the basic tools but no hc, as such a machine's PATH would."""
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.layout as layout
+        self.mock, self.layout = mock, layout
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home, self.sys = os.path.join(self.tmp, "home"), os.path.join(self.tmp, "usr-bin")
+        local = os.path.join(self.home, ".local", "bin")
+        os.makedirs(local)
+        os.makedirs(self.sys)
+        # nextgate's /usr/bin shows a tool only to a caller whose PATH has it: the bare PATH's tools, linked in
+        for t in ("sh", "id", "mkdir", "chmod", "find", "rm", "mv", "cat", "env", "python3"):
+            p = shutil.which(t)
+            if p:
+                os.symlink(p, os.path.join(self.sys, t))
+        self.sh = os.path.join(self.sys, "sh")
+        # hc there says what it was asked; each helper there runs hc, as herdr-task show does
+        self.fake(os.path.join(local, "hc"), 'echo "hc-found $*"')
+        for h in ("herdr-task", "herdr-artifact", "herdr-secret"):
+            self.fake(os.path.join(local, h), f'exec hc {h} "$@"')
+
+    def fake(self, path, body):
+        with open(path, "w") as f:
+            f.write(f"#!{self.sh}\n{body}\n")
+        os.chmod(path, 0o755)
+
+    def there(self, argv):
+        """Runs argv (what follows `hc exec --on <machine> --`) as that machine would: the bare PATH, its home."""
+        env = {"HOME": self.home, "PATH": self.sys, "TMPDIR": self.tmp}
+        argv = [self.sh, *argv[1:]] if argv[0] == "sh" else argv
+        return subprocess.run(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
+
+    def after_dashes(self, argv):
+        self.assertEqual(argv[:2], ["hc", "exec"], argv)
+        return argv[argv.index("--") + 1:]
+
+    def test_the_bare_path_alone_finds_no_hc(self):
+        """The repro: what main sent (`exec "$HOME/.local/bin/herdr-task"`, no PATH) can't find hc there."""
+        r = self.there(["sh", "-c", 'exec "$HOME/.local/bin/herdr-task" "$@"', "herdr-task", "show", "MGTM-5"])
+        self.assertNotIn("hc-found", r.stdout)
+        self.assertIn("hc", r.stderr)
+
+    def test_the_path_is_one_list(self):
+        L = self.layout
+        self.assertEqual(L.TOOL_DIRS, ("$HOME/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"))
+        self.assertTrue(L.THERE_PATH.startswith('PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin'))
+        with open(os.path.join(ROOT, "mods", "coordinator", "restart.sh")) as f:
+            self.assertIn(L.THERE_PATH.strip(), f.read(), "restart.sh runs there too: layout.THERE_PATH, word for word")
+
+    def test_herdr_task_on_another_machine(self):
+        import herdr_task.cli as cli
+        ran = []
+
+        def run(argv, cwd=None, check=False):
+            ran.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "{}", "")
+        store = os.path.join(self.tmp, "store")
+        os.makedirs(os.path.join(store, ".remote"))
+        with open(os.path.join(store, ".remote", "m3oracle"), "w") as f:
+            f.write("source")
+        with self.mock.patch.object(cli, "run", run), self.mock.patch.object(cli, "STORE", store), \
+                self.mock.patch.object(cli, "sync_held", lambda: None), self.mock.patch.object(cli, "guard", lambda a: None), \
+                self.mock.patch.object(cli, "install_secret", lambda m: None, create=True):
+            cli.remote_run("m3oracle", ["show", "MGTM-5", "--json"])
+        r = self.there(self.after_dashes(ran[-1]))
+        self.assertEqual(r.stdout.strip(), "hc-found herdr-task show MGTM-5 --json", r.stderr)
+
+    def test_home_report_on_another_machine(self):
+        import herdr_task.home as home
+        ran = []
+        with self.mock.patch.object(home, "guard", lambda a: None), self.mock.patch.object(
+                home.subprocess, "run", lambda argv, **kw: ran.append(argv) or subprocess.CompletedProcess(argv, 0, "{}", "")):
+            try:
+                home.remote_report("m3oracle", [], None, False)
+            except Exception:
+                pass
+        r = self.there(self.after_dashes(ran[0]))
+        self.assertIn("hc-found herdr-task home report", r.stdout, r.stderr)
+
+    def test_an_action_there(self):
+        """The person's actions (accept, ...) run there whole under hc run (link.RUN): its herdr-task finds hc too."""
+        import herdr_task.link as link
+        r = self.there(["sh", "-c", link.RUN, "sh", "job1", "", "accept", "MGTM-5"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        d = os.path.join(self.tmp, f"herdr-task-jobs-{os.getuid()}")
+        with open(os.path.join(d, "job1.out")) as f:
+            self.assertEqual(f.read().strip(), "hc-found herdr-task accept MGTM-5")
+
+    def test_backups_state_there(self):
+        import herdr_task.backups as backups
+        docs = os.path.join(self.home, ".local", "state", "herdr-core", "default")
+        os.makedirs(docs)
+        with open(os.path.join(docs, "docs.json"), "w") as f:
+            f.write("{}")
+        r = self.there(["sh", "-c", backups.STATE_SCRIPT])
+        self.assertIn("hc-found ls --json", r.stdout, r.stderr)
+
+    def test_a_message_through_hops(self):
+        import herdr_task.machines as machines
+        inner = ["hc", "send", "t1", "hi"]
+        r = self.there(self.after_dashes(machines._hops(["m3oracle"], ["herdr-core"], inner)))
+        self.assertEqual(r.stdout.strip(), "hc-found send t1 hi", r.stderr)
+        ssh = machines._hops(["m3oracle"], ["ssh"], inner)
+        self.assertEqual(ssh[0], "ssh")
+        r = self.there(["sh", "-c", ssh[-1]])
+        self.assertEqual(r.stdout.strip(), "hc-found send t1 hi", r.stderr)
+
+    def load(self, name, rel):
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader(name, os.path.join(ROOT, rel))
+        mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+        loader.exec_module(mod)
+        return mod
+
+    def test_herdr_artifact_on_another_machine(self):
+        """A note on another machine's artifact (the viewer's comment box) goes through herdr-artifact --on."""
+        A = self.load("herdr_artifact_bare_path", "mods/artifacts/bin/herdr-artifact")
+        self.assertEqual(A.THERE_PATH, self.layout.THERE_PATH)
+        ran = []
+        store = os.path.join(self.tmp, "art-store")
+        with self.mock.patch.object(A, "run", lambda argv, **kw: ran.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")), \
+                self.mock.patch.object(A.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, b"", b"")), \
+                self.mock.patch.object(A, "sync_held", lambda: None), self.mock.patch.object(A, "STORE", store):
+            A.remote("m3oracle", ["note", "a1", "--text", "hi"])
+        r = self.there(self.after_dashes(ran[-1]))
+        self.assertEqual(r.stdout.strip(), "hc-found herdr-artifact note a1 --text hi", r.stderr)
+
+    def test_herdr_secret_there(self):
+        S = self.load("herdr_secret_bare_path", "bin/herdr-secret")
+        self.assertEqual(S.THERE_PATH, self.layout.THERE_PATH)
+        r = self.there(["sh", "-c", S.THERE, "sh", "where", "--json"])
+        self.assertEqual(r.stdout.strip(), "hc-found herdr-secret where --json", r.stderr)
+
+    def own_lookup(self, code, path=None):
+        """herdr-task's own code in a python started with only the bare PATH, on the throwaway home."""
+        env = {"HOME": self.home, "PATH": path or self.sys, "TMPDIR": self.tmp}
+        pre = ("import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]);"
+               "import herdr_task.base as base; base.not_real = lambda: None\n")
+        return subprocess.run([sys.executable, "-c", pre + code, BIN], env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
+
+    def test_herdr_task_finds_hc_in_local_bin(self):
+        """herdr-task run there with PATH=/usr/bin:/bin: hc in ~/.local/bin is found (it was FileNotFoundError: 'hc')."""
+        r = self.own_lookup("print(base.run(['hc', 'ls', '--label', 'herdr.task=x']).stdout.strip())")
+        self.assertEqual(r.stdout.strip(), "hc-found ls --label herdr.task=x", r.stderr)
+        r = self.own_lookup("import os; print(os.environ['PATH'])")
+        self.assertEqual(r.stdout.strip().split(":")[:2], [self.sys, os.path.join(self.home, ".local", "bin")],
+                         "the PATH's own folders first, the added ones after")
+
+    def test_a_path_with_hc_is_left_alone(self):
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        self.fake(os.path.join(other, "hc"), "echo other")
+        r = self.own_lookup("import os; print(os.environ['PATH'])", path=f"{other}:{self.sys}")
+        self.assertEqual(r.stdout.strip(), f"{other}:{self.sys}", r.stderr)
+
+    def test_hc_beside_the_running_herdr_core(self):
+        """No hc in ~/.local/bin (a Nix or package install): the folder of the herdr-core this runs under, where hc
+        sits beside it."""
+        os.remove(os.path.join(self.home, ".local", "bin", "hc"))
+        core = os.path.join(self.tmp, "core-bin")
+        os.makedirs(core)
+        shutil.copy(os.path.realpath(self.sh), os.path.join(core, "herdr-core"))   # a program named herdr-core
+        self.fake(os.path.join(core, "hc"), 'echo "hc-found $*"')
+        # on the test's throwaway HOME, base.not_real held the core back at import; let it, and look again
+        code = ("import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); import herdr_task.base as base\n"
+                "base.not_real = lambda: None; base.find_tools()\n"
+                "print(base.core_dir()); print(base.run(['hc', 'ls']).stdout.strip())")
+        env = {"HOME": self.home, "PATH": self.sys, "TMPDIR": self.tmp}
+        # python3 as herdr-core's child: `; true` keeps sh from exec'ing it in its own place
+        r = subprocess.run([os.path.join(core, "herdr-core"), "-c", '"$0" -c "$1" "$2"; true', sys.executable, code, BIN],
+                           env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
+        self.assertEqual(r.stdout.strip().splitlines(), [core, "hc-found ls"], r.stderr)

@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 
-from . import link
+from . import layout, link
 from .base import bundle, Fail, guard, run, STORE, sync_held, VERSION
 from .agents import LINE_MAX, SUMMARY_MAX
 from .launch import cmd_allow, name_tabs
@@ -102,7 +102,8 @@ def remote_run(machine, argv, timeout=None):
         # the person's action: runs there whole even when the link drops, its result read back (SHEP-227, #1055)
         return link.action(machine, argv, install)
     wait = ["--timeout", str(timeout)] if timeout else []
-    call = ["hc", "exec", "--on", machine, *wait, "--", "sh", "-c", 'exec "$HOME/.local/bin/herdr-task" "$@"', "herdr-task", *argv]
+    # fork: SHEP-61: herdr-task there finds hc and git even when that herdr-core runs with a bare PATH (launchd)
+    call = ["hc", "exec", "--on", machine, *wait, "--", "sh", "-c", layout.there('exec "$HOME/.local/bin/herdr-task" "$@"'), "herdr-task", *argv]
     r = link.again(machine, argv, lambda: run(call)) if argv[:1] and argv[0] in link.READS else run(call)
     if r.returncode == 127 or "not found" in r.stderr and not r.stdout:
         install()

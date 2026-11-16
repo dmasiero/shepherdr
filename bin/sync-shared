@@ -18,7 +18,7 @@ committed of the source stands in for it (a copy equal to that is ours, not hand
 
 The helpers that go to other machines as one file each (herdr-secret, herdr-artifact) carry a block of
 Shepherdr's paths between "# ---- SHEP:" and "# ---- end SHEP ----": the source is
-mods/tasks/bin/herdr_task/layout.py's PY, written in here too.
+mods/tasks/bin/herdr_task/layout.py's BLOCK (its PY, then THERE_PATH: fork, SHEP-61), written in here too.
 """
 import hashlib, os, shutil, subprocess, sys
 
@@ -77,7 +77,7 @@ def shep_blocks(check):
         spec = importlib.util.spec_from_file_location("shep_layout", os.path.join(MODS, "tasks", "bin", "herdr_task", "layout.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        want = mod.PY
+        want = getattr(mod, "BLOCK", mod.PY)   # fork: SHEP-61 (PY, then THERE_PATH)
     except (OSError, ImportError, SyntaxError) as e:
         return [f"mods/tasks/bin/herdr_task/layout.py: {e}"], []
     bad, made = [], []
@@ -95,7 +95,7 @@ def shep_blocks(check):
         if text[a:b] == want.lstrip("\n"):
             continue
         if check:
-            bad.append(f"{rel}'s SHEP block differs from layout.py's PY")
+            bad.append(f"{rel}'s SHEP block differs from layout.py's BLOCK")
         else:
             mode = os.stat(path).st_mode
             write(path, (text[:a] + want.lstrip("\n") + text[b:]).encode())

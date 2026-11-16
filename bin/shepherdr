@@ -183,7 +183,7 @@ def shep_py(base):
         spec = importlib.util.spec_from_file_location("shep_layout_py", os.path.join(base, "mods/tasks/bin/herdr_task/layout.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return mod.PY.lstrip("\n")
+        return getattr(mod, "BLOCK", mod.PY).lstrip("\n")   # fork: SHEP-61 (PY, then THERE_PATH)
     except Exception:
         return None
 

@@ -56,6 +56,8 @@ def SHEP(rel, _t={'.herdr/shepherdr.json': ('config', 'settings.json'), '.herdr/
             if rel == old or rel.startswith(old + "/"):
                 return os.path.join(R[base], new + rel[len(old):])
     return os.path.join(H, rel)
+# fork: SHEP-61: what a call to another machine puts first on its PATH (layout.py's THERE_PATH)
+THERE_PATH = 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin${PATH:+:$PATH}"; export PATH; '
 # ---- end SHEP ----
 
 # Shepherdr's own folders (~/.local/share/shepherdr/artifacts) once this machine's data moved there,
@@ -1299,7 +1301,7 @@ def pull(aid, machine, version=None):
         # pack --version needs this herdr-artifact there: --on installs it when it differs.
         run([sys.executable, os.path.realpath(__file__), "--on", machine, "--version"])
     with tempfile.TemporaryDirectory(prefix="herdr-artifact-") as d:
-        p = subprocess.run(["hc", "exec", "--on", machine, "--", "sh", "-c", 'exec "$HOME/.local/bin/herdr-artifact" pack "$@"', "x", aid,
+        p = subprocess.run(["hc", "exec", "--on", machine, "--", "sh", "-c", THERE_PATH + 'exec "$HOME/.local/bin/herdr-artifact" pack "$@"', "x", aid,
                             *(["--version", str(version)] if version else [])],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if p.returncode != 0:
@@ -2428,7 +2430,8 @@ def remote(machine, argv):
     # Held (sync_held): no copy goes; the copy already there runs.
     if not installed and not sync_held():
         install()
-    call = ["hc", "exec", "--on", machine, "--", "sh", "-c", 'exec "$HOME/.local/bin/herdr-artifact" "$@"', "herdr-artifact", *argv]
+    # fork: SHEP-61: THERE_PATH (the SHEP block), so herdr-artifact there finds hc on a launchd herdr-core's bare PATH
+    call = ["hc", "exec", "--on", machine, "--", "sh", "-c", THERE_PATH + 'exec "$HOME/.local/bin/herdr-artifact" "$@"', "herdr-artifact", *argv]
     r = run(call)
     if r.returncode == 127 or ("not found" in r.stderr and not r.stdout):
         install()

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import time
 
+from . import layout
 from .base import APP_HOME, Fail, guard, hc_json, not_real, now, SHELLS
 from .store import read_list
 from .output import say
@@ -33,8 +34,8 @@ SIDEBAR_KEYS = ("spaces-chat", "space.colors", "coordinator.slots")
 # What a terminal was, enough to start it again (its status and turn change all the time).
 TERMINAL_KEYS = ("address", "name", "agent", "template", "cwd", "parent", "state")
 MARK = "--herdr-backup--"
-# On a machine: its docs.json, the mark, its live terminals.
-STATE_SCRIPT = ('PATH="$HOME/.local/bin:$PATH"; cat "${XDG_STATE_HOME:-$HOME/.local/state}/herdr-core/default/docs.json"'
+# On a machine: its docs.json, the mark, its live terminals. (fork: SHEP-61: layout.there, the shared PATH)
+STATE_SCRIPT = layout.there('cat "${XDG_STATE_HOME:-$HOME/.local/state}/herdr-core/default/docs.json"'
                 f' && echo && echo {MARK} && hc ls --json')
 
 

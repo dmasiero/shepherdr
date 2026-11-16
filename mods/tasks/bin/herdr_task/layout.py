@@ -208,6 +208,29 @@ def SHEP(rel, _t={table!r}):
 PY = _py()
 
 
+# fork: SHEP-61. Where hc and Shepherdr's helpers live on a machine whose PATH lacks them. A herdr-core started by
+# launchd or systemd runs what `hc exec --on` sends it with PATH=/usr/bin:/bin:/usr/sbin:/sbin: no ~/.local/bin
+# (hc, herdr-task and the helpers) and no Homebrew. Every helper run on another machine gets THERE_PATH first.
+TOOL_DIRS = ("$HOME/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
+THERE_PATH = f'PATH="{":".join(TOOL_DIRS)}${{PATH:+:$PATH}}"; export PATH; '
+
+
+def there(script):
+    """A `sh -c` script for another machine, with TOOL_DIRS first on its PATH."""
+    return THERE_PATH + script
+
+
+def there_argv(argv):
+    """argv to run after `hc exec --on <machine> --`: the program found with TOOL_DIRS first on the PATH."""
+    return ["sh", "-c", there('exec "$@"'), "sh", *argv]
+
+
+# The one-file helpers (herdr-secret, herdr-artifact) carry PY and THERE_PATH in their SHEP block (bin/sync-shared).
+BLOCK = PY + f"""# fork: SHEP-61: what a call to another machine puts first on its PATH (layout.py's THERE_PATH)
+THERE_PATH = {THERE_PATH!r}
+"""
+
+
 # ---- the move ---------------------------------------------------------------------------------
 
 def _fs_type(p):
