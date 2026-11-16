@@ -30,6 +30,8 @@ from . import gitea  # fork: Gitea pull requests (gitea.py)
 from .news import news_pass, typing
 from .takeover import cant_go_on, takeover
 from .ghnews import main_pass, pr_deliver, pr_news
+from . import touches  # fork: SHEP-63
+from .touches import touches_pass  # fork: SHEP-63
 from .scheduler import SCHEDULER
 from .revive import revive_pass
 
@@ -499,7 +501,7 @@ def retry_one(row, k, log, report):
         report["retries"].append({"address": addr, "reason": row["reason"], "tries": row["tries"], "over": bool(row.get("over"))})
     # Not into words the person is writing to it (HERD-71): the next round tries again.
     if row.get("due") and row["due"] <= now() and status_word(k) != "working" and not typing(addr, k):
-        r = run(["hc", "send", addr, NUDGE.format(row["reason"].lower())])
+        r = run(["hc", "send", addr, touches.tag("retry") + NUDGE.format(row["reason"].lower())])  # fork: SHEP-63, Herdr's own
         if r.returncode == 0:
             row = {**row, "nudged": now()}
             row.pop("due")
@@ -643,6 +645,10 @@ def cmd_tick(args):
         memory_guard(report)
     except Exception as e:  # never stops the queue
         report["ended_error"] = str(e)
+    try:
+        touches_pass(report, args.folder)  # fork: SHEP-63, where the person stepped in (touches.py)
+    except Exception as e:  # never stops the queue
+        report["touches_error"] = str(e)
     try:
         lost_logs_pass(report, args.folder)
     except Exception as e:  # never stops the queue
