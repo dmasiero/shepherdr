@@ -583,6 +583,10 @@ def closing_line(s, task, parent=None, argv=None):
             f"--summary \"<what the person now sees or can do, plain words, at most {SUMMARY_MAX} characters>\"` (optionally "
             f"`--details \"<a few short bullets in plain words, one per line: what changed for the person first, then how it was checked>\"`; with `--agents-md \"<one line>\"` when you learned something "
             f"about setting up or testing this repo that its AGENTS.md lacks). The person accepts it from there; never mark it done yourself.")
+    from .lessons import lessons_on  # fork: SHEP-64: drafts from where the person stepped in, only while lessons are on
+    if lessons_on(task.get("space")):
+        text += (" If the person stepped in, add up to 3 `--lesson \"<one short rule>\" --scope repo|space|you|shepherdr` "
+                 "as your brief says.")
     on, rounds = review_limits(s, task)
     if on:
         text += (f" Review is on: after each review round, record it on the commit it reviewed with `{ht} reviewed {s.ref(task)} "
@@ -621,6 +625,13 @@ def where_line(task):
     return f"You work in {task['worktree']} on branch {task['branch']}{base}."
 
 
+def worker_words(task, space=None):
+    """fork: SHEP-64: worker.md's words, without its lessons line while lessons are off (lessons.py)."""
+    from .lessons import lessons_on, without_rule
+    words = instructions("worker")
+    return words if lessons_on(space or task.get("space")) else without_rule(words)
+
+
 def brief(s, task, parent=None, space=None, argv=None):
     instructions("reviewer")  # the file its review's reviewer gets (WORKER_MD)
     keep_review(s, task, space)
@@ -629,12 +640,12 @@ def brief(s, task, parent=None, space=None, argv=None):
         start += f"\n(The main folder is {s.loc['folder']}.)"
     body = "Your task, " + s.ref(task) + ":\n" + ((task.get("prompt") or "").strip() or task["title"])
     finish = notes_part("Before you say ready", notes(s, task, "finish", space))
-    return "\n\n".join(x for x in [instructions("worker"), start, body, where_line(task), finish, closing_line(s, task, parent, argv),
+    return "\n\n".join(x for x in [worker_words(task, space), start, body, where_line(task), finish, closing_line(s, task, parent, argv),
                                     settings_block(s, task, space, argv, live=True)] if x)
 
 
 def handoff(s, task, prev, parent=None, argv=None):
-    lines = [f"You are taking over task {s.ref(task)} \"{task['title']}\" from another agent.", instructions("worker")]
+    lines = [f"You are taking over task {s.ref(task)} \"{task['title']}\" from another agent.", worker_words(task)]
     lines.append(where_line(task))
     lines.append("The task:\n" + ((task.get("prompt") or "").strip() or task["title"]))
     if prev and prev.get("log"):
