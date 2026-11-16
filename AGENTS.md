@@ -154,6 +154,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Reach map tests: `test/test_reach.py` puts logging fake ssh/tailscale/hc on PATH and runs the real probe; reuse it for
   anything that might contact other hosts.
 
+- A fork change to `templates/worker.md` (or another template that goes into briefs) can't carry a `fork:` comment, which
+  would reach every brief: name it in its FORK.md row's prose and pin its line with a test.
+
 ## Add-ons
 
 - `lib/addons.json` lists every mod by add-on; a new mod goes in one (the tests check). Shared modules have one
