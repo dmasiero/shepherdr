@@ -120,3 +120,13 @@ test("Feedback offers and the repo they file to", () => {
   expect(S.feedbackRepo("not a repo")).toBeNull();
   expect(read("mods/shepherdr-settings/main.js")).toContain("feedbackRow(this, t)");
 });
+
+// fork: SHEP-65: a key this file doesn't know (kept lessons) stays when a row changes or the file is upgraded
+test("a row's change and the upgrade keep kept lessons", () => {
+  const kept = [{ id: "l-4-1", text: "Commit a paid receipt's row without asking." }];
+  const f = { everywhere: { lessons: { on: false, kept }, assistant: { reactions: true } }, spaces: { sp1: { lessons: { kept } } } };
+  const next = S.withValue(f, "tasks", "merge", "auto");
+  expect(next.everywhere.lessons).toEqual({ on: false, kept });
+  expect(S.upgradeReactions(next).spaces.sp1.lessons).toEqual({ kept });
+  expect(next.everywhere.lessons.kept).toEqual(kept);
+});
