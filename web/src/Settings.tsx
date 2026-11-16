@@ -25,6 +25,7 @@ const AP = APc as any
 import { usePluginErrors } from './guard.tsx'
 import { PlacesToggle } from './Frame.tsx'
 import { Stack } from './Stack.tsx'
+import { LessonsList } from './Lessons.tsx' // fork: SHEP-67
 import {
   AppearanceIcon,
   AutopilotIcon,
@@ -803,6 +804,8 @@ function PageBody({ page, phone, set, refused, clear, hint }: { page: Page; phon
           </dl>
         </Group>
       })}
+      {/* fork: SHEP-67: Agents › Lessons' kept lessons, under its switch */}
+      {page.lessons ? <LessonsList view={page.lessons} space={!!page.level && page.level !== 'all'} phone={phone} card={card} /> : null}
       {page.qr ? (
         // Web: the link's QR code, to open it on a phone (the window's)
         <figure className="flex w-full flex-col gap-2">

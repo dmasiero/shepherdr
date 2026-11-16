@@ -429,7 +429,9 @@ def expire_pass(report, folder=None):
 
 def kept_at(d, space):
     """(level, lessons) kept at one level: space id, or None for Everywhere's."""
-    layer = (d.get("spaces") or {}).get(bare(space)) if space else d.get("everywhere")
+    spaces = d.get("spaces") or {}
+    # fork: SHEP-67: a space under its full id ("vm/sp1", the window's own file) is found as it's kept
+    layer = spaces.get(space if space in spaces else bare(space)) if space else d.get("everywhere")
     part = layer.get("lessons") if isinstance(layer, dict) else None
     kept = part.get("kept") if isinstance(part, dict) else None
     return [x for x in kept or [] if isinstance(x, dict) and x.get("text")]

@@ -203,6 +203,28 @@ async function addedMachines() {
 const task = async (args: string[], folder: string, machine: string | null) =>
   settle((a: string[]) => run(["herdr-task", ...a]), await run(["herdr-task", ...(machine ? ["--on", machine] : []), ...args, "--folder", folder, "--json"]));
 
+/** fork: SHEP-67: `herdr-task lessons <what> <id> [--text]`: a kept lesson's (no task: where the lessons are kept, this
+ *  machine) or a task's draft (its folder, on its machine). -> { ok, lesson, said } or { ok: false, error } */
+export async function lessonAct(b: any, compat: Pick<Compat, "taskOf">) {
+  const what = b.what;
+  if (!["keep", "edit", "drop", "retire"].includes(what)) throw new Error("Not something a lesson can do.");
+  const id = str(b.id, 80);
+  if (!/^l-[\w.-]+$/.test(id)) throw new Error("Not a lesson.");
+  const text = what === "edit" ? str(b.text, 1000).trim() : null;
+  if (what === "edit" && !text) return { ok: false, error: "Give it some words: one short rule." };
+  const args = ["lessons", what, id, ...(text ? ["--text", text] : [])];
+  let r;
+  if (typeof b.task === "string") {
+    const t = compat.taskOf(b.task);
+    if (!t) throw new Error("That task isn't here any more.");
+    r = await task(args, t.folder, t.machine);
+  } else r = await run(["herdr-task", ...args, "--json"]);
+  let out: any = null;
+  try { out = JSON.parse(r.stdout); } catch {}
+  if (r.code !== 0 || out?.error) return { ok: false, error: out?.error || r.stderr.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "herdr-task refused it." };
+  return { ok: true, lesson: out };
+}
+
 function str(v: unknown, max = 100_000) {
   if (typeof v !== "string" || v.length > max) throw new Error("bad input");
   return v;
@@ -659,6 +681,9 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     for (const key of Object.keys(b.chats).slice(0, 20)) { const a = compat.addrOf(key); if (a) await act(hub, { type: "read", addr: a }, compat); }
     return { ok: true };
   }
+  // fork: SHEP-67: a lesson's Edit or Retire (Settings › Agents › Lessons), and a draft's Keep, Edit or Drop (the
+  // Accept card's lessons chip), as `herdr-task lessons` makes them; its refusal comes back in its words
+  if (b?.type === "lesson") return lessonAct(b, compat);
   // a call started or ended on the page: its audio goes over /api/voice; nothing to keep here
   if (b?.type === "call") return { ok: true };
   if (b?.type === "artifact-delete" && typeof b.artifact === "string") {
