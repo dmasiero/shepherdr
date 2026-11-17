@@ -12,13 +12,11 @@ from .launch import coordinator_in
 from .commands import workers
 from .news import news_send
 from . import gitea  # fork: a Gitea pull request's news (gitea.py)
-from . import touches  # fork: SHEP-63
 
 
 PR_NEWS_EVERY = 120000      # how often a Ready task's pull request is read for news (ms)
 MAIN_EVERY = 120000         # how often a watched base branch's runs are read (ms)
 NOTICE_KEEP_MS = 6 * 3600000
-BOT = re.compile(r"\[bot\]$|-bot$|^(?:github-actions|dependabot|renovate|gitea-actions)$", re.I)  # fork: SHEP-63
 TAIL = 3000                 # the end of a failed log, in characters
 GREEN = {"success", "neutral", "skipped"}
 RED = {"failure", "timed_out", "action_required", "startup_failure", "stale"}
@@ -144,10 +142,6 @@ def pr_news(s, t, v, report):
                  and (c["body"] or c.get("state") == "CHANGES_REQUESTED") and c["body"] not in own]
         w["seen"] = [c["id"] for c in all_c][-500:]
     pr["watch"] = w
-    # fork: SHEP-63: a comment or review with a person's words is a touch (a bot's, a check or a conflict isn't).
-    for c in fresh:
-        if c["body"] and not BOT.search(c["who"]):
-            touches.add(t, "pr", "person", "gitea" if gitea.on(t) else "github", f"pr{pr['number']}/{c['id']}", c["at"])
     if not news_checks and not fresh and not news_conflict:
         return
     forge = gitea.word(t)  # fork: GitHub's or Gitea's words
