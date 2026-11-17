@@ -6972,3 +6972,83 @@ class BarePathThere(unittest.TestCase):
         r = subprocess.run([os.path.join(core, "herdr-core"), "-c", '"$0" -c "$1" "$2"; true', sys.executable, code, BIN],
                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30)
         self.assertEqual(r.stdout.strip().splitlines(), [core, "hc-found ls"], r.stderr)
+
+
+class LeftoverRolledBackData(unittest.TestCase):
+    """SHEP-69: the lessons feature (SHEP-63 to SHEP-67) was rolled back. What it wrote stays harmless: a task's
+    lessons, touches and touch_logs fields, and lessons keys at any settings level, are read past quietly (no error,
+    no warning, nothing of them in briefs or the Assistant's block). A throwaway store and settings file."""
+
+    LEFT = {"lessons": [{"id": "l-1-1", "text": "Say where the files are.", "scope": "space", "state": "pending", "at": 1}],
+            "touches": [{"kind": "answer", "who": "person", "at": 1, "id": "file:ask:1"}],
+            "touch_logs": {"/x/log.jsonl": 120}}
+    OLD = {"on": True, "kept": [{"id": "l-4-1", "text": "Commit a paid receipt's row without asking.", "from": ["SHEP-4"],
+                                 "kept_at": 1, "seen": 2, "off": False}], "dropped": ["x"]}
+
+    def setUp(self):
+        import contextlib
+        import io
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.settings as settings
+        import herdr_task.assistant_settings as aset
+        import herdr_task.launch as launch
+        import herdr_task.output as output
+        from herdr_task import store
+        self.settings, self.aset, self.launch, self.output, self.store = settings, aset, launch, output, store
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.file = os.path.join(self.dir, "shepherdr.json")
+        with open(self.file, "w") as f:
+            # where write_lessons kept them: Everywhere's and a space's (its bare id or, the window's file, its full one)
+            json.dump({"version": 1, "everywhere": {"lessons": self.OLD, "agents": {"reactions": True}},
+                       "spaces": {"sp1": {"lessons": self.OLD, "tasks": {"merge": "checks"}},
+                                  "vm/sp2": {"machine": "vm", "lessons": {"on": False}}}}, f)
+        self.terminals = {"t5": {"state": "live", "turn": 3, "labels": {"herdr.role": "coordinator", "herdr.space": "sp1"}}}
+        self.err = io.StringIO()
+        for target, name, value in [
+            (settings, "SETTINGS", self.file), (aset, "SETTINGS", self.file), (store, "STORE", os.path.join(self.dir, "tasks")),
+            (aset, "STATE", os.path.join(self.dir, ".assistant-settings.json")),
+            (aset, "hc_json", lambda *a: self.terminals.get(a[1]) if a[0] == "get" else None),
+            (aset, "addon_off", lambda name: False), (aset, "coordinators", lambda: list(self.terminals)),
+            (aset, "autopilot_of", lambda space, cfg: (False, "every 60 minutes", "")),
+            (aset, "run", lambda args, **_: subprocess.CompletedProcess(args, 0, "", "")),
+        ]:
+            p = mock.patch.object(target, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        r = contextlib.redirect_stderr(self.err)
+        r.__enter__()
+        self.addCleanup(r.__exit__, None, None, None)
+        self.folder = os.path.join(self.dir, "proj")
+        os.makedirs(self.folder)
+        self.loc = {"folder": self.folder, "kind": "folder", "name": "proj", "common": None}
+        with store.Store(self.loc) as s:
+            s.data["tasks"].append({"id": 1, "title": "Old", "state": "ready", "prompt": "Do the thing.", "agents": [],
+                                    "space": "sp1", **json.loads(json.dumps(self.LEFT))})
+            s.dirty = True
+
+    def test_a_task_holding_them_reads_shows_and_briefs_as_any_other(self):
+        with self.store.Store(self.loc) as s:
+            t = s.data["tasks"][0]
+            self.output.view(s, t)
+            text = self.launch.brief(s, t, space="sp1")
+            t["title"] = "Old, renamed"
+            s.dirty = True
+        text = text.replace(ROOT, "<repo>").lower()  # the repo's own folder may be named after a task
+        self.assertNotIn("lesson", text)
+        self.assertNotIn("touch", text)
+        with self.store.Store(self.loc, write=False) as s:
+            self.assertEqual(s.data["tasks"][0]["title"], "Old, renamed")
+        self.assertEqual(self.err.getvalue(), "")
+
+    def test_settings_holding_them_at_every_level_change_nothing(self):
+        self.assertTrue(self.settings.reactions_on("sp1"))
+        note = self.aset.session_note("t5")
+        self.assertTrue(note.startswith("Your settings: "))
+        self.assertNotIn("lesson", note.lower())
+        self.assertIn("- Merge: after checks", note)
+        with self.store.Store(self.loc, write=False) as s:
+            block = self.settings.settings_block(s, s.data["tasks"][0], "sp1")
+        self.assertNotIn("lesson", block.lower())
+        self.assertEqual(self.err.getvalue(), "")
