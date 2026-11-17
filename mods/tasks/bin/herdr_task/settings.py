@@ -27,8 +27,7 @@ DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "
                       "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": "", "branch": "",
                       "worktree_root": ""},
             "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {},
-            "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"},
-            "lessons": {"on": True}}  # fork: SHEP-64: Settings › Agents › Lessons, the whole feature's switch (lessons.py)
+            "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"}}
 LEVELS = ["blocker", "major", "minor"]
 
 
