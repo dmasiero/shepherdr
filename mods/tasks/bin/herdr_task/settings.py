@@ -27,8 +27,7 @@ DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "
                       "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": "", "branch": "",
                       "worktree_root": ""},
             "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {},
-            "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"},
-            "lessons": {"on": True}}  # fork: SHEP-64: Settings › Agents › Lessons, the whole feature's switch (lessons.py)
+            "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"}}
 LEVELS = ["blocker", "major", "minor"]
 
 
@@ -88,36 +87,6 @@ def write_autopilot(space, values):
         json.dump(d, f, indent=2)
         f.write("\n")
     os.replace(tmp, SETTINGS)
-
-
-def write_lessons(space, edit):
-    """fork: SHEP-65: changes `lessons` ({on, kept}) at one level of the settings file, as
-    write_autopilot does (space None: Everywhere's): edit(part) changes the dict in place; an empty one
-    goes. Refused on a copy the window pushed here: the window's machine would put its own back."""
-    d = read_settings()
-    if d.get("pushed_from"):
-        raise Fail("This machine's Shepherdr settings are a copy from the machine whose window sets them: "
-                   "change Lessons there (nothing changed here).")
-    # fork: SHEP-67: a space kept under its full id here ("vm/sp1", the window's own file) is changed there, not as "sp1"
-    key = space if space and space in (d.get("spaces") or {}) else bare(space)
-    layer = d.setdefault("spaces", {}).setdefault(key, {}) if space else d.setdefault("everywhere", {})
-    part = dict(layer["lessons"]) if isinstance(layer.get("lessons"), dict) else {}
-    out = edit(part)
-    if part:
-        layer["lessons"] = part
-    else:
-        layer.pop("lessons", None)
-    if space and not layer:
-        d["spaces"].pop(key, None)
-    d["version"] = 1
-    path = SETTINGS
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.{os.getpid()}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(d, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, path)
-    return out
 
 
 def reactions_on(space=None, d=None):

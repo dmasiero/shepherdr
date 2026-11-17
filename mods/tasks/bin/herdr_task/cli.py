@@ -27,8 +27,6 @@ from .home import cmd_home
 from .assistant_settings import cmd_session_note
 from .feedback import cmd_feedback
 from .sandbox import cmd_sandbox
-from .touches import cmd_stats, cmd_touch  # fork: SHEP-63
-from .lessons import cmd_lessons, SCOPES as LESSON_SCOPES  # fork: SHEP-64
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -246,11 +244,6 @@ def main():
     c.add_argument("--proof", help="its proof artifact's id (herdr-artifact publish prints it); default: its newest artifact titled \"... · Proof\"")
     c.add_argument("--agents-md", help="\"For AGENTS.md\": one line about setting up or testing this repo that the next agent "
                                        "would need and AGENTS.md lacks; the Assistant decides whether to add it")
-    # fork: SHEP-64: lessons drafted from where the person stepped in (lessons.py); ignored while lessons are off
-    c.add_argument("--lesson", action="append", help="a lesson for later tasks: one short imperative rule (at most 200 "
-                                                     "characters), drafted only from where the person stepped in; up to 3, each followed by its --scope")
-    c.add_argument("--scope", action="append", choices=LESSON_SCOPES, help="the --lesson before it is for: repo (AGENTS.md), "
-                                                                          "space (this space), you (the person, every space) or shepherdr (Shepherdr's makers)")
     c = cmd("reviewed", cmd_reviewed, "a task's agent records one review round of its current commit (Review: on): ready then "
                                       "accepts that commit; uses one of its Review rounds")
     c.add_argument("--report", help="the round's findings in a line (levels, what was fixed)")
@@ -289,32 +282,7 @@ def main():
     c = cmd("accept", cmd_accept, "the person's Accept on a Ready task: merges first when there is something to merge, then done")
     agent_opts(c)
     c.add_argument("--space")
-    c = cmd("reopen", lambda a: cmd_state(a, "reopen"), "undo done or ready; a queued or scheduled task goes back to to do")
-    c.add_argument("--why", help="why it's reopened, a short line (kept on its touch)")  # fork: SHEP-63
-    # fork: SHEP-63: touches (where the person steps in) and their stats (touches.py)
-    c = cmd("touch", cmd_touch, "note someone stepping into a task (the service's answered cards, herdr-artifact's notes)", id=False)
-    c.add_argument("id", nargs="?", help="the task (or --terminal: its agent's)")
-    c.add_argument("--terminal", help="the task's agent's terminal, instead of its id")
-    c.add_argument("--kind", required=True, help="message, stop, ask, note, reopen, back, fix, review-more, pr or guide")
-    c.add_argument("--by", help="person, assistant, autopilot, agent or herdr (default: who runs this)")
-    c.add_argument("--from", dest="source", help="where it came from: web, chat, terminal, viewer...")
-    c.add_argument("--log", help="where its words already live (a log line's id, an ask's id): never the words")
-    c.add_argument("--at", type=int, help="when, in ms (default: now)")
-    c.add_argument("--why", help=argparse.SUPPRESS)
-    c = cmd("stats", cmd_stats, "per space: tasks, touches by kind, done with no help, Ready to Accept, reopens", id=False)
-    c.add_argument("--space", help="one space (its id or name)")
-    c.add_argument("--weeks", type=int, help="only tasks started in the last N weeks")
-    # fork: SHEP-64: the switch for Lessons (Settings › Agents › Lessons)
-    c = cmd("lessons", cmd_lessons, "Lessons, drafted by workers from where you step in: on, off, or (a space) inherit "
-                                    "Everywhere's; keep, edit, drop or retire one (fork: SHEP-65: the person's answer); "
-                                    "no word: the drafts and kept lessons", id=False)
-    c.add_argument("what", nargs="?", choices=("on", "off", "inherit", "keep", "edit", "drop", "retire"))
-    c.add_argument("lesson_id", nargs="?", metavar="id", help="the lesson (l-4-1) to keep, edit, drop or retire")
-    c.add_argument("--space", help="one space's own (its id); default: Everywhere")
-    c.add_argument("--text", help="edit: the lesson's new words, one short rule (the person's)")
-    c.add_argument("--scope", choices=LESSON_SCOPES, help="keep or edit: who it's for instead of the draft's")
-    c.add_argument("--pending", action="store_true", help="only the drafts waiting for the person's answer")
-    c.add_argument("--task", help="only one task's drafts (HAT-4)")
+    cmd("reopen", lambda a: cmd_state(a, "reopen"), "undo done or ready; a queued or scheduled task goes back to to do")
     cmd("unarchive", cmd_unarchive, "bring an archived task back into its list (only when the person asks; writing to it does too)")
     c = cmd("edit", cmd_edit, "change a task")
     c.add_argument("--title")

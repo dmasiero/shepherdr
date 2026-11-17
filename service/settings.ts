@@ -13,7 +13,6 @@ import * as HC from "../core/host.js";
 import * as APc from "../core/autopilot.js";
 import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 
-const { LESSONS, lessonsView, lessonsOn } = C as any; // fork: SHEP-67
 const { TASK_ROWS, DEFAULTS, wordFor, valueFor, ROLES: CORE_ROLES, NOTES: CORE_NOTES, ABOUT, BACKUP, REACTIONS, SUGGESTIONS, FEEDBACK, feedbackRepo, upgradeReactions, BASE, BRANCH, branchPattern, MACHINES, OLD_NAMES, SECTIONS,
   WEB, modelLabel, roleSel, otherCli, otherCliWords, backupProblem, homeAbout, webState, fromWord, LOADING_AGENTS, RESET, machineLabel } = C as any;
 const AP = APc as any;
@@ -232,12 +231,7 @@ export class Settings {
       rows.push({ label: FEEDBACK.repoTitle, key: "agents.feedback_repo", value: String(repo.value ?? ""), text: true, hint: FEEDBACK.repoAbout,
         placeholder: FEEDBACK.repo } as SettingRow);
     }
-    // fork: SHEP-67: Lessons (herdr-task's lessons.py): its switch under its own heading, then the kept lessons
-    // (core/settings.js lessonsView), drawn under the rows (web/src/Lessons.tsx)
-    const lo = { own: !!scope && typeof this.file.spaces?.[scope]?.lessons?.on === "boolean", parent: lessonsOn(this.file, null), level: "everywhere", machine: null };
-    rows.push({ label: LESSONS.title, key: "lessons.on", value: ON(lessonsOn(this.file, scope)), options: ["on", "off"], hint: LESSONS.about,
-      ...this.follows(s, lo, (v) => ON(v !== false), "lessons", "on") });
-    return { name: title("agents"), level: scope ?? "all", rows, lessons: lessonsView(this.file, scope) };
+    return { name: title("agents"), level: scope ?? "all", rows };
   }
 
   private tasks(s: Scope | null): SettingSection {
@@ -493,12 +487,6 @@ export class Settings {
       const repo = feedbackRepo(word ?? "");
       if (repo === null) throw new Error(FEEDBACK.bad);
       put("agents", "feedback_repo", repo || null);
-    } else if (key === "lessons.on") {
-      // fork: SHEP-67: on or off at this level, kept beside the kept lessons (lessons.kept stays); the same as what
-      // this level would inherit unsets it, so it follows again (as Reactions)
-      if (word !== null && word !== "on" && word !== "off") throw new Error("Not one of its choices.");
-      const parent = space ? lessonsOn(file, null) : true;
-      put("lessons", "on", word === null || (word === "on") === parent ? null : word === "on");
     } else if (key === "backup.agent") {
       // off is "off"; on follows what it would get anyway when that is on, else names the other CLI (as the window's)
       const parent = space ? file.everywhere?.backup?.agent ?? null : null;

@@ -37,7 +37,6 @@ from .output import line, minutes, say, view
 from .scheduler import ensure_scheduler
 from .proof import evidence, find_proof
 from .when import when_from
-from . import touches  # fork: SHEP-63, where the person steps in (touches.py)
 
 
 # ---- commands -------------------------------------------------------------------------------
@@ -230,10 +229,6 @@ def cmd_show(args):
         if on:
             v["review_rounds"] = {"used": rounds_used(t), "of": rounds, "added": int(t.get("review_rounds_added") or 0)}
         v["after_refs"] = after_refs(s, t)
-        # fork: SHEP-67: its drafts waiting for the person's answer, for the Accept card's lessons chip (none while off)
-        from .lessons import pending as _pending, lessons_on as _lessons_on
-        v["lessons_waiting"] = ([{"id": x["id"], "text": x.get("text"), "scope": x.get("scope")} for x in _pending(t)]
-                                if _lessons_on(t.get("space")) else [])
         block = settings_block(s, t)
         if getattr(args, "evidence", False):
             # What the Accept card shows: commits, files, checks and the proof (proof.py).
@@ -251,12 +246,8 @@ def cmd_show(args):
         r = v["review_rounds"]
         text.append(f"review rounds: {r['used']} of {r['of']} used" + (f" ({r['added']} added by the assistant)" if r["added"] else "")
                     + (" (ready refused: out of rounds)" if v.get("review_out") else ""))
-    from .lessons import pending, SCOPE_WORDS, lessons_on, md_as_lesson  # fork: SHEP-64: drafts waiting for the person
-    if v.get("agents_md") and not md_as_lesson(v):  # fork: SHEP-65: else it's a repo lesson, below
+    if v.get("agents_md"):
         text.append(f"for AGENTS.md: {v['agents_md']}")
-    if pending(v) and lessons_on(v.get("space")):
-        for x in pending(v):
-            text.append(f"lesson {x['id']} ({SCOPE_WORDS.get(x['scope'], x['scope'])}): {x['text']}")
     if v.get("pr"):
         text.append(f"pull request: #{v['pr']['number']} {v['pr']['url']}")
     if v.get("why") and v["status"] == "needs":
@@ -376,11 +367,8 @@ def ready_words(args):
 
 def cmd_ready(args):
     said, details = ready_words(args)
-    from .lessons import check as check_lessons  # fork: SHEP-64
     with open_store(args) as s:
         t = s.find(args.id)
-        # fork: SHEP-64: its drafted lessons, checked before anything changes (lessons off: ignored)
-        drafted, lesson_words = check_lessons(s, t, args)
         me = os.environ.get("HC_TERMINAL_ID")
         if me and any(a["address"] == me for a in t["agents"]):
             refresh_sessions(s, t, [k for k in live_agents(s.key(t)) if k["address"] == me])
@@ -419,8 +407,6 @@ def cmd_ready(args):
                 # "For AGENTS.md": what the next agent would need about setting up or testing this
                 # repo; the Assistant decides whether it goes into the repo's AGENTS.md.
                 t["agents_md"] = note[:300]
-            if drafted:
-                t.setdefault("lessons", []).extend(drafted)  # fork: SHEP-64: candidates, pending the person's Keep
             for k in ("attention", "attention_at", "handed_at", "fix_requested", "progress", "retry", "review_out", "back"):
                 t.pop(k, None)
             # Its agents' turns now: a later turn of theirs takes it back to work (busy_again()).
@@ -459,8 +445,6 @@ def cmd_ready(args):
         if jobs and t["state"] == "ready":
             msg += (f" {len(jobs)} background job{'s' if len(jobs) > 1 else ''} of yours still run{'' if len(jobs) > 1 else 's'}: "
                     "the task shows Working until they end, then Ready. Stop any you don't need (a server, a watcher).")
-        if lesson_words:
-            msg += f" {lesson_words}"  # fork: SHEP-64
         if proof:
             msg += f" Proof: {proof['title']}."
         elif asked:
@@ -607,7 +591,6 @@ def cmd_review_more(args):
         if used < rounds:
             raise Fail(f"{s.ref(t)} has used {used} of {rounds} review rounds; add one only when they are all used.")
         t["review_rounds_added"] = int(t.get("review_rounds_added") or 0) + 1
-        touches.note(s, t, "review-more")  # fork: SHEP-63
         t.pop("review_out", None)
         s.dirty = True
         live = workers(s, t)
@@ -615,7 +598,7 @@ def cmd_review_more(args):
         if live:
             ht, folder = own_path(), shlex.quote(s.loc["folder"])
             from .news import send_or_hold
-            r = send_or_hold(live[-1]["address"], touches.tag("review-more") +  # fork: SHEP-63, Herdr's own words
+            r = send_or_hold(live[-1]["address"],
                      f"Your Assistant added one review round to {s.ref(t)}: {rounds + 1} in all. Have your final commit reviewed, "
                      f"record it with `{ht} reviewed {s.ref(t)} --folder {folder} --report \"<findings, a line>\"`, then run ready again.")
             told = live[-1]["address"] if r else None
@@ -703,7 +686,7 @@ def cmd_alert(args):
     say(args, alert, "Alert sent.")
 
 
-def back_to_work(s, t, why, said=WORKING_AGAIN, auto=False, touch=True):
+def back_to_work(s, t, why, said=WORKING_AGAIN, auto=False):
     """A Ready task taken back to work (herdr-task fix or resume, or its agent at work again):
     Working, its status line saying so until its agent reports, and no Accept until its next
     ready. why: what took it back, for its Assistant's news ("SHEP-7 is working again: why").
@@ -711,9 +694,6 @@ def back_to_work(s, t, why, said=WORKING_AGAIN, auto=False, touch=True):
     fix asked for: Ready again when that turn changed nothing (tick's settle_back())."""
     if t["state"] != "ready":
         return False
-    if touch:
-        # fork: SHEP-63: Working again after ready, a touch (Herdr's when its agent's own turn took it back).
-        touches.note(s, t, "back", by="herdr" if auto or why == "its agent is at work again" else None)
     t["state"] = "running"
     for k in ("ready_turns", "merge_requested"):
         t.pop(k, None)
@@ -810,7 +790,7 @@ def cmd_review(args):
             last = n >= of
             if t["state"] == "ready":
                 t["state"] = "running"
-            sent, _ = tell(s, t, touches.tag("review") + (f"Review round {n} of {of} for {s.ref(t)} found what must be fixed before it can merge:\n{text.strip()}\n\n"  # fork: SHEP-63, tagged as Herdr's own (touches.py)
+            sent, _ = tell(s, t, (f"Review round {n} of {of} for {s.ref(t)} found what must be fixed before it can merge:\n{text.strip()}\n\n"
                                      f"Fix these, commit, then run `herdr-task ready {s.ref(t)} --folder {shlex.quote(s.loc['folder'])}` again"
                                      + (" (that was the last review round)." if last else " for the next round.")), None)
             msg = f"{s.ref(t)}: findings sent to {sent}."
@@ -828,7 +808,6 @@ def cmd_state(args, state):
     with open_store(args) as s:
         t = s.find(args.id)
         if state == "reopen":
-            touches.note(s, t, "reopen", why=getattr(args, "why", None))  # fork: SHEP-63, reopen --why
             state = "running" if t.get("started") and t["state"] not in ("queued", "scheduled") else "todo"
             # #844: reopened after its pull request merged: it stays open (the tick would find that
             # pull request merged and close it again at once) until its agent says ready.
@@ -964,7 +943,7 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
 
 # SHEP-189: what a resumed agent hears first. Its session comes back with no message, so without this
 # it sat idle until someone wrote to it.
-RESUME_NUDGE = (touches.tag("resume") + "Shepherdr resumed your session because your agent had stopped. Carry on where you left off: check "  # fork: SHEP-63, tagged as Herdr's own (touches.py)
+RESUME_NUDGE = ("Shepherdr resumed your session because your agent had stopped. Carry on where you left off: check "
                 "what is already done with `herdr-task show`, then keep going with the task.")
 
 
@@ -995,7 +974,7 @@ def cmd_resume(args):
 
 # SHEP-211: what a session resumed by switch hears first. Without it the new agent sat idle on the old one's
 # interrupted turn ("Interrupted · What should Claude do instead?") and the task showed a false "needs you".
-SWITCH_NUDGE = (touches.tag("switch") + "Shepherdr restarted your session on a new agent (the task's agent, model or settings changed), "  # fork: SHEP-63, tagged as Herdr's own (touches.py)
+SWITCH_NUDGE = ("Shepherdr restarted your session on a new agent (the task's agent, model or settings changed), "
                 "which stopped your last turn part-way. Nothing is wrong and nobody is waiting on you: carry on "
                 "where you left off (check what is already done with `herdr-task show` and git), then keep going "
                 "with the task.")
@@ -1076,7 +1055,7 @@ def tell(s, t, msg, args):
 def local_merge_msg(s, t):
     main, wt, br, base = s.loc["folder"], t["worktree"], t["branch"], t.get("base") or "main"
     q = shlex.quote
-    return touches.tag("merge") + (f"Merge task {s.ref(t)} \"{t['title']}\" now:\n"  # fork: SHEP-63, tagged as Herdr's own (touches.py)
+    return (f"Merge task {s.ref(t)} \"{t['title']}\" now:\n"
             f"1. In {wt}: commit any remaining work, then rebase {br} onto {base} (git rebase {base}) and resolve conflicts.\n"
             f"2. Run the project's checks (tests, build, lint) and fix what fails.\n"
             f"3. Merge into {base}: git -C {q(main)} merge --ff-only {br} when {main} has {base} checked out, else git -C {q(main)} fetch . {br}:{base}. If {main} has uncommitted changes in the way, or another worktree has {base} checked out, stop and tell the person; don't stash or reset their work.\n"
@@ -1324,15 +1303,14 @@ def cmd_fix(args):
             raise Fail(f"{s.ref(t)} works in the folder itself; tell its agent what to fix.")
         problem = args.reason or t.get("attention") or "The pull request can't merge yet."
         main, wt, br, base = s.loc["folder"], t["worktree"], t["branch"], t.get("base") or "main"
-        msg = touches.tag("fix") + (f"Task {s.ref(t)} \"{t['title']}\" can't merge yet: {problem}\n"  # fork: SHEP-63, tagged as Herdr's own (touches.py)
+        msg = (f"Task {s.ref(t)} \"{t['title']}\" can't merge yet: {problem}\n"
                f"Fix it in {wt}: for conflicts, rebase {br} onto {base}; for failing checks, find out why and fix them. "
                f"Run the checks, commit, then run `herdr-task ready {t['id']} --folder {shlex.quote(main)}` to push the fix.")
         # Handed the problem: someone is on it while its agent starts (on_it()).
         t["fix_requested"] = t["handed_at"] = now()
-        touches.note(s, t, "fix")  # fork: SHEP-63
         s.dirty = True
         sent, started = tell(s, t, msg, args)
-        back_to_work(s, t, f"asked to fix: {problem}", f"Fixing: {problem}", touch=False)
+        back_to_work(s, t, f"asked to fix: {problem}", f"Fixing: {problem}")
         v = view(s, t)
     say(args, {**v, "terminal": sent, "new_agent": started},
         f"{s.ref(t)}: asked {sent} to fix it" + (" (a new agent)" if started else ""))

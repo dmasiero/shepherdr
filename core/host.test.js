@@ -111,20 +111,3 @@ test("a Kept on / Serve from pick of this computer is null, whichever way the pa
   expect(pickedMachine("here", undefined)).toBe(null);
   expect(pickedMachine("mac-mini", "m3")).toBe("mac-mini");
 });
-
-// fork: SHEP-65: kept lessons (herdr-task's lessons.py) under a layer's `lessons` key: moved between machines' names and
-// merged with the host's like any other key (a list is one value: the side that changed it wins)
-test("kept lessons stay when settings move to the host and merge back", () => {
-  const kept = [{ id: "l-4-1", text: "Commit a paid receipt's row without asking.", from: ["ACC-4"], seen: 0, off: false }];
-  const file = { version: 1, everywhere: { lessons: { on: true, kept } }, spaces: { "vm/sp3": { machine: "vm", lessons: { kept } } } };
-  const there = relocateSettings(file, toMini);
-  expect(there.everywhere.lessons).toEqual({ on: true, kept });
-  expect(there.spaces["vm/sp3"].lessons).toEqual({ kept });
-  // one kept here since they were last the same: it goes to the host, the host's own change stays
-  const more = [...kept, { id: "l-5-1", text: "Say where the files are.", from: ["ACC-5"], seen: 0, off: false }];
-  const mine = { ...file, everywhere: { lessons: { on: true, kept: more } } };
-  const theirs = { ...file, everywhere: { ...file.everywhere, tasks: { merge: "auto" } } };
-  const merged = merge3(file, mine, theirs);
-  expect(merged.everywhere).toEqual({ lessons: { on: true, kept: more }, tasks: { merge: "auto" } });
-  expect(merged.spaces["vm/sp3"].lessons).toEqual({ kept });
-});
