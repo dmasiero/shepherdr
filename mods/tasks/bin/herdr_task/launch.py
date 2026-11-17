@@ -632,12 +632,6 @@ def worker_words(task, space=None):
     return words if lessons_on(space or task.get("space")) else without_rule(words)
 
 
-def kept_part(task, space=None):
-    """fork: SHEP-66: the "Lessons you kept" part (lessons.py's brief_part; "" while lessons are off)."""
-    from .lessons import brief_part
-    return brief_part(space or task.get("space"))
-
-
 def brief(s, task, parent=None, space=None, argv=None):
     instructions("reviewer")  # the file its review's reviewer gets (WORKER_MD)
     keep_review(s, task, space)
@@ -646,8 +640,7 @@ def brief(s, task, parent=None, space=None, argv=None):
         start += f"\n(The main folder is {s.loc['folder']}.)"
     body = "Your task, " + s.ref(task) + ":\n" + ((task.get("prompt") or "").strip() or task["title"])
     finish = notes_part("Before you say ready", notes(s, task, "finish", space))
-    # fork: SHEP-66: kept_part, the "Lessons you kept" part, after "Before you start"
-    return "\n\n".join(x for x in [worker_words(task, space), start, kept_part(task, space), body, where_line(task), finish, closing_line(s, task, parent, argv),
+    return "\n\n".join(x for x in [worker_words(task, space), start, body, where_line(task), finish, closing_line(s, task, parent, argv),
                                     settings_block(s, task, space, argv, live=True)] if x)
 
 
@@ -660,7 +653,6 @@ def handoff(s, task, prev, parent=None, argv=None):
     elif prev:
         lines.append(f"The previous agent ({prev.get('agent') or 'agent'}) left no session log; check the folder's state (git status, git log) before you continue.")
     lines.append(notes_part("Before you continue, if it isn't done yet", notes(s, task, "start")))
-    lines.append(kept_part(task))  # fork: SHEP-66
     lines.append(notes_part("Before you say ready", notes(s, task, "finish")))
     lines.append(closing_line(s, task, parent, argv))
     lines.append(settings_block(s, task, None, argv, live=True))
