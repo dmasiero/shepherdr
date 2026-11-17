@@ -7756,44 +7756,6 @@ class LessonsKeep(unittest.TestCase):
             self.assertIn(words, src)
 
 
-class LessonsInTheWebApp(unittest.TestCase):
-    """fork: SHEP-67: what the web app's Lessons list and Accept card read and run: `show` lists a task's drafts waiting
-    for the person (none while lessons are off), and Edit and Retire on a lesson kept under a space's full id ("vm/sp1",
-    the window's own file) change it there, never a new bare "sp1". LessonsKeep's setUp (not a subclass)."""
-    run_cmd, task_list, tasks, log, user = Touches.run_cmd, Touches.task_list, Touches.tasks, Touches.log, staticmethod(Touches.user)
-    write_settings, ready = Lessons.write_settings, Lessons.ready
-    lessons_cmd, settings_now = LessonsKeep.lessons_cmd, LessonsKeep.settings_now
-
-    def setUp(self):
-        LessonsKeep.setUp(self)
-
-    def show(self):
-        return self.run_cmd(self.commands.cmd_show, id="APP-1", evidence=False)
-
-    def test_show_lists_the_drafts_waiting_and_none_while_off(self):
-        self.assertEqual([(x["id"], x["scope"]) for x in self.show()["lessons_waiting"]], [("l-1-1", "space"), ("l-1-2", "you")])
-        self.assertEqual(self.show()["lessons_waiting"][0]["text"], "Record and commit a paid receipt's row without asking first.")
-        self.lessons_cmd("drop", "l-1-1")
-        self.assertEqual([x["id"] for x in self.show()["lessons_waiting"]], ["l-1-2"])
-        self.write_settings({"everywhere": {"lessons": {"on": False}}})
-        self.assertEqual(self.show()["lessons_waiting"], [])
-
-    def test_edit_and_retire_change_a_lesson_where_it_is_kept(self):
-        kept = {"id": "l-9-1", "text": "Say which box you ran it on.", "key": "box ran", "from": ["VM-9"], "kept_at": 1, "seen": 2, "off": False}
-        self.write_settings({"spaces": {"vm/sp1": {"name": "far", "lessons": {"kept": [kept]}}}})
-        out = self.lessons_cmd("edit", "l-9-1", text="Say which machine you ran it on.")
-        self.assertEqual((out["space"], out["text"], out["seen"]), ("vm/sp1", "Say which machine you ran it on.", 2))
-        self.lessons_cmd("retire", "l-9-1")
-        d = self.settings_now()
-        self.assertEqual(list(d["spaces"]), ["vm/sp1"])
-        x = d["spaces"]["vm/sp1"]["lessons"]["kept"][0]
-        self.assertEqual((x["text"], x["edited"], x["off"], x["from"]), ("Say which machine you ran it on.", True, True, ["VM-9"]))
-        # a refusal in its own words, nothing changed
-        with self.assertRaises(self.lessons.Fail):
-            self.lessons_cmd("edit", "l-9-1", text="The admin password is Hunter2x!")
-        self.assertEqual(self.settings_now(), d)
-
-
 class LessonsTheAssistantIsTaught(unittest.TestCase):
     """fork: SHEP-65: a space's Assistant learns how to ask about lessons from its session note, only while lessons are
     on (assistant.md is read by hc as it is: its words can't be left out, so they live in the note). AssistantSettings'

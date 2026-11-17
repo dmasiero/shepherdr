@@ -230,10 +230,6 @@ def cmd_show(args):
         if on:
             v["review_rounds"] = {"used": rounds_used(t), "of": rounds, "added": int(t.get("review_rounds_added") or 0)}
         v["after_refs"] = after_refs(s, t)
-        # fork: SHEP-67: its drafts waiting for the person's answer, for the Accept card's lessons chip (none while off)
-        from .lessons import pending as _pending, lessons_on as _lessons_on
-        v["lessons_waiting"] = ([{"id": x["id"], "text": x.get("text"), "scope": x.get("scope")} for x in _pending(t)]
-                                if _lessons_on(t.get("space")) else [])
         block = settings_block(s, t)
         if getattr(args, "evidence", False):
             # What the Accept card shows: commits, files, checks and the proof (proof.py).

@@ -28,7 +28,6 @@ import { secretsInit, secretsSection } from "./secrets-section.js";
 import { baseInit, baseRow } from "./base-branch.js";
 import { branchInit, branchRow } from "./branch-names.js";
 import { feedbackInit, feedbackRow, feedbackRepoRow } from "./feedback-repo.js";
-import { lessonsInit, lessonsSection } from "./lessons-section.js"; // fork: SHEP-67
 import { autopilotInit, autopilotSection, autopilotFlush } from "./autopilot-section.js";
 import { spaceName } from "./core/spaces.js";
 import { NOTIFY, NOTIFY_DEFAULT, notifyMachine, notifyMachineOwn, notifyOf, notifyOwn, notifyEverywhere,
@@ -99,7 +98,6 @@ export default class ShepherdrSettings extends View {
     // Tasks > Branch names, Everywhere's or a space's (branch-names.js).
     this.bn = branchInit(this);
     this.fr = feedbackInit(this);
-    this.ls = lessonsInit(); // fork: SHEP-67: Agents › Lessons (lessons-section.js)
     // Autopilot: one setting for every space, kept by herdr-task (autopilot-section.js).
     this.ap = autopilotInit(this, cx);
     // The add-ons Window's switches offer (lib/addons.json, layout.js).
@@ -490,8 +488,7 @@ export default class ShepherdrSettings extends View {
       .child(this.backupRow(t))
       .child(this.reactionsRow(t))
       .child(feedbackRow(this, t))
-      .children([feedbackRepoRow(this, t)].filter(Boolean))
-      .child(lessonsSection(this, t)); // fork: SHEP-67
+      .children([feedbackRepoRow(this, t)].filter(Boolean));
   }
 
   // A role: its model button and, on Everywhere, "Edit instructions" (the same for every space).

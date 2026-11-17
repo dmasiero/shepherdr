@@ -98,9 +98,7 @@ def write_lessons(space, edit):
     if d.get("pushed_from"):
         raise Fail("This machine's Shepherdr settings are a copy from the machine whose window sets them: "
                    "change Lessons there (nothing changed here).")
-    # fork: SHEP-67: a space kept under its full id here ("vm/sp1", the window's own file) is changed there, not as "sp1"
-    key = space if space and space in (d.get("spaces") or {}) else bare(space)
-    layer = d.setdefault("spaces", {}).setdefault(key, {}) if space else d.setdefault("everywhere", {})
+    layer = d.setdefault("spaces", {}).setdefault(bare(space), {}) if space else d.setdefault("everywhere", {})
     part = dict(layer["lessons"]) if isinstance(layer.get("lessons"), dict) else {}
     out = edit(part)
     if part:
@@ -108,7 +106,7 @@ def write_lessons(space, edit):
     else:
         layer.pop("lessons", None)
     if space and not layer:
-        d["spaces"].pop(key, None)
+        d["spaces"].pop(bare(space), None)
     d["version"] = 1
     path = SETTINGS
     os.makedirs(os.path.dirname(path), exist_ok=True)
