@@ -72,10 +72,8 @@ def news_line(s, t, v, event, words=None):
     attr = lambda x: str(x).replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
     note = " ".join(str(t.get("agents_md") or "").split())
     said = " ".join(str(t.get("summary") or "").split())
-    from .lessons import count_words, md_as_lesson  # fork: SHEP-64: "2 lessons", its drafts waiting for the person
+    from .lessons import count_words  # fork: SHEP-64: "2 lessons", its drafts waiting for the person
     drafts = count_words(t)
-    if md_as_lesson(t):
-        note = ""  # fork: SHEP-65: its For AGENTS.md line is a repo lesson now: the person keeps it, or not
     text = {"ready": f"{ref} is ready: {title}" + (f" · {said}" if said else "") + (f" · {drafts}" if drafts else "")
                      + (f" · For AGENTS.md: {note}" if note else ""),
             "needs-you": f"{ref} needs you: {v.get('why') or 'Needs you'} ({title})",
@@ -84,8 +82,7 @@ def news_line(s, t, v, event, words=None):
             "working-again": f"{ref} is working again: {(t.get('back') or {}).get('why') or 'its agent is at work again'} ({title})",
             "backup": f"{ref} backup: {words} ({title})",
             "done": f"{ref} is done" + (": merged" if t.get("merged") else ": nothing to merge" if t.get("nothing_to_merge")
-                                        else ": accepted" if t.get("accepted_at") else "") + f" ({title})"
-                    + (f" · {drafts} to ask the person" if drafts else "")}[event]  # fork: SHEP-65: its drafts, to ask about now
+                                        else ": accepted" if t.get("accepted_at") else "") + f" ({title})"}[event]
     return f'<herdr-news task="{attr(ref)}" event="{event}">{text.replace("<", "‹").replace(">", "›")}</herdr-news>'
 
 

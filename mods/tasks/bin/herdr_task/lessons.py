@@ -5,7 +5,7 @@ candidates (t["lessons"], state pending) for the person's Keep, Edit or Drop (st
 A candidate: {id, text, scope, key, state, at, from}: id "l-<task id>-<n>"; scope repo (the repo's AGENTS.md),
 space (this space's later briefs), you (the person's, every space) or shepherdr (Shepherdr's makers: Feedback);
 key: feedback.key_of(text), its words that say something; from: "lesson" (--lesson) or "agents-md" (--agents-md,
-which stays the task's "For AGENTS.md" line too; step 3: news and show leave it to the person's card).
+which stays the task's "For AGENTS.md" line too until step 3 keeps repo lessons itself).
 
 Checks, before anything changes (ready is refused, as for a long summary): one line of at most MAX_TEXT
 characters; nothing feedback.redact() would hide but home paths (a key, a token, an e-mail, a host, an
@@ -18,8 +18,6 @@ dropped, not refused: the worker hears which.
 The switch: settings.json `lessons.on` at Everywhere or a space (default on). Off: briefs carry no lesson
 words, ready ignores --lesson (still accepts it) and news says nothing of lessons. Kept lessons (step 3) go
 under `lessons.kept` beside it, so they stay saved while it's off.
-
-fork: SHEP-65: step 3, the person's Keep, Edit or Drop: see "step 3" below.
 """
 
 import json
@@ -81,12 +79,47 @@ def lessons_on(space=None, d=None):
 def write_on(space, value):
     """Sets `lessons.on` at one level (space None: Everywhere's); None unsets it there (a space then
     follows Everywhere). Refused on a copy the window pushed here, as write_autopilot is."""
-    def edit(part):
-        if value is None:
-            part.pop("on", None)
-        else:
-            part["on"] = bool(value)
-    _settings.write_lessons(space, edit)
+    d = read_settings()
+    if d.get("pushed_from"):
+        raise Fail("This machine's Shepherdr settings are a copy from the machine whose window sets them: switch Lessons there.")
+    layer = d.setdefault("spaces", {}).setdefault(bare(space), {}) if space else d.setdefault("everywhere", {})
+    part = layer.get("lessons") if isinstance(layer.get("lessons"), dict) else {}
+    if value is None:
+        part.pop("on", None)
+    else:
+        part["on"] = bool(value)
+    if part:
+        layer["lessons"] = part
+    else:
+        layer.pop("lessons", None)
+    if space and not layer:
+        d["spaces"].pop(bare(space), None)
+    d["version"] = 1
+    path = _settings.SETTINGS
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def cmd_lessons(args):
+    """herdr-task lessons [on|off|inherit] [--space ID]: the switch, or what it is now."""
+    space = getattr(args, "space", None)
+    what = getattr(args, "what", None)
+    if what in ("on", "off"):
+        write_on(space, what == "on")
+    elif what == "inherit":
+        if not space:
+            raise Fail("Only a space follows Everywhere: herdr-task lessons inherit --space <id>.")
+        write_on(space, None)
+    on = lessons_on(space)
+    where = f"in {space}" if space else "everywhere"
+    text = (f"Lessons are {'on' if on else 'off'} {where}: " +
+            ("workers draft lessons at ready from where you stepped in; nothing changes a brief until you keep one."
+             if on else "workers draft none and briefs carry none; kept lessons stay saved for when it's on again."))
+    print(json.dumps({"on": on, "space": space}) if getattr(args, "json", False) else text)
 
 
 # ---- the brief's words ----------------------------------------------------------------------
@@ -253,23 +286,6 @@ def drafts(args):
     return list(zip(texts, scopes))
 
 
-def why_not(text, held, near, long_ok=False):
-    """Why a lesson's words can't be kept ("is empty", "holds ..."), else None. held: it holds a
-    secret's value (holds_secret); near: near_words of the person's lines."""
-    if not text:
-        return "is empty"
-    if len(text) > MAX_TEXT and not long_ok:
-        return f"is {len(text)} characters: one short rule, {MAX_TEXT} at most"
-    if held:
-        return "holds the value of a secret you can use: never put one in a lesson"
-    if SAID.search(text):
-        return "says a password, token or key in plain words: a lesson never holds one"
-    if near & {w.strip(".,;:!?()[]{}\"'`").lower() for w in TOKEN.findall(text) if secretish(w)}:
-        return "shares a word with a line the person sent about a password, code or key: leave it out"
-    p = private_part(text)
-    return f"holds {p}: write it without" if p else None
-
-
 def check(s, t, args):
     """The drafts this ready adds, checked: (candidates, words for the worker). Refused (Fail, before
     anything changes) for a draft too long, empty, too many, or holding a secret or something private;
@@ -293,7 +309,21 @@ def check(s, t, args):
     held = holds_secret([x for x, _, _ in items])
     for i, (text, scope, frm) in enumerate(items):
         n = f"Lesson {i + 1}" if frm == "lesson" else "Your --agents-md line"
-        why = why_not(text, i in held, near, long_ok=frm != "lesson")
+        why = None
+        if not text:
+            why = "is empty"
+        elif len(text) > MAX_TEXT and frm == "lesson":
+            why = f"is {len(text)} characters: one short rule, {MAX_TEXT} at most"
+        elif i in held:
+            why = "holds the value of a secret you can use: never put one in a lesson"
+        elif SAID.search(text):
+            why = "says a password, token or key in plain words: a lesson never holds one"
+        elif near & {w.strip(".,;:!?()[]{}\"'`").lower() for w in TOKEN.findall(text) if secretish(w)}:
+            why = "shares a word with a line the person sent about a password, code or key: leave it out"
+        else:
+            p = private_part(text)
+            if p:
+                why = f"holds {p}: write it without"
         if why and frm == "agents-md":
             unfit.add(i)  # still the task's "For AGENTS.md" line, as before lessons
             said.append(f"{n} isn't drafted as a lesson: it {why}.")
@@ -302,7 +332,6 @@ def check(s, t, args):
     if problems:
         raise Fail("Lessons not kept, and nothing changed: " + " ".join(problems) + " Fix them (or leave them out), then run ready again.")
     keys = {x.get("key") for o in s.data["tasks"] for x in o.get("lessons") or [] if x.get("state") == "pending"}
-    gone = dropped_keys(s)  # step 3: one the person dropped is never asked again
     kept = {key_of(x["text"]) for x in kept_lessons(d, space)} | {x["key"] for x in kept_lessons(d, space) if x.get("key")}
     md = None
     out, seq = [], len(t.get("lessons") or [])
@@ -315,9 +344,6 @@ def check(s, t, args):
             continue
         if k in kept:
             said.append(f"\"{text[:60]}\" is already kept: dropped.")
-            continue
-        if k in gone:
-            said.append(f"\"{text[:60]}\" was dropped by the person before: dropped.")
             continue
         if scope == "repo":
             md = agents_md_keys(s.loc["folder"]) if md is None else md
@@ -333,8 +359,7 @@ def check(s, t, args):
 
 
 def pending(t):
-    """Its drafts waiting for the person's answer (step 3: not those gone stale, EXPIRE_MS)."""
-    return [x for x in t.get("lessons") or [] if isinstance(x, dict) and x.get("state") == "pending" and not stale(x)]
+    return [x for x in t.get("lessons") or [] if isinstance(x, dict) and x.get("state") == "pending"]
 
 
 def count_words(t, space=None, d=None):
@@ -343,340 +368,3 @@ def count_words(t, space=None, d=None):
     if not n or not lessons_on(space or t.get("space"), d):
         return ""
     return f"{n} lesson{'s' if n > 1 else ''}"
-
-
-# ---- step 3: the person's Keep, Edit or Drop (SHEP-65) ----------------------------------------
-#
-# The Assistant asks the person (after Accept, never on an Autopilot wake: ASSISTANT_GUIDE, taught at
-# its session's start while lessons are on) and records the answer here:
-#   keep <id>          a space lesson goes to the space's `lessons.kept` in settings.json, a "you" one
-#                      to Everywhere's (write_lessons, as write_autopilot); a repo one is queued for the
-#                      AGENTS.md notes pull request (the Assistant's route: a notes branch, pushed only
-#                      on the person's yes); a Shepherdr one goes to Feedback for Shepherdr (feedback.py's
-#                      from_lesson: offered, filed only on the person's yes).
-#   edit <id> --text   keep it in the person's words (checked as a draft is); a kept one's words change.
-#   drop <id>          never kept, never asked again (a later draft with its key is a repeat).
-#   retire <id>        a kept one turned off: it stays (off: true) so it isn't drafted again.
-# Pending drafts not answered in EXPIRE_MS are dropped quietly (the tick's expire_pass: state expired).
-# Off: the list and the actions still work (kept lessons stay saved), but no draft is pending to ask.
-
-EXPIRE_MS = 7 * 24 * 3600000
-ROUTE_WORDS = {"space": "this space's later briefs", "you": "every space's later briefs",
-               "repo": "the AGENTS.md notes pull request", "shepherdr": "Feedback for Shepherdr"}
-
-ASSISTANT_GUIDE = (
-    "Lessons (on in Settings): at ready, a worker may draft up to 3 lessons from where the person stepped into its task; "
-    "nothing reaches a later brief, AGENTS.md or Shepherdr's makers until the person keeps it. When a task with drafts is "
-    "done (its `done` news line says \"n lessons\": accepted by the person), vet them first: `herdr-task lessons --pending "
-    "--task <ref>` lists each one's id, who reads it and its words; drop without asking (`herdr-task lessons drop <id>`) "
-    "one that is wrong, a one-off, a repeat of one kept, or would change what permission prompts or question cards ask. "
-    "Then, between things, ask the person about the rest in one batch with your question tool: one question per lesson "
-    "(at most 4 a card, a second card for more, never more for one task), its words and who reads it in the question, "
-    "options Keep, Drop and Edit. Keep: `herdr-task lessons keep <id>`. Drop: `herdr-task lessons drop <id>`. Edit: take "
-    "their words, then `herdr-task lessons edit <id> --text \"<their words>\"`. Kept: a space lesson reaches that space's "
-    "later briefs, a \"you\" one every space's; a repo one waits for the AGENTS.md notes pull request (add it with the "
-    "other notes on its own notes branch; push and open the pull request only on the person's yes); a Shepherdr one "
-    "goes to Feedback for Shepherdr (offer it as that says, file only on their yes). On an Autopilot wake never ask: the "
-    "drafts wait until the person is back. Never ask about a dropped one again; drafts nobody answered in 7 days are "
-    "dropped quietly. `herdr-task lessons` lists the kept ones; `herdr-task lessons retire <id>` turns one off.")
-OFF_WORDS = "Lessons are off in Settings: raise no lesson cards and keep, edit or drop nothing (kept ones stay saved)."
-TURNED_ON = "Lessons are now on in Settings. " + ASSISTANT_GUIDE.split(": ", 1)[1]
-TURNED_OFF = "Lessons are now off in Settings: raise no lesson cards from now on (kept ones stay saved)."
-
-
-def stale(x, at=None):
-    return x.get("state") == "pending" and bool(x.get("at")) and (at if at is not None else now()) - x["at"] > EXPIRE_MS
-
-
-def dropped_keys(s):
-    """The keys of every lesson the person dropped, in every task list here (s: the list open now)."""
-    from .store import read_list, store_files
-    out = set()
-    for p in store_files():
-        if p != getattr(s, "path", None):
-            for t in (read_list(p) or {}).get("tasks") or []:
-                out |= {x.get("key") for x in t.get("lessons") or [] if isinstance(x, dict) and x.get("state") == "dropped"}
-    for t in s.data["tasks"]:
-        out |= {x.get("key") for x in t.get("lessons") or [] if isinstance(x, dict) and x.get("state") == "dropped"}
-    out.discard(None)
-    return out
-
-
-def expire_pass(report, folder=None):
-    """The tick's look: pending drafts older than EXPIRE_MS become expired, quietly (no news, no card)."""
-    from .store import Store, locate, read_list, store_files
-    at = now()
-    for p in store_files(folder):
-        d = read_list(p)
-        if not d or not os.path.isdir(d.get("folder") or ""):
-            continue
-        if not any(stale(x, at) for t in d.get("tasks") or [] for x in t.get("lessons") or [] if isinstance(x, dict)):
-            continue
-        try:
-            with Store(locate(d["folder"])) as s:
-                n = 0
-                for t in s.data["tasks"]:
-                    for x in t.get("lessons") or []:
-                        if isinstance(x, dict) and stale(x, at):
-                            x.update(state="expired", ended_at=at)
-                            n += 1
-                if n:
-                    s.dirty = True
-                    report.setdefault("lessons_expired", []).append({"folder": d["folder"], "n": n})
-        except Fail as e:  # one list it can't write: the others still go
-            report.setdefault("lessons_error", []).append(f"{d['folder']}: {e}")
-
-
-def kept_at(d, space):
-    """(level, lessons) kept at one level: space id, or None for Everywhere's."""
-    layer = (d.get("spaces") or {}).get(bare(space)) if space else d.get("everywhere")
-    part = layer.get("lessons") if isinstance(layer, dict) else None
-    kept = part.get("kept") if isinstance(part, dict) else None
-    return [x for x in kept or [] if isinstance(x, dict) and x.get("text")]
-
-
-def all_kept(d):
-    """[(space or None, lesson)] for every kept lesson in settings, Everywhere's first."""
-    out = [(None, x) for x in kept_at(d, None)]
-    for sid in sorted((d.get("spaces") or {})):
-        out += [(sid, x) for x in kept_at(d, sid)]
-    return out
-
-
-def candidates(folder=None, task=None):
-    """[(list path, folder, ref, task, lesson)] of the drafts on every task list here (or one folder's)."""
-    from .store import read_list, store_files, parse_ref
-    out = []
-    want = parse_ref(task) if task else None
-    for p in store_files(folder):
-        d = read_list(p)
-        if not d:
-            continue
-        prefix = d.get("prefix") or ""
-        for t in d.get("tasks") or []:
-            if want and (want[1] != t.get("id") or (want[0] and want[0] != prefix)):
-                continue
-            for x in t.get("lessons") or []:
-                if isinstance(x, dict) and x.get("id"):
-                    out.append((p, d.get("folder"), f"{prefix}-{t.get('id')}" if prefix else f"#{t.get('id')}", t, x))
-    return out
-
-
-def caller_is_worker():
-    """A task's own agent (its worker or reviewer) never keeps its own lessons: only the person's answer does."""
-    if os.environ.get("HERDR_BROWSER_TASK"):
-        return True
-    addr = os.environ.get("HC_TERMINAL_ID")
-    if not addr:
-        return False
-    from .base import hc_json
-    k = hc_json("get", addr) or {}
-    labels = k.get("labels") or {}
-    return bool(labels.get("herdr.task")) or labels.get("herdr.role") in ("worker", "reviewer")
-
-
-def find_draft(lid, folder):
-    found = [c for c in candidates(folder) if c[4]["id"] == lid]
-    if not found:
-        return None
-    if len({c[0] for c in found}) > 1:
-        raise Fail(f"{lid} is a lesson in more than one folder ({', '.join(sorted({c[1] for c in found}))}): add --folder <its folder>.")
-    return found[0]
-
-
-def checked_text(text, t):
-    """The person's words for a lesson, checked as a draft is (Fail with why)."""
-    text = " ".join(str(text or "").split())
-    why = why_not(text, bool(holds_secret([text])), near_words(person_lines(t)))
-    if why:
-        raise Fail(f"Not kept, and nothing changed: the lesson {why}.")
-    return tilde(text)
-
-
-def keep_draft(lid, folder, text=None, scope=None):
-    """Keep (or with text, edit and keep) a pending draft: (row, words for the Assistant)."""
-    from .store import Store, locate
-    c = find_draft(lid, folder)
-    if not c:
-        return None
-    _, fold, ref, t0, x0 = c
-    if x0.get("state") not in ("pending", "expired"):
-        raise Fail(f"{lid} is {x0.get('state')}, not waiting for an answer: nothing changed." +
-                   (" Use `herdr-task lessons edit` or `retire` on a kept one." if x0.get("state") == "kept" else ""))
-    scope = scope or x0.get("scope")
-    if scope not in SCOPES:
-        raise Fail(f"Say who it's for: --scope {'|'.join(SCOPES)}.")
-    space = t0.get("space")
-    if scope == "space" and not space:
-        raise Fail(f"{ref} has no space to keep {lid} in: keep it for you everywhere (--scope you), or drop it.")
-    words = checked_text(text, t0) if text is not None else x0["text"]
-    edited = words != x0["text"]
-    key = key_of(words)
-    route, said = None, ""
-    if scope in ("space", "you"):
-        level = space if scope == "space" else None
-        entry = {"id": lid, "text": words, "key": key, "from": [ref], "kept_at": now(), "edited": edited, "seen": 0, "off": False}
-
-        def edit(part):
-            kept = [y for y in part.get("kept") or [] if isinstance(y, dict)]
-            same = next((y for y in kept if y.get("id") == lid or (y.get("key") or key_of(y.get("text") or "")) == key), None)
-            if same:  # the same lesson again: seen once more, never twice in the list
-                same["seen"] = int(same.get("seen") or 0) + 1
-                same["from"] = list(dict.fromkeys([*(same.get("from") or []), ref]))
-                same["off"] = False
-                return "seen"
-            kept.append(entry)
-            part["kept"] = kept
-            return "kept"
-        how = _settings.write_lessons(level, edit)
-        route = f"space:{bare(space)}" if scope == "space" else "everywhere"
-        said = (f"Kept for {ROUTE_WORDS[scope]}" + (f" ({bare(space)})" if scope == "space" else "") + ": tasks started from now on get it."
-                if how == "kept" else f"Already kept for {ROUTE_WORDS[scope]}: counted as seen again.")
-    elif scope == "repo":
-        route = "agents-md"
-        said = ("Queued for the AGENTS.md notes pull request: add it with the other notes on its own notes branch "
-                "(\"AGENTS.md: notes from …\"); push and open the pull request only on the person's yes.")
-    else:
-        from .feedback import feedback_on, from_lesson
-        if not feedback_on(space):
-            raise Fail("Feedback offers are off in Settings: nothing goes to Shepherdr's makers. Drop it, or keep it "
-                       "for you (--scope you): nothing changed.")
-        fkey, state = from_lesson(words, space, ref)
-        route = f"feedback:{fkey}"
-        said = ({"later": f"Handed to Feedback for Shepherdr: offer it to the person now with `herdr-task feedback --key {fkey} "
-                          f"\"{words[:80]}\"` and your question tool; file it only on their yes.",
-                 "declined": "The person said no to filing this one before: it isn't offered again.",
-                 "filed": "Already filed for Shepherdr's makers: nothing more to do."}.get(state)
-                or "Feedback for Shepherdr already has this one: it's offered from there.")
-    with Store(locate(fold)) as s:
-        t = s.find(ref)
-        x = next(y for y in t.get("lessons") or [] if y.get("id") == lid)
-        x.update(state="queued" if scope == "repo" else "kept", answered_at=now(), route=route, scope=scope,
-                 **({"text": words, "key": key, "edited": True} if edited else {}))
-        s.dirty = True
-        row = row_of(ref, fold, t, x)
-    return row, said
-
-
-def end_draft(lid, folder, state):
-    """Drop a pending (or queued) draft: never kept, never asked again."""
-    from .store import Store, locate
-    c = find_draft(lid, folder)
-    if not c:
-        return None
-    _, fold, ref, _, x0 = c
-    if x0.get("state") == "kept":
-        raise Fail(f"{lid} is kept: `herdr-task lessons retire {lid}` turns it off. Nothing changed.")
-    with Store(locate(fold)) as s:
-        t = s.find(ref)
-        x = next(y for y in t.get("lessons") or [] if y.get("id") == lid)
-        x.update(state=state, answered_at=now())
-        s.dirty = True
-        return row_of(ref, fold, t, x), "Dropped: never kept, and never asked about again."
-
-
-def change_kept(lid, text=None, off=None):
-    """Edit a kept lesson's words, or retire it (off), where it's kept. None when no kept one has the id."""
-    d = read_settings()
-    where = next(((sp, x) for sp, x in all_kept(d) if x.get("id") == lid), None)
-    if not where:
-        return None
-    space, x0 = where
-    words = None
-    if text is not None:
-        words = " ".join(str(text).split())
-        why = why_not(words, bool(holds_secret([words])), set())
-        if why:
-            raise Fail(f"Not changed: the lesson {why}.")
-        words = tilde(words)
-
-    def edit(part):
-        for y in part.get("kept") or []:
-            if isinstance(y, dict) and y.get("id") == lid:
-                if words is not None:
-                    y.update(text=words, key=key_of(words), edited=True)
-                if off is not None:
-                    y["off"] = bool(off)
-                return dict(y)
-    y = _settings.write_lessons(space, edit)
-    where_words = f"in {space}" if space else "everywhere"
-    said = (f"Retired {where_words}: no later brief gets it, and it isn't drafted again." if off
-            else f"Changed {where_words}: tasks started from now on get the new words.")
-    return {"id": lid, "space": space, "state": "retired" if y.get("off") else "kept", "text": y["text"],
-            "from": y.get("from") or [], "kept_at": y.get("kept_at"), "seen": y.get("seen") or 0}, said
-
-
-def row_of(ref, folder, t, x):
-    state = "expired" if stale(x) else x.get("state")
-    return {"id": x["id"], "task": ref, "folder": folder, "space": t.get("space"), "scope": x.get("scope"),
-            "who": SCOPE_WORDS.get(x.get("scope"), x.get("scope")), "text": x.get("text"), "state": state,
-            "at": x.get("at"), **({"route": x["route"]} if x.get("route") else {})}
-
-
-def cmd_lessons(args):
-    """herdr-task lessons [on|off|inherit] [--space ID]: the switch; lessons keep|edit|drop|retire <id>
-    [--text] [--scope]: the person's answer; no word: the drafts and kept lessons (--pending: only the
-    drafts waiting for an answer), and whether the switch is on."""
-    from .output import say
-    space = getattr(args, "space", None)
-    what = getattr(args, "what", None)
-    lid = getattr(args, "lesson_id", None)
-    folder = getattr(args, "folder", None)
-    if what in ("on", "off"):
-        write_on(space, what == "on")
-    elif what == "inherit":
-        if not space:
-            raise Fail("Only a space follows Everywhere: herdr-task lessons inherit --space <id>.")
-        write_on(space, None)
-    elif what in ("keep", "edit", "drop", "retire"):
-        if not lid:
-            raise Fail(f"Say which lesson: herdr-task lessons {what} <id> (herdr-task lessons --pending lists them).")
-        if caller_is_worker():
-            raise Fail("Only the person keeps, edits or drops a lesson (their Assistant asks them): a task's own agent never does.")
-        text = getattr(args, "text", None)
-        if what == "edit" and text is None:
-            raise Fail(f"Give the new words: herdr-task lessons edit {lid} --text \"<one short rule>\".")
-        if what == "retire" and text is not None:
-            raise Fail("Retire takes no --text: edit it, or retire it.")
-        got = None
-        if what in ("edit", "retire"):  # a kept one first (its draft is answered), else a draft
-            got = change_kept(lid, text=text if what == "edit" else None, off=True if what == "retire" else None)
-        if got is None and what in ("keep", "edit"):
-            got = keep_draft(lid, folder, text, getattr(args, "scope", None))
-        elif got is None and what == "drop":
-            got = end_draft(lid, folder, "dropped")
-        if got is None:
-            raise Fail(f"No lesson {lid} here" + (f" in {folder}" if folder else "") + ": herdr-task lessons lists them.")
-        row, words = got
-        return say(args, {**row, "done": what}, words)
-    on = lessons_on(space)
-    if what in ("on", "off", "inherit"):
-        where = f"in {space}" if space else "everywhere"
-        text = (f"Lessons are {'on' if on else 'off'} {where}: " +
-                ("workers draft lessons at ready from where you stepped in; nothing changes a brief until you keep one."
-                 if on else "workers draft none and briefs carry none; kept lessons stay saved for when it's on again."))
-        return say(args, {"on": on, "space": space}, text)
-    d = read_settings()
-    rows = [row_of(ref, fold, t, x) for _, fold, ref, t, x in candidates(folder, getattr(args, "task", None))
-            if not space or bare(t.get("space")) == bare(space)]
-    waiting = [r for r in rows if r["state"] == "pending" and lessons_on(r["space"], d)]
-    kept = [{"id": x["id"], "space": sp, "state": "retired" if x.get("off") else "kept", "text": x["text"],
-             "from": x.get("from") or [], "kept_at": x.get("kept_at"), "seen": x.get("seen") or 0}
-            for sp, x in all_kept(d) if not space or sp is None or bare(sp) == bare(space)]
-    if getattr(args, "pending", False):
-        return say(args, waiting, "\n".join(f"{r['id']}  {r['task']}  {r['who']}: {r['text']}" for r in waiting)
-                   or "No lesson waits for an answer.")
-    queued = [r for r in rows if r["state"] == "queued"]
-    out = {"on": on, "space": space, "pending": waiting, "queued": queued, "kept": kept}
-    lines = [f"Lessons are {'on' if on else 'off'}" + (f" in {space}" if space else " everywhere") + "."]
-    lines += [f"waiting  {r['id']}  {r['task']}  {r['who']}: {r['text']}" for r in waiting]
-    lines += [f"queued   {r['id']}  {r['task']}  AGENTS.md notes: {r['text']}" for r in queued]
-    lines += [f"{k['state']:<8} {k['id']}  {k['space'] or 'everywhere'}: {k['text']}" + (f" (seen {k['seen']})" if k["seen"] else "")
-              for k in kept]
-    return say(args, out, "\n".join(lines))
-
-
-def md_as_lesson(t, d=None):
-    """Its --agents-md line became a repo lesson (lessons on): the person keeps it from a card, so news
-    and show no longer offer it as a "For AGENTS.md" line for the Assistant to add on its own."""
-    return any(isinstance(x, dict) and x.get("from") == "agents-md" for x in t.get("lessons") or []) and lessons_on(t.get("space"), d)

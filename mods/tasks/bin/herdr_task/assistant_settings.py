@@ -16,7 +16,6 @@ from .base import addon_off, hc_json, MAX_RUNNING, now, run, STORE
 from .settings import DEFAULTS, LOCAL_MACHINE, MUST_WORDS, SETTINGS, agent_key, bare, read_settings
 from .launch import coordinators, is_coordinator
 from . import reactions
-from . import lessons  # fork: SHEP-65
 
 # What an Assistant was last told, on its terminal: "review:1a2b3c,merge:…", a short hash of each line.
 LABEL = "herdr.settings"
@@ -129,10 +128,6 @@ def rows(space, d=None, auto=None):
              else "off (never react to the person's messages)", "on" if reacting else "off", [("agents", "reactions")]),
             ("suggestions", "Suggested next message", "on (end each reply with the message you'd likely send next, greyed out in the box)"
              if suggesting else "off (no suggested next message)", "on" if suggesting else "off", [("agents", "suggestions")]),
-            # fork: SHEP-65: Lessons' switch; its guide is in the session note only while it's on
-            ("lessons", "Lessons", "on (after Accept, ask the person to keep, edit or drop a task's drafted lessons)"
-             if (cfg.get("lessons") or {}).get("on") is not False else "off (raise no lesson cards)",
-             "off" if (cfg.get("lessons") or {}).get("on") is False else "on", [("lessons", "on")]),
             ("feedback", "Feedback offers", f"on (offer once to file a Shepherdr problem as an issue on {repo}, only on the person's yes)"
              if offering else "off (never offer feedback for Shepherdr; file nothing)", "on" if offering else "off",
              [("agents", "feedback"), ("agents", "feedback_repo")]),
@@ -176,7 +171,6 @@ def notice(changed):
     out = []
     for i, r in enumerate(changed):
         words = (reactions.TURNED_ON if r["value"] == "on" else reactions.TURNED_OFF) if r["key"] == "reactions" else \
-            (lessons.TURNED_ON if r["value"] == "on" else lessons.TURNED_OFF) if r["key"] == "lessons" else \
             f"{r['label']} is now {r['text']}" + (f"; {BY[r['by']]}" if r["by"] else "; Herdr's default") + \
             ("." if r["key"] in ("autopilot", "feedback") else ". Tasks you add from now on get it; running ones keep their brief.")
         end = f" {NOTICE_END}" if i == len(changed) - 1 else ""
@@ -197,8 +191,7 @@ def session_note(terminal):
     on = next(r for r in rs if r["key"] == "reactions")["value"] == "on"
     run(["hc", "label", terminal, f"{LABEL}={digest(rs)}"])
     run(["hc", "label", terminal, f"{reactions.LABEL}={'on' if on else 'off'}"])
-    learn = next(r for r in rs if r["key"] == "lessons")["value"] == "on"  # fork: SHEP-65: no lessons words while off
-    return block(rs) + (f"\n{lessons.ASSISTANT_GUIDE}" if learn else "") + "\n" + (reactions.GUIDE if on else reactions.OFF)
+    return block(rs) + "\n" + (reactions.GUIDE if on else reactions.OFF)
 
 
 def cmd_session_note(args):
@@ -252,8 +245,6 @@ def settings_pass(report, quiet):
             # started before Assistants were told their settings: the whole block, once
             on = next(r for r in rs if r["key"] == "reactions")["value"] == "on"
             guide = reactions.GUIDE if on and labels.get(reactions.LABEL) != "on" else ""
-            if next(r for r in rs if r["key"] == "lessons")["value"] == "on":  # fork: SHEP-65
-                guide = (guide + "\n" if guide else "") + lessons.ASSISTANT_GUIDE
             text = (f'<herdr-setting name="all">{block(rs)}' + (f"\n{guide}" if guide else "") + f" {NOTICE_END}</herdr-setting>")
             changed = [{"key": "all"}]
         else:

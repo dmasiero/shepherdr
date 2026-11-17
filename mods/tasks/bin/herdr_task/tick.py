@@ -650,11 +650,6 @@ def cmd_tick(args):
     except Exception as e:  # never stops the queue
         report["touches_error"] = str(e)
     try:
-        from .lessons import expire_pass  # fork: SHEP-65: drafts nobody answered in 7 days are dropped quietly
-        expire_pass(report, args.folder)
-    except Exception as e:  # never stops the queue
-        report["lessons_error"] = str(e)
-    try:
         lost_logs_pass(report, args.folder)
     except Exception as e:  # never stops the queue
         report["logs_error"] = str(e)

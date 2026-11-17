@@ -306,15 +306,9 @@ def main():
     c.add_argument("--weeks", type=int, help="only tasks started in the last N weeks")
     # fork: SHEP-64: the switch for Lessons (Settings › Agents › Lessons)
     c = cmd("lessons", cmd_lessons, "Lessons, drafted by workers from where you step in: on, off, or (a space) inherit "
-                                    "Everywhere's; keep, edit, drop or retire one (fork: SHEP-65: the person's answer); "
-                                    "no word: the drafts and kept lessons", id=False)
-    c.add_argument("what", nargs="?", choices=("on", "off", "inherit", "keep", "edit", "drop", "retire"))
-    c.add_argument("lesson_id", nargs="?", metavar="id", help="the lesson (l-4-1) to keep, edit, drop or retire")
+                                    "Everywhere's; no word: what it is now", id=False)
+    c.add_argument("what", nargs="?", choices=("on", "off", "inherit"))
     c.add_argument("--space", help="one space's own (its id); default: Everywhere")
-    c.add_argument("--text", help="edit: the lesson's new words, one short rule (the person's)")
-    c.add_argument("--scope", choices=LESSON_SCOPES, help="keep or edit: who it's for instead of the draft's")
-    c.add_argument("--pending", action="store_true", help="only the drafts waiting for the person's answer")
-    c.add_argument("--task", help="only one task's drafts (HAT-4)")
     cmd("unarchive", cmd_unarchive, "bring an archived task back into its list (only when the person asks; writing to it does too)")
     c = cmd("edit", cmd_edit, "change a task")
     c.add_argument("--title")
