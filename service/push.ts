@@ -8,6 +8,7 @@ import { DATA, where } from "./paths.ts";
 import * as T from "../core/toasts.js";
 import { alertUrl, ACCEPT, choiceButtons, DEFAULT_TOPICS, notifies, notifyOf, pushTopics, REPLY, taskWho, WATCH_BODY, WATCH_TITLE, watchTitle, type PushAction, type PushTopic } from "../web/shared/alerts.ts";
 import { excerpt } from "../web/shared/excerpt.ts";
+import { unread } from "../web/shared/needs-you.ts";
 
 /** a push alert; its buttons (SHEP-243) and what each does: answer a card, accept a task, reply in its chat */
 type Out = {
@@ -22,17 +23,25 @@ type Out = {
  * message (an Autopilot update when its Autopilot woke it: woke, the spaces whose wake was under way a moment ago).
  * Keyed so each goes once; each with its topic and space, which every device chooses by (Settings › Notifications).
  */
+/** a need's alert key: one per card or wait */
+export const needKey = (n: any) => `need:${n.chat}:${n.id}`;
+
+/** what a need's alert says (whether it is sent or not: its space's Notify decides), in words that fit a watch */
+export function needAlert(snap: any, n: any): Out {
+  const who = n.task ? taskWho(snap, n.task) : T.assistantWho(snap.places?.find((p: any) => p.id === n.place)?.name);
+  const go = alertUrl({ place: n.place, ...(n.task ? { task: n.task } : {}), ...(n.question?.id ? { focus: n.question.id } : {}) });
+  // its card's choices as buttons; a question with none a button may send opens the app; no card: a reply
+  const buttons = n.question ? choiceButtons(n.question) : [];
+  const acts = n.question ? (buttons.length ? { actions: buttons, answer: { chat: n.chat, question: n.question.id } } : {})
+    : n.secret ? {} : { actions: [REPLY], reply: { chat: n.chat, ...(n.reply ? { to: n.reply } : {}) } };
+  return { title: watchTitle(T.toastTitle(who, T.NEEDS_YOU)), body: excerpt(T.needReason(n), WATCH_BODY), tag: n.task ?? n.chat, topic: "needs", place: n.place, waits: true, url: go, ...acts };
+}
+
 export function alertsOf(snap: any, woke: Set<string> = new Set(), said: (chat: string) => string | undefined = () => undefined): Map<string, Out> {
   const now = new Map<string, Out>();
-  const who = (n: any) => n.task ? taskWho(snap, n.task) : T.assistantWho(snap.places?.find((p: any) => p.id === n.place)?.name);
   for (const n of snap.needs ?? []) {
     if (snap.settings && !notifies(snap, { go: { place: n.place }, task: n.task ? true : undefined })) continue;
-    const go = alertUrl({ place: n.place, ...(n.task ? { task: n.task } : {}), ...(n.question?.id ? { focus: n.question.id } : {}) });
-    // its card's choices as buttons; a question with none a button may send opens the app; no card: a reply
-    const buttons = n.question ? choiceButtons(n.question) : [];
-    const acts = n.question ? (buttons.length ? { actions: buttons, answer: { chat: n.chat, question: n.question.id } } : {})
-      : n.secret ? {} : { actions: [REPLY], reply: { chat: n.chat, ...(n.reply ? { to: n.reply } : {}) } };
-    now.set(`need:${n.chat}:${n.id}`, { title: T.toastTitle(who(n), T.NEEDS_YOU), body: T.needReason(n), tag: n.task ?? n.chat, topic: "needs", place: n.place, waits: true, url: go, ...acts });
+    now.set(needKey(n), needAlert(snap, n));
   }
   // a task ready for the person's Accept (Ready is only that: one Settings merge by itself shows Working meanwhile,
   // core/tasks.js readyWait), the same Accept as the Tasks panel's
@@ -43,8 +52,9 @@ export function alertsOf(snap: any, woke: Set<string> = new Set(), said: (chat: 
     now.set(`done:${t.id}`, { title: T.toastTitle(taskWho(snap, t.id), "Done"), body: t.name, tag: t.id, topic: "done", place: t.place, url: alertUrl({ place: t.place, task: t.id }) });
   // an Assistant's new message (its chat's last moved on, not yet read), unless its space's Notify is Off
   for (const p of snap.places ?? []) {
-    const last = Number(snap.last?.[p.chat]) || 0;
-    if (!last || last <= (Number(snap.read?.[p.chat]) || 0)) continue;
+    // unread as everywhere else (web/shared/needs-you.ts: Needs you lists it until read)
+    if (!unread(snap, p.chat)) continue;
+    const last = Number(snap.last[p.chat]);
     // its question already says so (Needs you)
     if ((snap.needs ?? []).some((n: any) => n.chat === p.chat)) continue;
     if (snap.settings && notifyOf(snap, p.id) === "Off") continue;
@@ -65,7 +75,7 @@ export function alertsOf(snap: any, woke: Set<string> = new Set(), said: (chat: 
  * task's agent or an alert about a task always; an Assistant's by its space's Notify). chatOf: a terminal's chat key.
  */
 export function agentAlerts(terminals: Iterable<any>, snap: any, chatOf: (address: string) => string | null, home: string) {
-  const out: { id: string; at: number; title: string; body: string; chat?: string; place?: string; notify: boolean }[] = [];
+  const out: { id: string; at: number; title: string; body: string; chat?: string; place?: string; notify: boolean; ended?: true; machine?: string | null; memory?: true }[] = [];
   const all = [...terminals];
   for (const k of all) {
     let a: any = null;
@@ -78,7 +88,13 @@ export function agentAlerts(terminals: Iterable<any>, snap: any, chatOf: (addres
     const who = ref || (k.labels?.["herdr.role"] === "coordinator" || coord ? T.assistantWho(coord?.name) : k.program?.name ?? "Agent");
     const place = task?.place ?? coord?.id;
     const notify = Boolean(a.about || task || k.labels?.["herdr.task"] || !place || notifies(snap, { go: { place } }));
-    out.push({ id: String(a.id), at: Number(a.at) || 0, title: T.clip(T.toastTitle(who, String(a.title ?? "")), 60), body: T.clip(String(a.body ?? ""), 300), ...(chat ? { chat } : {}), ...(place ? { place } : {}), notify });
+    // SHEP-246: what the glance feed needs to keep only what is still true: its terminal finished, its machine, and a
+    // memory guard's alert (herdr-task tick memory_guard: a machine's state, over once memory is back under)
+    const ended = k.state !== undefined && k.state !== "live";
+    const machine = String(k.address ?? "").includes("/") ? String(k.address).slice(0, String(k.address).indexOf("/")) : null;
+    const memory = a.about && /^Memory at \d+%/.test(String(a.title ?? ""));
+    out.push({ id: String(a.id), at: Number(a.at) || 0, title: T.clip(T.toastTitle(who, String(a.title ?? "")), 60), body: T.clip(String(a.body ?? ""), 300), ...(chat ? { chat } : {}), ...(place ? { place } : {}), notify,
+      ...(ended ? { ended: true as const } : {}), ...(machine ? { machine } : {}), ...(memory ? { memory: true as const } : {}) });
   }
   // Assistants here that their model's provider kept cutting off (herdr-task tick's .retries.json), once per cut, as
   // the window's (lib/inbox.js readRetries): "<who> · <why>", "Write to it to carry on, or restart it."
@@ -97,7 +113,9 @@ export const PROVIDER_BODY = "Write to it to carry on, or restart it.";
 
 /** a device's subscription: what it is told about (none kept: what it got before it could choose) and the spaces it hears
  *  nothing from */
-type Sub = { endpoint: string; keys: { p256dh: string; auth: string }; device?: string; at: number; topics?: PushTopic[]; muted?: string[] };
+type Sub = { endpoint: string; keys: { p256dh: string; auth: string }; device?: string; at: number; topics?: PushTopic[]; muted?: string[];
+  /** the tailnet device it is on (main.ts deviceFrom): a device whose phone app shows its own alerts gets none (SHEP-246) */
+  node?: string };
 
 /** does a device want this alert: its topic chosen, its space not muted; an alert with no topic (a test) always */
 export function wants(s: Pick<Sub, "topics" | "muted">, a: { topic?: string; place?: string }) {
@@ -145,6 +163,8 @@ export class Push {
   private vapid: { publicKey: string; privateJwk: JsonWebKey } | null = null;
   /** endpoints of devices whose app is on screen now (their pages say so) */
   visible = new Set<string>();
+  /** a tailnet device whose own app shows the alerts now (the glance feed's native stream, SHEP-246): no web push */
+  quiet: (node: string | undefined) => boolean = () => false;
 
   constructor(private subject: () => string, private file = join(DATA, "push.json")) {
     try { this.subs = JSON.parse(readFileSync(this.file, "utf8")); } catch {}
@@ -163,11 +183,20 @@ export class Push {
   }
 
   /** a device turned on (or again, with a new subscription: from: the one it had); it keeps what it chose */
-  subscribe(sub: any, device?: string, from?: string) {
+  subscribe(sub: any, device?: string, from?: string, node?: string | null) {
     if (typeof sub?.endpoint !== "string" || !/^https:\/\//.test(sub.endpoint) || typeof sub?.keys?.p256dh !== "string" || typeof sub?.keys?.auth !== "string") throw new Error("Not a push subscription.");
     const had = this.subs.find((s) => s.endpoint === sub.endpoint) ?? (from ? this.subs.find((s) => s.endpoint === from) : undefined);
     const chose = had ? { topics: pushTopics(had.topics), ...(had.muted?.length ? { muted: had.muted } : {}) } : { topics: [...DEFAULT_TOPICS] };
-    this.subs = [...this.subs.filter((s) => s.endpoint !== sub.endpoint && s !== had), { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, device: String(device ?? "").slice(0, 200), at: Date.now(), ...chose }].slice(-20);
+    this.subs = [...this.subs.filter((s) => s.endpoint !== sub.endpoint && s !== had), { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth }, device: String(device ?? "").slice(0, 200), at: Date.now(), ...chose,
+      ...(node ? { node } : had?.node ? { node: had.node } : {}) }].slice(-20);
+    this.save();
+  }
+
+  /** the tailnet device a subscription is on, told by its page's socket (one subscribed before SHEP-246 had none) */
+  nodeOf(endpoint: string, node: string | null | undefined) {
+    const s = node ? this.subs.find((x) => x.endpoint === endpoint) : undefined;
+    if (!s || s.node === node) return;
+    s.node = node!;
     this.save();
   }
 
@@ -217,11 +246,12 @@ export class Push {
     } catch { return 0; }
   }
 
-  /** Sends an alert to every subscribed device whose app isn't on screen and that wants it (its topic, its space). */
+  /** Sends an alert to every subscribed device whose app isn't on screen, whose phone app doesn't show it natively, and
+   *  that wants it (its topic, its space). */
   async send(alert: Record<string, unknown> & { topic?: string; place?: string }) {
     const payload = enc(JSON.stringify(alert));
     for (const s of [...this.subs]) {
-      if (this.visible.has(s.endpoint) || !wants(s, alert)) continue;
+      if (this.visible.has(s.endpoint) || this.quiet(s.node) || !wants(s, alert)) continue;
       await this.deliver(s, payload);
     }
   }

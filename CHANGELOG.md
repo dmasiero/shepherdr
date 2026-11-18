@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.1.42
+
+A tiny fix: the Tasks panel lists only tasks again.
+
+### Needs you
+
+- Assistants' new messages no longer show in the Tasks panel, its badge or the phone and watch app's Needs you. They
+  stay in Chat, with its own unread dots. Tasks that wait on you and an Assistant's question cards still show.
+
+## 3.1.41
+
+A small release: what needs you is the same everywhere, and a call keeps going when your phone locks.
+
+### Needs you
+
+- The Tasks panel, the counts in the sidebar and header, the app icon's number and the phone and watch app now all use
+  one rule for what needs you, so a "2 need you" on your phone always matches what the Tasks panel lists.
+
+### Voice
+
+- A call can carry on in your pocket: hand it from the web page to the Shepherdr Wake app and keep talking with the
+  phone locked. The page shows Carrying on in your pocket, with Take it back.
+- On a locked phone the call is for talking only: the agent can still pass on messages for you, but it takes no actions
+  and shows no secrets or settings. Unlock the phone for those.
+
+## 3.1.40
+
+A tiny fix for the phone and watch app: the number by each section now always matches what it lists.
+
+### Phone and watch
+
+- The Needs you number in the phone and watch app now counts everything listed under it, including an Assistant's
+  unread message and an agent's alert, so the number and the list never disagree.
+- The app shows its sections in the same order and with the same names as the web app's Tasks panel.
+
+## 3.1.39
+
+A small release for the phone and watch app: it stays up to date with little data, and an alert never buzzes twice.
+
+### Phone and watch
+
+- The phone and watch app gets a small live feed of what needs you, what's ready and what's working, sent only when
+  that changes. It uses a tiny part of the data the full web page needs.
+- A device that shows Shepherdr's alerts itself no longer also gets the web page's notification, so one alert buzzes
+  once. If that app loses its link for more than 2 minutes, the web notifications take over again.
+- Tapping an alert in the app can open it right in the Shepherdr page you already have open on that device.
+
+### Alerts
+
+- In the phone and watch app, an agent's alert shows for 15 minutes at most, and goes once its task is done.
+- A low-memory alert clears itself once the machine has enough memory again, instead of staying for days.
+- Tapping a notification about a task that's ready opens its Accept card in the page you have open.
+
 ## 3.1.38
 
 A small release: answer your agents straight from a notification on your phone or watch, and fewer false alarms from
