@@ -161,7 +161,7 @@ def manifest():
 
 # Runs on the other machine (python3, 3.8+), its input on stdin: checks or installs, then prints
 # what it found. Each file: written beside its place, tried (its --version), the old one kept as
-# <file>.bak, then swapped in one step (os.replace).
+# <file>.bak, then swapped in one step (os.replace): a herdr-task running there keeps its old file (SHEP-259).
 INSTALL = r'''
 import base64, hashlib, json, os, shutil, subprocess, sys, time
 x = json.loads(sys.stdin.read())
@@ -207,12 +207,14 @@ for f in x["files"]:
     else:
         st = "behind"
     if x["op"] == "install" and st in ("missing", "behind") and "data" in f:
-        tmp = p + ".herdr-new"
+        tmp = p + ".herdr-new." + str(os.getpid())
         try:
             os.makedirs(os.path.dirname(p), exist_ok=True)
             data = base64.b64decode(f["data"])
             with open(tmp, "wb") as w:
                 w.write(data)
+                w.flush()
+                os.fsync(w.fileno())
             os.chmod(tmp, f["mode"])
             # fork: a script whose interpreter isn't here (a Nix store path from a Nix install) never runs
             # here: refused, not installed (its test below runs it with python3 itself, past its first line).

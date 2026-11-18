@@ -907,7 +907,7 @@ export interface RestartCli {
   efforts?: string[]
   defaultModel?: string
   defaultEffort?: string
-  /** the speeds it can start on: normal, fast */
+  /** the speeds it can start on: normal, fast, ultrafast (Codex, SHEP-258) */
   speeds?: string[]
   /** its permission modes (Settings › Agents), and the one a new agent gets unless picked */
   perms?: { id: string; label: string }[]
@@ -1027,11 +1027,12 @@ export interface RoleAgent {
   unset?: boolean
   other?: boolean
 }
-export interface AgentPick { agent: string; model?: string | null; effort?: string | null; fast?: boolean; perm?: string | null }
+/** fast: true (Fast), false (standard) or 'ultrafast' (Codex's Ultrafast tier) */
+export interface AgentPick { agent: string; model?: string | null; effort?: string | null; fast?: boolean | 'ultrafast'; perm?: string | null }
 
 /** Settings › Agents' model menu, as the window's (mods/chat-models, settings mode; core/agents.js menuFor) */
 export interface ModelMenus {
-  menus: Record<string, { name: string; models: { id: string; name: string; efforts: string[]; defaultEffort?: string | null; fast?: boolean }[]; perms: { id: string; label: string }[] }>
+  menus: Record<string, { name: string; models: { id: string; name: string; efforts: string[]; defaultEffort?: string | null; fast?: boolean; ultrafast?: boolean }[]; perms: { id: string; label: string }[] }>
   permDefault: Record<string, string>
 }
 
@@ -1241,7 +1242,7 @@ export interface Snapshot {
   read?: Record<string, number>
   /** the agents' own alerts (herdr-task alert), one per agent, as the window's toasts say them (service/push.ts
    *  agentAlerts): "HERD-4 · <title>" over its body, its chat, and whether it reaches the person (its space's Notify) */
-  alerts?: { id: string; at: number; title: string; body: string; chat?: string; place?: string; notify: boolean; ended?: true; machine?: string | null; memory?: true }[]
+  alerts?: { id: string; at: number; title: string; body: string; chat?: string; /** the task it is about (SHEP-255): its row shows it; none: no task's, not in Tasks */ task?: string; place?: string; notify: boolean; ended?: true; machine?: string | null; memory?: true }[]
   /** the sidebar's sections, as Slack's, each with its spaces in the human's order: the top ones first (Pinned, id
    *  'pinned', among them), then each machine's, its machine in order (shared/order.ts) */
   sections?: Section[]
@@ -1312,7 +1313,7 @@ export type Action =
   | { type: 'restart-info'; chat: string }
   /** start a coordinator or a task's agent again on this CLI, model and effort (none: the CLI's own; no kind: all as
       Settings say for its role); save: as its space's Settings for its role too */
-  /** speed: normal or fast, '' for the CLI's own; left out keeps what it was started on. It lasts as long as this chat, and save leaves it out of Settings. */
+  /** speed: normal, fast or ultrafast, '' for the CLI's own; left out keeps what it was started on. It lasts as long as this chat, and save leaves it out of Settings. */
   | { type: 'restart'; chat: string; kind?: string; model?: string; effort?: string; speed?: string; save?: boolean }
   /** mark a task done with nothing merged (shepherdr task close); refused (held) while it holds unmerged work, unless force */
   | { type: 'close'; chat: string; force?: boolean }

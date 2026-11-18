@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.1.44
+
+A small release: Codex's newest models, and a crash fix for updates.
+
+### Models
+
+- Codex's GPT-6.2 Sol and Astra are in the model menus, in the window, the web app and Settings. Update Codex to get
+  them.
+- Where Codex offers it, an Ultrafast switch sits next to Fast, and you can flip it while the agent runs.
+
+### Updates
+
+- The task helper (`herdr-task`) no longer breaks with a zip error when an update lands while it runs.
+
+## 3.1.43
+
+A tiny fix: Needs you shows only tasks.
+
+### Needs you
+
+- What belongs to no task, like an Assistant's question card, a sign-in helper's "Finish sign-in", a memory warning or
+  a failed automation, no longer shows in the Tasks panel, its counts or the phone and watch app's Needs you. You still
+  get their pop-ups and pushes, and a failed automation still says so in Automations. A task's helper alert now shows
+  on that task's row.
+
 ## 3.1.42
 
 A tiny fix: the Tasks panel lists only tasks again.
