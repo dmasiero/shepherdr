@@ -152,7 +152,7 @@ class NoteToABlockedAgent(unittest.TestCase):
         open(os.path.join(self.state, "blocked"), "w").close()
         with mock.patch.object(A, "herdr_task", return_value=None), self.assertRaises(A.Fail) as e:
             self.note("Hello")
-        self.assertEqual(str(e.exception), "t9 is blocked (question)")
+        self.assertIn("couldn't be kept", str(e.exception))
 
     def test_hc_refusal_reads_hcs_json(self):
         r = types.SimpleNamespace(returncode=1, stdout="", stderr='{"error":{"kind":"blocked","message":"t1 is blocked (question)","hint":"x"}}')

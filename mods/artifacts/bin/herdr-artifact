@@ -1636,7 +1636,9 @@ def cmd_note(o):
         kind, said = hc_refusal(r)
         # fork: SHEP-72: a dialog open (a question, a permission): typing would answer it, so the note waits for it
         # in herdr-task's held messages (news.hold, sent by its scheduler's held_pass once hc takes it). Never --force.
-        if kind != "blocked" or not hold_note(to, body):
+        if kind == "blocked" and not hold_note(to, body):
+            raise Fail("It's waiting on a question, and your note couldn't be kept for it: answer that, then send it again.")
+        if kind != "blocked":
             raise Fail(said or f"Couldn't send it to {to}.")
         held = "question"
     out = {"to": to, "why": why, "version": v, "image": image, **({"held": held} if held else {})}
