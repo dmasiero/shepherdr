@@ -9,7 +9,9 @@
 //             "tasks.pinned" (mods/tasks keeps the same list). A task not started yet (props().status
 //             todo, queued or scheduled) also starts later (SHEP-38): herdr-task edit --in / --at on
 //             props().machine, folder and ref; a scheduled one Start now and Unschedule. What herdr-task
-//             refuses shows as a toast.
+//             refuses shows as a toast. fork: a started task not done snoozes (SHEP-78, core/snooze.js):
+//             props().snooze = { seen, task } into shared "tasks.snoozed"; a snoozed one (props().snoozed,
+//             props().until its words) unsnoozes or changes its time.
 // ↑/↓ move, Enter picks, Esc closes.
 
 import { View, div } from "gpui-kit";
@@ -17,6 +19,7 @@ import { v_flex } from "gpui-base";
 import { props, closeOverlay, theme, shared, setShared, exec, appHome } from "herdr";
 import { menuRow, heading, toast, TEXT } from "./ui.js";
 import { taskMenu } from "./core/menus.js";
+import { SNOOZED, snoozeIn, unsnooze, whenOf } from "./core/snooze.js"; // fork: Snooze (SHEP-78)
 import { settle } from "./core/pending.js";
 
 // Shepherdr's GROUP_WORDS (core/tasks.js GROUP_BY).
@@ -37,7 +40,8 @@ function sections() {
 function rowSections(p) {
   const out = [];
   let cur = null;
-  for (const it of taskMenu({ pinned: p.on, status: p.status ?? null })) {
+  // fork: a started task snoozes; a snoozed one unsnoozes or changes its time (SHEP-78)
+  for (const it of taskMenu({ pinned: p.on, status: p.status ?? null, snoozed: Boolean(p.snoozed), until: p.until ?? null })) {
     if (it.typed) continue;
     if (it.sep || it.heading || !cur) out.push(cur = { title: it.heading ? (p.status === "scheduled" && p.sub ? `${it.heading} · ${p.sub}` : it.heading) : null,
       checks: false, current: null, items: [], pick: (key) => rowPick(p, key) });
@@ -55,6 +59,14 @@ function rowPick(p, key) {
     const v = shared("tasks.pinned");
     const rest = (Array.isArray(v) ? v : []).filter((k) => k !== p.key);
     setShared("tasks.pinned", p.on ? rest : [...rest, p.key]);
+    return;
+  }
+  // fork: Snooze (SHEP-78): the shared "tasks.snoozed", as the web's snooze action writes it (the bridge carries it)
+  if (it.id === "unsnooze") { setShared(SNOOZED, unsnooze(shared(SNOOZED), p.key)); return; }
+  if (it.id === "snooze") {
+    const w = whenOf(it.in ? { in: it.in } : { at: it.at });
+    if (w.error !== undefined || !p.snooze) { toast({ level: "error", title: `Couldn't snooze ${p.ref}`, body: w.error ?? "It can't be snoozed now." }); return; }
+    setShared(SNOOZED, snoozeIn(shared(SNOOZED), p.key, { until: w.at, seen: p.snooze.seen, task: p.snooze.task }));
     return;
   }
   const args = it.id === "start-now" ? ["start", p.ref, "--now"] : it.id === "unschedule" ? ["edit", p.ref, "--at", ""]

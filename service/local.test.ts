@@ -80,11 +80,11 @@ describe("lib/bridge.js", () => {
   });
   // fork: SHEP-78: a snooze made on the web reaches the window's shared keys, and one made in the window the document
   test("it carries tasks.snoozed both ways", async () => {
-    const web = { ":/home/d/shop#7": { until: 2e12, at: 1e12, seen: { status: "work", cards: [], ready: null }, task: "shop#7" } };
+    const web = { ":/srv/shop#7": { until: 2e12, at: 1e12, seen: { status: "work", cards: [], ready: null }, task: "shop#7" } };
     doc = { "tasks.snoozed": web };
     await tick!();
     expect(shared.get("tasks.snoozed")).toEqual(web);
-    const here = { ...web, ":/home/d/shop#8": { woke: "Ready", at: 1e12 } };
+    const here = { ...web, ":/srv/shop#8": { woke: "Ready", at: 1e12 } };
     shared.set("tasks.snoozed", here);
     seen.length = 0;
     await tick!();

@@ -33,6 +33,7 @@
 // Edit lib/inbox.js, never a mod's copy, then run bin/sync-shared.
 
 import { LINE_MAX, REASONS, fit, reqReason, reportReason } from "./core/needs.js";
+import { SNOOZED, snoozedUntil, snoozedLabels } from "./core/snooze.js"; // fork: Snooze (SHEP-78)
 import { SH } from "./core/paths.js";
 import { dirsReady } from "./dirs.js";
 import { notifies, spaceOfTerminal } from "./notify.js";
@@ -146,6 +147,7 @@ const release = (id) => writeTextFile(`${ASKS()}/ans/${id}.json`, "", null).catc
 // already gave them (the agent shows as blocked). An open chat alerts by itself. It says why, as
 // the Tasks row does.
 async function alert(a) {
+  if (snoozedNow().term(a.terminal)) return; // fork: a snoozed task sends nothing (SHEP-78)
   if (chatOf(a.terminal) || threadShown(a.terminal) || terminals().find((k) => k.address === a.terminal)?.status === "blocked") return;
   // An Assistant whose space's Notify is Off stays quiet.
   if (!notifies(terminals().find((k) => k.address === a.terminal), "need")) return;
@@ -304,15 +306,17 @@ async function json(cmd, args) {
 export function items() {
   const asks = shared("inbox.asks") ?? [];
   const asking = new Set(asks.map((a) => a.terminal));
-  const out = asks.map((a) => ({ key: `ask:${a.id}`, kind: "ask", id: a.id, terminal: a.terminal, at: Number(a.id.split(".")[1]) * 1000 || 0 }));
   const all = terminals();
+  // fork: a snoozed task's are none of them (SHEP-78)
+  const z = snoozedNow(all);
+  const out = asks.filter((a) => !z.term(a.terminal)).map((a) => ({ key: `ask:${a.id}`, kind: "ask", id: a.id, terminal: a.terminal, at: Number(a.id.split(".")[1]) * 1000 || 0 }));
   forgetUnblocked(all);
   for (const k of all)
-    if (k.state === "live" && k.status === "blocked" && !asking.has(k.address))
+    if (k.state === "live" && k.status === "blocked" && !asking.has(k.address) && !z.term(k.address, k))
       out.push({ key: `blocked:${k.address}`, kind: "blocked", terminal: k.address, at: blockedSince(k.address) });
   const tasks = shared("inbox.tasks") ?? [];
-  for (const x of tasks) if (x.kind !== "merge" && x.kind !== "asks") out.push({ key: `${x.kind}:${x.machine ?? ""}:${x.folder}:${x.ref}`, ...x });
-  for (const p of shared("inbox.provider") ?? []) if (!asking.has(p.terminal)) out.push({ key: `provider:${p.terminal}`, kind: "provider", ...p });
+  for (const x of tasks) if (x.kind !== "merge" && x.kind !== "asks" && !z.task(x)) out.push({ key: `${x.kind}:${x.machine ?? ""}:${x.folder}:${x.ref}`, ...x });
+  for (const p of shared("inbox.provider") ?? []) if (!asking.has(p.terminal) && !z.term(p.terminal)) out.push({ key: `provider:${p.terminal}`, kind: "provider", ...p });
   for (const a of shared("inbox.autos") ?? []) out.push({ key: `auto:${a.machine ?? ""}:${a.id}`, kind: "auto", ...a, at: a.error?.at ?? 0 });
   return out;
 }
@@ -351,7 +355,23 @@ export function countsByTab() {
 }
 
 // The tasks in Tasks' Ready, for the green counts (beside the red ones), and per tab.
-export const ready = () => (shared("inbox.tasks") ?? []).filter((x) => x.kind === "merge");
+export const ready = () => { const z = snoozedNow(); return (shared("inbox.tasks") ?? []).filter((x) => x.kind === "merge" && !z.task(x)); }; // fork: SHEP-78
+
+// fork: Snooze (SHEP-78, core/snooze.js): which items are a snoozed task's, by the shared "tasks.snoozed": a task's own
+// item by its key (machine, folder, its ref's number), an agent's by its herdr.task label on its machine.
+export function snoozedNow(all = null) {
+  const map = shared(SNOOZED);
+  if (!map || typeof map !== "object" || !Object.keys(map).length) return { task: () => false, term: () => false };
+  const labels = snoozedLabels(map);
+  const ks = all ?? terminals();
+  return {
+    task: (x) => snoozedUntil(map, `${x.machine ?? ""}:${x.folder}#${String(x.ref ?? "").split("-").pop().replace(/^#/, "")}`) !== null,
+    term: (address, k = ks.find((y) => y.address === address)) => {
+      const l = k?.labels?.["herdr.task"];
+      return Boolean(l) && labels.has(`${String(address).includes("/") ? String(address).split("/")[0] : ""}|${l}`);
+    },
+  };
+}
 export const readyCount = () => ready().length;
 export function readyByTab() {
   const m = new Map();

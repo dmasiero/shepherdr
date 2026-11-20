@@ -5,7 +5,7 @@ import { judge, resolve, signature, snoozeIn, unsnooze, snoozedUntil, wokeOf, ne
 
 const T0 = new Date(2026, 10, 20, 10, 0).getTime(); // Fri 20 Nov 2026 10:00, this machine's time
 const H = 3600_000;
-const KEY = ":/home/d/dev/shop#7";
+const KEY = ":/srv/shop#7";
 const snoozed = (seen, until = T0 + 3 * H) => snoozeIn({}, KEY, { until, seen, task: "shop#7", at: T0 });
 
 test("which statuses snooze", () => {
