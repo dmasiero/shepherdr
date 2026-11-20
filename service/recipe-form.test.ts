@@ -15,7 +15,7 @@ const made: any[] = [];
 class GuardedInputState {
   static new(o: any) {
     if (rendering) throw new Error("InputState.new(...) cannot run during render; create state in init() or in an event handler and keep it on the view");
-    const s = { o, text: "", value: () => s.text };
+    const s = { o, text: o?.value ?? "", value: () => s.text };
     made.push(s);
     return s;
   }
@@ -41,6 +41,13 @@ const recipe = {
     // forms inside tabs and details get theirs from init() too
     { type: "tabs", id: "t", tabs: [{ label: "More", blocks: [{ type: "form", id: "g", fields: [{ name: "why", label: "Why", kind: "textarea" }, { name: "done", kind: "checkbox" }] }] }] },
     { type: "details", id: "d", summary: "Extra", blocks: [{ type: "form", id: "h", fields: [{ name: "x" }] }] },
+    // fork: SHEP-70: fields that start on a preset value
+    { type: "form", id: "p", submit: "Monthly review", fields: [
+      { name: "gym", label: "Gym", kind: "select", options: ["Keep", "Cancel"], value: "Cancel" },
+      { name: "news", label: "News", kind: "select", options: ["Keep", "Cancel"] },
+      { name: "auto", label: "Auto-renew", kind: "checkbox", value: true },
+      { name: "why", label: "Why", kind: "text", value: "too pricey" },
+    ] },
   ],
 };
 writeFileSync(join(dir, "recipe-data.js"), `export default ${JSON.stringify(recipe)};\n`);
@@ -65,13 +72,13 @@ describe("a recipe's form in the window (#1026)", () => {
 
   test("every text field's state is made in init, none during render", () => {
     const v = view();
-    expect(made.map((s) => s.o.placeholder).sort()).toEqual(["Note", "Why", "x"]);
+    expect(made.map((s) => s.o.placeholder).sort()).toEqual(["Note", "Why", "Why", "x"]);
     expect(made.find((s) => s.o.placeholder === "Why").o.multi_line).toBe(true);
     expect(() => render(v)).not.toThrow();
     // a details block unfolded and another tab picked draw their forms without making state either
     v.open.add("d");
     expect(() => render(v)).not.toThrow();
-    expect(made.length).toBe(3);
+    expect(made.length).toBe(4);
   });
 
   test("a select shows its options; a click picks one, and the reply carries both fields", async () => {
@@ -84,5 +91,50 @@ describe("a recipe's form in the window (#1026)", () => {
     handler(byId("fs-f"), "on_click")!({}, cx);
     await Promise.resolve();
     expect(sent).toEqual(["Send review\nNote: Looks good\nStatus: Fix"]);
+  });
+});
+
+// fork: SHEP-70 (upstream #1212): a field may start on a preset value
+describe("a recipe's form fields start on their preset values (SHEP-70)", () => {
+  beforeEach(() => { made.length = 0; sent.length = 0; });
+
+  test("a preset select's pick, a checkbox's tick and a text's state start on the value", () => {
+    const v = view();
+    expect(v.picks.get("p:gym")).toBe("Cancel");
+    expect(v.picks.has("p:news")).toBe(false);
+    expect(v.checks.get("p:auto")).toBe(true);
+    const why = made.find((s) => s.o.placeholder === "Why" && s.o.value !== undefined);
+    expect(why.o.value).toBe("too pricey");
+    expect(why.value()).toBe("too pricey");
+    expect(made.find((s) => s.o.placeholder === "Note").o.value).toBeUndefined();
+  });
+
+  test("sent untouched, the form sends its presets; changed, the person's picks", async () => {
+    let v = view();
+    render(v);
+    handler(byId("fs-p"), "on_click")!({}, cx);
+    await Promise.resolve();
+    expect(sent).toEqual(["Monthly review\nGym: Cancel\nNews: (empty)\nAuto-renew: yes\nWhy: too pricey"]);
+
+    sent.length = 0; made.length = 0;
+    v = view();
+    render(v);
+    handler(byId("sel-p-gym-0"), "on_click")!({}, cx);
+    handler(byId("sel-p-news-1"), "on_click")!({}, cx);
+    handler(byId("cb-p-auto"), "on_click")!({}, cx);
+    render(v);
+    handler(byId("fs-p"), "on_click")!({}, cx);
+    await Promise.resolve();
+    expect(sent).toEqual(["Monthly review\nGym: Keep\nNews: Cancel\nAuto-renew: no\nWhy: too pricey"]);
+  });
+
+  test("a preset select can't be cleared: a press on its pick keeps it", () => {
+    const v = view();
+    render(v);
+    // twice: an unpreset select's second press would clear it
+    handler(byId("sel-p-gym-1"), "on_click")!({}, cx);
+    render(v);
+    handler(byId("sel-p-gym-1"), "on_click")!({}, cx);
+    expect(v.picks.get("p:gym")).toBe("Cancel");
   });
 });

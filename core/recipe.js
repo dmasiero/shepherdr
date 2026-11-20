@@ -17,7 +17,9 @@
 //   columns  { columns: [[blocks]] }                    tabs     { tabs: [{ label, blocks }] }
 //   details  { summary, blocks }                        divider  {}
 //   choice   { question, options: [{ label, description }] }   one pick, sent to the agent as a reply
-//   form     { fields: [{ name, label, kind: text | textarea | select | checkbox, options }], submit }
+//   form     { fields: [{ name, label, kind: text | textarea | select | checkbox, options, value }], submit }
+//            value: where the field starts (one of a select's options, a checkbox's true or false, a text's words);
+//            a select with one shows no blank, and an untouched field sends it (fork: SHEP-70, upstream #1212)
 //   button   { label, reply, href, quiet }              a press sends `reply` to the agent; with href (https only) it
 //                                                       opens that page in the person's browser too; quiet: the softer look
 //   buttons  { items: [button] }                        buttons side by side (the first not quiet is the one to press)
@@ -80,7 +82,10 @@ export function problems(recipe, files = null) {
       case "tabs": need(arr(b.tabs) && b.tabs.every((t) => str(t?.label) && arr(t?.blocks)), "tabs need a label and blocks"); if (arr(b.tabs)) b.tabs.forEach((t, j) => arr(t?.blocks) && walk(t.blocks, `${where}.${j + 1}.`)); break;
       case "details": need(str(b.summary) && arr(b.blocks), "needs a summary and blocks"); if (arr(b.blocks)) walk(b.blocks, `${where}.`); break;
       case "choice": need(str(b.question) && arr(b.options) && b.options.every((o) => str(o?.label)), "needs a question and options with labels"); break;
-      case "form": need(arr(b.fields) && b.fields.every((f) => str(f?.name) && FIELDS.includes(f.kind ?? "text")), `fields need a name and a kind (${FIELDS.join(", ")})`); break;
+      case "form": need(arr(b.fields) && b.fields.every((f) => str(f?.name) && FIELDS.includes(f.kind ?? "text")), `fields need a name and a kind (${FIELDS.join(", ")})`);
+        // fork: a field's preset value fits its kind (SHEP-70, upstream #1212)
+        if (arr(b.fields)) b.fields.forEach((f) => { const p = valueProblem(f); if (p) need(false, `field ${JSON.stringify(f?.name)}: ${p}`); });
+        break;
       case "button": buttonProblem(b, need); break;
       case "buttons": need(arr(b.items) && b.items.length > 0 && b.items.length <= 4, "items must be 1 to 4 buttons"); if (arr(b.items)) b.items.forEach((x) => buttonProblem(x ?? {}, need)); break;
     }
@@ -90,6 +95,15 @@ export function problems(recipe, files = null) {
   if (recipe.cover != null && (!str(recipe.cover) || recipe.cover.includes("..") || recipe.cover.startsWith("/") || (files && !files.includes(recipe.cover)))) out.push('"cover" must be a picture beside recipe.json.');
   if (n > MAX_BLOCKS) out.push(`at most ${MAX_BLOCKS} blocks.`);
   return out;
+}
+
+// What's wrong with a form field's preset value (null: nothing, or none given). fork: SHEP-70, upstream #1212
+function valueProblem(f) {
+  if (!f || typeof f !== "object" || f.value == null) return null;
+  const kind = f.kind ?? "text";
+  if (kind === "select") return arr(f.options) && f.options.includes(f.value) ? null : `value must be one of its options (${arr(f.options) ? f.options.map((o) => JSON.stringify(o)).join(", ") : "it has none"})`;
+  if (kind === "checkbox") return typeof f.value === "boolean" ? null : "a checkbox's value must be true or false";
+  return str(f.value) ? null : "a text field's value must be words (a string)";
 }
 
 // A button's own fields: words, and a reply, a link or both (a link is a plain https page, opened by the person's press).
@@ -123,8 +137,12 @@ export function blockName(b) {
 
 // The reply a choice or a form sends to its agent: plain words, as the person would write them.
 export function choiceReply(b, label) { return `${b.question}: ${label}`; }
+// A field the person left untouched (no value in values) sends its preset value (fork: SHEP-70, upstream #1212).
 export function formReply(b, values) {
-  const lines = (b.fields ?? []).map((f) => `${f.label ?? f.name}: ${f.kind === "checkbox" ? (values[f.name] ? "yes" : "no") : String(values[f.name] ?? "").trim() || "(empty)"}`);
+  const lines = (b.fields ?? []).map((f) => {
+    const v = values[f.name] === undefined ? f.value : values[f.name];
+    return `${f.label ?? f.name}: ${f.kind === "checkbox" ? (v ? "yes" : "no") : String(v ?? "").trim() || "(empty)"}`;
+  });
   return [b.title ?? b.submit ?? "Form", ...lines].join("\n");
 }
 
