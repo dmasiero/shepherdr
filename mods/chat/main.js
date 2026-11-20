@@ -380,8 +380,9 @@ export default class Chat extends View {
     });
     // A paste with no text: the clipboard's image or copied files become attachments.
     this.box.on("paste_other", (_e, cx) => cx.spawn(async (cx) => {
-      const got = await attach.fromClipboard().catch((e) => { this.error = String(e?.message ?? e); cx.notify(); return []; });
-      if (got.length) { this.error = null; this.addFiles(got); this.saveSoon(cx); cx.notify(); }
+      // fork: SHEP-75: an attach error shows in the composer (attachError), not at the pane's edge.
+      const got = await attach.fromClipboard().catch((e) => { this.attachError = String(e?.message ?? e); cx.notify(); return []; });
+      if (got.length) { this.addFiles(got); this.saveSoon(cx); cx.notify(); }
     }));
     this.wasFocused = false;
     // Up/Down/Tab/Escape reach the textarea first, which keeps them. While the "/" list shows
@@ -704,6 +705,7 @@ export default class Chat extends View {
   }
 
   addFiles(list) {
+    if (list.length) this.attachError = null; // fork: SHEP-75
     for (const f of list) if (!this.files.some((x) => x.path === f.path)) this.files.push(f);
     this.files = this.files.slice(0, 20);
   }
@@ -4234,12 +4236,19 @@ export default class Chat extends View {
       .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-unzoom(this.lineH)));
   }
 
+  // fork: SHEP-75. The attach error's line, inside the composer: wraps rather than cut off, so the why stays readable.
+  attachErrorLine(t) {
+    return div().id("chat-attach-error").w_full().px(12).pt(4).text_size(12).text_color(t.blocked).child(this.attachError);
+  }
+
   // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
-  // the message as tiles, as a drop or a paste makes them.
+  // the message as tiles, as a drop or a paste makes them. When none opens, the composer says why (fork: SHEP-75:
+  // it said "Couldn't open the file picker." in this.error, drawn at the pane's left edge above the status line).
   pickFiles(cx) {
+    this.attachError = null;
     cx.spawn(async (cx) => {
-      const { code, paths: list } = await attach.pick();
-      if (code !== 0) this.error = "Couldn't open the file picker.";
+      const { code, paths: list, error } = await attach.pick();
+      if (code !== 0) this.attachError = error ?? "Couldn't open the file picker.";
       if (!list.length) { cx.notify(); return; }
       this.addFiles(attach.paths(list));
       this.saveSoon(cx);
@@ -4434,6 +4443,8 @@ export default class Chat extends View {
         .child(this.boxArea(t))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
           .child(this.asks.length || st === "blocked" ? WORDS.replyInstead : this.placeholder()))))
+      // Why an attach or a paste of files didn't work, in the box, above the + it came from (fork: SHEP-75).
+      .when(Boolean(this.attachError), (el) => el.child(this.attachErrorLine(t)))
       // While recording: the recording row. Else one row, on the right: what the agent runs on
       // (opens the picker), dictation, Send (or Call). Send never turns into Stop: while the
       // agent works it still sends (or queues) and calls; Stop is on the working line above.
