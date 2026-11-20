@@ -102,6 +102,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   with `mock.patch.object(..., create=True)` so the same test runs on both.
 - Tests that run accept or merge with the real `finish()` must stub `github.live_agents` and `live_helpers` (hc is
   refused under test).
+- pick-files.py tests: a private dbus-daemon from a minimal `--config-file` (no servicedir, `env -i`) plus
+  `test/fake_portal.py`; never call OpenFile on the real bus (it opens a picker on the person's desktop).
 - test/test_ask_hook.py runs mods/chat/ask-hook.sh with a fake hc; a killed test can orphan the hook (it waits up to a
   week): find it with ps by the worktree's ask-hook.sh path and kill that pid.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
