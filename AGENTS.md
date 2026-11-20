@@ -22,6 +22,11 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   scheduler on another home can overwrite every machine's spaces.
 - `herdr-app check <mod folder>` runs a mod's `init()` for real: never for `shepherdr-settings` (its init pushes
   settings to other machines).
+- Window-mod modules with only gpui imports (e.g. `mods/chat/cards.js`) run whole in node by swapping their import
+  lines for stubs (see `test/test_question_card_enter.py`).
+- Window chat focus tests: `test/test_question_card_keeps_keys.py` runs cards.js, secret-card.js and main.js's
+  `refocus()`/`cardKeys()` together in node with a one-owner keyboard stand-in; `SHEP74_ROOT=<git archive dir>` runs it
+  against another tree.
 - Window-mod methods (e.g. chat's `refocus()`) can be tested by extracting the method text from `mods/chat/main.js`
   and running it in node with stubs (see `test/test_chat_refocus.py`).
 - Mark up (`mods/artifacts/markup.js`) imports must be listed in `MARKUP_PARTS` in `mods/artifacts/bin/herdr-artifact`
@@ -81,6 +86,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `git config url.<bare>.insteadOf <full url>`; fake `tea`/`gh` first on PATH (see `GiteaTasks`).
 - Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
   read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
+- A herdr-artifact note end to end without a real agent: reuse `test/test_herdr_artifact_held.py`'s NoteToABlockedAgent
+  setUp (fake hc on PATH, throwaway task store) from a scratch script and call `A.main()` with a patched `sys.argv`.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - nextgate's `/usr/bin` is envfs: a tool shows there only to a caller whose PATH has it, so a test that narrows PATH
@@ -95,12 +102,16 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   with `mock.patch.object(..., create=True)` so the same test runs on both.
 - Tests that run accept or merge with the real `finish()` must stub `github.live_agents` and `live_helpers` (hc is
   refused under test).
+- pick-files.py tests: a private dbus-daemon from a minimal `--config-file` (no servicedir, `env -i`) plus
+  `test/fake_portal.py`; never call OpenFile on the real bus (it opens a picker on the person's desktop).
 - test/test_ask_hook.py runs mods/chat/ask-hook.sh with a fake hc; a killed test can orphan the hook (it waits up to a
   week): find it with ps by the worktree's ask-hook.sh path and kill that pid.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
 - `bun test` from service/ alone skips bunfig's preload (2 false failures): run `bun test service core web` from the repo root.
 - Window-mod methods that need `cx.spawn`'s result in a bun test: give the stub cx a spawn that keeps the promise (see the
   #1010 tests in service/spaces-sidebar.test.ts). ShepherdrSettings menus go through `mods/shepherdr-settings/over.js`.
+- A web component test without a DOM: extract the component's text from client.tsx, transpile it with `Bun.Transpiler`
+  and run it with a tiny useState shim to press its buttons (see `web/plugins/chat/secret-decline.test.tsx`).
 - Window-mod render tests: `bun test service` (from the root) with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
@@ -153,6 +164,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `mods/tasks/bin/herdr-task` or the `herdr_task/` folder beside it (`zipfile.is_zipfile` says which).
 - Reach map tests: `test/test_reach.py` puts logging fake ssh/tailscale/hc on PATH and runs the real probe; reuse it for
   anything that might contact other hosts.
+
+- A fork change to `templates/worker.md` (or another template that goes into briefs) can't carry a `fork:` comment, which
+  would reach every brief: name it in its FORK.md row's prose and pin its line with a test.
 
 ## Add-ons
 
