@@ -95,7 +95,9 @@ export interface TaskGroup {
  */
 export function groupTasks(places: Place[], machines: Machine[], ts: Task[], by: GroupBy, level = 1, waits?: string[]): TaskGroup[] {
   // archived tasks are in no group: only their place's Archived view shows them
-  const all = doneNewestFirst(GROUPS.flatMap(([s]) => ts.filter((t) => t.status === s && !t.archived)))
+  // SHEP-77 mock-up: snoozed tasks in no group but Snoozed, at the bottom, soonest back first
+  const snoozed = ts.filter((t) => t.snoozedUntil && !t.archived).sort((a, b) => a.snoozedUntil! - b.snoozedUntil!)
+  const all = doneNewestFirst(GROUPS.flatMap(([s]) => ts.filter((t) => t.status === s && !t.archived && !t.snoozedUntil)))
   const names = namesFor(level)
   // by status, Needs you is what waits on you (web/shared/needs-you.ts, SHEP-250: the phone's glance feed lists the same),
   // in its order: a task in it, pinned or working with an alert, is in no other group
@@ -110,6 +112,7 @@ export function groupTasks(places: Place[], machines: Machine[], ts: Task[], by:
     ...(pinned.length ? [{ key: 'pinned', label: 'Pinned', tasks: pinned, names }] : []),
     ...(by === 'status' ? GROUPS.filter(([s]) => s !== 'done').map(([s, label]) => ({ key: s, label, tasks: inGroup(s), names })).filter((g) => g.tasks.length) : projectGroups(places, machines, open)),
     ...(done.length ? [{ key: 'done', label: 'Done', tasks: done, names }] : []),
+    ...(snoozed.length ? [{ key: 'snoozed', label: 'Snoozed', tasks: snoozed, names }] : []),
   ]
 }
 

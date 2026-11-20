@@ -362,6 +362,11 @@ export interface Task {
   outcome?: 'done' | 'stopped' | 'failed'
   /** when it was archived (ms): out of every list and count, only search and its place's Archived view show it */
   archived?: number
+  /** SHEP-77 mock-up: snoozed until then (ms): out of its group, in Snoozed at the bottom, until then or until it needs
+   *  the person again */
+  snoozedUntil?: number
+  /** SHEP-77 mock-up: back from a snooze, and why ("Asked a question", "Time's up"), until the person opens it */
+  woke?: string
   /** when it was pinned (ms): it shows in the Pinned group at the top of its lists */
   pinned?: number
   /** the shared browser (the browser plugin), for a task not merged: whether it works on its machine, and if not why */

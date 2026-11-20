@@ -27,6 +27,8 @@ import {
   pinTask,
   placeOf,
   scheduleTask,
+  snoozeTask,
+  SNOOZED_OPEN,
   registry,
   setFilter,
   setGroup,
@@ -46,6 +48,8 @@ import { keysMoved } from '@client/focus.ts'
 import {
   ArchivedIcon,
   BackIcon,
+  BellIcon,
+  SnoozeIcon,
   CheckIcon,
   ClockIcon,
   DownIcon,
@@ -129,16 +133,18 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
       sel={sel}
       kb={kb}
       // its pie: the % done, while it works; an archived one is a done task's check
-      glyph={<TaskDot s={t.archived ? 'done' : t.status} w={t.archived || !t.report ? undefined : { ...t.report, eta: undefined }} />}
+      glyph={t.snoozedUntil ? <SnoozeIcon className="size-3.5 text-fg3 phone:size-4" /> : <TaskDot s={t.archived ? 'done' : t.status} w={t.archived || !t.report ? undefined : { ...t.report, eta: undefined }} />}
       ref_={refOf(t.id)}
       title={t.name}
-      sub={t.sub}
+      // SHEP-77 mock-up: a snoozed row says until when; one back from a snooze says why, before its own line
+      sub={t.snoozedUntil ? `Snoozed until ${day(t.snoozedUntil)}` : t.sub}
+      woke={t.snoozedUntil ? undefined : t.woke}
       // Scheduled (SHEP-38): its time until it starts ("6h") in the same place, counted live, in grey
-      left={t.archived ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
+      left={t.archived || t.snoozedUntil ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
       leftQuiet={t.status === 'scheduled'}
-      dim={t.status === 'done'}
+      dim={t.status === 'done' || !!t.snoozedUntil}
       where={where?.join(' · ')}
-      action={accept}
+      action={t.snoozedUntil ? null : accept}
       // with ⌘ (Ctrl off a Mac), beside the focused pane in split view
       onOpen={(e) => !menu.held() && (splitClick(e) ? openSplit({ kind: 'task', id: t.id }) : openTask(t.id))}
       menu={t.archived ? undefined : menu}
@@ -159,15 +165,15 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
  *   Review or an automation's next run (`meta`).
  * A row with nothing under its title is one line. `tip`: more for its button's label only (an automation's error).
  */
-function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children }: {
-  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
+function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children, woke }: {
+  woke?: string; flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
   where?: string; action?: ReactNode; tip?: string; onOpen?: (e: MouseEvent) => void; menu?: RowMenuState; children?: ReactNode
 }) {
   const said = sub ? capital(sub) : undefined
   const shown = said ? fit(said) : undefined
   // the rows under the title: REF · where (always, the same on every status), then the status line on its own line
   const second = !!(ref_ || where)
-  const rows = 1 + (second ? 1 : 0) + (shown ? 1 : 0)
+  const rows = 1 + (second ? 1 : 0) + (shown || woke ? 1 : 0)
   const two = rows > 1
   const statusRow = second ? 'row-start-3' : 'row-start-2'
   const end = action ?? (meta ? <span className="shrink-0 text-[0.75rem] whitespace-nowrap text-fg3 tabular-nums phone:text-[0.8125rem]">{meta}</span> : null)
@@ -201,9 +207,10 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
             {where ? <span className="min-w-0 truncate text-fg3">{where}</span> : null}
           </span>
         ) : null}
-        {shown ? (
-          <span aria-hidden={!!onOpen} className={clsx('col-start-2 flex h-5 min-w-0 items-center text-[0.75rem]/4 phone:h-6 phone:text-[0.8125rem]/5', statusRow)}>
-            <span className="min-w-0 truncate text-fg2">{shown}</span>
+        {shown || woke ? (
+          <span aria-hidden={!!onOpen} className={clsx('col-start-2 flex h-5 min-w-0 items-center gap-1.5 text-[0.75rem]/4 phone:h-6 phone:text-[0.8125rem]/5', statusRow)}>
+            {/* SHEP-77 mock-up: back from a snooze, and why, quiet before what it says now */}
+            {woke ? <span className="flex min-w-0 items-center gap-1 truncate text-fg2"><SnoozeIcon aria-hidden className="size-3 shrink-0 text-fg3 phone:size-3.5" />Back from snooze · {woke}</span> : <span className="min-w-0 truncate text-fg2">{shown}</span>}
           </span>
         ) : null}
         {end ? <span className={clsx('col-start-3 row-start-1 flex items-center', two && (rows === 3 ? 'row-span-3' : 'row-span-2'), two && '@max-[24rem]:row-span-1 @max-[24rem]:row-start-2')}>{end}</span> : null}
@@ -232,12 +239,24 @@ function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
     if (r?.ok === false) setError(r.error ?? "Couldn't schedule it.")
     else close()
   }
-  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status })
+  // SHEP-77 mock-up: Snooze's picks go the same way as Start later's, to the snooze action
+  const snooze = async (when: Parameters<typeof snoozeTask>[1]) => {
+    setBusy(true)
+    const r = await snoozeTask(t, when).catch((e: Error) => ({ ok: false, error: e.message }))
+    setBusy(false)
+    if (r?.ok === false) setError(r.error ?? "Couldn't snooze it.")
+    else close()
+  }
+  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status, snoozed: !!t.snoozedUntil })
   return (
     <>
       {items.map((it, i) => {
         if (it.sep) return <MenuSeparator key={`sep${i}`} />
-        if (it.heading) return <MenuLabel key={it.heading}>{t.status === 'scheduled' && t.sub ? `${it.heading} · ${capital(t.sub)}` : it.heading}</MenuLabel>
+        if (it.heading) return <MenuLabel key={it.heading}>{t.status === 'scheduled' && t.sub ? `${it.heading} · ${capital(t.sub)}` : t.snoozedUntil && it.heading !== 'Snooze' ? `${it.heading} · ${day(t.snoozedUntil)}` : it.heading}</MenuLabel>
+        if (it.id === 'snooze')
+          return <MenuItem key={`z${it.label}`} disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void snooze(it.in ? { in: it.in } : { at: it.at })}>{it.label}</MenuItem>
+        if (it.id === 'snooze-other') return <MenuItem key="zother" disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void snooze({ at: 'mon 9:00' })}>{it.label}</MenuItem>
+        if (it.id === 'unsnooze') return <MenuItem key="unsnooze" disabled={busy} icon={<BellIcon className={ic} />} onClick={() => void snooze({ off: true })}>{it.label}</MenuItem>
         if (it.id === 'schedule')
           return <MenuItem key={it.label} disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void go(it.in ? { in: it.in } : { at: it.at })}>{it.label}</MenuItem>
         if (it.id === 'schedule-other')
@@ -446,7 +465,7 @@ function TaskList(_: { placeId: string }) {
           if (g.key === 'done' && g.shut) {
             return <DoneLine key="done" count={g.count} today={g.count === live.filter((t) => t.status === 'done' && !t.archived && !t.pinned && isToday(t.doneAt)).length} onClick={() => toggleShut(key, DONE_OPEN)} />
           }
-          const doneFold: Fold | undefined = g.key === 'done' && !q ? { shut: false, toggle: () => toggleShut(key, DONE_OPEN) } : fold
+          const doneFold: Fold | undefined = g.key === 'done' && !q ? { shut: false, toggle: () => toggleShut(key, DONE_OPEN) } : g.key === 'snoozed' && !q ? { shut: g.shut, toggle: () => toggleShut(key, SNOOZED_OPEN) } : fold
           return (
             <div key={g.key}>
               <GroupHeading label={g.label} note={g.note} count={g.count} flip={`group:${g.key}`} fold={doneFold} />

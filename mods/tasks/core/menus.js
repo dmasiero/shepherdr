@@ -51,9 +51,18 @@ export const SCHEDULE_PICKS = [
   { label: "In 1 hour", in: "1h" }, { label: "In 3 hours", in: "3h" },
   { label: "Tomorrow 9:00", at: "tomorrow 9:00" }, { label: "Monday 9:00", at: "mon 9:00" },
 ];
-export const taskMenu = ({ pinned = false, status = null } = {}) => {
+// SHEP-77 mock-up: Snooze (Gmail's): a started task not done leaves the lists until the time picked or until it needs the
+// person again. Its picks: Start later's words, In 1 hour dropped (too short to be worth hiding).
+export const SNOOZE_PICKS = SCHEDULE_PICKS.filter((p) => p.in !== "1h");
+const SNOOZABLE = ["need", "needs", "ready", "merging", "work", "working"]; // the web's words and the window's
+export const taskMenu = ({ pinned = false, status = null, snoozed = false } = {}) => {
   const later = ["todo", "queued", "scheduled"].includes(status);
+  const snooze = !later && (snoozed || SNOOZABLE.includes(status));
   return [
+    ...(snoozed ? [{ id: "unsnooze", label: "Unsnooze", icon: "bell" }, sep] : []),
+    ...(snooze ? [{ heading: snoozed ? "Change snooze time" : "Snooze" },
+      ...SNOOZE_PICKS.map((p) => ({ id: "snooze", icon: "clock", ...p })),
+      { id: "snooze-other", label: "Other time…", icon: "clock", typed: true }, sep] : []),
     ...(later ? [{ heading: status === "scheduled" ? "Reschedule" : "Start later" },
       ...SCHEDULE_PICKS.map((p) => ({ id: "schedule", icon: "clock", ...p })),
       { id: "schedule-other", label: "Other time…", icon: "clock", typed: true }] : []),

@@ -17,6 +17,7 @@ import { placeFloat, type Placement } from './float.ts'
 export {
   AdjustmentsHorizontalIcon as ModeIcon,
   BellSlashIcon,
+  BellSnoozeIcon as SnoozeIcon,
   EnvelopeOpenIcon as ReadIcon,
   ArchiveBoxArrowDownIcon as ArchiveIcon,
   ArchiveBoxIcon as ArchivedIcon,

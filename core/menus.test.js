@@ -23,7 +23,10 @@ test("the sidebar's other menus and a task row's", () => {
   const later = (m) => m.map((x) => x.sep ? "—" : x.heading ? `# ${x.heading}` : x.label);
   expect(later(taskMenu({ status: "todo" }))).toEqual(["# Start later", "In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Pin"]);
   expect(later(taskMenu({ status: "scheduled", pinned: true }))).toEqual(["# Reschedule", "In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Start now", "Unschedule", "—", "Unpin"]);
-  expect(later(taskMenu({ status: "working" }))).toEqual(["Pin"]);
+  // SHEP-77 mock-up: a started task snoozes; a snoozed one unsnoozes or changes its time
+  expect(later(taskMenu({ status: "working" }))).toEqual(["# Snooze", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Pin"]);
+  expect(later(taskMenu({ status: "ready", snoozed: true }))).toEqual(["Unsnooze", "—", "# Change snooze time", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Pin"]);
+  expect(later(taskMenu({ status: "done" }))).toEqual(["Pin"]);
   expect(machineLabel(null)).toBe("This computer");
   expect(machineLabel("vm", "Build box")).toBe("Build box");
 });
