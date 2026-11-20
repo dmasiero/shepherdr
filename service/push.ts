@@ -9,9 +9,12 @@ import * as T from "../core/toasts.js";
 import { alertUrl, ACCEPT, choiceButtons, DEFAULT_TOPICS, notifies, notifyOf, pushTopics, REPLY, taskWho, WATCH_BODY, WATCH_TITLE, watchTitle, type PushAction, type PushTopic } from "../web/shared/alerts.ts";
 import { excerpt } from "../web/shared/excerpt.ts";
 import { unread } from "../web/shared/needs-you.ts";
+import { WHY, BACK } from "../core/snooze.js"; // fork: Snooze (SHEP-78)
 
 /** a push alert; its buttons (SHEP-243) and what each does: answer a card, accept a task, reply in its chat */
 type Out = {
+  // fork: snoozed: a snoozed task's (SHEP-78), kept as sent but never sent; silent: no sound or buzz (Back from snooze)
+  snoozed?: true; silent?: true;
   title: string; body: string; tag: string; topic: PushTopic; place?: string; waits?: true; url?: string;
   actions?: PushAction[]; answer?: { chat: string; question: string }; accept?: { task: string }; reply?: { chat: string; to?: string };
 };
@@ -63,6 +66,12 @@ export function alertsOf(snap: any, woke: Set<string> = new Set(), said: (chat: 
   }
   // an agent's own alert (herdr-task alert), as its toast: a task's always, an Assistant's by its space's Notify
   for (const a of snap.alerts ?? []) if (a.notify) now.set(`alert:${a.id}`, { title: a.title, body: a.body, tag: `alert:${a.id}`, topic: "needs", ...(a.place ? { place: a.place, url: alertUrl({ place: a.place }) } : {}) });
+  // fork: Snooze (SHEP-78): a snoozed task sends nothing (its alerts kept as sent, so its time up never sends them
+  // again); one back by its time sends one quiet "Back from snooze" (a wake by an event sends that event's own)
+  const snoozed = new Set((snap.tasks ?? []).filter((t: any) => t.snoozedUntil).map((t: any) => t.id));
+  for (const [k, a] of now) if (snoozed.has(a.tag) || (k.startsWith("alert:") && snoozed.has(snap.alerts?.find((x: any) => `alert:${x.id}` === k)?.task))) a.snoozed = true;
+  for (const t of snap.tasks ?? []) if (t.woke === WHY.time && !t.archived)
+    now.set(`woke:${t.id}:${t.wokeAt ?? 0}`, { title: T.toastTitle(taskWho(snap, t.id), BACK), body: t.name, tag: t.id, topic: t.status === "need" ? "needs" : "ready", place: t.place, silent: true, url: alertUrl({ place: t.place, task: t.id }) });
   // short enough for a watch: its title on one line, its body in two
   for (const a of now.values()) { a.title = watchTitle(a.title); a.body = excerpt(a.body, WATCH_BODY); }
   return now;

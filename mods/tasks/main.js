@@ -29,8 +29,10 @@ import { taskMenu } from "./core/menus.js";
 import { machinesInOrder, machineOrderOf, chatPane } from "./core/spaces.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
-  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems } from "./core/tasks.js";
+  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems, startsAt } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
+// fork: Snooze (SHEP-78): snoozed tasks fold into Snoozed at the bottom, out of every other group and count
+import { SNOOZED, snoozedUntil, wokeOf, unsnooze, canSnooze, untilLine, BACK } from "./core/snooze.js";
 import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirs } from "./dirs.js";
@@ -304,6 +306,9 @@ export default class Tasks extends View {
     const archived = placed.filter((p) => this.shelved(p)).sort((a, b) => (b.task.archived ?? 0) - (a.task.archived ?? 0));
     placed = placed.filter((p) => !archived.includes(p));
     this.prunePins(placed, cx);
+    // fork: Snooze (SHEP-78): a snoozed task is in no group but Snoozed (soonest back first), in no chip and no count
+    const snoozed = placed.filter((p) => this.snoozed(p)).sort((a, b) => this.snoozed(a) - this.snoozed(b));
+    placed = placed.filter((p) => !snoozed.includes(p));
     // Needs you: asks, stuck agents, problems, failed automations (a task ready to merge is in Ready).
     let inbox = holdingItems(needs(), truth);
     if (here) inbox = inbox.filter((x) => this.needHere(here, x));
@@ -316,6 +321,7 @@ export default class Tasks extends View {
       inbox = inbox.filter((x) => this.needFound(x, q));
     }
     const found = q ? archived.filter((p) => this.found(p, q)) : archived;
+    const snoozedShown = q ? snoozed.filter((p) => this.found(p, q)) : snoozed;
     // Pinned (the person's pins, shared "tasks.pinned"): at the top of the grouped list, and in no
     // other group there, Needs you included (its item for a pinned task shows as that task's row).
     const pinSet = this.pins();
@@ -419,6 +425,12 @@ export default class Tasks extends View {
             body.push(this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note: twin ? machineName(l.machine) : null, done: ps.filter((p) => p.section === "done").length }));
           }
         }
+      }
+      // fork: Snoozed (SHEP-78): under Done, folded until opened (as the web's), in every grouping
+      if (snoozedShown.length) {
+        const opened = open || this.shut("snoozed:open");
+        body.push(this.group("snoozed", "Snoozed", opened ? snoozedShown.map((p) => this.row(p, t)) : [], t, { open, closed: !opened, count: snoozedShown.length,
+          onFold: () => this.fold("snoozed:open", !this.shut("snoozed:open")) }));
       }
       // Automations: their own group, last.
       if (rowsOf.automations.length) body.push(this.group("automations", "Automations", rowsOf.automations, t, { open }));
@@ -550,6 +562,11 @@ export default class Tasks extends View {
     return secondLine(p, w, p.section === "queued" ? this.queueReason(p.list, p.task) : null);
   }
 
+  // fork: Snooze (SHEP-78): until when a task is snoozed (ms; null: it isn't, or its time is up), and why it came back
+  // (null: it didn't), from the shared "tasks.snoozed" (the service works out the wakes; core/snooze.js)
+  snoozed(p) { return canSnooze(p.section) ? snoozedUntil(shared(SNOOZED), taskKey(p.list, p.task)) : null; }
+  wokeOf(p) { return wokeOf(shared(SNOOZED), taskKey(p.list, p.task)); }
+
   // Archived (herdr-task's archive_pass), unless its agent works or asks again: someone wrote to
   // it, and it's back (herdr-task's next tick makes that stick).
   shelved(p) {
@@ -650,8 +667,9 @@ export default class Tasks extends View {
   // name). top: For you's heading, a step above the others (its label brighter and larger: the
   // list's first thing to read). onFold: what a click on the heading does instead of folding it
   // (For you's opened Done goes back to its count).
-  group(key, label, rows, t, { done = 0, open = false, note = null, top = false, count = rows.length, onFold = null } = {}) {
-    const shut = !open && !onFold && this.shut(key);
+  // fork: closed: shut whatever its own fold says (Snoozed, SHEP-78: shut until opened, its onFold opens it)
+  group(key, label, rows, t, { done = 0, open = false, note = null, top = false, count = rows.length, onFold = null, closed = null } = {}) {
+    const shut = closed ?? (!open && !onFold && this.shut(key));
     const all = open || this.allDone.has(key);
     const cut = !all && done > DONE_SHOWN ? done - DONE_SHOWN : 0;
     const shown = cut ? rows.slice(0, rows.length - cut) : rows;
@@ -892,12 +910,22 @@ export default class Tasks extends View {
     const left = leftOf(p, w);
     // Pin / Unpin in its right-click menu (not an archived task's: archived ones drop out of Pinned).
     const key = taskKey(list, task);
+    // fork: Snooze (SHEP-78): a snoozed row greyed, its snooze bell, "Snoozed until Mon 9:00", nothing at its end; one
+    // back from a snooze says why first. Opening either takes its snooze away; the menu snoozes with its signature now
+    // (its status, its open cards, its last Ready time: core/snooze.js), which the service wakes it by.
+    const until = this.snoozed(p), why = until ? null : this.wokeOf(p);
+    const go = this.target(p);
+    const asks = (shared("inbox.asks") ?? []).filter((a) => live.some((x) => x.address === a.terminal)).map((a) => a.id);
     return this.line(`task-${key}`, {
-      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
-      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
-      action: section === "ready" ? this.acceptButton(p, t) : null,
+      go: go && (until || why) ? () => { setShared(SNOOZED, unsnooze(shared(SNOOZED), key)); go(); } : go,
+      glyph: until ? svg("mods/tasks/snooze.svg").size(14).flex_none().text_color(t.dim) : this.glyph(p, w), ref: refOf(list, task), title: task.title,
+      sub: until ? untilLine(startsAt(until)) : why ? `${BACK} · ${why}` : sub, left: until ? null : left, leftColor: section === "scheduled" ? t.dim : null,
+      dim: section === "done" || Boolean(until), selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
+      action: section === "ready" && !until ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
-        ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
+        ref: refOf(list, task), sub: section === "scheduled" ? sub : null,
+        ...(until ? { snoozed: true, until: startsAt(until) } : {}),
+        ...(canSnooze(section) ? { snooze: { seen: { status: section, cards: asks, ready: task.ready_at ?? null }, task: `${list.slug}#${task.id}` } } : {}) },
     }, t);
   }
 
@@ -923,7 +951,7 @@ export default class Tasks extends View {
   // A task not started yet also starts later (SHEP-38): a few times, and a scheduled one Start now and Unschedule
   // (core/menus.js taskMenu; the web's Other time… types any time, here the Assistant does).
   rowMenu(pin) {
-    const items = taskMenu({ pinned: pin.on, status: pin.status }).filter((x) => !x.typed);
+    const items = taskMenu({ pinned: pin.on, status: pin.status, snoozed: pin.snoozed, until: pin.until }).filter((x) => !x.typed); // fork: SHEP-78
     // As tasks-menu draws it: a section per line or heading, 4 apart; a heading 28, a row 32.
     let height = 8, first = true;
     for (const x of items) {
@@ -932,7 +960,7 @@ export default class Tasks extends View {
       first = false;
     }
     openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height, props: { menu: "row", key: pin.key, on: pin.on,
-      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub } });
+      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub, snoozed: pin.snoozed, until: pin.until, snooze: pin.snooze } });
   }
 
   // Ready = "looks done, your call": Review (opens the Accept card) is the person's one action here, at the row's end. It merges first when there is something to merge (herdr-task accept follows the merge

@@ -59,6 +59,8 @@ self.addEventListener('push', (e) => {
           tag,
           // a task's newer alert buzzes again, though it takes the old one's place
           renotify: !!tag,
+          // fork: a quiet one (Back from snooze, SHEP-78): no sound or buzz
+          ...(a.silent ? { silent: true } : {}),
           icon: 'icon-192.png?v=2',
           badge: 'badge-96.png?v=2',
           data: { url: a.url || './', waits: !!a.waits, answer: a.answer, accept: a.accept, reply: a.reply },

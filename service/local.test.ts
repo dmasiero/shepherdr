@@ -20,13 +20,16 @@ mock.module("herdr", () => fakeHerdr({
 const { localService, serviceFile } = await import("../mods/tabs-tasks/local.js");
 const { startBridge } = await import("../mods/tabs-tasks/bridge.js");
 
-const seen: { app: string; path: string; auth: string | null }[] = [];
+const seen: { app: string; path: string; auth: string | null; body?: any }[] = [];
+// the service's shared document as GET /api/state gives it (fork: SHEP-78's tasks.snoozed rides in it)
+let doc: Record<string, unknown> = {};
 // Shepherdr's service on a port of its own choosing, and another app that answers health too
 const ours = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
   const u = new URL(req.url);
+  if (u.pathname === "/api/health") { seen.push({ app: "ours", path: u.pathname, auth: req.headers.get("authorization") }); return Response.json({ ok: true, app: "shepherdr", id: "id-1", jobs: true }); }
+  if (u.pathname === "/api/state" && req.method !== "GET") return req.json().then((body) => { seen.push({ app: "ours", path: u.pathname, auth: req.headers.get("authorization"), body }); return Response.json({ ok: true }); });
   seen.push({ app: "ours", path: u.pathname, auth: req.headers.get("authorization") });
-  if (u.pathname === "/api/health") return Response.json({ ok: true, app: "shepherdr", id: "id-1", jobs: true });
-  if (u.pathname === "/api/state") return Response.json(req.method === "GET" ? { value: {} } : { ok: true });
+  if (u.pathname === "/api/state") return Response.json({ value: doc });
   return new Response("no", { status: 404 });
 } });
 const other = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
@@ -60,10 +63,10 @@ describe("lib/local.js", () => {
 });
 
 describe("lib/bridge.js", () => {
+  let tick: (() => Promise<void>) | null = null;
   test("another app on the port gets neither the token nor the shared state; the service does", async () => {
     say(other.port);
     seen.length = 0;
-    let tick: (() => Promise<void>) | null = null;
     startBridge({ timer: { every: (_ms: number, f: (c: any) => void) => { tick = () => new Promise<void>((done) => f({ spawn: (g: any) => g(cx).then(done) })); } } } as any);
     await tick!();
     expect(seen.filter((x) => x.app === "other").map((x) => x.path)).toEqual(["/api/health"]);
@@ -74,5 +77,17 @@ describe("lib/bridge.js", () => {
     expect(seen.filter((x) => x.app === "ours" && x.path === "/api/state").length).toBeGreaterThan(0);
     expect(seen.filter((x) => x.path === "/api/state").every((x) => x.auth === "Bearer secret-token")).toBe(true);
     expect(seen.some((x) => x.app === "other")).toBe(false);
+  });
+  // fork: SHEP-78: a snooze made on the web reaches the window's shared keys, and one made in the window the document
+  test("it carries tasks.snoozed both ways", async () => {
+    const web = { ":/srv/shop#7": { until: 2e12, at: 1e12, seen: { status: "work", cards: [], ready: null }, task: "shop#7" } };
+    doc = { "tasks.snoozed": web };
+    await tick!();
+    expect(shared.get("tasks.snoozed")).toEqual(web);
+    const here = { ...web, ":/srv/shop#8": { woke: "Ready", at: 1e12 } };
+    shared.set("tasks.snoozed", here);
+    seen.length = 0;
+    await tick!();
+    expect(seen.find((x) => x.body?.key === "tasks.snoozed")?.body?.value).toEqual(here);
   });
 });

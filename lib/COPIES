@@ -12,6 +12,8 @@ core/menus.js: spaces-chat tasks tasks-menu menu-tasks new-menu-tasks pane-chat 
 core/asks.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts
 core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts
 core/tasks.js: chat jump tasks
+# fork: Snooze (SHEP-78): inbox.js and the Tasks panel leave snoozed tasks out
+core/snooze.js: spaces-chat tabs-tasks tasks tasks-menu workspace-status-chat
 core/notify.js: chat spaces-chat tabs-tasks tasks shepherdr-settings workspace-status-chat
 parked.js: chat spaces-chat tabs-tasks workspace-status-chat
 keyholder.js: chat tasks newspace

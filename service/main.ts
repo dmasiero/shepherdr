@@ -189,8 +189,9 @@ function alertNew(snap: any) {
   // the phone's and watch's glance, with these same words (service/glance.ts)
   try { glance.set(glanceOf(snap, now)); } catch (err) { console.error(`glance: ${(err as Error).message}`); }
   woke = new Set((snap.places ?? []).filter((p: any) => p.pilot?.on && (p.pilot.inflight || p.pilot.pending)).map((p: any) => p.id));
-  waitingNow = { count: waiting(snap).count, tags: [...new Set([...now.values()].filter((x) => x.waits).map((x) => x.tag))] };
-  if (alerted) for (const [k, a] of now) if (!alerted.has(k)) void push.send({ ...a, badge: waitingNow.count, open: waitingNow.tags });
+  waitingNow = { count: waiting(snap).count, tags: [...new Set([...now.values()].filter((x) => x.waits && !x.snoozed).map((x) => x.tag))] };
+  // fork: a snoozed task's alerts are kept as sent, never sent (SHEP-78)
+  if (alerted) for (const [k, a] of now) if (!alerted.has(k) && !a.snoozed) void push.send({ ...a, badge: waitingNow.count, open: waitingNow.tags });
   alerted = new Set(now.keys());
 }
 compat.agents = new Agents(hub);

@@ -340,7 +340,8 @@
       "core": [
         "tasks",
         "tasklists",
-        "needs"
+        "needs",
+        "snooze"
       ],
       "herdr": {
         "mods": [
@@ -353,7 +354,7 @@
         ]
       },
       "forms": {
-        "herdr": "Groups, filters, group by, search (F), dots and %, Review on Ready rows, Scheduled and Start later, automations, archived",
+        "herdr": "Groups, filters, group by, search (F), dots and %, Review on Ready rows, Scheduled and Start later, automations, archived, Snoozed (fork)",
         "desktop": "Right column",
         "tablet": "Column beside the chat",
         "phone": "Tasks tab in the bottom bar"
@@ -530,7 +531,8 @@
       "addon": "tasks",
       "title": "Pin from a row",
       "core": [
-        "tasks"
+        "tasks",
+        "snooze"
       ],
       "herdr": {
         "mods": [
@@ -543,7 +545,7 @@
         ]
       },
       "forms": {
-        "herdr": "Right-click a row: Pin/Unpin, group by, filters",
+        "herdr": "Right-click a row: Pin/Unpin, Snooze (fork), group by, filters",
         "desktop": "Right-click or ⋯",
         "tablet": "Long-press",
         "phone": "Long-press: sheet"

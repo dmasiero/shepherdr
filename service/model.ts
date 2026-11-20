@@ -17,6 +17,7 @@ const { spacesFromDoc, sidebarOf, assistantOf, isUnread, inOrder, byMachineOrder
 import * as N from "../core/notify.js";
 const { spaceLevel } = N as any;
 import * as AP from "../core/autopilot.js";
+import * as SZ from "../core/snooze.js"; // fork: Snooze (SHEP-78)
 const { everywhereOf, pilotFor, levelOf, STARTER, currentBeat } = AP as any;
 
 const SHARED = join(HOME, ".config", "herdr-app", "shared.json");
@@ -285,6 +286,8 @@ export class Model {
       };
     }));
     this.live.put("tasks", rows);
+    // fork: a snoozed task back by itself (SHEP-78): built again when its time is up
+    settles = Math.min(settles, SZ.nextWake(this.value(SZ.SNOOZED)));
     // a task in its grace before Needs you (core GRACE_MS): built again the moment it ends, not up to 10 s later
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = settles < Infinity ? setTimeout(() => { this.settleTimer = null; this.soon(); }, Math.max(0, settles - Date.now()) + 50) : null;
@@ -299,7 +302,8 @@ export class Model {
     const spaces = byMachineOrder(inOrder([...fromDocs, ...own.filter((x: any) => !fromDocs.some((y: any) => y.id === x.id))], this.value("spaces-chat")?.order), machineOrderOf(this.value("spaces-chat"))).map((s: any, at: number) => {
       const k = assistantOf(s, terminals as any[]);
       // a task belongs to the space that started it, else to the space in its folder (as the window's counts)
-      const here = rows.filter((r) => !r.archived && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
+      // fork: a snoozed task in neither count (SHEP-78)
+      const here = rows.filter((r) => !r.archived && SZ.snoozedUntil(this.value(SZ.SNOOZED), r.key) === null && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
       return {
         ...s, at, icon: bar.icons[s.id] ?? null, pinned: bar.pinned.includes(s.id),
         // when something in its tabs last changed state (Herdr's tab changed_at: its terminals' status times), for

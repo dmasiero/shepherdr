@@ -460,7 +460,7 @@ const panels = {
 /** the Tasks button's count: everything that needs you and every Ready task, as the window's */
 function TasksCount() {
   const snap = useSnap()!
-  const ready = snap.tasks.filter((t) => !t.archived && t.status === 'ready').length
+  const ready = snap.tasks.filter((t) => !t.archived && t.status === 'ready' && !t.snoozedUntil).length // fork: not a snoozed one (SHEP-78)
   return <AttentionBadge need={snap.needs.length} ready={ready} scope="everywhere" />
 }
 

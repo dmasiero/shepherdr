@@ -37,7 +37,8 @@ export function waiting(snap: NeedsSnap & Pick<Snapshot, 'asks'>, now = Date.now
   const asks = Object.keys(snap.asks ?? {}).filter((p) => places.has(p) && snap.asks[p]).map(askTag)
   const needs = needsYou(snap, now)
   const held = waitingTasks(needs)
-  const ready = snap.tasks.filter((t) => !t.archived && t.status === 'ready' && !held.has(t.id))
+  // fork: a snoozed task is in no count (SHEP-78)
+  const ready = snap.tasks.filter((t) => !t.archived && t.status === 'ready' && !t.snoozedUntil && !held.has(t.id))
   return { count: needs.length + ready.length, tags: [...tasks, ...asks] }
 }
 

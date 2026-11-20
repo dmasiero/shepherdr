@@ -130,13 +130,14 @@ export function glanceOf(snap: any, alerts: Map<string, any>, now = Date.now()):
   for (const [key, a] of alerts) {
     if (!key.startsWith("ready:")) continue;
     const t = tasks.get(key.slice(6));
-    if (!t || waiting.has(t.id)) continue;
+    // fork: a snoozed task is in no section (SHEP-78)
+    if (!t || t.snoozedUntil || waiting.has(t.id)) continue;
     items.push({ key, kind: "ready", type: "task", tag: a.tag, title: clip(a.title, WATCH_TITLE), body: clip(a.body, WATCH_BODY), task: t.id, ...taskRow(t), ...(t.at ? { at: t.at } : {}), alert: true,
       url: a.url ?? urlOf(t.place, t.id), ...(a.accept ? { accept: a.accept } : {}) });
   }
   const start = today(now);
   for (const t of snap.tasks ?? []) {
-    if (t.archived || waiting.has(t.id)) continue;
+    if (t.archived || t.snoozedUntil || waiting.has(t.id)) continue; // fork: not a snoozed one (SHEP-78)
     const kind = t.status === "work" || t.status === "merging" ? "working" : t.status === "done" && (t.doneAt ?? 0) >= start ? "done" : null;
     if (kind) items.push(taskItem(t, kind, kind === "done" ? t.doneAt : t.at));
   }

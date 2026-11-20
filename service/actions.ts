@@ -26,6 +26,7 @@ import * as MA from "../core/machine-add.js";
 import { exec } from "./model.ts";
 import { FIND } from "../core/chat-log.js";
 import { closeSaved, renameSaved, orderSaved, withoutSpace, splitId } from "./saved-spaces.ts";
+import * as SZ from "../core/snooze.js"; // fork: Snooze (SHEP-78)
 
 // The window's own space log (lib/spacelog.js): a space the service closed or renamed with no window is traced there too
 export function logSpace(action: string, id: string, name: string | null, extra: Record<string, unknown> = {}, by = "web, no window (service/saved-spaces.ts)") { // fork: by (SHEP-28)
@@ -237,6 +238,27 @@ function taskOf(b: any) {
   return { ref, folder, machine };
 }
 
+/** fork: Snooze (SHEP-78, core/snooze.js): a task snoozed until a time ({ at } or { in }, herdr-task's words) in the
+ *  shared "tasks.snoozed", its signature now kept to wake it by; { off: true } takes its entry away (Unsnooze, and a
+ *  task opened back from a snooze). A time it doesn't know: { ok: false, error } in herdr-task's words. */
+async function snooze(compat: Compat, b: any) {
+  const sh = compat.shared;
+  const id = String(b.chat).split("/")[0], t = compat.taskOf(id);
+  if (!t || !sh) throw new Error("That task isn't here any more.");
+  if (b.off) { await snoozeOff(compat, id); return { ok: true }; }
+  const seen = compat.sigs.get(t.pin);
+  if (!seen || !SZ.canSnooze(seen.status)) return { ok: false, error: "Only a started task that isn't done can be snoozed." };
+  const w = SZ.whenOf(b.in !== undefined ? { in: str(b.in, 100) } : { at: str(b.at ?? "", 100) });
+  if (w.error !== undefined || w.at === undefined) return { ok: false, error: w.error ?? "Say when." };
+  await sh.set(SZ.SNOOZED, SZ.snoozeIn(sh.value(SZ.SNOOZED), t.pin, { until: w.at, seen, task: t.key }));
+  return { ok: true, until: w.at };
+}
+async function snoozeOff(compat: Compat, id: string) {
+  const sh = compat.shared, t = compat.taskOf(id), map = sh?.value(SZ.SNOOZED);
+  if (!sh || !t || !map || !(t.pin in map)) return;
+  await sh.set(SZ.SNOOZED, SZ.unsnooze(map, t.pin)).catch(() => null);
+}
+
 type Known = { kind: string; name: string; installed: boolean; run?: string[] };
 /** The agents a machine has, as the window's knownAgents() gives its + menu and Switch agent: the installed ones with
  *  their command, then the first two that aren't. Only the window can ask Herdr: it keeps them in its shared
@@ -259,6 +281,9 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (!a) throw new Error("That chat isn't here any more.");
     return a;
   };
+  // fork: Snooze (SHEP-78): the person writing to a task, or answering it, unsnoozes it
+  if ((b?.type === "send" || b?.type === "steer" || b?.type === "answer") && typeof b.chat === "string" && b.chat.endsWith("/worker")) void snoozeOff(compat, b.chat.slice(0, -7));
+  if (b?.type === "snooze" && typeof b.chat === "string") return snooze(compat, b);
   if (b?.type === "answer" && typeof b.question === "string" && b.question.startsWith("scr-")) {
     // a CLI's start screen (service/watch.ts): a tap presses that choice, only on the screen the card was drawn from;
     // "Answer in terminal" just shows the terminal
