@@ -218,7 +218,9 @@ function send(m, cx) {
     m.sending = false;
     if (err) { m.said = err; m.failed = true; }
     else {
-      m.said = `Sent to ${keeperName(out.to)}. A new version shows here when it's in.`;
+      // fork: SHEP-72: held for an agent with a dialog open (herdr-artifact note's "held"): it goes once that's answered
+      m.said = out.held ? "It's waiting on a question: your note goes to it once that's answered."
+        : `Sent to ${keeperName(out.to)}. A new version shows here when it's in.`;
       m.input.set_value("");
       m.spot = null;
       m.shot = null;

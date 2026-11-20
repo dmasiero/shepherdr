@@ -1616,7 +1616,7 @@ def cmd_note(o):
         if out.get("error"):
             raise Fail(out["error"])
         out["to"] = f"{o.machine}/{out['to']}"
-        print(json.dumps(out) if o.json else f"Sent to {out['to']}.")
+        print(json.dumps(out) if o.json else f"Held for {out['to']}: {HELD_WORDS}" if out.get("held") else f"Sent to {out['to']}.")
         return 0
     loc = find_anywhere(o.id)
     with Store(loc, write=False) as s:
@@ -1631,11 +1631,55 @@ def cmd_note(o):
         lines.append(f"The artifact as they saw it, the spot outlined in blue: {image}")
     body = f'<hc from="artifact" id="{attr(a["id"])}" version="{v}" title="{attr(a["title"])}"{on}>\n' + "\n\n".join(lines) + "\n</hc>"
     r = run(["hc", "send", to, body])
+    held = None
     if r.returncode != 0:
-        raise Fail(r.stderr.strip() or r.stdout.strip() or f"Couldn't send it to {to}.")
-    out = {"to": to, "why": why, "version": v, "image": image}
-    print(json.dumps(out) if o.json else f"Sent to {to} ({why}).")
+        kind, said = hc_refusal(r)
+        # fork: SHEP-72: a dialog open (a question, a permission): typing would answer it, so the note waits for it
+        # in herdr-task's held messages (news.hold, sent by its scheduler's held_pass once hc takes it). Never --force.
+        if kind == "blocked" and not hold_note(to, body):
+            raise Fail("It's waiting on a question, and your note couldn't be kept for it: answer that, then send it again.")
+        if kind != "blocked":
+            raise Fail(said or f"Couldn't send it to {to}.")
+        held = "question"
+    out = {"to": to, "why": why, "version": v, "image": image, **({"held": held} if held else {})}
+    print(json.dumps(out) if o.json else f"Held for {to}: {HELD_WORDS}" if held else f"Sent to {to} ({why}).")
     return 0
+
+
+# fork: SHEP-72: a held note's words for the person (core/markup.js's MARKUP.held, the window's and the web's)
+HELD_WORDS = "It's waiting on a question: your note goes to it once that's answered."
+
+
+def hc_refusal(r):
+    """(kind, plain message) of hc's refusal: it writes {"error": {"kind", "message", "hint"}}; the hint is for
+    agents, never the person's."""
+    text = (r.stderr or "").strip() or (r.stdout or "").strip()
+    for line in reversed(text.splitlines()):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        e = e.get("error") if isinstance(e, dict) else None
+        if isinstance(e, dict):
+            return e.get("kind"), str(e.get("message") or "").strip()
+        if isinstance(e, str):
+            return None, e.strip()
+    return None, text.splitlines()[-1].strip() if text else ""
+
+
+def herdr_task():
+    """This machine's herdr-task: beside this file in Herdr's mods, else ~/.local/bin's (another machine's copy)."""
+    for p in (os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "tasks", "bin", "herdr-task"),
+              os.path.join(HOME, ".local", "bin", "herdr-task")):
+        if os.path.isfile(p):
+            return os.path.normpath(p)
+    return shutil.which("herdr-task")
+
+
+def hold_note(to, body):
+    """Hands the note to herdr-task's held messages for `to` (its _hold): True once it's kept."""
+    ht = herdr_task()
+    return bool(ht) and run([sys.executable, ht, "_hold", to, body]).returncode == 0
 
 
 # ---- a custom artifact's picture (the web app shows it in its place) -------------------------------
