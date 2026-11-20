@@ -30,6 +30,12 @@ test("the sidebar's other menus and a task row's", () => {
   for (const status of ["done", "archived", null]) expect(later(taskMenu({ status }))).toEqual(["Pin"]);
   for (const status of ["todo", "queued"]) expect(later(taskMenu({ status }))).not.toContain("# Snooze");
   expect(taskMenu({ status: "ready" }).find((x) => x.id === "snooze-other")?.typed).toBe(true);
+  // fork: SHEP-80: Same as last first in Snooze and in Change snooze time, its moment on it; never in Start later
+  const last = { until: 1_800_000_000_000, words: "Sat 18:30" };
+  expect(later(taskMenu({ status: "working", last }))).toEqual(["# Snooze", "Same as last · Sat 18:30", ...snooze.slice(1), "Pin"]);
+  expect(later(taskMenu({ status: "ready", snoozed: true, until: "Mon 9:00", last })).slice(2, 4)).toEqual(["# Change snooze time · Mon 9:00", "Same as last · Sat 18:30"]);
+  expect(taskMenu({ status: "need", last }).find((x) => x.id === "snooze-last")).toMatchObject({ until: last.until, icon: "clock" });
+  for (const status of ["todo", "queued", "scheduled", "done", null]) expect(later(taskMenu({ status, last }))).not.toContain("Same as last · Sat 18:30");
   expect(machineLabel(null)).toBe("This computer");
   expect(machineLabel("vm", "Build box")).toBe("Build box");
 });

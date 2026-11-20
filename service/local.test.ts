@@ -21,7 +21,7 @@ const { localService, serviceFile } = await import("../mods/tabs-tasks/local.js"
 const { startBridge } = await import("../mods/tabs-tasks/bridge.js");
 
 const seen: { app: string; path: string; auth: string | null; body?: any }[] = [];
-// the service's shared document as GET /api/state gives it (fork: SHEP-78's tasks.snoozed rides in it)
+// the service's shared document as GET /api/state gives it (fork: SHEP-78's tasks.snoozed and SHEP-80's tasks.lastSnooze ride in it)
 let doc: Record<string, unknown> = {};
 // Shepherdr's service on a port of its own choosing, and another app that answers health too
 const ours = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
@@ -89,5 +89,15 @@ describe("lib/bridge.js", () => {
     seen.length = 0;
     await tick!();
     expect(seen.find((x) => x.body?.key === "tasks.snoozed")?.body?.value).toEqual(here);
+  });
+  // fork: SHEP-80: the last snooze's moment, for Same as last, the same on the web and in the window
+  test("it carries tasks.lastSnooze both ways", async () => {
+    doc = { ...doc, "tasks.lastSnooze": { until: 2e12, at: 1e12 } };
+    await tick!();
+    expect(shared.get("tasks.lastSnooze")).toEqual({ until: 2e12, at: 1e12 });
+    shared.set("tasks.lastSnooze", { until: 2.1e12, at: 1.1e12 });
+    seen.length = 0;
+    await tick!();
+    expect(seen.find((x) => x.body?.key === "tasks.lastSnooze")?.body?.value).toEqual({ until: 2.1e12, at: 1.1e12 });
   });
 });

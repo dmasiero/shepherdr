@@ -25,14 +25,14 @@ import { spaces, panes, agents, terminals, inRender } from "./live.js";
 import { items as needs, ASKS, toAgent, reasonOf, reqReason, REASONS, fit, tabOf } from "./inbox.js";
 import { words } from "./core/asks.js";
 import { taskDot, ownProgress } from "./dot.js";
-import { taskMenu } from "./core/menus.js";
+import { taskMenu, SNOOZE_PICKS } from "./core/menus.js";
 import { machinesInOrder, machineOrderOf, chatPane } from "./core/spaces.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
   queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems, startsAt } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
 // fork: Snooze (SHEP-78): snoozed tasks fold into Snoozed at the bottom, out of every other group and count
-import { SNOOZED, snoozedUntil, wokeOf, unsnooze, canSnooze, untilLine, BACK } from "./core/snooze.js";
+import { SNOOZED, snoozedUntil, wokeOf, unsnooze, canSnooze, untilLine, BACK, LAST, sameAsLast } from "./core/snooze.js"; // fork: LAST, sameAsLast: SHEP-80
 import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirs } from "./dirs.js";
@@ -951,7 +951,9 @@ export default class Tasks extends View {
   // A task not started yet also starts later (SHEP-38): a few times, and a scheduled one Start now and Unschedule
   // (core/menus.js taskMenu; the web's Other time… types any time, here the Assistant does).
   rowMenu(pin) {
-    const items = taskMenu({ pinned: pin.on, status: pin.status, snoozed: pin.snoozed, until: pin.until }).filter((x) => !x.typed); // fork: SHEP-78
+    // fork: Same as last (SHEP-80): the last snooze's moment (shared "tasks.lastSnooze"), while ahead and none of the picks
+    const lastAt = sameAsLast(shared(LAST), SNOOZE_PICKS), last = lastAt ? { until: lastAt, words: startsAt(lastAt) } : null;
+    const items = taskMenu({ pinned: pin.on, status: pin.status, snoozed: pin.snoozed, until: pin.until, last }).filter((x) => !x.typed); // fork: SHEP-78
     // As tasks-menu draws it: a section per line or heading, 4 apart; a heading 28, a row 32.
     let height = 8, first = true;
     for (const x of items) {
@@ -960,7 +962,7 @@ export default class Tasks extends View {
       first = false;
     }
     openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height, props: { menu: "row", key: pin.key, on: pin.on,
-      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub, snoozed: pin.snoozed, until: pin.until, snooze: pin.snooze } });
+      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub, snoozed: pin.snoozed, until: pin.until, snooze: pin.snooze, last } });
   }
 
   // Ready = "looks done, your call": Review (opens the Accept card) is the person's one action here, at the row's end. It merges first when there is something to merge (herdr-task accept follows the merge

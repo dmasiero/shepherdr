@@ -1127,8 +1127,8 @@ export function pinTask(t: Task, on: boolean) {
 }
 
 /** fork: Snooze (SHEP-78): a task out of the lists until a time ({ at } or { in }, herdr-task's words), or back now
- *  ({ off: true }); error: the words for a time it doesn't know */
-export function snoozeTask(t: Task, when: { at?: string; in?: string; off?: boolean }): Promise<{ ok?: boolean; error?: string }> {
+ *  ({ off: true }), or to a moment ({ until: ms }: Same as last, SHEP-80); error: the words for a time it doesn't know */
+export function snoozeTask(t: Task, when: { at?: string; in?: string; off?: boolean; until?: number }): Promise<{ ok?: boolean; error?: string }> {
   return act({ type: 'snooze', chat: t.agent?.chat ?? `${t.id}/worker`, ...when })
 }
 

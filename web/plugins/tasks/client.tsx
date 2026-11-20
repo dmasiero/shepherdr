@@ -221,7 +221,7 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
   )
 }
 
-type MenuEntry = { id?: string; label?: string; icon?: string; heading?: string; sep?: boolean; at?: string; in?: string; typed?: boolean }
+type MenuEntry = { id?: string; label?: string; icon?: string; heading?: string; sep?: boolean; at?: string; in?: string; typed?: boolean; until?: number }
 const OTHER = MN.SCHEDULE_OTHER as { placeholder: string; label: string; button: string }
 // fork: Snooze's Other time… (SHEP-78)
 const SNOOZE_OTHER = MN.SNOOZE_OTHER as { placeholder: string; label: string; button: string }
@@ -247,7 +247,10 @@ function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
   const go = (when: Parameters<typeof scheduleTask>[1]) => run(scheduleTask(t, when), "Couldn't schedule it.")
   const snooze = (when: Parameters<typeof snoozeTask>[1]) => run(snoozeTask(t, when), "Couldn't snooze it.")
   const until = t.snoozedUntil ? (TK.startsAt as (ms: number) => string)(t.snoozedUntil) : null
-  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status, snoozed: !!t.snoozedUntil, until })
+  // fork: Same as last (SHEP-80): the last snooze's moment, while ahead and none of the picks
+  const lastAt = (SZ.sameAsLast as (l: unknown, p: unknown, at?: number) => number | null)({ until: useSnap()?.lastSnooze }, MN.SNOOZE_PICKS)
+  const last = lastAt ? { until: lastAt, words: (TK.startsAt as (ms: number) => string)(lastAt) } : null
+  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status, snoozed: !!t.snoozedUntil, until, last })
   // Other time…: its field in place of its row, the button sending what's typed; what's refused shows under it
   const other = (words: typeof OTHER, send: (at: string) => void, label: string) =>
     typing ? (
@@ -272,6 +275,7 @@ function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
         if (it.id === 'unsnooze') return <MenuItem key="unsnooze" disabled={busy} icon={<BellIcon className={ic} />} onClick={() => void snooze({ off: true })}>{it.label}</MenuItem>
         if (it.id === 'snooze' || it.id === 'schedule')
           return <MenuItem key={`${it.id}${it.label}`} disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void (it.id === 'snooze' ? snooze : go)(it.in ? { in: it.in } : { at: it.at })}>{it.label}</MenuItem>
+        if (it.id === 'snooze-last') return <MenuItem key="last" disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void snooze({ until: it.until })}>{it.label}</MenuItem>
         if (it.id === 'snooze-other') return other(SNOOZE_OTHER, (at) => void snooze({ at }), it.label!)
         if (it.id === 'schedule-other') return other(OTHER, (at) => void go({ at }), it.label!)
         if (it.id === 'start-now') return <MenuItem key="now" disabled={busy} icon={<PlayIcon className={ic} />} onClick={() => void go({ now: true })}>{it.label}</MenuItem>

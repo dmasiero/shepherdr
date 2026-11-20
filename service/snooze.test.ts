@@ -132,3 +132,39 @@ test("two services agree, and a task done drops its entry", () => {
   snap(d.c, row({ section: "done", done_at: Date.now() }));
   expect(d.doc["tasks.snoozed"]).toEqual({});
 });
+
+// fork: Same as last (SHEP-80): every snooze keeps its moment in the shared "tasks.lastSnooze", whatever picked it; the
+// snapshot carries it to the web; { until } snoozes to that very moment.
+test("each kind of snooze keeps its moment for Same as last; { until } snoozes to that moment", async () => {
+  const { c, doc } = service();
+  snap(c);
+  // a pick by span, a pick by time, Other time… typed (the web sends what's typed as at)
+  for (const when of [{ in: "3h" }, { at: "tomorrow 9:00" }, { at: "fri 8:15" }, { at: "in 2 days" }]) {
+    const r: any = await act({} as any, { type: "snooze", chat: "SHOP-4/worker", ...when }, c);
+    expect(r.ok).toBe(true);
+    expect(doc["tasks.lastSnooze"]).toEqual({ until: r.until, at: expect.any(Number) });
+    expect(doc["tasks.snoozed"][KEY].until).toBe(r.until);
+  }
+  const last = doc["tasks.lastSnooze"].until;
+  expect(snap(c).lastSnooze).toBe(last);
+  // a second task snoozed to the same moment, not a span from now
+  const KEY5 = ":/srv/shop#5";
+  snap(c, row(), row({ key: KEY5, ref: "SHOP-5", id: 5, worker: "t6" }));
+  const r: any = await act({} as any, { type: "snooze", chat: "SHOP-5/worker", until: last }, c);
+  expect(r).toEqual({ ok: true, until: last });
+  expect(doc["tasks.snoozed"][KEY5].until).toBe(last);
+  expect(doc["tasks.snoozed"][KEY].until).toBe(last);
+  const s = snap(c, row(), row({ key: KEY5, ref: "SHOP-5", id: 5, worker: "t6" }));
+  expect(s.tasks.map((t: any) => t.snoozedUntil)).toEqual([last, last]);
+  // a moment past: refused, nothing changed
+  expect(await act({} as any, { type: "snooze", chat: "SHOP-5/worker", until: Date.now() - 1 }, c)).toMatchObject({ ok: false });
+  expect(doc["tasks.lastSnooze"].until).toBe(last);
+  // a refused time keeps the last as it was
+  await act({} as any, { type: "snooze", chat: "SHOP-4/worker", at: "someday" }, c);
+  expect(doc["tasks.lastSnooze"].until).toBe(last);
+});
+
+test("the snapshot leaves lastSnooze out when none is kept", () => {
+  const { c } = service();
+  expect("lastSnooze" in snap(c)).toBe(false);
+});

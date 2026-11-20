@@ -90,6 +90,24 @@ export function unsnooze(map, key) {
   return rest;
 }
 
+// fork: Same as last (SHEP-80): the last snooze's moment, whatever picked it (a pick, Other time…, Same as last), so the
+// next task snoozes to the same: "tasks.lastSnooze" = { until, at } beside the snoozes, carried the same way (the
+// service's shared document, lib/bridge.js), so the phone, the web and the window offer the same one.
+export const LAST = "tasks.lastSnooze";
+export const lastOf = (until, at = Date.now()) => ({ until, at });
+// The moment Same as last offers (ms), null for none: the last one's while it's still ahead, not when one of the picks
+// below it (core/menus.js SNOOZE_PICKS: their { in } or { at } words) comes to the same minute now.
+export function sameAsLast(last, picks = [], at = Date.now()) {
+  const u = last && typeof last === "object" ? last.until : null;
+  if (typeof u !== "number" || !Number.isFinite(u) || u <= at) return null;
+  const minute = (ms) => Math.floor(ms / 60000);
+  for (const p of picks ?? []) {
+    const w = whenOf(p.in !== undefined ? { in: p.in } : { at: p.at }, at);
+    if (w.at !== undefined && minute(w.at) === minute(u)) return null;
+  }
+  return u;
+}
+
 // A task's snooze as the lists show it: until when (ms) while snoozed and its time not up, else null. Between a wake
 // and the service writing it (a few seconds), the time alone decides.
 export function snoozedUntil(map, key, at = Date.now()) {
