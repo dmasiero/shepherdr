@@ -77,12 +77,28 @@ export const MAC_PICK = [
 ];
 
 // The desktop's own file picker, for the attach button: xdg-desktop-portal's on Linux (pick-files.py), macOS's own.
-// Resolves { code, paths }.
+// Resolves { code, paths, error }: `error`, when no picker opened, says why in plain words (fork: SHEP-75).
 export async function pick(title = "Attach files", os = window()?.platform) {
   const r = os === "macos"
     ? await exec("osascript", [...MAC_PICK.flatMap((l) => ["-e", l]), title]).catch(() => null)
-    : await exec("sh", ["-c", 'P=/usr/bin/python3; [ -x "$P" ] || P=python3; exec "$P" -I "$1" "$2"', "x", `${appHome()}/mods/chat/pick-files.py`, title]).catch(() => null);
-  return { code: r ? r.code : 1, paths: (r?.stdout ?? "").split("\n").map((l) => l.replace(/\r$/, "")).filter(Boolean) };
+    : await exec("sh", ["-c", 'P=/usr/bin/python3; [ -x "$P" ] || P=python3; command -v "$P" >/dev/null || exit 127; exec "$P" -I "$1" "$2"', "x", `${appHome()}/mods/chat/pick-files.py`, title]).catch(() => null);
+  const code = r ? r.code : 1;
+  /** @type {{ code: number, paths: string[], error?: string }} */
+  const out = { code, paths: (r?.stdout ?? "").split("\n").map((l) => l.replace(/\r$/, "")).filter(Boolean) };
+  if (code !== 0) out.error = pickError(r, os);
+  return out;
+}
+
+// fork: SHEP-75. Why the picker didn't open, for the chat: pick-files.py's first stderr line is already plain words
+// ("No file picker: xdg-desktop-portal has no FileChooser for this desktop."); a missing python3 is said here. The
+// whole of stderr goes to the log. A user-cancelled macOS picker isn't an error (MAC_PICK returns "" for it).
+export function pickError(r, os = "linux") {
+  const err = String(r?.stderr ?? "").trim();
+  console.error(`chat attach: the file picker exited ${r ? r.code : "(didn't run)"}${err ? `: ${err}` : ""}`);
+  if (!r) return "Couldn't open the file picker.";
+  if (os !== "macos" && r.code === 127) return "No file picker: python3 isn't installed.";
+  const first = err.split("\n")[0].trim();
+  return os !== "macos" && /^(No file picker|The file picker)/.test(first) ? first : "Couldn't open the file picker.";
 }
 
 // Dropped or pasted file paths as attachments.
