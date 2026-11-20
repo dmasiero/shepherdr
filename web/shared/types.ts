@@ -362,6 +362,13 @@ export interface Task {
   outcome?: 'done' | 'stopped' | 'failed'
   /** when it was archived (ms): out of every list and count, only search and its place's Archived view show it */
   archived?: number
+  /** fork: Snooze (SHEP-78, core/snooze.js): snoozed until then (ms): in no group but Snoozed, at the bottom, and in no
+   *  count, until then or until it needs the person again */
+  snoozedUntil?: number
+  /** fork: back from a snooze, and why ("Asked a question", "Blocked", "Ready", "Time's up"), until the person opens it;
+   *  wokeAt: when */
+  woke?: string
+  wokeAt?: number
   /** when it was pinned (ms): it shows in the Pinned group at the top of its lists */
   pinned?: number
   /** the shared browser (the browser plugin), for a task not merged: whether it works on its machine, and if not why */
@@ -1304,6 +1311,8 @@ export type Action =
   | { type: 'archive'; chat: string; on: boolean }
   /** pin a task to the top of its lists (on: true) or unpin it */
   | { type: 'pin'; chat: string; on: boolean }
+  // fork: Snooze (SHEP-78)
+  | { type: 'snooze'; chat: string; at?: string; in?: string; off?: boolean }
   /** pause a working task: its agent is interrupted (it stays alive) and the task is To do until written to */
   | { type: 'pause'; chat: string }
   /** its agent goes and the task is To do; its work stays */

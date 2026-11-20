@@ -77,7 +77,8 @@ export function alertStands(a: Alert | undefined | null, snap: Pick<NeedsSnap, '
 export function needsYou(snap: NeedsSnap, now = Date.now()): Waiting[] {
   const out: Waiting[] = []
   const tasks = new Map<string, Task>(snap.tasks.map((t) => [t.id, t]))
-  const open = (id?: string) => { const t = id ? tasks.get(id) : undefined; return !!t && !t.archived && t.status !== 'done' }
+  // fork: a snoozed task waits on nobody (SHEP-78): none of its cards, waits or alerts is in Needs you
+  const open = (id?: string) => { const t = id ? tasks.get(id) : undefined; return !!t && !t.archived && t.status !== 'done' && !t.snoozedUntil }
   const taken = new Set<string>()
   const add = (w: Waiting) => { if (taken.has(w.task)) return; taken.add(w.task); out.push(w) }
   // a task's cards: its oldest stands for it (one row, one item)
@@ -86,7 +87,7 @@ export function needsYou(snap: NeedsSnap, now = Date.now()): Waiting[] {
     if (!n.task || !open(n.task)) continue
     add({ key: `need:${n.chat}:${n.id}`, type: 'need', at: n.at, place: n.place, task: n.task, need: n })
   }
-  for (const t of snap.tasks) if (t.status === 'need' && !t.archived) add({ key: `task:${t.id}`, type: 'task', at: t.at ?? 0, place: t.place, task: t.id })
+  for (const t of snap.tasks) if (t.status === 'need' && !t.archived && !t.snoozedUntil) add({ key: `task:${t.id}`, type: 'task', at: t.at ?? 0, place: t.place, task: t.id })
   for (const a of snap.alerts ?? []) {
     const t = taskOfAlert(snap, a)
     if (!t || !alertStands(a, snap, now)) continue

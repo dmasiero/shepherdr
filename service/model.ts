@@ -17,6 +17,7 @@ const { spacesFromDoc, sidebarOf, assistantOf, isUnread, inOrder, byMachineOrder
 import * as N from "../core/notify.js";
 const { spaceLevel } = N as any;
 import * as AP from "../core/autopilot.js";
+import * as SZ from "../core/snooze.js"; // fork: Snooze (SHEP-78)
 const { everywhereOf, pilotFor, levelOf, STARTER, currentBeat } = AP as any;
 
 const SHARED = join(HOME, ".config", "herdr-app", "shared.json");
@@ -285,6 +286,8 @@ export class Model {
       };
     }));
     this.live.put("tasks", rows);
+    // fork: a snoozed task back by itself (SHEP-78): built again when its time is up
+    settles = Math.min(settles, SZ.nextWake(this.value(SZ.SNOOZED)));
     // a task in its grace before Needs you (core GRACE_MS): built again the moment it ends, not up to 10 s later
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = settles < Infinity ? setTimeout(() => { this.settleTimer = null; this.soon(); }, Math.max(0, settles - Date.now()) + 50) : null;

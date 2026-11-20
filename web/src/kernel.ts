@@ -534,7 +534,20 @@ export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
   if (p.lists) saveLists(p.lists)
   if (p.side) saveSide(p.side)
   watchVisible()
+  // fork: SHEP-78: a task opened is no longer snoozed or back from a snooze
+  if (p.task) seenSnooze(p.task)
   emit()
+}
+
+/** fork: Snooze (SHEP-78): opening a snoozed task, or one back from a snooze, takes its entry away (once per open) */
+let seenSent: string | null = null
+function seenSnooze(id: string | null | undefined) {
+  const t = id && state.snap ? state.snap.tasks.find((x) => x.id === id) : undefined
+  if (!t || !(t.snoozedUntil || t.woke)) { if (!id) seenSent = null; return }
+  const key = `${t.id}|${t.snoozedUntil ?? ''}|${t.woke ?? ''}`
+  if (seenSent === key) return
+  seenSent = key
+  void act({ type: 'snooze', chat: t.agent?.chat ?? `${t.id}/worker`, off: true }).catch(() => undefined)
 }
 
 const subscribe = (l: () => void) => {
@@ -814,6 +827,8 @@ export function connect() {
       noteView(state.ui)
       stayOnShown()
       fromOldPin(msg.snapshot)
+      // fork: SHEP-78: a task open from a link before its snapshot came: opened, so it's no longer snoozed or back
+      seenSnooze(state.ui.task)
       // once loaded, the first snapshot with every machine in reach says which chats are gone (one connecting or out
       // of reach may not list its chats yet: then none is dropped); later ones don't, so a failed one left open a day
       // keeps its Retry
@@ -1111,6 +1126,12 @@ export function pinTask(t: Task, on: boolean) {
   return act({ type: 'pin', chat: t.agent?.chat ?? `${t.id}/Agent`, on })
 }
 
+/** fork: Snooze (SHEP-78): a task out of the lists until a time ({ at } or { in }, herdr-task's words), or back now
+ *  ({ off: true }); error: the words for a time it doesn't know */
+export function snoozeTask(t: Task, when: { at?: string; in?: string; off?: boolean }): Promise<{ ok?: boolean; error?: string }> {
+  return act({ type: 'snooze', chat: t.agent?.chat ?? `${t.id}/worker`, ...when })
+}
+
 /** SHEP-38: start a task by itself later ({ at: "fri 8:15" } or { in: "6h" }), take that back ({ off: true }) or start a
  *  scheduled one now ({ now: true }); error: herdr-task's words for a time it doesn't know */
 export function scheduleTask(t: Task, when: { at?: string; in?: string; off?: boolean; now?: boolean }): Promise<{ ok?: boolean; error?: string; why?: string }> {
@@ -1186,13 +1207,16 @@ export function taskGroups(snap: Snapshot, list: ListView, by: GroupBy): TaskGro
 
 /** Done: shut until opened ("done:open" in shut), its count showing alone */
 export const DONE_OPEN = 'done:open'
+/** fork: Snoozed (SHEP-78): shut until opened, as Done */
+export const SNOOZED_OPEN = 'snoozed:open'
 
 /** a list's task groups as this screen shows them: grouped as this device chose, Done cut short until Show all, a
  *  group folded shut showing none of its tasks (Done shut until opened) */
 export function shownGroups(snap: Snapshot, list: ListView, ui: Pick<UI, 'groups' | 'allDone' | 'shut'> = state.ui) {
   const shut = (key: string) => ui.shut.includes(`${list.key}|${key}`)
   const all = (key: string) => ui.allDone.includes(`${list.key}|${key}`)
-  return taskGroups(snap, list, ui.groups).map((g) => shownGroup(g, all(g.key), g.key === 'done' ? !shut(DONE_OPEN) : shut(g.key)))
+  // fork: Snoozed (SHEP-78) folds as Done does
+  return taskGroups(snap, list, ui.groups).map((g) => shownGroup(g, all(g.key), g.key === 'done' ? !shut(DONE_OPEN) : g.key === 'snoozed' ? !shut(SNOOZED_OPEN) : shut(g.key)))
 }
 
 /** fold a heading of a list's tasks shut or open ("group", "m:machine"); with siblings, them too, the same way */
@@ -1360,7 +1384,7 @@ export function listView(ui: UI, snap: Snapshot): ListView {
 
 /** what waits on you in a list: its tasks that need you or are ready */
 export function listWaiting(snap: Snapshot, list: ListView) {
-  return tasksIn(snap, list).filter((t) => t.status === 'need' || t.status === 'ready').length
+  return tasksIn(snap, list).filter((t) => (t.status === 'need' || t.status === 'ready') && !t.snoozedUntil).length // fork: SHEP-78
 }
 
 /** a chip's words: a space's "# gtm" (with its machine where there are more: "# gtm · vm-str"), a machine's name */

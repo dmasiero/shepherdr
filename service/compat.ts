@@ -26,6 +26,7 @@ import * as APc from "../core/autopilot.js";
 const { machineLabel } = MNc as any;
 import { HOME, appHome } from "./paths.ts";
 import { installCheck } from "./install-check.ts";   // fork: SHEP-34
+import * as SZ from "../core/snooze.js";                // fork: Snooze (SHEP-78)
 const { spaceName } = SPc as any;
 import type { Where } from "./worktree.ts";
 import * as AGc from "../core/agents.js";
@@ -447,6 +448,8 @@ export class Compat {
     // not twice (one toast, one alert, one in the counts)
     const carded = new Set(needs.filter((x) => x.id !== "attention").map((x) => x.chat));
     for (let i = needs.length - 1; i >= 0; i--) if (needs[i].id === "attention" && carded.has(needs[i].chat)) needs.splice(i, 1);
+    // fork: Snooze (SHEP-78): the snoozed tasks as they are now, woken where they asked for the person
+    this.snoozes(rows, tasks, needs);
 
     const pinned = spaces.filter((s) => s.pinned).map((s) => s.id);
     const sections: Section[] = [
@@ -489,6 +492,35 @@ export class Compat {
       ...((install) => (install ? { install } : {}))(installCheck()),
     };
     return this.last;
+  }
+
+  /** fork: Snooze (SHEP-78, core/snooze.js): each task's signature now (pin key -> its status, open cards, last Ready
+   *  time; null: done or archived), for a snooze made now (actions.ts) and the wake rule. */
+  sigs = new Map<string, any>();
+  /** the shared entries this service last wrote, so a write not back yet isn't written again */
+  private snoozeWrote: string | null = null;
+  private snoozes(rows: Row[], tasks: Task[], needs: Need[]) {
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const cards = new Map<string, string[]>();
+    for (const n of needs) if (n.task && n.id !== "attention") cards.set(n.task, [...(cards.get(n.task) ?? []), n.id]);
+    this.sigs = new Map(rows.map((r) => {
+      const t = byId.get(taskId(r));
+      return [r.key, !t || r.archived ? null : SZ.signature({ status: t.status, cards: cards.get(t.id) ?? [], ready: r.ready_at ?? null })];
+    }));
+    const was = this.shared?.value(SZ.SNOOZED);
+    if (!was || typeof was !== "object" || !Object.keys(was).length) return;
+    const now = Date.now();
+    const z = SZ.resolve(was, this.sigs, now);
+    // the first service to see a wake writes it (every service works out the same)
+    const text = JSON.stringify(z.map);
+    if (z.changed && text !== this.snoozeWrote) { this.snoozeWrote = text; void this.shared!.set(SZ.SNOOZED, z.map).catch(() => { this.snoozeWrote = null; }); }
+    for (const r of rows) {
+      const t = byId.get(taskId(r));
+      if (!t) continue;
+      const until = SZ.snoozedUntil(z.map, r.key, now), why = SZ.wokeOf(z.map, r.key);
+      if (until) t.snoozedUntil = until;
+      else if (why) { t.woke = why; t.wokeAt = z.map[r.key]?.at ?? now; }
+    }
   }
 
   /** An Assistant's tasks' workers (its space's tasks with an agent), by the Assistant's address: [{ addr, ref }]. */
