@@ -11,6 +11,7 @@ import type { Hub } from "./hub.ts";
 import { HOME, where } from "./paths.ts";
 import * as SC from "../core/secrets.js";
 import * as HC from "../core/host.js";
+import { refusal } from "../core/send.js"; // fork: SHEP-76
 
 const { NAME, ASK, asksIn, keptLine, declinedLine, SECRETS_DOC, secretsRecord, believeRecord, autoKeeper, followTo, COUNT_SCRIPT } = SC as any;
 const { HOST_DOC, newestHost } = HC as any;
@@ -48,9 +49,37 @@ function scope(level: string): { args: string[]; words: string } {
   throw new Error("Not a place a secret can be kept.");
 }
 
+/** fork: SHEP-76: a message for an agent with a dialog open, held in herdr-task's held messages (as SHEP-72's Mark up
+ *  notes): its scheduler sends it once hc takes it. True once it is kept. */
+async function holdFor(to: string, text: string): Promise<boolean> {
+  const p = Bun.spawn([process.env.SHEPHERDR_HERDR_TASK || "herdr-task", "_hold", to, text], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+  return (await p.exited) === 0;
+}
+
 export class Secrets {
-  /** local: this machine's vault, as a count (tests give their own) */
-  constructor(private hub: Hub, private local = localVault) {}
+  /** fork: SHEP-76: asks the person declined from a card, as the window's quiet "Declined" line in that chat */
+  ends: { address: string; name: string; at: number }[] = [];
+
+  /** local: this machine's vault, as a count; hold: a message held for an agent with a dialog open; secret: herdr-secret
+   *  here (tests give their own of each) */
+  constructor(private hub: Hub, private local = localVault, private hold = holdFor, private secret = run) {}
+
+  /** fork: SHEP-76: the declined asks of one agent, newest last */
+  endsOf(address: string) { return this.ends.filter((e) => e.address === address); }
+
+  /** fork: SHEP-76: a card's Decline: the agent hears it was declined (held while it has a dialog open, never typed
+   *  into it), then its ask goes. Never touches a kept secret. */
+  async decline(address: string, name: string) {
+    const text = declinedLine(name);
+    const r = await this.hub.send(address, text);
+    if (r.code !== 0) {
+      const e = refusal(r);
+      if (e.kind !== "blocked") throw new Error(e.message);
+      if (!(await this.hold(address, text))) throw new Error("It's waiting on a question, and your answer couldn't be kept for it: answer that, then decline again.");
+    }
+    await hc(["label", address, `${ASK}${name}=`]);
+    this.ends = [...this.ends, { address, name, at: Date.now() }].slice(-50);
+  }
 
   /** Every agent's waiting asks: [{ address, name, why }]. */
   asks() {
@@ -60,7 +89,7 @@ export class Secrets {
 
   /** Every kept secret by name: Everywhere's, and each space's (by its id as the snapshot has it). */
   async names(): Promise<{ name: string; at: number; space: string | null }[]> {
-    const r = await run(["names", "--json"]);
+    const r = await this.secret(["names", "--json"]);
     try {
       return (JSON.parse(r.out) as any[]).filter((e) => e.scope === "everywhere" || e.scope === "space")
         .map((e) => ({ name: e.name, at: e.at ?? 0, space: e.scope === "space" ? (e.machine ? `${e.machine}/${e.space}` : e.space) : null }));
@@ -70,7 +99,7 @@ export class Secrets {
   /** Every kept secret with where it is kept, as the window's Settings › Secrets lists them: Everywhere, a machine
    *  (null: this computer) or a space (its id as the snapshot has it). */
   async entries(): Promise<{ name: string; at: number; scope: "everywhere" | "machine" | "space"; machine: string | null; space: string | null }[]> {
-    const r = await run(["names", "--json"]);
+    const r = await this.secret(["names", "--json"]);
     try {
       return (JSON.parse(r.out) as any[]).filter((e) => ["everywhere", "machine", "space"].includes(e.scope)).map((e) => ({
         name: e.name, at: e.at ?? 0, scope: e.scope,
@@ -84,14 +113,15 @@ export class Secrets {
     if (!NAME.test(name)) throw new Error("Name it like an environment variable: GITHUB_TOKEN.");
     const s = scope(level);
     if (value === null) {
-      if (card) { await hc(["label", card.address, `${ASK}${name}=`]); await this.hub.send(card.address, declinedLine(name)); return; }
-      const r = await run(["rm", name, ...s.args]);
+      // fork: SHEP-76: a card's Decline (the window's and the web's): the agent is told, no secret is removed
+      if (card) { await this.decline(card.address, name); return; }
+      const r = await this.secret(["rm", name, ...s.args]);
       if (r.code !== 0) throw new Error(r.err.trim() || "It wasn't removed.");
       return;
     }
     const v = value.replace(/[\r\n]+$/, "");
     if (!v) throw new Error("Type or paste the value first.");
-    const r = await run(["set", name, ...s.args], v);
+    const r = await this.secret(["set", name, ...s.args], v);
     if (r.code !== 0) throw new Error(r.err.trim().split("\n").pop() || "It wasn't kept.");
     // as the window's: every agent waiting for this name hears it's kept
     for (const a of this.asks().filter((x) => x.name === name)) {

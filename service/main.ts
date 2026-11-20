@@ -590,9 +590,13 @@ async function doAction(body: any): Promise<Response> {
   if (body?.type === "secret" && typeof body.name === "string" && typeof body.level === "string") {
     // a value goes straight to the vault (herdr-secret set, from stdin); the agent hears its name only
     try {
-      const card = body.card && typeof body.card.chat === "string" ? { address: compat.addrOf(body.card.chat) ?? "" } : undefined;
+      // fork: SHEP-76: a value is a string, or null: a card's Decline (with its card), or Settings' Remove (without);
+      // a card that isn't one never falls through to Remove
+      if (typeof body.value !== "string" && body.value !== null) throw new Error("Type or paste the value first.");
+      if (body.card != null && typeof body.card?.chat !== "string") throw new Error("That card isn't here any more.");
+      const card = body.card ? { address: compat.addrOf(body.card.chat) ?? "" } : undefined;
       if (card && !card.address) throw new Error("That agent isn't here any more.");
-      await secrets.keep(body.level, body.name, typeof body.value === "string" ? body.value : null, card);
+      await secrets.keep(body.level, body.name, body.value, card);
       await refreshSecrets();
       return json({ ok: true });
     } catch (err) { return new Response((err as Error).message, { status: 400 }); }
