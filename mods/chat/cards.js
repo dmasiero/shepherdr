@@ -97,8 +97,10 @@ export class AskCards {
   answerOf(ask, q, i) {
     const qq = ask.words.questions[i];
     const other = q.boxes[i]?.value().trim() || q.other[i]?.trim();
-    if (q.other[i] !== null && other) return other;
-    return [...q.picks[i]].sort((a, b) => a - b).map((k) => qq.options[k].name).join(", ");
+    const picked = [...q.picks[i]].sort((a, b) => a - b).map((k) => qq.options[k].name);
+    // fork: SHEP-73: a multi-select keeps its ticked options beside the "Other" words
+    if (q.other[i] !== null && other) return qq.multi ? [...picked, other].join(", ") : other;
+    return picked.join(", ");
   }
 
   done(ask, q) {
@@ -192,9 +194,29 @@ export class AskCards {
     const q = this.state(ask);
     q.other[i] = q.other[i] ?? "";
     if (!ask.words.questions[i].multi) q.picks[i] = new Set();
-    if (!q.boxes[i]) { q.boxes[i] = InputState.new({ placeholder: "Your answer" }); q.boxes[i].on("change", (_e, cx) => cx.notify()); }
+    if (!q.boxes[i]) {
+      q.boxes[i] = InputState.new({ placeholder: "Your answer" }); q.boxes[i].on("change", (_e, cx) => cx.notify());
+      // fork: SHEP-73: Enter in the box does what the step's button does (Shift+Enter stays the box's)
+      q.boxes[i].on("submit", (e, cx) => { if (!e?.shift) this.enterOther(ask, i, cx); });
+    }
     const box = q.boxes[i];
     cx.timer.after(0, () => box.focus());
+  }
+
+  // fork: SHEP-73: Enter in question i's "Other…" box. One question: Submit, once it's ready. Several: the next
+  // step, as Next does; the last one submits when every answer is in, else shows the answers to check. The box's
+  // own submit event, so the chat's composer and the card's keys never see this Enter.
+  enterOther(ask, i, cx) {
+    const q = this.states.get(ask.id);
+    if (!q) return;
+    const n = ask.words.questions.length;
+    if (n > 1 && i < n - 1) this.go(ask, i + 1);
+    else if (this.done(ask, q)) { this.submit(ask, cx); cx.notify(); return; }
+    else if (n > 1 && this.answerOf(ask, q, i)) this.go(ask, n);
+    else return;
+    // The box goes with its step: the card takes the keys (arrows, digits) from here.
+    this.pressed(ask);
+    cx.notify();
   }
 
   // One card for the whole ask: steps when there are several questions (and a last one to
