@@ -110,6 +110,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - `bun test` from service/ alone skips bunfig's preload (2 false failures): run `bun test service core web` from the repo root.
 - Window-mod methods that need `cx.spawn`'s result in a bun test: give the stub cx a spawn that keeps the promise (see the
   #1010 tests in service/spaces-sidebar.test.ts). ShepherdrSettings menus go through `mods/shepherdr-settings/over.js`.
+- A web component test without a DOM: extract the component's text from client.tsx, transpile it with `Bun.Transpiler`
+  and run it with a tiny useState shim to press its buttons (see `web/plugins/chat/secret-decline.test.tsx`).
 - Window-mod render tests: `bun test service` (from the root) with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
