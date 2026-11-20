@@ -302,7 +302,8 @@ export class Model {
     const spaces = byMachineOrder(inOrder([...fromDocs, ...own.filter((x: any) => !fromDocs.some((y: any) => y.id === x.id))], this.value("spaces-chat")?.order), machineOrderOf(this.value("spaces-chat"))).map((s: any, at: number) => {
       const k = assistantOf(s, terminals as any[]);
       // a task belongs to the space that started it, else to the space in its folder (as the window's counts)
-      const here = rows.filter((r) => !r.archived && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
+      // fork: a snoozed task in neither count (SHEP-78)
+      const here = rows.filter((r) => !r.archived && SZ.snoozedUntil(this.value(SZ.SNOOZED), r.key) === null && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
       return {
         ...s, at, icon: bar.icons[s.id] ?? null, pinned: bar.pinned.includes(s.id),
         // when something in its tabs last changed state (Herdr's tab changed_at: its terminals' status times), for
