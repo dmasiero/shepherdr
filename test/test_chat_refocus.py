@@ -27,7 +27,7 @@ const focusCalls = [];
 const timers = [];
 const self = Object.assign({ box: { focus: () => focusCalls.push(1) }, wasFocused: false, hadBox: false,
   focused: false, call: null, press: null, refocusAt: 0, areaKey: () => "pane",
-  keepsText: () => false /* fork: SHEP-37 */ }, input.self);
+  keepsText: () => false /* fork: SHEP-37 */, cardKeys: () => Boolean(input.cardKeys) /* fork: SHEP-74 */ }, input.self);
 const cx = { timer: { after: (ms, fn) => timers.push([ms, fn]) } };
 obj.refocus.call(self, input.paneFocused, input.showsBox, cx);
 for (const [, fn] of timers) fn();
@@ -35,9 +35,9 @@ console.log(JSON.stringify({ focus: focusCalls.length }));
 """
 
 
-def run(self_state, paneFocused=True, showsBox=True):
+def run(self_state, paneFocused=True, showsBox=True, cardKeys=False):
     method = MATCH.group(0).strip()
-    inp = {"self": self_state, "paneFocused": paneFocused, "showsBox": showsBox}
+    inp = {"self": self_state, "paneFocused": paneFocused, "showsBox": showsBox, "cardKeys": cardKeys}
     script = HARNESS % {"method": method, "input": json.dumps(inp)}
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "refocus.mjs")
@@ -69,6 +69,12 @@ class RefocusKeepsSelection(unittest.TestCase):
     def test_without_a_selection_that_later_render_refocuses_the_box(self):
         state = {"wasFocused": True, "hadBox": True, "focused": False, "pressMoved": False, "press": {"at": 0}}
         self.assertEqual(run(state), 1)
+
+    def test_a_card_box_with_the_keyboard_keeps_it(self):
+        # fork: SHEP-74: typing in a question card's "Other…" box re-renders; neither branch takes its keys.
+        later = {"wasFocused": True, "hadBox": True, "focused": False, "pressMoved": False, "press": {"at": 0}}
+        self.assertEqual(run(later, cardKeys=True), 0)
+        self.assertEqual(run({"pressMoved": False, "press": {"at": 0}}, cardKeys=True), 0)
 
 
 class ChatTracksDrags(unittest.TestCase):

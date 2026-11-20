@@ -34,7 +34,7 @@ const cx = { timer: { after: (ms, fn) => fn() } };
 const self = { box: { focus: () => focusCalls.push(1) }, wasFocused: true, hadBox: true, focused: false, call: null,
   press: null, pressMoved: false, refocusAt: 0, thread: false, inner: false,
   myPane: () => "pane-mine", areaKey: () => "pane-mine", forgetHidden: obj.forgetHidden,
-  keepsText: () => false /* fork: SHEP-37 */ };
+  keepsText: () => false /* fork: SHEP-37 */, cardKeys: () => false /* fork: SHEP-74 */ };
 const input = %(input)s;
 if (input.hidden) { shownTab = "tab-other"; if (input.timer) self.forgetHidden(); }
 shownTab = "tab-mine";

@@ -4542,10 +4542,11 @@ export default class Chat extends View {
     // Never while a dialog over it holds the keyboard (New space's field, #752): Herdr counts this pane focused under it.
     // Never over a text selection (GitHub #916, SHEP-192): a drag over the messages selects them, and the box taking the
     // keyboard then made Ctrl+C copy nothing. The timers check again when they fire: a drag can start after they're set.
+    // Nor while a card's box has it (an "Other…" answer, a secret's value): fork: SHEP-74, its keys went to both boxes.
     const dialog = dialogHolds(shared(KEY_HOLDER));
     if (paneFocused && showsBox && !dialog && !this.pressMoved && (!this.wasFocused || !this.hadBox)) {
-      cx.timer.after(0, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER)) && !this.keepsText()) this.box.focus(); });
-      cx.timer.after(600, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER)) && !this.keepsText()) this.box.focus(); });
+      cx.timer.after(0, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER)) && !this.keepsText() && !this.cardKeys()) this.box.focus(); });
+      cx.timer.after(600, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER)) && !this.keepsText() && !this.cardKeys()) this.box.focus(); });
     }
     // The pane focused again (a command, a click on its header) can leave the box without the
     // keyboard: give it back, unless the person just pressed something inside the chat.
@@ -4554,10 +4555,15 @@ export default class Chat extends View {
     // Nor while a highlight in the messages has it, for its Ctrl+C (fork: SHEP-37, keepsText(): a double click's too).
     else if (paneFocused && showsBox && !this.call && !this.pressMoved && this.focused === false && !this.keepsText() && Date.now() - (this.press?.at ?? 0) > 1500
       && !keysElsewhere(liveHolder(shared(KEY_HOLDER)), this.areaKey())
-      && Date.now() - (this.refocusAt ?? 0) > 1000) {
+      && Date.now() - (this.refocusAt ?? 0) > 1000 && !this.cardKeys()) {
       this.refocusAt = Date.now();
-      cx.timer.after(0, () => this.box.focus());
+      cx.timer.after(0, () => { if (!this.cardKeys()) this.box.focus(); });
     }
+  }
+
+  // fork: SHEP-74: whether a card's own box (a question's "Other…", a secret's value) has the keyboard.
+  cardKeys() {
+    return [this.cards, this.workerCards, this.codexCards, this.secretCards].some((c) => c?.hasKeys?.());
   }
 
   // A copy in a tab the window doesn't show (another space or tab) isn't drawn, so the wasFocused of its last draw
