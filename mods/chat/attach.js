@@ -83,6 +83,7 @@ export async function pick(title = "Attach files", os = window()?.platform) {
     ? await exec("osascript", [...MAC_PICK.flatMap((l) => ["-e", l]), title]).catch(() => null)
     : await exec("sh", ["-c", 'P=/usr/bin/python3; [ -x "$P" ] || P=python3; command -v "$P" >/dev/null || exit 127; exec "$P" -I "$1" "$2"', "x", `${appHome()}/mods/chat/pick-files.py`, title]).catch(() => null);
   const code = r ? r.code : 1;
+  /** @type {{ code: number, paths: string[], error?: string }} */
   const out = { code, paths: (r?.stdout ?? "").split("\n").map((l) => l.replace(/\r$/, "")).filter(Boolean) };
   if (code !== 0) out.error = pickError(r, os);
   return out;
