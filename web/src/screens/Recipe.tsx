@@ -76,7 +76,8 @@ function Choice({ b, reply }: { b: Block; reply?: Props['reply'] }) {
 }
 
 function Form({ b, reply }: { b: Block; reply?: Props['reply'] }) {
-  const [v, setV] = useState<Record<string, unknown>>({})
+  // fork: each field starts on its preset value, if it has one (SHEP-70, upstream #1212)
+  const [v, setV] = useState<Record<string, unknown>>(() => Object.fromEntries((b.fields ?? []).filter((f: any) => f.value != null).map((f: any) => [f.name, f.value])))
   const [sent, setSent] = useState(false)
   const field = 'w-full rounded-[var(--row-radius)] bg-bg px-3 py-2 shadow-[inset_0_0_0_1px_var(--line2)] outline-none focus:shadow-[inset_0_0_0_1px_var(--fg3)]'
   return (
@@ -86,7 +87,7 @@ function Form({ b, reply }: { b: Block; reply?: Props['reply'] }) {
           {f.kind === 'checkbox' ? <input type="checkbox" checked={!!v[f.name]} onChange={(e) => setV({ ...v, [f.name]: e.target.checked })} className="size-4" /> : null}
           <span className="text-fg2">{f.label ?? f.name}</span>
           {f.kind === 'textarea' ? <textarea rows={3} className={field} placeholder={f.label ?? f.name} value={String(v[f.name] ?? '')} onChange={(e) => setV({ ...v, [f.name]: e.target.value })} />
-            : f.kind === 'select' ? <select className={field} value={String(v[f.name] ?? '')} onChange={(e) => setV({ ...v, [f.name]: e.target.value })}><option value="" />{(f.options ?? []).map((o: string) => <option key={o}>{o}</option>)}</select>
+            : f.kind === 'select' ? <select className={field} value={String(v[f.name] ?? '')} onChange={(e) => setV({ ...v, [f.name]: e.target.value })}>{f.value == null ? <option value="" /> : null}{(f.options ?? []).map((o: string) => <option key={o}>{o}</option>)}</select>
             : f.kind === 'checkbox' ? null : <input className={field} placeholder={f.label ?? f.name} value={String(v[f.name] ?? '')} onChange={(e) => setV({ ...v, [f.name]: e.target.value })} />}
         </label>
       ))}

@@ -344,6 +344,21 @@ def file_kind(name):
     return kind_of(name)
 
 
+def field_value_problem(f):
+    """What's wrong with a form field's preset value (None: nothing, or none given). core/recipe.js valueProblem.
+    fork: SHEP-70, upstream #1212."""
+    if not isinstance(f, dict) or f.get("value") is None:
+        return None
+    kind, v, opts = f.get("kind") or "text", f["value"], f.get("options")
+    if kind == "select":
+        if isinstance(opts, list) and any(type(o) is type(v) and o == v for o in opts):
+            return None
+        return f"value must be one of its options ({', '.join(json.dumps(o) for o in opts) if isinstance(opts, list) else 'it has none'})"
+    if kind == "checkbox":
+        return None if isinstance(v, bool) else "a checkbox's value must be true or false"
+    return None if isinstance(v, str) else "a text field's value must be words (a string)"
+
+
 def recipe_problems(src, files):
     """What's wrong with a recipe.json, in words (core/recipe.js's problems(), its main rules)."""
     try:
@@ -384,6 +399,11 @@ def recipe_problems(src, files):
                     out.append(f"block {where} ({b['type']}): a button needs a label and a reply or an href.")
                 if href is not None and not (isinstance(href, str) and re.fullmatch(r'https://[^\s"<>]+', href)):
                     out.append(f"block {where} ({b['type']}): href must be an https:// link.")
+            # fork: a form field's preset value fits its kind (core/recipe.js valueProblem; SHEP-70, upstream #1212)
+            for f in (b.get("fields") or []) if b["type"] == "form" and isinstance(b.get("fields"), list) else []:
+                bad = field_value_problem(f)
+                if bad:
+                    out.append(f"block {where} (form): field {json.dumps(f.get('name'))}: {bad}.")
             if b["type"] == "columns":
                 for j, c in enumerate(b.get("columns") or []):
                     walk(c, f"{where}.{j + 1}.")
