@@ -81,6 +81,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `git config url.<bare>.insteadOf <full url>`; fake `tea`/`gh` first on PATH (see `GiteaTasks`).
 - Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
   read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
+- A herdr-artifact note end to end without a real agent: reuse `test/test_herdr_artifact_held.py`'s NoteToABlockedAgent
+  setUp (fake hc on PATH, throwaway task store) from a scratch script and call `A.main()` with a patched `sys.argv`.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - nextgate's `/usr/bin` is envfs: a tool shows there only to a caller whose PATH has it, so a test that narrows PATH
