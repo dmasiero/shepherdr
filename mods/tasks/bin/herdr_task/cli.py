@@ -27,7 +27,6 @@ from .home import cmd_home
 from .assistant_settings import cmd_session_note
 from .feedback import cmd_feedback
 from .sandbox import cmd_sandbox
-from .touches import cmd_stats, cmd_touch  # fork: SHEP-63
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -84,10 +83,13 @@ def remote_run(machine, argv, timeout=None):
             with open(mark, "w") as f:
                 f.write("source")
             return
-        r = subprocess.run(["hc", "file", "write", "--on", machine, target], input=body, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # Written beside its place, then swapped in with one rename (SHEP-259): a herdr-task running there keeps
+        # its whole old file, never a half-written one.
+        tmp = f"{target}.herdr-new.{os.getpid()}"
+        r = subprocess.run(["hc", "file", "write", "--on", machine, tmp], input=body, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if r.returncode != 0:
             raise Fail(f"Couldn't install herdr-task on {machine}: {r.stderr.decode().strip()}")
-        run(["hc", "exec", "--on", machine, "--", "chmod", "+x", target], check=True)
+        run(["hc", "exec", "--on", machine, "--", "sh", "-c", 'chmod +x "$1" && mv -f "$1" "$2"', "sh", tmp, target], check=True)
         os.makedirs(os.path.dirname(mark), exist_ok=True)
         with open(mark, "w") as f:
             f.write(digest)
@@ -283,21 +285,7 @@ def main():
     c = cmd("accept", cmd_accept, "the person's Accept on a Ready task: merges first when there is something to merge, then done")
     agent_opts(c)
     c.add_argument("--space")
-    c = cmd("reopen", lambda a: cmd_state(a, "reopen"), "undo done or ready; a queued or scheduled task goes back to to do")
-    c.add_argument("--why", help="why it's reopened, a short line (kept on its touch)")  # fork: SHEP-63
-    # fork: SHEP-63: touches (where the person steps in) and their stats (touches.py)
-    c = cmd("touch", cmd_touch, "note someone stepping into a task (the service's answered cards, herdr-artifact's notes)", id=False)
-    c.add_argument("id", nargs="?", help="the task (or --terminal: its agent's)")
-    c.add_argument("--terminal", help="the task's agent's terminal, instead of its id")
-    c.add_argument("--kind", required=True, help="message, stop, ask, note, reopen, back, fix, review-more, pr or guide")
-    c.add_argument("--by", help="person, assistant, autopilot, agent or herdr (default: who runs this)")
-    c.add_argument("--from", dest="source", help="where it came from: web, chat, terminal, viewer...")
-    c.add_argument("--log", help="where its words already live (a log line's id, an ask's id): never the words")
-    c.add_argument("--at", type=int, help="when, in ms (default: now)")
-    c.add_argument("--why", help=argparse.SUPPRESS)
-    c = cmd("stats", cmd_stats, "per space: tasks, touches by kind, done with no help, Ready to Accept, reopens", id=False)
-    c.add_argument("--space", help="one space (its id or name)")
-    c.add_argument("--weeks", type=int, help="only tasks started in the last N weeks")
+    cmd("reopen", lambda a: cmd_state(a, "reopen"), "undo done or ready; a queued or scheduled task goes back to to do")
     cmd("unarchive", cmd_unarchive, "bring an archived task back into its list (only when the person asks; writing to it does too)")
     c = cmd("edit", cmd_edit, "change a task")
     c.add_argument("--title")
@@ -485,6 +473,11 @@ def main():
     c.add_argument("to")
     c.add_argument("text")
     c.set_defaults(fn=lambda a: __import__("herdr_task.news", fromlist=["hold"]).hold(a.to, a.text, "news"), json=False)
+    # fork: SHEP-72: herdr-artifact's note to an agent with a dialog open, held until hc takes it (news.held_pass)
+    c = sub.add_parser("_hold")
+    c.add_argument("to")
+    c.add_argument("text")
+    c.set_defaults(fn=lambda a: __import__("herdr_task.news", fromlist=["hold"]).hold(a.to, a.text, "send"), json=False)
     c = cmd("sandbox", cmd_sandbox, "whether Codex's sandbox (bwrap) can start on this machine, and the fix for it when it can't "
             "(asked once and kept; --check asks again)", id=False)
     c.add_argument("--check", action="store_true", help="ask again now")

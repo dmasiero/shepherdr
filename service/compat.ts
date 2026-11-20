@@ -118,8 +118,8 @@ export function automationsBySpace(list: any[], spaces: Space[], spaceName: (s: 
     // as the window's automation row (mods/tasks autoRow): its name, why it won't run as planned, when it runs next,
     // its last task (a tap opens it), where it is
     const ref = typeof a.last_task === "string" ? a.last_task : null;
-    (out[s?.id ?? `${a.machine ?? ""}:${a.folder}`] ??= []).push({ name: a.title ?? a.id, when: a.last_error ? "Didn't start" : a.paused ? "Paused" : a.when ?? "", what: a.title ?? "", on: !a.paused, next,
-      ...(a.last_error ? { error: String(a.last_error.message ?? ""), failed: a.last_error.kind === "fire" ? "fire" : "start" } : {}),
+    (out[s?.id ?? `${a.machine ?? ""}:${a.folder}`] ??= []).push({ name: a.title ?? a.id, when: a.last_error ? (a.last_error.kind === "from" ? String(a.last_error.message ?? "") : "Didn't start") : a.paused ? "Paused" : a.when ?? "", what: a.title ?? "", on: !a.paused, next,
+      ...(a.last_error ? { error: String(a.last_error.message ?? ""), failed: a.last_error.kind === "fire" || a.last_error.kind === "from" ? a.last_error.kind : "start" } : {}),
       ...(!a.last_error && !a.paused && a.next_run ? { nextAt: a.next_run } : {}),
       ...(ref ? { task: a.machine ? `${a.machine}:${ref}` : ref } : {}),
       listName: s ? spaceName(s) : a.list ?? a.folder, machine: a.machine ?? null,
@@ -239,6 +239,17 @@ export class Compat {
   /** The model menu and restarts (service/agents.ts), set by main. */
   /** The agent Shepherdr settings choose for a space's Assistant (main.ts: Settings.role), for a start from the web. */
   assistantPick: ((space: string) => any) | null = null;
+  /** A space's Assistant chat with no Assistant yet (SHEP-263): nothing said, and what its first message starts it
+   *  on, as the window's chat says it on its model button before then (the choice kept for the space, else Shepherdr
+   *  settings' Assistant, else the CLI's own), with its CLI. null: the key is no space's, or its Assistant runs. */
+  freshChat(key: string): Chat | null {
+    const s = this.spaceList.find((x) => placeKey(x.id) === key);
+    if (!s || s.assistant || !(this.agents as any)?.fresh) return null;
+    const f = (this.agents as any).fresh(s.machine ?? null, this.assistantPick?.(s.id) ?? null);
+    const kind = f.sel.agent === "codex" ? "codex" : "claude";
+    return { key, fresh: true, messages: [], cli: kind, working: false,
+      agent: { kind, words: f.words, planned: { ...(f.sel.model ? { model: f.sel.model } : {}), ...(f.label ? { modelLabel: f.label } : {}), ...(f.effort ? { effort: f.effort } : {}) } } } as Chat;
+  }
   agents: { info(addr: string, reader: any): Promise<unknown>; restart(addr: string, reader: any, pick: any): Promise<string>; choices(machine: string | null): Promise<unknown>; ownDefaults(): Promise<{ claude: unknown; codex: unknown }> } | null = null;
 
   /** Agents' secret asks (service/secrets.ts), set by main. */
@@ -695,8 +706,8 @@ export class Compat {
       const c = current(kind, t?.foreground?.argv ?? t?.argv ?? [], meta, dflt);
       const row = rowFor(kind, c), label = menuFor(kind, {}).models.find((m: any) => m.id === row)?.name ?? modelName(c.model);
       // the window's model button (mods/chat pickParts): model, level, Fast
-      const words = [c.label ?? modelName(c.model), levelName(c.effort), c.fast ? "Fast" : null].filter(Boolean).join(" · ") || NAMES[kind] || "Agent";
-      agent = { kind, words, ...(c.model ? { model: c.model, modelLabel: label } : {}), ...(c.effort ? { effort: c.effort } : {}), ...(c.model ? { runtime: { model: c.model, modelLabel: label, ...(c.effort ? { effort: c.effort } : {}), speed: c.fast ? "fast" : "normal", source: "session", at: Date.now() } } : {}) };
+      const words = [c.label ?? modelName(c.model), levelName(c.effort), c.fast === "ultrafast" ? "Ultrafast" : c.fast ? "Fast" : null].filter(Boolean).join(" · ") || NAMES[kind] || "Agent";
+      agent = { kind, words, ...(c.model ? { model: c.model, modelLabel: label } : {}), ...(c.effort ? { effort: c.effort } : {}), ...(c.model ? { runtime: { model: c.model, modelLabel: label, ...(c.effort ? { effort: c.effort } : {}), speed: c.fast === "ultrafast" ? "ultrafast" : c.fast ? "fast" : "normal", source: "session", at: Date.now() } } : {}) };
     } catch {}
     // the first row: the log's very start, or earlier pages to load as it scrolls up
     const head = reader.start === 0 ? { top: true } : reader.start ? { earlier: true } : {};

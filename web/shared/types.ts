@@ -275,6 +275,19 @@ export interface Report {
  * starting and not yet at work on its brief; done: merged */
 export type TaskStatus = 'need' | 'ready' | 'merging' | 'work' | 'queued' | 'scheduled' | 'todo' | 'done'
 
+/** the Tasks panel's Status groups, in its order (who has to act first; Done last): the web app's groups and the glance
+ *  feed's (service/glance.ts) both come from here, so phone, watch and app list them alike */
+export const GROUPS: [TaskStatus, string][] = [
+  ['need', 'Needs you'],
+  ['ready', 'Ready'],
+  ['merging', 'Merging'],
+  ['work', 'Working'],
+  ['queued', 'Queued'],
+  ['scheduled', 'Scheduled'],
+  ['todo', 'To do'],
+  ['done', 'Done'],
+]
+
 /** A task's one agent: tapping the task opens its chat. */
 export interface TaskAgent {
   /** chat key */
@@ -375,9 +388,10 @@ export interface Automation {
   next: string[]
   /** its latest runs, newest first: when (ms), and the task it added or why it couldn't */
   runs?: { at: number; task?: string; error?: string }[]
-  /** why it didn't run as planned (its last error's message), and which way: it didn't run, or didn't start its task */
+  /** why it didn't run as planned (its last error's message), and which way: it didn't run, didn't start its task, or
+   *  the folder it watches on another machine (--from) hasn't answered for a while ("Can't reach vm-b since 23:03") */
   error?: string
-  failed?: 'fire' | 'start'
+  failed?: 'fire' | 'start' | 'from'
   /** when it runs next (ms): none while paused or failed */
   nextAt?: number
   /** the task it added last (its id): a tap on its row opens it */
@@ -856,6 +870,9 @@ export interface Chat {
   blocked?: string
   /** a note at the conversation's end (a lost session being started again) */
   note?: string
+  /** a space's Assistant that hasn't started (SHEP-263): nothing said yet, and `agent` is what its first message
+   *  starts it on (its model menu changes that choice, nothing runs yet) */
+  fresh?: boolean
   /** 3.0's notice instead of the conversation: opening it, not a chat agent, its log not found, its agent ended */
   notice?: 'opening' | 'unsupported' | 'none' | 'ended' | 'gone'
   /** the turn that runs now: how far it got and its step on now, drawn as one quiet line at the end of the chat */
@@ -893,7 +910,7 @@ export interface RestartCli {
   efforts?: string[]
   defaultModel?: string
   defaultEffort?: string
-  /** the speeds it can start on: normal, fast */
+  /** the speeds it can start on: normal, fast, ultrafast (Codex, SHEP-258) */
   speeds?: string[]
   /** its permission modes (Settings › Agents), and the one a new agent gets unless picked */
   perms?: { id: string; label: string }[]
@@ -1013,11 +1030,12 @@ export interface RoleAgent {
   unset?: boolean
   other?: boolean
 }
-export interface AgentPick { agent: string; model?: string | null; effort?: string | null; fast?: boolean; perm?: string | null }
+/** fast: true (Fast), false (standard) or 'ultrafast' (Codex's Ultrafast tier) */
+export interface AgentPick { agent: string; model?: string | null; effort?: string | null; fast?: boolean | 'ultrafast'; perm?: string | null }
 
 /** Settings › Agents' model menu, as the window's (mods/chat-models, settings mode; core/agents.js menuFor) */
 export interface ModelMenus {
-  menus: Record<string, { name: string; models: { id: string; name: string; efforts: string[]; defaultEffort?: string | null; fast?: boolean }[]; perms: { id: string; label: string }[] }>
+  menus: Record<string, { name: string; models: { id: string; name: string; efforts: string[]; defaultEffort?: string | null; fast?: boolean; ultrafast?: boolean }[]; perms: { id: string; label: string }[] }>
   permDefault: Record<string, string>
 }
 
@@ -1227,7 +1245,7 @@ export interface Snapshot {
   read?: Record<string, number>
   /** the agents' own alerts (herdr-task alert), one per agent, as the window's toasts say them (service/push.ts
    *  agentAlerts): "HERD-4 · <title>" over its body, its chat, and whether it reaches the person (its space's Notify) */
-  alerts?: { id: string; at: number; title: string; body: string; chat?: string; place?: string; notify: boolean }[]
+  alerts?: { id: string; at: number; title: string; body: string; chat?: string; /** the task it is about (SHEP-255): its row shows it; none: no task's, not in Tasks */ task?: string; place?: string; notify: boolean; ended?: true; machine?: string | null; memory?: true }[]
   /** the sidebar's sections, as Slack's, each with its spaces in the human's order: the top ones first (Pinned, id
    *  'pinned', among them), then each machine's, its machine in order (shared/order.ts) */
   sections?: Section[]
@@ -1298,7 +1316,7 @@ export type Action =
   | { type: 'restart-info'; chat: string }
   /** start a coordinator or a task's agent again on this CLI, model and effort (none: the CLI's own; no kind: all as
       Settings say for its role); save: as its space's Settings for its role too */
-  /** speed: normal or fast, '' for the CLI's own; left out keeps what it was started on. It lasts as long as this chat, and save leaves it out of Settings. */
+  /** speed: normal, fast or ultrafast, '' for the CLI's own; left out keeps what it was started on. It lasts as long as this chat, and save leaves it out of Settings. */
   | { type: 'restart'; chat: string; kind?: string; model?: string; effort?: string; speed?: string; save?: boolean }
   /** mark a task done with nothing merged (shepherdr task close); refused (held) while it holds unmerged work, unless force */
   | { type: 'close'; chat: string; force?: boolean }
@@ -1352,6 +1370,10 @@ export type ServerEvent =
   | { type: 'pong' }
   /** an agent shows the person an artifact (herdr-artifact open): this screen, the one they used last, opens it */
   | { type: 'show'; artifact: string }
+  /** a wake word was heard on this screen's device (SHEP-240): it starts a voice call, or shows the one on */
+  | { type: 'voice' }
+  /** a tap on the phone app's alert (POST /api/open, SHEP-246): this screen goes where it points, in place */
+  | { type: 'go'; url: string }
 
 /** how Shepherdr's last update of itself went (update.json in its folder, written by the supervisor) */
 export interface UpdateStatus {

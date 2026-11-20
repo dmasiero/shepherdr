@@ -428,7 +428,9 @@ def held_messages():
 
 def hold(address, text, how="send"):
     """Keeps a message for an agent the person is writing to; held_pass sends it once they've
-    stopped. how: "send" (a plain hc send, as an agent's message) or "news" (news_send)."""
+    stopped. how: "send" (a plain hc send, as an agent's message) or "news" (news_send).
+    fork: SHEP-72: also herdr-artifact's note to an agent with a dialog open (hc send refuses it,
+    "blocked"): held_pass's send is refused the same way until the dialog is answered or closed."""
     with held_messages() as held:
         held.setdefault(address, []).append({"text": text, "how": how, "at": now()})
 

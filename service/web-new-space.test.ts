@@ -90,7 +90,7 @@ test("one that never reports a session isn't held for good: past half an hour it
 test("the web's first message starts the Assistant only after Claude Code trusts the space's folder, on its machine", async () => {
   const w = world([]);
   const r: any = await act(w.hub as any, { type: "send", chat: "p:spP2", text: "hello" }, compat(() => null, [{ id: "spP2", folder: "/srv/dev/pool.fan", machine: null }]));
-  expect(r).toEqual({ ok: true, started: true });
+  expect(r).toMatchObject({ ok: true, started: true }); // upstream adds its `at` (SHEP-263)
   expect(w.execs[0].argv.slice(0, 2)).toEqual(["python3", "-c"]);
   expect(w.execs[0].argv[3]).toBe("/srv/dev/pool.fan");
   expect(calls(HC_CALLS).some((l) => l.startsWith("run ") && l.includes("--cwd /srv/dev/pool.fan"))).toBe(true);

@@ -6,14 +6,9 @@ import { join } from "node:path";
 // a throwaway app home: never the real data/chat-asks
 const home = mkdtempSync(join(tmpdir(), "shep-asks-"));
 process.env.HERDR_APP_HOME = home;
-// fork: SHEP-63: a fake herdr-task that keeps each touch it's given (never the real task lists)
-const touchLog = join(home, "touches.txt");
-const fakeTask = join(home, "herdr-task");
-writeFileSync(fakeTask, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${touchLog}"\n`, { mode: 0o755 });
-process.env.SHEPHERDR_HERDR_TASK = fakeTask;
 const dir = join(home, "data", "chat-asks");
 for (const d of ["req", "ans", "end", "open"]) mkdirSync(join(dir, d), { recursive: true });
-const { Asks, touchArgv } = await import("./asks.ts");
+const { Asks } = await import("./asks.ts");
 const { Compat } = await import("./compat.ts");
 
 const put = (id: string, req: unknown) => writeFileSync(join(dir, "req", `${id}.json`), JSON.stringify(req));
@@ -168,42 +163,4 @@ test("a question's previews show on the card and go back with the pick and its n
   const d = JSON.parse(readFileSync(join(dir, "ans", "t50.100.1.json"), "utf8")).hookSpecificOutput.decision;
   expect(d.updatedInput.answers).toEqual({ "Which layout?": "List" });
   expect(d.updatedInput.annotations).toEqual({ "Which layout?": { preview: "- a\n- b", notes: "keep it short" } });
-});
-
-// fork: SHEP-63: an answered question card is a touch on its task (herdr-task touch by its agent's terminal), a
-// permission or a dismissed card is not; another machine's goes through --on; its id is the pointer, never its words.
-test("an answered question card becomes a touch on its task; a permission or a dismissal doesn't", async () => {
-  expect(touchArgv({ id: "t6.100.1", how: "Answered on the web", kind: "questions" })?.slice(1))
-    .toEqual(["touch", "--terminal", "t6", "--kind", "ask", "--by", "person", "--from", "web", "--log", "ask:t6.100.1", "--json"]);
-  expect(touchArgv({ id: "m3/t12.1700000000.7", how: "Answered in the terminal", kind: "questions" })?.slice(1, 6))
-    .toEqual(["--on", "m3", "touch", "--terminal", "t12"]);
-  expect(touchArgv({ id: "t6.100.1", how: "Answered in the task's chat", kind: "questions" })).toContain("chat");
-  expect(touchArgv({ id: "t6.100.1", how: "Left to talk over on the web", kind: "questions" })).not.toBeNull();
-  expect(touchArgv({ id: "t5.100.1", how: "Allowed on the web", kind: "permission" })).toBeNull();
-  expect(touchArgv({ id: "t6.100.1", how: "Dismissed on the web", kind: "questions" })).toBeNull();
-  expect(touchArgv({ id: "t6.100.1", how: "No longer waiting", kind: "questions" })).toBeNull();
-
-  rmSync(touchLog, { force: true });
-  put("t60.100.1", { tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Ship it?", header: "Ship", options: [{ label: "Yes" }, { label: "No" }] }] } });
-  put("t61.100.1", { tool_name: "Bash", tool_input: { command: "ls" } });
-  const asks = new Asks();
-  asks.start();
-  await asks.answer("t60.100.1", { choice: 0 });
-  await asks.answer("t61.100.1", { choice: 0 });
-  // answered in the window instead: its end file says how a moment after the request goes
-  put("t62.100.1", { tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Which?", header: "W", options: [{ label: "A" }, { label: "B" }] }] } });
-  (asks as any).read();
-  writeFileSync(join(dir, "ans", "t62.100.1.json"), "{}");
-  (asks as any).read();
-  writeFileSync(join(dir, "end", "t62.100.1"), "Answered in the task's chat\n");
-  (asks as any).read();
-  (asks as any).read();
-  for (let i = 0; i < 40 && (!existsSync(touchLog) || !/t60[\s\S]*t62|t62[\s\S]*t60/.test(readFileSync(touchLog, "utf8"))); i++) await Bun.sleep(50);
-  // (an earlier test's answers may land here too: only these three asks count)
-  const lines = readFileSync(touchLog, "utf8").trim().split("\n").filter((l) => /--terminal t6[012] /.test(l));
-  expect(lines).toEqual([
-    "touch --terminal t60 --kind ask --by person --from web --log ask:t60.100.1 --json",
-    "touch --terminal t62 --kind ask --by person --from chat --log ask:t62.100.1 --json",
-  ]);
-  expect(lines.join("\n")).not.toContain("Ship it");
 });

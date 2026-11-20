@@ -9,7 +9,16 @@ import type { Chats, Watcher } from "./chats.ts";
 import type { Compat } from "./compat.ts";
 
 // A page's socket: the chats it follows (by 2.1's chat key), each with the terminal and the watcher it holds.
-type WS = ServerWebSocket<{ who: string; keys?: string[]; chats?: Map<string, { addr: string; watcher: Watcher }>; push?: string | null; visible?: boolean; seen?: number }>;
+type WS = ServerWebSocket<{ who: string; keys?: string[]; chats?: Map<string, { addr: string; watcher: Watcher }>; push?: string | null; visible?: boolean; seen?: number; from?: string | null;
+  /** the fresh chats it was sent (an Assistant that hasn't started), as sent; when a followed chat's agent went; the timer that looks again */
+  fresh?: Map<string, string>; left?: Map<string, number>; freshTimer?: ReturnType<typeof setTimeout> | null }>;
+
+/** how long an Assistant must be gone before its chat says what a new one would start on: a restart ends one and
+ *  starts another a moment later, and the chat shouldn't flicker in between */
+export const FRESH_AFTER_MS = 5000;
+
+/** how long a wake word (or an open, SHEP-246) waits for a page of its device to show up */
+export const WAKE_HELD_MS = 15_000;
 
 export class Live {
   private pages = new Set<WS>();
@@ -20,15 +29,20 @@ export class Live {
   chats: Chats | null = null;
   /** told which devices have the app on screen (they get no push) */
   onVisible: ((endpoints: Set<string>) => void) | null = null;
+  /** told which tailnet device a push subscription is on (a page knows both): push.ts nodeOf */
+  onPushDevice: ((endpoint: string, device: string) => void) | null = null;
   compat: Compat | null = null;
   private snap: string | null = null;
+  /** a wake word or an open no page of its device had on screen yet (voiceWake, go): the next one that shows up takes it */
+  private wake: { from: string; at: number; msg: string } | null = null;
 
   constructor(private hub: Hub, private store: Store, private me: () => Me | null, private version: string, private link: () => string | null = () => null) {
     hub.on((e) => {
       if (e.type === "reset") { void this.machines(); this.agents(); }
       else if ("terminal" in e && e.terminal) this.agents();
     });
-    store.on((d) => this.put("state", d));
+    // the shared document changed: a choice for an Assistant that hasn't started may be one of them
+    store.on((d) => { this.put("state", d); this.refresh(); });
     setInterval(() => void this.machines(), 15_000);
   }
 
@@ -53,6 +67,7 @@ export class Live {
     this.pages.delete(ws);
     this.visibleNow();
     for (const w of ws.data.chats?.values() ?? []) this.chats?.unwatch(w.addr, w.watcher);
+    if (ws.data.freshTimer) clearTimeout(ws.data.freshTimer);
   }
 
   /** 2.1's snapshot: everything the screen lists, whole, each time it changes. */
@@ -73,7 +88,11 @@ export class Live {
     const want = new Map<string, string>();
     for (const k of keys.slice(0, 40)) { const a = compat.addrOf(k); if (a) want.set(k, a); }
     ws.data.chats ??= new Map();
-    for (const [k, w] of ws.data.chats) if (want.get(k) !== w.addr) { chats.unwatch(w.addr, w.watcher); ws.data.chats.delete(k); }
+    for (const [k, w] of ws.data.chats) if (want.get(k) !== w.addr) {
+      chats.unwatch(w.addr, w.watcher); ws.data.chats.delete(k);
+      if (!want.has(k)) (ws.data.left ??= new Map()).set(k, Date.now());
+    }
+    this.fresh(ws, keys.slice(0, 40).filter((k) => !want.has(k)));
     for (const [k, addr] of want) {
       if (ws.data.chats.has(k)) continue;
       let sent = "";
@@ -84,6 +103,31 @@ export class Live {
       ws.data.chats.set(k, { addr, watcher });
       chats.watch(addr, watcher);
     }
+  }
+
+  /** The open chats with no agent: a space's Assistant that hasn't started gets its fresh chat (compat.freshChat: what
+   *  its first message starts it on), sent again only when it changed. One whose Assistant just went waits a moment. */
+  private fresh(ws: WS, keys: string[]) {
+    const compat = this.compat as any, sent = (ws.data.fresh ??= new Map());
+    for (const k of [...sent.keys()]) if (!keys.includes(k)) sent.delete(k);
+    for (const k of keys) {
+      if (!k.startsWith("p:")) continue;
+      const left = ws.data.left?.get(k) ?? 0, wait = left + FRESH_AFTER_MS - Date.now();
+      if (wait > 0) {
+        ws.data.freshTimer ??= setTimeout(() => { ws.data.freshTimer = null; if (this.pages.has(ws) && ws.data.keys) this.watch(ws, ws.data.keys); }, wait + 50);
+        continue;
+      }
+      ws.data.left?.delete(k);
+      const chat = compat?.freshChat?.(k);
+      if (!chat) { sent.delete(k); continue; }
+      const text = JSON.stringify({ type: "chat", chat });
+      if (sent.get(k) !== text && ws.readyState === 1) { sent.set(k, text); ws.send(text); }
+    }
+  }
+
+  /** What the pages' open chats show may have changed without a new snapshot (a choice kept, a machine's CLIs read). */
+  refresh() {
+    for (const ws of this.pages) if (ws.data.keys) this.watch(ws, ws.data.keys);
   }
 
   message(ws: WS, text: string) {
@@ -97,7 +141,34 @@ export class Live {
       ws.data.push = typeof m.push === "string" ? m.push : null;
       ws.data.visible = m.visible !== false;
       this.visibleNow();
+      if (ws.data.push && ws.data.from) this.onPushDevice?.(ws.data.push, ws.data.from);
+      if (this.wake && ws.data.from === this.wake.from && ws.data.visible && Date.now() - this.wake.at < WAKE_HELD_MS) {
+        const msg = this.wake.msg;
+        this.wake = null;
+        ws.send(msg);
+      }
     }
+  }
+
+  /** A wake word was heard on device `from` (POST /api/voice/wake, SHEP-240): that device's page on screen, the one used
+   *  last, starts a voice call (or shows the one on: never hangs up). Pages of other devices never hear it. None on
+   *  screen yet (a phone bringing Shepherdr forward or starting it): the first that shows up within 15 s does. True: a
+   *  page got it now. */
+  voiceWake(from: string) { return this.toDevice(from, JSON.stringify({ type: "voice" })); }
+
+  /** Open an alert's link on device `from` (POST /api/open, SHEP-246): its page on screen used last goes there in place,
+   *  as a tap on the alert does, without reloading. None on screen yet: the first that shows up within 15 s does. */
+  go(from: string, url: string) { return this.toDevice(from, JSON.stringify({ type: "go", url })); }
+
+  /** one message to device `from`'s page on screen it used last, or held for its first page within 15 s */
+  private toDevice(from: string, msg: string) {
+    let best: WS | null = null;
+    for (const ws of this.pages)
+      if (ws.data.from === from && ws.data.visible !== false && ws.readyState === 1 && (!best || (ws.data.seen ?? 0) > (best.data.seen ?? 0))) best = ws;
+    if (!best) { this.wake = { from, at: Date.now(), msg }; return false; }
+    this.wake = null;
+    best.send(msg);
+    return true;
   }
 
   /** Shows an artifact where the person is (herdr-artifact open, service/show.ts): the page on screen they used

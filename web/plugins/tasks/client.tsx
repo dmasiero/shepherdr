@@ -14,11 +14,9 @@ import {
   keepTasks,
   matches,
   filteredGroups,
-  goChat,
   setThisSpace,
   inList,
   tasksIn,
-  namesFor,
   filterOf,
   getState,
   listView,
@@ -75,6 +73,7 @@ import {
   XIcon,
   field,
 } from '@client/ui.tsx'
+import { needsYou, type Waiting } from '@shared/needs-you.ts'
 import { doneNewestFirst, machineName, type Automation, type Machine, type Place, type Snapshot, type Task } from '@shared/types.ts'
 import { useFlip } from '@client/motion.ts'
 import { RowMenu, useRowMenu, type RowMenuState } from '@client/rowmenu.tsx'
@@ -87,7 +86,6 @@ import * as ND from '@core/needs.js'
 const capital = TK.capital as (s: string) => string
 const fit = ND.fit as (s: string) => string
 const day = TK.day as (ms: number) => string
-const REASONS = ND.REASONS as Record<string, string>
 const STATUS = TK.STATUS as Record<string, string>
 /** a task's id as its row shows it: its list's ref, without the machine ("SHEP-7"; the machine is in where it is) */
 const refOf = (id: string) => id.slice(id.lastIndexOf(':') + 1)
@@ -292,49 +290,19 @@ function whereOf(snap: Snapshot, t: Task, names: TaskGroup['names']) {
   return [m, names.project ? (t.listName || p.name) : undefined].filter((x): x is string => !!x)
 }
 
-/** what needs you that is no task's: an agent asking (an Assistant's question, a secret, its turn waiting), or an
- *  automation that didn't run or didn't start its task (the window's inbox items) */
-type AgentNeed = { id: string; chat?: string; who: string; why: string; where?: string; space?: string; auto?: Automation }
-/** what needs you that is no task's, in a list: an agent's by its place, an automation's by the place it is kept under */
-function agentNeeds(snap: Snapshot, chips: string[]): AgentNeed[] {
-  const where = (machine: string | null | undefined, name?: string) => {
-    const m = machine && machine !== snap.host ? snap.machines?.find((x) => x.machine === machine)?.name ?? machine : undefined
-    return [m, name].filter(Boolean).join(' · ') || undefined
-  }
-  const asks = snap.needs.filter((n) => !n.task && n.chat && inList(snap, chips, n.place)).map((n) => {
-    const p = snap.places.find((x) => x.id === n.place)
-    // why, in the window's words (core/needs.js REASONS, reqReason): a plan, a permission's own words, a question
-    const q = n.question
-    const why = q ? (q.kind === 'Plan' ? REASONS.plan : fit(q.title) || (q.choices?.[0]?.label === 'Allow' ? REASONS.permission : REASONS.question))
-      : n.secret ? fit(`Wants the secret ${n.secret.name}`) : REASONS.question
-    // an agent's item: its name (a space's agent is its Assistant), where it is: its machine and space
-    return { id: n.id, chat: n.chat, who: 'Assistant', why, where: where(p?.machine, p?.name), space: p?.name }
-  })
-  // an automation goes by its name, with no id: "Didn't run" or "Didn't start its task"
-  const autos = autosIn(snap, chips).filter((a) => a.error)
-    .map((a) => ({ id: `auto:${a.machine ?? ''}:${a.listName}:${a.name}`, who: a.name, why: a.failed === 'fire' ? "Didn't run" : "Didn't start its task", where: where(a.machine, a.listName), space: a.listName, auto: a }))
-  return [...asks, ...autos]
-}
-
 /** a list's automations: snap.automations holds them by place id (a list no space works in: by its own key, in
  *  every list but one narrowed to places) */
 function autosIn(snap: Snapshot, chips: string[]) {
   return Object.entries(snap.automations ?? {}).filter(([k]) => inList(snap, chips, k)).flatMap(([, v]) => v)
 }
 
-/** a Needs you row of no task: an agent's opens its chat; a failed automation's opens the Automations group */
-function AgentNeedRow({ n, listKey, spaceOnly }: { n: AgentNeed; listKey: string; spaceOnly?: boolean }) {
-  const shut = useUI((u) => u.shut.includes(`${listKey}|automations`))
-  return (
-    <Line
-      glyph={n.auto ? <RepeatIcon className="size-3.5 text-need" /> : <TaskDot s="need" />}
-      title={n.who}
-      sub={n.why}
-      where={spaceOnly ? n.space : n.where}
-      tip={n.auto?.error}
-      onOpen={() => (n.chat ? goChat(n.chat) : shut && toggleShut(listKey, 'automations'))}
-    />
-  )
+/** a task in Needs you as its row shows it: one there for its agent's alert (working all the same) shows red, with the
+ *  alert's words */
+function waitingRow(t: Task, ws: Waiting[]): Task {
+  const w = ws.find((x) => x.task === t.id)
+  if (w?.type !== 'alert' || !w.alert) return t
+  const cut = w.alert.title.indexOf(' · ')
+  return { ...t, status: 'need', sub: fit(cut < 0 ? w.alert.title : w.alert.title.slice(cut + 3)) }
 }
 
 /** a task the search finds, as the window's (mods/tasks found()): by its id, title, status line or pull request's
@@ -367,7 +335,7 @@ function AutoRow({ a, where, from }: { a: Automation; where?: string; from?: str
       glyph={<RepeatIcon className={clsx('size-3.5', a.error ? 'text-need' : 'text-fg3')} />}
       title={a.name}
       dim={!a.on}
-      sub={a.error ? "Didn't start" : !a.on ? 'Paused' : from}
+      sub={a.error ? (a.failed === 'from' ? a.error : "Didn't start") : !a.on ? 'Paused' : from}
       meta={a.nextAt ? day(a.nextAt) : undefined}
       where={where}
       tip={a.error}
@@ -420,20 +388,16 @@ function TaskList(_: { placeId: string }) {
   if (archived) return <ArchivedList list={view} />
   const loaded = !!snap.places.length || !!snap.tasks.length
   // what the search field holds: only what matches it shows, in its group (the window's matches())
-  const asks = agentNeeds(snap, view.chips).filter((n) => !q || matches(q, n.who, n.why, n.where))
+  // Needs you, one rule for every view (SHEP-250): only tasks (SHEP-255), in its group (kernel taskGroups)
+  const ws = needsYou(snap)
   const live = tasksIn(snap, view).filter((t) => !q || found(snap, t, q))
   const autos = autosIn(snap, view.chips).filter((a) => !q || matches(q, a.name, a.listName, a.machine ? machineName(snap.machines, a.machine) : undefined))
   const footer = q ? null : registry.tasksFooter.map((F, i) => <F key={i} place={place} list={view} />)
   // searching, Done and archived tasks are in it too, each group whole and open, folded shut or not
-  let groups = q
+  const groups = q
     ? filteredGroups(snap, view, '', { groups: by }).map((g) => keepTasks(g, (t) => found(snap, t, q))).filter((g) => g.tasks.length)
       .map((g) => ({ ...g, count: g.tasks.length, more: 0, less: false, shut: false }))
     : shownGroups(snap, view, { groups: by, allDone, shut })
-  // what agents ask needs you too: Needs you is a group of its own when no task is in it, first but Pinned
-  if (asks.length && !groups.some((g) => g.key === 'need')) {
-    const at = groups[0]?.key === 'pinned' ? 1 : 0
-    groups = [...groups.slice(0, at), { key: 'need', label: 'Needs you', tasks: [], names: namesFor(view.level), count: 0, more: 0, less: false, shut: !q && shut.includes(`${key}|need`) }, ...groups.slice(at)]
-  }
   // what the keyboard walks: the rows on screen
   const order = groups.flatMap((g) => g.tasks)
   const nothing = !groups.length && !autos.length
@@ -455,9 +419,12 @@ function TaskList(_: { placeId: string }) {
         {!loaded ? <Empty className="pt-3 text-fg3">Reading tasks…</Empty> : null}
         {groups.filter((g) => g !== archivedGroup).map((g) => {
           const fold: Fold | undefined = q ? undefined : { shut: g.shut, toggle: (all) => toggleShut(key, g.key, all ? groups.filter((x) => x !== g).map((x) => x.key) : []) }
-          const extra = g.key === 'need' ? asks : []
-          const row = (t: Task) => <TaskRow key={t.id} t={t} ix={order.indexOf(t)} where={whereOf(snap, t, g.names)} />
-          const rows = <List>{g.tasks.map(row)}{extra.map((n) => <AgentNeedRow key={n.id} n={n} listKey={key} spaceOnly />)}</List>
+          const row = (t: Task) => <TaskRow key={t.id} t={g.key === 'need' ? waitingRow(t, ws) : t} ix={order.indexOf(t)} where={whereOf(snap, t, g.names)} />
+          // Needs you: oldest first, as the phone lists them
+          const rank = (k: string) => { const i = ws.findIndex((w) => w.task === k); return i < 0 ? ws.length : i }
+          const rows = <List>{g.key === 'need'
+            ? g.tasks.map((t) => ({ r: rank(t.id), el: row(t) })).sort((a, b) => a.r - b.r).map((x) => x.el)
+            : g.tasks.map(row)}</List>
           // by place: a space's work under its name, under its machine's name where more show; both fold
           if (g.on !== undefined) {
             const mShut = !q && shut.includes(`${key}|m:${g.on}`)
@@ -482,7 +449,7 @@ function TaskList(_: { placeId: string }) {
           const doneFold: Fold | undefined = g.key === 'done' && !q ? { shut: false, toggle: () => toggleShut(key, DONE_OPEN) } : fold
           return (
             <div key={g.key}>
-              <GroupHeading label={g.label} note={g.note} count={g.count + extra.length} flip={`group:${g.key}`} fold={doneFold} />
+              <GroupHeading label={g.label} note={g.note} count={g.count} flip={`group:${g.key}`} fold={doneFold} />
               {g.shut ? null : rows}
               {g.more || g.less ? (
                 <div data-flip={`more:${g.key}`}>

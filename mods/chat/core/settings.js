@@ -3,7 +3,7 @@
 // web app's Settings say the same. herdr-task reads the file (herdr_task/settings.py: settings_for); its defaults are
 // DEFAULTS there and here.
 // Shared core: the source is core/settings.js; bin/sync-shared copies it into the mods in lib/COPIES.
-import { NAMES, levelName, current, rowFor, menuFor, permAcross } from "./agents.js";
+import { NAMES, levelName, current, rowFor, menuFor, permAcross, speedName, speedFor } from "./agents.js";
 import { SERVE } from "./host.js";
 
 // ---- the frame -------------------------------------------------------------------------------------------------
@@ -134,12 +134,12 @@ export function backupProblem(checks, m, cli) {
 
 // The model menu's words (mods/chat-models, settings mode) and its button's: "Opus 5.5 · 1M · High".
 // the model list's headings come from core/agents.js modelSections (Pinned, Recent, Models)
-export const MODEL_MENU = { reasoning: "Reasoning", fast: "Fast", permissions: "Permissions" };
+export const MODEL_MENU = { reasoning: "Reasoning", fast: "Fast", ultrafast: "Ultrafast", permissions: "Permissions" };
 const modelOf = (menus, sel) => menus?.[sel?.agent]?.models?.find((m) => m.id === sel.model) ?? null;
 export function modelLabel(menus, sel) {
   const m = modelOf(menus, sel);
   const level = sel?.effort ?? m?.defaultEffort ?? null;
-  return [m?.name ?? sel?.model, levelName(level), sel?.fast ? "Fast" : null].filter(Boolean).join(" · ") || "Choose a model";
+  return [m?.name ?? sel?.model, levelName(level), speedName(sel?.fast)].filter(Boolean).join(" · ") || "Choose a model";
 }
 // What the agents offer, from each CLI's own settings (agents.js parseDefaults) and which are installed:
 // { menus, permDefault, defaults } (defaults: the first installed CLI's own, what an unset role runs).
@@ -159,6 +159,12 @@ export function roleSel(role, own, choices, worker) {
     return { sel: { agent: o, model: choices.menus[o].models[0]?.id ?? null, effort: null, fast: false, perm: choices.permDefault?.[o] ?? null }, unset: true };
   return { sel: choices?.defaults ? { ...choices.defaults } : null, unset: true };
 }
+// What an Assistant's chat starts on before its first message, as its model button says it (the window's chat
+// loadChoice, the web's): the choice kept or set (`st`: { agent, model, effort, fast, perm }) when its agent is on
+// offer there, else the defaults (the first installed CLI's own).
+export function freshSel(st, choices) {
+  return st?.agent && choices?.menus?.[st.agent] ? { perm: choices.permDefault?.[st.agent] ?? null, effort: null, fast: false, ...st } : { ...(choices?.defaults ?? {}) };
+}
 // A model picked in the menu: the effort and speed stay where it has them; another agent brings its own permission
 // modes, the nearest to the one chosen (agents.js permAcross).
 export function chooseModel(menus, permDefault, sel, agent, id) {
@@ -166,7 +172,7 @@ export function chooseModel(menus, permDefault, sel, agent, id) {
   if (!m) return sel;
   const next = { ...sel, agent, model: id };
   if (next.effort && !m.efforts.includes(next.effort)) next.effort = null;
-  if (!m.fast) next.fast = false;
+  next.fast = speedFor(m, next.fast);
   if (agent !== sel.agent) {
     next.perm = permAcross(sel.perm, agent, permDefault);
     next.fast = false;

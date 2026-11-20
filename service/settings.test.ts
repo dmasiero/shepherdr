@@ -244,3 +244,27 @@ test("Feedback offers and its repo", () => {
   s.set("agents.feedback_repo", "", "all");
   expect(JSON.parse(readFileSync(file, "utf8")).everywhere?.agents).toBeUndefined();
 });
+
+// SHEP-69: the lessons feature (SHEP-63 to SHEP-67) was rolled back; a file still holding its `lessons` keys at any level
+// (Everywhere's and a space's, under its bare or full id: where herdr-task's write_lessons put them) reads, shows and
+// changes as any other: no error, no warning, no row of them
+test("a file holding the rolled-back lessons keys shows nothing of them and changes as before", () => {
+  const old = { on: true, kept: [{ id: "l-4-1", text: "Commit a paid receipt's row without asking.", from: ["ACC-4"], seen: 0, off: false }] };
+  writeFileSync(file, JSON.stringify({ version: 1, everywhere: { lessons: old },
+    spaces: { sp7: { name: "shop", lessons: old }, "vm/sp8": { machine: "vm", lessons: { on: false } } } }));
+  const warn = console.warn, error = console.error, said: unknown[] = [];
+  console.warn = console.error = (...a: unknown[]) => void said.push(a);
+  try {
+    const s = new Settings();
+    s.start();
+    const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop" };
+    const shown = JSON.stringify(s.sections(null, [sp], ["vm"]));
+    expect(shown.toLowerCase()).not.toContain("lesson");
+    s.set("tasks.merge", "Right away", "sp7", sp);
+    expect(JSON.parse(readFileSync(file, "utf8")).spaces.sp7.tasks).toEqual({ merge: "auto" });
+  } finally {
+    console.warn = warn;
+    console.error = error;
+  }
+  expect(said).toEqual([]);
+});

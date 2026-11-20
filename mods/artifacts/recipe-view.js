@@ -35,7 +35,13 @@ export default class RecipeView extends View {
     // every form field's InputState now: GPUI refuses InputState.new during render (#1026)
     const walk = (bs) => (Array.isArray(bs) ? bs : []).forEach((b) => {
       // fork: a select's pick is in this.picks, no InputState (SHEP-48)
-      if (b?.type === "form") (b.fields ?? []).forEach((f) => f.kind !== "checkbox" && f.kind !== "select" && this.input(b, f));
+      // fork: each field starts on its preset value: a select's pick, a checkbox's tick, a text's words (SHEP-70)
+      if (b?.type === "form") (b.fields ?? []).forEach((f) => {
+        const k = `${b.id}:${f.name}`;
+        if (f.kind === "select") { if (f.value != null) this.picks.set(k, f.value); }
+        else if (f.kind === "checkbox") { if (f.value != null) this.checks.set(k, !!f.value); }
+        else this.input(b, f);
+      });
       else if (b?.type === "columns") (b.columns ?? []).forEach(walk);
       else if (b?.type === "tabs") (b.tabs ?? []).forEach((x) => walk(x?.blocks));
       else if (b?.type === "details") walk(b.blocks);
@@ -81,7 +87,7 @@ export default class RecipeView extends View {
   // a form field's InputState, made in init() (render only reads it)
   input(b, f) {
     const k = `${b.id}:${f.name}`;
-    if (!this.inputs.has(k)) this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, ...(f.kind === "textarea" ? { multi_line: true } : {}) }));
+    if (!this.inputs.has(k)) this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, ...(f.kind === "textarea" ? { multi_line: true } : {}), ...(typeof f.value === "string" ? { value: f.value } : {}) }));
     return this.inputs.get(k);
   }
 
@@ -93,7 +99,8 @@ export default class RecipeView extends View {
       return h_flex().flex_wrap().gap(6).children((f.options ?? []).map((o, i) => div().id(`sel-${b.id}-${f.name}-${i}`)
         .h(26).px(10).flex().items_center().rounded(6).cursor_pointer().border_1()
         .bg(on === o ? t.surface : t.background).border_color(on === o ? t.accent : t.border)
-        .on_click((_e, cx) => { if (on === o) this.picks.delete(k); else this.picks.set(k, o); cx.notify(); })
+        // fork: a preset select always holds one of its options, as the web's has no blank (SHEP-70)
+        .on_click((_e, cx) => { if (on === o && f.value == null) this.picks.delete(k); else this.picks.set(k, o); cx.notify(); })
         .child(div().text_size(13).text_color(on === o ? t.foreground : t.muted).child(String(o)))));
     }
     const state = this.input(b, f);

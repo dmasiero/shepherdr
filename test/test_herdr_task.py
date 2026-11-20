@@ -727,6 +727,46 @@ class MemoryGuardRepeat(unittest.TestCase):
         tick.memory_guard({})
         self.assertEqual(len(labels), 3)
 
+    def test_its_alert_label_goes_once_memory_is_back_under(self):
+        """SHEP-246: the guard's herdr.alert stayed on the scheduler for days after memory dropped (a phone's glance
+        listed "Memory at 90%" at 7%): back under, the label goes; an agent's own alert there stays."""
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.tick as tick
+        import herdr_task.machine as machine
+        store = tempfile.mkdtemp()
+        mem, labels = [60], []
+        held = [json.dumps({"id": "a1", "at": 1, "title": "Memory at 90%", "body": "x", "about": True, "task": "vm"})]
+        ok = type("R", (), {"returncode": 0})()
+        for obj, name, value in ((tick, "GUARD_FILE", os.path.join(store, ".memory-guard.json")),
+                                 (machine, "sample", lambda: {"memory": mem[0]}), (tick, "now", lambda: 10_000_000),
+                                 (tick, "end_done_pass", lambda r, pressed=False: []),
+                                 (tick, "hc_json", lambda *a: {"state": "live", "labels": {"herdr.alert": held[0]}} if a[0] == "get" else {"terminals": []}),
+                                 (tick, "run", lambda argv: (labels.append(argv), ok)[1]), (tick, "machine_name", lambda: "vm"),
+                                 (tick, "_guard_label_checked", False)):
+            p = mock.patch.object(obj, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        # a label left by an older version, no guard file: cleared once at the scheduler's start
+        tick.memory_guard({})
+        self.assertEqual(labels, [["hc", "label", tick.SCHEDULER, "herdr.alert="]])
+        tick.memory_guard({})
+        self.assertEqual(len(labels), 1, "checked once, not every tick")
+        # high, alerted, then back under: cleared
+        mem[0] = 92
+        tick.memory_guard({})
+        self.assertEqual(len(labels), 2)
+        mem[0] = 50
+        tick.memory_guard({})
+        self.assertEqual(labels[-1], ["hc", "label", tick.SCHEDULER, "herdr.alert="])
+        # an agent's own alert on that terminal is not the guard's: left alone
+        held[0] = json.dumps({"id": "b2", "at": 1, "title": "Look now", "body": "y"})
+        with open(tick.GUARD_FILE, "w") as f:
+            json.dump({"alerted": 1}, f)
+        n = len(labels)
+        tick.memory_guard({})
+        self.assertEqual(len(labels), n)
+
 
 class AcceptWhenHcCantStart(unittest.TestCase):
     """#1057: Accept ended in a traceback at its first hc call (busy_again(t, [detail(k) for k in live_agents(...)])) when
@@ -3625,6 +3665,16 @@ class FastOffIsSaid(unittest.TestCase):
         self.assertIn('service_tier="fast"', argv_for({"agent": "codex", "fast": True}))
         self.assertIn('{"fastMode": false}', argv_for({"agent": "claude", "fast": False}))
 
+    def test_codex_ultrafast(self):
+        """SHEP-258: a role set to Codex's Ultrafast starts on that tier; Claude Code reads it as Fast."""
+        sys.path.insert(0, BIN)
+        from herdr_task.settings import argv_for
+        a = argv_for({"agent": "codex", "model": "gpt-6.2-sol", "effort": "low", "fast": "ultrafast"})
+        self.assertEqual(a, ["codex", "--no-daemon", "-m", "gpt-6.2-sol", "-c", 'model_reasoning_effort="low"',
+                             "-c", 'service_tier="ultrafast"'])
+        self.assertIn('service_tier="fast"', argv_for({"agent": "codex", "model": "gpt-6.2-astra", "fast": True}))
+        self.assertIn('{"fastMode": true}', argv_for({"agent": "claude", "fast": "ultrafast"}))
+
 
 class AcceptCardArtifacts(unittest.TestCase):
     """SHEP-96: the Accept card links the task's other artifacts (a research report) beside its proof."""
@@ -4255,6 +4305,71 @@ class AutomationFromAnotherMachine(unittest.TestCase):
         self.assertEqual(shown["from"], f"vmb:{self.b_folder}")
         self.assertEqual(shown["runs"][-1]["from"], f"vmb:{self.b_folder}")
 
+    def round_at(self, at_ms):
+        from unittest import mock
+        with mock.patch.object(self.au, "now", lambda: at_ms):
+            return self.round()
+
+    def test_a_blip_is_no_needs_you(self):
+        """SHEP-242: B not answering for a round or two (a busy line) flags nothing; auto show keeps why."""
+        self.b_task("Fix one")
+        self.auto("add", title="Update", prompt="Go.", on="merged", from_=f"vmb:{self.b_folder}")
+        t0 = 1_800_000_000_000
+        self.round_at(t0)
+        self.b_up = False
+        self.round_at(t0 + 15_000)
+        self.round_at(t0 + 30_000)
+        shown = self.auto("show", id="1")
+        self.assertIsNone(shown["last_error"])  # no Needs you
+        self.assertEqual(shown["from_error"]["misses"], 2)
+        self.assertIn("connection refused", shown["from_error"]["message"])
+        listed = self.auto("list", all=False)
+        self.assertFalse(any(a.get("last_error") for a in listed))
+        self.b_up = True
+        self.round_at(t0 + 45_000)
+        self.assertIsNone(self.auto("show", id="1")["from_error"])
+
+    def test_a_long_outage_says_so_then_clears_on_recovery(self):
+        """SHEP-242: B down every round for 15 minutes: Needs you, in plain words ("Can't reach vmb since ..."),
+        not "Didn't start its task"; B back: the flag goes, and is saved."""
+        import datetime
+        self.b_task("Fix one")
+        self.auto("add", title="Update", prompt="Go.", on="merged", from_=f"vmb:{self.b_folder}")
+        t0 = 1_800_000_000_000
+        self.round_at(t0)
+        self.b_up = False
+        down = t0 + 15_000
+        for k in range(0, 14 * 60_000, 60_000):
+            self.round_at(down + k)
+        self.assertIsNone(self.auto("show", id="1")["last_error"])  # 14 minutes: still quiet
+        self.round_at(down + 15 * 60_000)
+        err = self.auto("show", id="1")["last_error"]
+        since = f"{datetime.datetime.fromtimestamp(down / 1000):%H:%M}"
+        self.assertEqual(err["kind"], "from")
+        self.assertEqual(err["message"], f"Can't reach vmb since {since}")
+        self.assertIn("connection refused", err["detail"])
+        self.assertNotIn("start", err["message"])
+        # B answers again: the flag is gone from the saved list, with nothing else to save that round
+        self.b_up = True
+        self.round_at(down + 16 * 60_000)
+        shown = self.auto("show", id="1")
+        self.assertIsNone(shown["last_error"])
+        self.assertIsNone(shown["from_error"])
+
+    def test_recovery_saves_a_cleared_error(self):
+        """SHEP-242: a "from" error (as an older herdr-task kept it, no from_error) clears on B's next answer and is
+        saved, though that round changes nothing else."""
+        self.b_task("Fix one")
+        self.auto("add", title="Update", prompt="Go.", on="merged", from_=f"vmb:{self.b_folder}")
+        self.round()
+        from herdr_task.store import locate, Store
+        with Store(locate(self.a_folder)) as s:
+            s.data["automations"][0]["last_error"] = {"at": 1, "message": "Couldn't ask vmb: down", "kind": "from"}
+            s.dirty = True
+        self.assertIsNotNone(self.auto("show", id="1")["last_error"])
+        self.round()
+        self.assertIsNone(self.auto("show", id="1")["last_error"])
+
     def test_missed_while_down_is_caught_up_once(self):
         self.b_task("Fix one")
         self.auto("add", title="Update", prompt="Go.", on="merged", from_=f"vmb:{self.b_folder}")
@@ -4264,11 +4379,12 @@ class AutomationFromAnotherMachine(unittest.TestCase):
         self.b_merge(1)
         self.b_task("Fix two", state="done", merged=True)  # added and merged while unseen
         self.assertEqual(self.round(), [])
-        self.assertIn("Couldn't ask vmb", self.auto("show", id="1")["last_error"]["message"])
+        self.assertIn("Couldn't ask vmb", self.auto("show", id="1")["from_error"]["message"])
         # B is back: each merge fires once, the error goes
         self.b_up = True
         self.assertEqual(sorted(f["why"] for f in self.round()), ["merged: vmb:SHEP-1", "merged: vmb:SHEP-2"])
         self.assertEqual(self.round(), [])
+        self.assertIsNone(self.auto("show", id="1")["from_error"])
         self.assertIsNone(self.auto("show", id="1")["last_error"])
         # A was down (no rounds) while B merged another: once, on A's next round
         self.b_task("Fix three")
@@ -6908,297 +7024,81 @@ class BarePathThere(unittest.TestCase):
         self.assertEqual(r.stdout.strip().splitlines(), [core, "hc-found ls"], r.stderr)
 
 
-class Touches(unittest.TestCase):
-    """fork: SHEP-63: where the person steps in, kept as touches on the task (herdr_task/touches.py): what a worker's log
-    line was, the commands that make one, the tick's look at new lines only, back-fill once, and `stats`. A real task
-    list in a throwaway store, logs written here; hc, herdr-app and the clock never run for real."""
+class LeftoverRolledBackData(unittest.TestCase):
+    """SHEP-69: the lessons feature (SHEP-63 to SHEP-67) was rolled back. What it wrote stays harmless: a task's
+    lessons, touches and touch_logs fields, and lessons keys at any settings level, are read past quietly (no error,
+    no warning, nothing of them in briefs or the Assistant's block). A throwaway store and settings file."""
+
+    LEFT = {"lessons": [{"id": "l-1-1", "text": "Say where the files are.", "scope": "space", "state": "pending", "at": 1}],
+            "touches": [{"kind": "answer", "who": "person", "at": 1, "id": "file:ask:1"}],
+            "touch_logs": {"/x/log.jsonl": 120}}
+    OLD = {"on": True, "kept": [{"id": "l-4-1", "text": "Commit a paid receipt's row without asking.", "from": ["SHEP-4"],
+                                 "kept_at": 1, "seen": 2, "off": False}], "dropped": ["x"]}
 
     def setUp(self):
-        import argparse
         import contextlib
         import io
         from unittest import mock
         sys.path.insert(0, BIN)
-        import herdr_task.commands as commands
         import herdr_task.settings as settings
-        import herdr_task.store as store
-        import herdr_task.touches as touches
-        import herdr_task.autopilot as autopilot
-        self.commands, self.touches, self.store_mod = commands, touches, store
-        self.argparse, self.io, self.redirect = argparse, io, contextlib.redirect_stdout
-        self.tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.folder = os.path.join(self.tmp, "app")
-        os.makedirs(self.folder)
-        self.store_dir = os.path.join(self.tmp, "tasks")
-        os.makedirs(self.store_dir)
-        self.hc = {}  # terminal -> hc get's record
-
-        def never(*a, **k):
-            raise AssertionError("ran a program")
-        for p in [mock.patch.object(store, "STORE", self.store_dir), mock.patch.object(touches, "STORE", self.store_dir),
-                  mock.patch.object(settings, "SETTINGS", os.path.join(self.tmp, "settings.json")),
-                  mock.patch.dict(os.environ, {"HC_TERMINAL_ID": ""}),
-                  mock.patch.object(touches, "hc_json", lambda *a: self.hc.get(a[1]) if a[:1] == ("get",) else None),
-                  mock.patch.object(autopilot, "window_spaces", lambda: None),
-                  mock.patch.object(commands, "run", never), mock.patch.object(commands, "live_agents", lambda key: [])]:
+        import herdr_task.assistant_settings as aset
+        import herdr_task.launch as launch
+        import herdr_task.output as output
+        from herdr_task import store
+        self.settings, self.aset, self.launch, self.output, self.store = settings, aset, launch, output, store
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.file = os.path.join(self.dir, "shepherdr.json")
+        with open(self.file, "w") as f:
+            # where write_lessons kept them: Everywhere's and a space's (its bare id or, the window's file, its full one)
+            json.dump({"version": 1, "everywhere": {"lessons": self.OLD, "agents": {"reactions": True}},
+                       "spaces": {"sp1": {"lessons": self.OLD, "tasks": {"merge": "checks"}},
+                                  "vm/sp2": {"machine": "vm", "lessons": {"on": False}}}}, f)
+        self.terminals = {"t5": {"state": "live", "turn": 3, "labels": {"herdr.role": "coordinator", "herdr.space": "sp1"}}}
+        self.err = io.StringIO()
+        for target, name, value in [
+            (settings, "SETTINGS", self.file), (aset, "SETTINGS", self.file), (store, "STORE", os.path.join(self.dir, "tasks")),
+            (aset, "STATE", os.path.join(self.dir, ".assistant-settings.json")),
+            (aset, "hc_json", lambda *a: self.terminals.get(a[1]) if a[0] == "get" else None),
+            (aset, "addon_off", lambda name: False), (aset, "coordinators", lambda: list(self.terminals)),
+            (aset, "autopilot_of", lambda space, cfg: (False, "every 60 minutes", "")),
+            (aset, "run", lambda args, **_: subprocess.CompletedProcess(args, 0, "", "")),
+        ]:
+            p = mock.patch.object(target, name, value)
             p.start()
             self.addCleanup(p.stop)
+        r = contextlib.redirect_stderr(self.err)
+        r.__enter__()
+        self.addCleanup(r.__exit__, None, None, None)
+        self.folder = os.path.join(self.dir, "proj")
+        os.makedirs(self.folder)
+        self.loc = {"folder": self.folder, "kind": "folder", "name": "proj", "common": None}
+        with store.Store(self.loc) as s:
+            s.data["tasks"].append({"id": 1, "title": "Old", "state": "ready", "prompt": "Do the thing.", "agents": [],
+                                    "space": "sp1", **json.loads(json.dumps(self.LEFT))})
+            s.dirty = True
 
-    # ---- helpers
+    def test_a_task_holding_them_reads_shows_and_briefs_as_any_other(self):
+        with self.store.Store(self.loc) as s:
+            t = s.data["tasks"][0]
+            self.output.view(s, t)
+            text = self.launch.brief(s, t, space="sp1")
+            t["title"] = "Old, renamed"
+            s.dirty = True
+        text = text.replace(ROOT, "<repo>").lower()  # the repo's own folder may be named after a task
+        self.assertNotIn("lesson", text)
+        self.assertNotIn("touch", text)
+        with self.store.Store(self.loc, write=False) as s:
+            self.assertEqual(s.data["tasks"][0]["title"], "Old, renamed")
+        self.assertEqual(self.err.getvalue(), "")
 
-    def task_list(self, tasks):
-        slug, self.path = self.store_mod.store_path(self.folder)
-        with open(self.path, "w") as f:
-            json.dump({"version": 1, "folder": self.folder, "kind": "folder", "name": "app", "slug": slug, "prefix": "APP",
-                       "next": len(tasks) + 1, "tasks": tasks}, f)
-        self.slug = slug
-        return self.path
-
-    def tasks(self):
-        with open(self.path) as f:
-            return json.load(f)["tasks"]
-
-    def log(self, name, lines, mode="w"):
-        path = os.path.join(self.tmp, f"{name}.jsonl")
-        with open(path, mode) as f:
-            for d in lines:
-                f.write(json.dumps(d) + "\n")
-        return path
-
-    @staticmethod
-    def user(text, uuid, at="2026-11-16T10:00:00.000Z", **extra):
-        return {"type": "user", "uuid": uuid, "timestamp": at, "message": {"role": "user", "content": text}, **extra}
-
-    def run_cmd(self, fn, **kw):
-        args = self.argparse.Namespace(**{"folder": self.folder, "json": True, **kw})
-        out = self.io.StringIO()
-        with self.redirect(out):
-            fn(args)
-        return json.loads(out.getvalue().strip().splitlines()[-1])
-
-    # ---- what a line was
-
-    def test_each_line_a_worker_received_is_sorted_by_who_stepped_in(self):
-        c = self.touches.classify
-        tag = self.touches.tag
-        self.assertEqual(c("Send it"), ("message", "person", "chat"))
-        self.assertEqual(c('<hc reply-to="The draft"/> no, shorter'), ("message", "person", "chat"))
-        self.assertEqual(c("", images=True), ("message", "person", "chat"))
-        self.assertEqual(c("[Request interrupted by user for tool use]"), ("stop", "person", "chat"))
-        self.assertEqual(c('<hc from="t8k herdr-assistant-mw8">From the Assistant: use the staging box</hc>'), ("guide", "assistant", "assistant"))
-        self.assertEqual(c('<hc from="t61 assistant">Task TIC-9 "Gmail" can\'t merge yet: conflicts</hc>'), ("fix", "assistant", "assistant"))
-        self.assertEqual(c('<hc from="artifact" id="a1" version="2" title="Proof">make it bigger</hc>'), ("note", "person", "viewer"))
-        self.assertEqual(c('<hc from="person" secret="KEY">Kept: KEY</hc>'), ("message", "person", "secret"))
-        self.assertEqual(c('Task APP-3 "x" can\'t merge yet: checks'), ("fix", "person", "tasks"))
-        # Herdr's own words, tagged now and known by their first words from before: never anyone stepping in
-        for own in (tag("merge") + 'Merge task APP-1 "x" now:\n1. ...', '<pasted_content id="1">Merge task INF-13 "x" now:</pasted_content>',
-                    tag("resume") + "Shepherdr resumed your session", "Shepherdr restarted your session on a new agent",
-                    "Your Assistant added one review round to APP-1", "Review round 1 of 2 for APP-1 found",
-                    '<hc from="t4 herdr-assistant-x">' + tag("fix") + 'Task APP-1 "x" can\'t merge yet</hc>',
-                    "Your last turn was cut off by the model's provider (overloaded).",
-                    '<herdr-github task="APP-1" pr="2">news</herdr-github>', "<task-notification><task-id>b1</task-id></task-notification>",
-                    '<hc from="t9 app-1-review">findings</hc>', '<hc from="person" reaction="👍" to="Done"/>', "  "):
-            self.assertIsNone(c(own), own)
-        # the tag hides in the chat (core/chat-log.js drops a <herdr-…/> tag and shows the words after it)
-        self.assertRegex(tag("merge"), r'^<herdr-[\w-]+\b[^>]*/>\n$')
-
-    def test_the_commands_herdr_sends_a_worker_start_with_its_tag(self):
-        c = self.commands
-        self.assertTrue(c.RESUME_NUDGE.startswith(self.touches.tag("resume")))
-        self.assertTrue(c.SWITCH_NUDGE.startswith(self.touches.tag("switch")))
-        t = {"id": 1, "title": "x", "worktree": "/w", "branch": "b"}
-        self.assertTrue(c.local_merge_msg(type("S", (), {"loc": {"folder": "/f"}, "ref": lambda self, t: "APP-1"})(), t)
-                        .startswith(self.touches.tag("merge")))
-
-    # ---- reading a log
-
-    def test_a_log_is_read_once_new_lines_only_and_never_twice(self):
-        tg = self.touches
-        path = self.log("s1", [
-            self.user("Your brief: do the thing", "u0"),
-            self.user("Use the staging box", "u1", "2026-11-16T10:01:00.000Z"),
-            {"type": "user", "uuid": "m1", "isMeta": True, "timestamp": "2026-11-16T10:01:01.000Z", "message": {"content": "[Image: original]"}},
-            self.user("[Request interrupted by user]", "u2", "2026-11-16T10:02:00.000Z"),
-            self.user(tg.tag("merge") + "Merge task APP-1 now", "u3", "2026-11-16T10:03:00.000Z"),
-            self.user('<hc from="t5 herdr-assistant-a">The person says: yes</hc>', "u4", "2026-11-16T10:04:00.000Z"),
-            {"type": "assistant", "uuid": "a1", "timestamp": "2026-11-16T10:05:00.000Z",
-             "message": {"content": [{"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {}},
-                                     {"type": "tool_use", "id": "q2", "name": "AskUserQuestion", "input": {}}]}},
-            {"type": "user", "uuid": "r1", "timestamp": "2026-11-16T10:06:00.000Z",
-             "message": {"content": [{"type": "tool_result", "tool_use_id": "q1", "content": "User has answered"}]}},
-            {"type": "user", "uuid": "r2", "timestamp": "2026-11-16T10:06:30.000Z",
-             "message": {"content": [{"type": "tool_result", "tool_use_id": "q2", "is_error": True, "content": "declined"}]}},
-            self.user("sidechain words", "u5", isSidechain=True),
-        ])
-        t = {"id": 1, "state": "running", "space": "sp1", "agents": [{"address": "t9", "log": path}]}
-        self.assertEqual(tg.read_logs(t), (4, True))
-        got = [(x["kind"], x["by"], x["log"]) for x in t["touches"]]
-        self.assertEqual(got, [("message", "person", "s1/u1"), ("stop", "person", "s1/u2"), ("guide", "assistant", "s1/u4"),
-                               ("ask", "person", "s1/r1")])
-        self.assertNotIn("Use the staging box", json.dumps(t), "a touch points at the words, never copies them")
-        self.assertEqual(tg.read_logs(t), (0, False), "nothing new: nothing read again")
-        # a line still being written waits; once whole, only it is new
-        with open(path, "a") as f:
-            f.write(json.dumps(self.user("one more thing", "u6", "2026-11-16T10:07:00.000Z"))[:-5])
-        self.assertEqual(tg.read_logs(t)[0], 0)
-        with open(path, "a") as f:
-            f.write(json.dumps(self.user("one more thing", "u6", "2026-11-16T10:07:00.000Z"))[-5:] + "\n")
-        self.assertEqual(tg.read_logs(t)[0], 1)
-        # its cursor lost (or the same session copied into a new log): the pointers keep it from counting twice
-        t.pop("touch_logs")
-        self.assertEqual(tg.read_logs(t)[0], 0)
-        self.assertEqual(len(t["touches"]), 5)
-
-    def test_codex_logs_too(self):
-        path = self.log("rollout-x", [
-            {"timestamp": "2026-11-16T10:00:00.000Z", "type": "event_msg", "payload": {"type": "user_message", "message": "brief"}},
-            {"timestamp": "2026-11-16T10:01:00.000Z", "type": "event_msg", "payload": {"type": "user_message", "message": "go on"}},
-            {"timestamp": "2026-11-16T10:02:00.000Z", "type": "event_msg", "payload": {"type": "turn_aborted", "reason": "interrupted"}},
-        ])
-        t = {"id": 1, "agents": [{"log": path}]}
-        self.touches.read_logs(t)
-        self.assertEqual([x["kind"] for x in t["touches"]], ["message", "stop"])
-
-    def test_the_assistant_on_an_autopilot_wake_is_autopilot(self):
-        at = 1794800000000
-        with open(os.path.join(self.store_dir, ".autopilot.json"), "w") as f:
-            json.dump({"spaces": {"sp1": {"wakes": [{"at": at, "outcome": "Delivered"}, {"at": at + 86400000, "outcome": "Missed: no Assistant"}]}}}, f)
-        self.assertEqual(self.touches.assistant_or_autopilot("sp1", at + 60000), "autopilot")
-        self.assertEqual(self.touches.assistant_or_autopilot("sp1", at + 86400000 + 60000), "assistant", "a missed wake answered nothing")
-        self.assertEqual(self.touches.assistant_or_autopilot("sp2", at + 60000), "assistant")
-
-    def test_a_card_or_note_told_two_ways_is_one_touch_and_old_ones_stay_counted(self):
-        tg = self.touches
-        t = {"id": 1}
-        self.assertTrue(tg.add(t, "ask", "person", "web", "ask:t5.100.1", 1000))
-        self.assertFalse(tg.add(t, "ask", "person", "log", "s1/r1", 30000), "the log's line of the same card")
-        self.assertEqual(t["touches"], [{"kind": "ask", "at": 1000, "by": "person", "from": "web", "log": "ask:t5.100.1"}])
-        self.assertTrue(tg.add(t, "ask", "person", "log", "s1/r2", 200000), "a later card is another")
-        self.assertFalse(tg.add(t, "ask", "person", "web", "ask:t5.100.1", 400000), "the same pointer again")
-        for i in range(60):
-            tg.add(t, "message", "person", "chat", f"s1/m{i}", 300000 + i)
-        tg.add(t, "back", "herdr", None, None, 1)
-        self.assertEqual(len(t["touches"]), tg.MAX)
-        self.assertEqual(sum(t["touches_older"].values()), 62 - tg.MAX)  # Herdr's own isn't kept as help
-        self.assertTrue(tg.add(t, "reopen", why="  it broke   the menu " + "x" * 300))
-        self.assertTrue(t["touches"][-1]["why"].startswith("it broke the menu"))
-        self.assertLessEqual(len(t["touches"][-1]["why"]), 200)
-
-    # ---- the commands that make one
-
-    def test_reopen_why_fix_review_more_and_working_again(self):
-        from unittest import mock
-        self.task_list([{"id": 1, "title": "x", "state": "done", "started": 5, "agents": [], "mode": "here"},
-                        {"id": 2, "title": "y", "state": "ready", "started": 5, "agents": [], "mode": "worktree", "worktree": "/w", "branch": "b"}])
-        self.run_cmd(lambda a: self.commands.cmd_state(a, "reopen"), id="1", why="the menu is still wrong")
-        t1 = self.tasks()[0]
-        self.assertEqual([(x["kind"], x["by"], x["why"]) for x in t1["touches"]], [("reopen", "person", "the menu is still wrong")])
-        sent = []
-        with mock.patch.object(self.commands, "tell", lambda s, t, msg, args: (sent.append(msg), ("t9", False))[1]):
-            self.run_cmd(self.commands.cmd_fix, id="2", reason="checks fail", agent=None, argv=None, space=None)
-        t2 = self.tasks()[1]
-        self.assertEqual([x["kind"] for x in t2["touches"]], ["fix"], "a fix is a fix, not also Working again")
-        self.assertTrue(sent[0].startswith(self.touches.tag("fix")))
-        # its agent at work again after ready: Herdr noticed (counted apart, never as help)
-        with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
-            t = s.find("2")
-            t["state"] = "ready"
-            self.commands.back_to_work(s, t, "its agent is at work again", auto=True)
-        self.assertEqual([(x["kind"], x["by"]) for x in self.tasks()[1]["touches"]], [("fix", "person"), ("back", "herdr")])
-        # the Assistant's run of a command is the Assistant's
-        self.hc["t3"] = {"labels": {"herdr.role": "coordinator", "herdr.space": "sp1"}}
-        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t3"}):
-            self.assertEqual(self.touches.caller_by({"space": "sp1"}), "assistant")
-        self.hc["t4"] = {"labels": {"herdr.task": f"{self.slug}#2"}}
-        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t4"}):
-            self.assertEqual(self.touches.caller_by(), "agent")
-
-    def test_touch_by_terminal_for_the_service_and_herdr_artifact(self):
-        self.task_list([{"id": 4, "title": "x", "state": "running", "started": 5, "agents": [{"address": "t7"}]}])
-        self.hc["t7"] = {"labels": {"herdr.task": f"{self.slug}#4"}}
-        base = dict(id=None, kind="ask", by="person", source="web", log="ask:t7.100.1", at=None, why=None)
-        out = self.run_cmd(self.touches.cmd_touch, terminal="t7", **base)
-        self.assertEqual(out, {"task": "APP-4", "touched": True})
-        self.assertFalse(self.run_cmd(self.touches.cmd_touch, terminal="t7", **base)["touched"], "told twice: once")
-        self.assertFalse(self.run_cmd(self.touches.cmd_touch, terminal="t8", **base)["touched"], "an Assistant's card: no task")
-        out = self.run_cmd(self.touches.cmd_touch, terminal=None, **{**base, "id": "APP-4", "kind": "note", "log": "note:a1:5"})
-        self.assertTrue(out["touched"])
-        self.assertEqual([x["kind"] for x in self.tasks()[0]["touches"]], ["ask", "note"])
-        with self.assertRaises(Exception):
-            self.run_cmd(self.touches.cmd_touch, terminal="t7", **{**base, "kind": "words"})
-
-    def test_a_pull_request_comment_with_a_persons_words_is_a_touch(self):
-        from unittest import mock
-        import herdr_task.ghnews as ghnews
-        from herdr_task.base import now
-        t = {"id": 1, "state": "ready", "ready_at": now() - 1000, "summary": "Done", "pr": {"number": 7, "repo": "o/r", "url": "u"}}
-        at = now()
-        comments = [{"id": "i1", "at": at, "who": "doug", "body": "Rename it please", "url": "u1"},
-                    {"id": "i2", "at": at, "who": "github-actions[bot]", "body": "Coverage 90%", "url": "u2"},
-                    {"id": "i3", "at": at, "who": "doug", "body": "Done", "url": "u3"}]
-        with mock.patch.object(ghnews, "resting", lambda s, t: {"address": "t1"}), \
-                mock.patch.object(ghnews, "pr_comments", lambda repo, n: comments):
-            ghnews.pr_news(Store([t]), t, {"state": "OPEN", "headRefOid": "abc", "mergeable": "CONFLICTING"}, {})
-        self.assertEqual([(x["kind"], x["by"], x["from"], x["log"]) for x in t["touches"]], [("pr", "person", "github", "pr7/i1")],
-                         "a bot's comment, its own summary and the conflict aren't anyone stepping in")
-
-    # ---- back-fill, the tick, stats
-
-    def test_back_fill_once_then_the_tick_and_stats(self):
-        old = self.log("old", [self.user("brief", "o0"), self.user("you may commit without asking", "o1"),
-                               self.user('<hc from="artifact" id="a1" version="1" title="P">bigger</hc>', "o2")])
-        live = self.log("live", [self.user("brief", "l0")])
-        self.task_list([
-            {"id": 1, "title": "a", "state": "done", "started": 1000, "space": "sp1", "ready_at": 2000, "accepted_at": 2000 + 6 * 60000,
-             "done_at": 3000, "agents": [{"log": old}], "reopened_at": 2500},
-            {"id": 2, "title": "b", "state": "done", "started": 1000, "space": "sp1", "ready_at": 2000, "accepted_at": 2000 + 2 * 60000,
-             "done_at": 3000, "agents": [{"log": os.path.join(self.tmp, "gone.jsonl")}]},
-            {"id": 3, "title": "c", "state": "running", "started": 1000, "space": "sp2", "agents": [{"address": "t9", "log": live}]},
-            {"id": 4, "title": "d", "state": "todo"},
-        ])
-        with open(os.path.join(self.store_dir, ".autopilot.json"), "w") as f:
-            json.dump({"spaces": {"sp2": {"name": "web"}}}, f)  # sp1 the window can't name: its folder's name
-        report = {}
-        self.touches.touches_pass(report)
-        self.assertEqual(report["touches"], [{"folder": self.folder, "added": 3}])
-        ts = self.tasks()
-        self.assertEqual(sorted(x["kind"] for x in ts[0]["touches"]), ["message", "note", "reopen"])
-        self.assertNotIn("touches", ts[1], "its log is gone: nothing to count, no help")
-        with open(self.path) as f:
-            filled = json.load(f)["touches_filled"]
-        # the tick from then on: only working tasks' logs, new lines only; the back-fill never again
-        self.log("live", [self.user("[Request interrupted by user]", "l1"), self.user("use port 8080", "l2")], mode="a")
-        report = {}
-        self.touches.touches_pass(report)
-        self.assertEqual(report["touches"], [{"folder": self.folder, "added": 2}])
-        report = {}
-        self.touches.touches_pass(report)
-        self.assertNotIn("touches", report)
-        with open(self.path) as f:
-            self.assertEqual(json.load(f)["touches_filled"], filled)
-        out = self.io.StringIO()
-        with self.redirect(out):
-            self.touches.cmd_stats(self.argparse.Namespace(json=True, space=None, weeks=None))
-        st = json.loads(out.getvalue())
-        a = st["all"]
-        self.assertEqual((a["tasks"], a["done"], a["no_help"], a["no_words"], a["touches"], a["reopens"]), (3, 2, 1, 1, 5, 1))
-        self.assertEqual(a["kinds"], {"message": 2, "note": 1, "reopen": 1, "stop": 1})
-        self.assertEqual(a["ready_to_accept"], {"n": 2, "median_min": 4.0, "p90_min": 6.0})
-        self.assertEqual(sorted((r["name"], r["tasks"]) for r in st["spaces"]), [("app", 2), ("web", 1)])
-        # one space; the words never reach the stats
-        out = self.io.StringIO()
-        with self.redirect(out):
-            self.touches.cmd_stats(self.argparse.Namespace(json=False, space="web", weeks=None))
-        self.assertIn("web", out.getvalue())
-        self.assertNotIn("app ", out.getvalue())
-        self.assertNotIn("8080", out.getvalue())
-
-    def test_stats_back_fills_a_list_the_tick_hasnt(self):
-        old = self.log("old", [self.user("brief", "o0"), self.user("go ahead", "o1")])
-        self.task_list([{"id": 1, "title": "a", "state": "done", "started": 1000, "agents": [{"log": old}]}])
-        for _ in range(2):
-            out = self.io.StringIO()
-            with self.redirect(out):
-                self.touches.cmd_stats(self.argparse.Namespace(json=True, space=None, weeks=None))
-            self.assertEqual(json.loads(out.getvalue())["all"]["kinds"], {"message": 1})
+    def test_settings_holding_them_at_every_level_change_nothing(self):
+        self.assertTrue(self.settings.reactions_on("sp1"))
+        note = self.aset.session_note("t5")
+        self.assertTrue(note.startswith("Your settings: "))
+        self.assertNotIn("lesson", note.lower())
+        self.assertIn("- Merge: after checks", note)
+        with self.store.Store(self.loc, write=False) as s:
+            block = self.settings.settings_block(s, s.data["tasks"][0], "sp1")
+        self.assertNotIn("lesson", block.lower())
+        self.assertEqual(self.err.getvalue(), "")

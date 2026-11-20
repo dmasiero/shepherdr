@@ -30,8 +30,6 @@ from . import gitea  # fork: Gitea pull requests (gitea.py)
 from .news import news_pass, typing
 from .takeover import cant_go_on, takeover
 from .ghnews import main_pass, pr_deliver, pr_news
-from . import touches  # fork: SHEP-63
-from .touches import touches_pass  # fork: SHEP-63
 from .scheduler import SCHEDULER
 from .revive import revive_pass
 
@@ -430,6 +428,21 @@ def quiet_hc(verb, k):
     return subprocess.run(["hc", verb, k["address"]], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
 
 
+_guard_label_checked = False
+
+
+def clear_memory_alert():
+    """The memory guard's alert label off the scheduler's terminal, if that is what it holds (an agent's own alert
+    there is left alone)."""
+    k = hc_json("get", SCHEDULER)
+    try:
+        a = json.loads(((k or {}).get("labels") or {}).get("herdr.alert") or "null")
+    except ValueError:
+        return
+    if isinstance(a, dict) and a.get("about") and str(a.get("title", "")).startswith("Memory at "):
+        run(["hc", "label", SCHEDULER, "herdr.alert="])
+
+
 def memory_guard(report):
     """Past GUARD_MEMORY% memory in use, before oomd ends everything: idle agents of Done tasks
     end first (whatever their grace), then the person is told (an alert from the scheduler's
@@ -444,11 +457,18 @@ def memory_guard(report):
     if h["memory"] <= GUARD_MEMORY:
         # #1047: removed at every dip to 85%, memory hovering at 85-86% alerted each tick (every 15 s); the alert
         # time stays until memory is well under, so one toast per GUARD_ALERT_EVERY_MS while it stays near the limit
-        if g and h["memory"] <= GUARD_BACK_UNDER:
-            try:
-                os.remove(GUARD_FILE)
-            except OSError:
-                pass
+        if h["memory"] <= GUARD_BACK_UNDER:
+            if g:
+                try:
+                    os.remove(GUARD_FILE)
+                except OSError:
+                    pass
+            # SHEP-246: its alert is a state that is over now: the label goes too (it stayed for days, and a phone's
+            # glance listed it as current); once per scheduler start too, for one left by a version before this
+            global _guard_label_checked
+            if g or not _guard_label_checked:
+                _guard_label_checked = True
+                clear_memory_alert()
         return
     ended = end_done_pass(report, pressed=True)
     if ended:
@@ -501,7 +521,7 @@ def retry_one(row, k, log, report):
         report["retries"].append({"address": addr, "reason": row["reason"], "tries": row["tries"], "over": bool(row.get("over"))})
     # Not into words the person is writing to it (HERD-71): the next round tries again.
     if row.get("due") and row["due"] <= now() and status_word(k) != "working" and not typing(addr, k):
-        r = run(["hc", "send", addr, touches.tag("retry") + NUDGE.format(row["reason"].lower())])  # fork: SHEP-63, Herdr's own
+        r = run(["hc", "send", addr, NUDGE.format(row["reason"].lower())])
         if r.returncode == 0:
             row = {**row, "nudged": now()}
             row.pop("due")
@@ -645,10 +665,6 @@ def cmd_tick(args):
         memory_guard(report)
     except Exception as e:  # never stops the queue
         report["ended_error"] = str(e)
-    try:
-        touches_pass(report, args.folder)  # fork: SHEP-63, where the person stepped in (touches.py)
-    except Exception as e:  # never stops the queue
-        report["touches_error"] = str(e)
     try:
         lost_logs_pass(report, args.folder)
     except Exception as e:  # never stops the queue
