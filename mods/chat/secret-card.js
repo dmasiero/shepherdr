@@ -22,6 +22,13 @@ export class SecretCards {
     this.kept = new Map();
     // Told when an ask is kept or declined here: (ask, how), for its quiet line (main.js).
     this.onEnd = null;
+    // fork: SHEP-74: the masked box that has the keyboard, or null: the chat's refocus() leaves it be.
+    this.typing = null;
+  }
+
+  // fork: SHEP-74: whether one of these cards' boxes has the keyboard.
+  hasKeys() {
+    return Boolean(this.typing);
   }
 
   // What to show for a terminal: its asks, then those just kept.
@@ -38,7 +45,7 @@ export class SecretCards {
   // those of asks gone let go.
   prepare(list, cx) {
     const want = new Set(list.filter((a) => !a.kept).map((a) => key(a.address, a.name)));
-    for (const [k, st] of this.states) if (!want.has(k) && !st.busy) { st.box?.release(); this.states.delete(k); }
+    for (const [k, st] of this.states) if (!want.has(k) && !st.busy) { if (st.box && st.box === this.typing) this.typing = null; st.box?.release(); this.states.delete(k); }
     const missing = [...want].filter((k) => !this.states.has(k));
     for (const k of missing) this.states.set(k, { box: null, level: null, err: "", busy: false });
     if (missing.length) cx.timer.after(0, (cx) => {
@@ -49,6 +56,10 @@ export class SecretCards {
         st.box.set_masked(true);
         st.box.on("change", (_e, cx) => { st.err = ""; cx.notify(); });
         st.box.on("submit", (_e, cx) => { const [address, name] = k.split("|"); this.save({ address, name }, cx); });
+        // fork: SHEP-74: while the masked box has the keyboard the chat's composer doesn't take it back (refocus())
+        const b = st.box;
+        b.on("focus", () => { this.typing = b; });
+        b.on("blur", () => { if (this.typing === b) this.typing = null; });
       }
       cx.notify();
     });
