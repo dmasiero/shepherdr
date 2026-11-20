@@ -130,9 +130,9 @@ export const untilLine = (words) => `Snoozed until ${words}`;
 export const BACK = "Back from snooze";
 
 // ---- Other time… (typed): herdr-task's when.py, the same words the same way --------------------------------------
-// "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00", "18:00", or a span from now ("6h", "in 2 days").
+// "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00", "18:00" or "1800" (SHEP-79), or a span from now ("6h", "in 2 days").
 // -> { at } (ms) or { error } in herdr-task's words. This machine's time zone (the service's: the person's).
-export const AT_HOW = 'Write a time like "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00" or "18:00" (this machine\'s time zone).';
+export const AT_HOW = 'Write a time like "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00", "18:00" or "1800" (this machine\'s time zone).';
 export const IN_HOW = 'Write a span like "6h", "90m", "2 days", "6 hours" or "1h 30m".';
 const UNITS = { m: 1, min: 1, mins: 1, minute: 1, minutes: 1, h: 60, hr: 60, hrs: 60, hour: 60, hours: 60, d: 1440, day: 1440, days: 1440, w: 10080, wk: 10080, week: 10080, weeks: 10080 };
 const NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -142,7 +142,8 @@ function parseClock(text, how = AT_HOW) {
   const t = text.trim().toLowerCase();
   if (t === "noon" || t === "midday") return [12, 0];
   if (t === "midnight") return [0, 0];
-  const m = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/.exec(t);
+  // 3 or 4 digits without the colon (SHEP-79): H:MM / HH:MM, the last two the minutes ("230" is "2:30"), as when.py
+  const m = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/.exec(t) ?? /^(\d{1,2})(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?$/.exec(t);
   const bad = () => new Fail(`Unknown time '${text.trim()}'. ${how}`);
   if (!m || (m[2] === undefined && m[3] === undefined)) throw bad();
   let h = Number(m[1]);
