@@ -253,7 +253,7 @@ export class Compat {
   agents: { info(addr: string, reader: any): Promise<unknown>; restart(addr: string, reader: any, pick: any): Promise<string>; choices(machine: string | null): Promise<unknown>; ownDefaults(): Promise<{ claude: unknown; codex: unknown }> } | null = null;
 
   /** Agents' secret asks (service/secrets.ts), set by main. */
-  secrets: { asks(): { address: string; name: string; why: string }[] } | null = null;
+  secrets: { asks(): { address: string; name: string; why: string }[]; endsOf?(address: string): { name: string; at: number }[] } | null = null;
 
   /** A secret ask as 2.1's masked card: kept for this space, this machine, or Everywhere. */
   secretAsk(a: { address: string; name: string; why: string }) {
@@ -666,6 +666,8 @@ export class Compat {
     const watch = (this as any).watch;
     const quiet = (id: string, at: number, text: string): Message => ({ id, who: "agent", at, ended: text });
     if (addr) for (const e of (this.asks as any)?.endsOf?.(addr) ?? []) if (e.kind !== "questions") messages.push(quiet(`ae:${e.id}`, e.at, `${e.title} · ${e.how}`));
+    // fork: SHEP-76: a secret declined from its card, as the window's quiet line
+    if (addr) for (const e of this.secrets?.endsOf?.(addr) ?? []) messages.push(quiet(`sd:${addr}:${e.name}:${e.at}`, e.at, `Secret: ${e.name} · Declined`));
     // its start screens (core/screens.js): an open one as its card, the rest a line saying how they went
     const screens = (who: string, ref: string | null, by?: { ref: string; title: string; chat: string }) => {
       for (const c of watch?.cardsOf?.(who) ?? []) {
@@ -682,6 +684,7 @@ export class Compat {
       if (a) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: { ...this.question(a, key), by } as any });
       else for (const s of (this.secrets?.asks() ?? []).filter((x) => x.address === r.worker)) messages.push({ id: `secret:${s.address}:${s.name}`, who: "agent", at: Date.now(), secret: { ...this.secretAsk(s), by } } as Message);
       for (const e of (this.asks as any)?.endsOf?.(r.worker) ?? []) messages.push(quiet(`ae:${e.id}`, e.at, `${r.ref} · ${e.title} · ${e.how}`));
+      for (const e of this.secrets?.endsOf?.(r.worker) ?? []) messages.push(quiet(`sd:${r.worker}:${e.name}:${e.at}`, e.at, `${r.ref} · Secret: ${e.name} · Declined`));
       screens(r.worker, r.ref, by);
     }
     const st = t?.status?.state ?? null;
