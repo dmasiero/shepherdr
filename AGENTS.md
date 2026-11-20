@@ -22,6 +22,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   scheduler on another home can overwrite every machine's spaces.
 - `herdr-app check <mod folder>` runs a mod's `init()` for real: never for `shepherdr-settings` (its init pushes
   settings to other machines).
+- Window-mod modules with only gpui imports (e.g. `mods/chat/cards.js`) run whole in node by swapping their import
+  lines for stubs (see `test/test_question_card_enter.py`).
 - Window-mod methods (e.g. chat's `refocus()`) can be tested by extracting the method text from `mods/chat/main.js`
   and running it in node with stubs (see `test/test_chat_refocus.py`).
 - Mark up (`mods/artifacts/markup.js`) imports must be listed in `MARKUP_PARTS` in `mods/artifacts/bin/herdr-artifact`
