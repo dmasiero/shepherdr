@@ -24,6 +24,9 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   settings to other machines).
 - Window-mod modules with only gpui imports (e.g. `mods/chat/cards.js`) run whole in node by swapping their import
   lines for stubs (see `test/test_question_card_enter.py`).
+- Window chat focus tests: `test/test_question_card_keeps_keys.py` runs cards.js, secret-card.js and main.js's
+  `refocus()`/`cardKeys()` together in node with a one-owner keyboard stand-in; `SHEP74_ROOT=<git archive dir>` runs it
+  against another tree.
 - Window-mod methods (e.g. chat's `refocus()`) can be tested by extracting the method text from `mods/chat/main.js`
   and running it in node with stubs (see `test/test_chat_refocus.py`).
 - Mark up (`mods/artifacts/markup.js`) imports must be listed in `MARKUP_PARTS` in `mods/artifacts/bin/herdr-artifact`
