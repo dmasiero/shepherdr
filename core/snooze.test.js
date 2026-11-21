@@ -1,7 +1,7 @@
 // fork: Snooze (SHEP-78): the wake rule, the shared entries and Other time…'s words (herdr-task's when.py).
 import { expect, test } from "bun:test";
 import { startsAt } from "./tasks.js";
-import { judge, resolve, signature, snoozeIn, unsnooze, snoozedUntil, wokeOf, nextWake, snoozedLabels, whenOf, untilLine, WHY, canSnooze, LAST, lastOf, sameAsLast } from "./snooze.js";
+import { judge, resolve, signature, snoozeIn, unsnooze, snoozedUntil, wokeOf, nextWake, snoozedLabels, whenOf, untilLine, backLine, WHY, canSnooze, LAST, lastOf, sameAsLast } from "./snooze.js";
 import { SNOOZE_PICKS } from "./menus.js";
 
 const T0 = new Date(2026, 10, 20, 10, 0).getTime(); // Fri 20 Nov 2026 10:00, this machine's time
@@ -148,4 +148,12 @@ test("Other time… takes a time without the colon, as when.py", () => {
   for (const typed of COLONLESS_REFUSED) expect([typed, typeof whenOf({ at: typed }, THU).error]).toEqual([typed, "string"]);
   for (const [typed, mins] of [["90m", 90], ["6h", 360], ["in 2 days", 2880], ["1h 30m", 90]]) expect(whenOf({ at: typed }, THU)).toEqual({ at: THU + mins * 60_000 });
   expect(whenOf({ at: "9" }, THU).error).toContain('"18:00" or "1800"');
+});
+
+test("the back line: a time up says only Back from snooze, an event says why (SHEP-81)", () => {
+  expect(backLine(WHY.time)).toBe("Back from snooze");
+  expect(backLine(WHY.asked)).toBe("Back from snooze · Asked a question");
+  expect(backLine(WHY.blocked)).toBe("Back from snooze · Blocked");
+  expect(backLine(WHY.ready)).toBe("Back from snooze · Ready");
+  expect(backLine(null)).toBe("Back from snooze");
 });

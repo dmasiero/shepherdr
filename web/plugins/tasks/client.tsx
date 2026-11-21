@@ -211,7 +211,7 @@ function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, le
         {shown || woke ? (
           <span aria-hidden={!!onOpen} className={clsx('col-start-2 flex h-5 min-w-0 items-center gap-1.5 text-[0.75rem]/4 phone:h-6 phone:text-[0.8125rem]/5', statusRow)}>
             {/* fork: SHEP-78: back from a snooze, and why, quiet before what it says now */}
-            {woke ? <span className="flex min-w-0 items-center gap-1 truncate text-fg2"><SnoozeIcon aria-hidden className="size-3 shrink-0 text-fg3 phone:size-3.5" />{SZ.BACK as string} · {woke}</span> : <span className="min-w-0 truncate text-fg2">{shown}</span>}
+            {woke ? <span className="flex min-w-0 items-center gap-1 truncate text-fg2"><SnoozeIcon aria-hidden className="size-3 shrink-0 text-fg3 phone:size-3.5" />{(SZ.backLine as (why: string) => string)(woke)}</span> : <span className="min-w-0 truncate text-fg2">{shown}</span>}
           </span>
         ) : null}
         {end ? <span className={clsx('col-start-3 row-start-1 flex items-center', two && (rows === 3 ? 'row-span-3' : 'row-span-2'), two && '@max-[24rem]:row-span-1 @max-[24rem]:row-start-2')}>{end}</span> : null}

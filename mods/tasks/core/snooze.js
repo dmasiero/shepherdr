@@ -128,6 +128,9 @@ export function snoozedLabels(map, at = Date.now()) {
 // A snoozed row's line: "Snoozed until Mon 9:00", given core/tasks.js startsAt's words (as Scheduled's "Starts Mon 9:00").
 export const untilLine = (words) => `Snoozed until ${words}`;
 export const BACK = "Back from snooze";
+// A row back from a snooze: "Back from snooze · Asked a question" (and Blocked, Ready), but its time up says only
+// "Back from snooze" (SHEP-81): `woke` keeps WHY.time, which the service and push.ts compare, only the words drop it.
+export const backLine = (why) => (why && why !== WHY.time ? `${BACK} · ${why}` : BACK);
 
 // ---- Other time… (typed): herdr-task's when.py, the same words the same way --------------------------------------
 // "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00", "18:00" or "1800" (SHEP-79), or a span from now ("6h", "in 2 days").

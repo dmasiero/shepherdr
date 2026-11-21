@@ -95,10 +95,21 @@ for (const group of ["status", "you", "space"]) {
   });
 }
 
-test("a task back from a snooze says why on its line", () => {
+test("a task back from a snooze by its time says only Back from snooze (SHEP-81)", () => {
   const p = panel();
   render(p);
-  expect(words(byId(`task-${key(3)}`))).toContain("Back from snooze · Time's up");
+  const line = words(byId(`task-${key(3)}`));
+  expect(line).toContain("Back from snooze");
+  expect(line.some((w) => w.includes("Time's up"))).toBe(false);
+});
+
+test("a task back from a snooze by an event says why on its line", () => {
+  for (const why of ["Asked a question", "Blocked", "Ready"]) {
+    shared.set("tasks.snoozed", { [key(3)]: { woke: why, at: 1 } });
+    const p = panel();
+    render(p);
+    expect(words(byId(`task-${key(3)}`))).toContain(`Back from snooze · ${why}`);
+  }
 });
 
 test("a snoozed task's asks and waits are in none of the window's counts; its time up, they are again", () => {
