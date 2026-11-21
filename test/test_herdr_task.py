@@ -908,16 +908,31 @@ class HomeLead(unittest.TestCase):
         self.assertEqual(health(laptop), ["t2"])
         self.assertEqual((self.lead("mini"), self.lead("laptop")), (None, "mini"))
 
-    def test_a_hub_that_doesnt_link_back_gets_the_others_news(self):
+    def test_a_hub_that_doesnt_link_back_gets_none_of_the_others_news(self):
+        """#1188: the mini can't reach the laptop, so its home Assistant never gets the laptop's news
+        (it could only sum up items it can't check); the laptop's own home Assistant keeps them."""
         world = home_world(mini_links_laptop=False)
         mini, laptop = self.round(world, "mini"), self.round(world, "laptop")
         self.assertEqual([l.split(">", 1)[1].split("<")[0] for _, l in self.overview(mini)], ["~/shop: SHOP-1 is ready"])
-        # The laptop's own news, and only its own, goes to the mini's home Assistant over its link.
-        ov = self.overview(laptop)
-        self.assertEqual({to for to, _ in ov}, {"mini/t1"})
-        self.assertEqual(sorted(l.split(">", 1)[1].split("<")[0] for _, l in ov),
-                         ["Machine laptop: Disk crossed its alert limit (Disk 97%)", "laptop · ~/shop: SHOP-2 is ready"])
-        self.assertTrue(all('machine="laptop"' in l for _, l in ov))
+        self.assertEqual(self.lead("laptop"), "mini")
+        self.assertNotIn("mini/t1", {to for to, _ in laptop}, "the laptop sent its news to a home Assistant that can't reach it")
+        self.assertEqual([(to, l.split(">", 1)[1].split("<")[0]) for to, l in self.overview(laptop)], [("t2", "~/shop: SHOP-2 is ready")])
+
+    def test_stale_overview_lines_are_dropped(self):
+        """#1188: overview lines queued for another machine's home Assistant (an older version's way),
+        or waiting over OVERVIEW_KEEP_MS (30 min), are never sent."""
+        world, t = home_world(mini_links_laptop=False), 10 ** 12
+        path = os.path.join(self.store, ".home-laptop.json")
+        old = lambda to, text, at: {"to": to, "line": f'<herdr-overview machine="laptop">{text}</herdr-overview>', "at": at}
+        with open(path, "w") as f:
+            json.dump({"at": 0, "outbox": [old("home:mini", "queued for the mini", t - 1000),
+                                           old("home:local", "long ago", t - 31 * 60000),
+                                           old("home:local", "a minute ago", t - 60000)]}, f)
+        world["laptop"]["news"] = []
+        sent = self.round(world, "laptop", at=t)
+        self.assertEqual([(to, l.split(">", 1)[1].split("<")[0]) for to, l in self.overview(sent)], [("t2", "a minute ago")])
+        with open(path) as f:
+            self.assertEqual(json.load(f)["outbox"], [])
 
     def test_a_lone_window_leads(self):
         world = {"mini": dict(home_world()["mini"], links=[], linked_by=0)}
@@ -2580,6 +2595,97 @@ class NewWorktrees(unittest.TestCase):
             set_branch(self.store, self.task(mode="here"), "ABC-4")
 
 
+class SetupBeforeTheAgent(unittest.TestCase):
+    """#1197 (SHEP-272): Settings > Tasks > Before the agent starts (tasks.setup): a shell command run in each new
+    worktree, in the agent's own terminal ahead of it; a failure holds the task with why and starts no agent.
+    Throwaway repos and settings (NewWorktrees'); hc is never run."""
+
+    setUp, git, commit, task, write_settings = (NewWorktrees.setUp, NewWorktrees.git, NewWorktrees.commit,
+                                                NewWorktrees.task, NewWorktrees.write_settings)
+
+    def begin(self, t, space="sp1"):
+        """commands.begin with only the agent's start faked: what launch was given."""
+        import herdr_task.commands as commands
+        got = {}
+        from unittest import mock
+        with mock.patch.object(commands, "launch", lambda s, t, argv, space, message=None, parent=None, setup=None: got.update(setup=setup) or {"address": "x"}), \
+                mock.patch.object(commands, "brief", lambda *a: "brief"), mock.patch.object(commands, "parent_for", lambda p, sp: None):
+            commands.begin(self.store, t, ["claude"], space)
+        return got["setup"]
+
+    def test_runs_in_a_new_worktree_only(self):
+        self.write_settings({"spaces": {"sp1": {"folder": self.main, "tasks": {"setup": "  bun install  "}}}})
+        t = self.task()
+        self.assertEqual(self.begin(t), "bun install")
+        self.assertTrue(os.path.isdir(t["worktree"]))
+        # started again in the worktree it has: not again
+        self.assertIsNone(self.begin(t))
+        # its last setup failed: again
+        t["setup_failed"] = {"code": 1}
+        self.assertEqual(self.begin(t), "bun install")
+        self.assertNotIn("setup_failed", t)
+        # a task in the folder itself, or a space with none set: nothing
+        self.assertIsNone(self.begin(self.task(mode="here")))
+        self.write_settings({})
+        self.assertIsNone(self.begin(self.task()))
+        # Everywhere's applies to every space
+        self.write_settings({"everywhere": {"tasks": {"setup": "make deps"}}})
+        self.assertEqual(self.begin(self.task(), space="other"), "make deps")
+
+    def wrapper(self, setup):
+        """SETUP_SH for real in sh: (exit code, its output, whether the agent ran, what _setup-failed got)."""
+        d = tempfile.mkdtemp(dir=self.root)
+        ht, called, ran = os.path.join(d, "ht"), os.path.join(d, "called"), os.path.join(d, "ran")
+        with open(ht, "w") as f:
+            f.write(f'#!/bin/sh\necho "$@" > {called}\n')
+        os.chmod(ht, 0o755)
+        log = os.path.join(d, "logs", "f-1.log")
+        r = subprocess.run(["sh", "-c", self.launch.SETUP_SH, "herdr-setup", setup, log, ht, "SHEP-1", self.main,
+                            "sh", "-c", f"echo agent > {ran}"], capture_output=True, text=True, cwd=self.main, stdin=subprocess.DEVNULL)
+        got = open(called).read().strip() if os.path.exists(called) else None
+        return r.returncode, r.stdout, os.path.exists(ran), got, log
+
+    def test_the_agent_starts_only_after_it_succeeds(self):
+        code, out, ran, called, log = self.wrapper("echo linking deps; ls >/dev/null")
+        self.assertEqual((code, ran, called), (0, True, None))
+        self.assertIn("linking deps", out)
+        self.assertIn("Setup done. Starting the agent.", out)
+        self.assertIn("linking deps", open(log).read())
+        self.assertFalse(os.path.exists(log + ".rc"))
+
+    def test_a_failure_holds_the_task_without_its_agent(self):
+        code, out, ran, called, log = self.wrapper("echo missing bun >&2; exit 3")
+        self.assertEqual((code, ran), (3, False))
+        self.assertIn("Setup failed (exit 3), so the agent was not started.", out)
+        self.assertEqual(called, f"_setup-failed SHEP-1 --folder {self.main} --code 3 --log {log}")
+        self.assertIn("missing bun", open(log).read())  # stderr too
+
+    def test_setup_failed_says_why(self):
+        import herdr_task.commands as commands
+        import herdr_task.base as base
+        from herdr_task.agents import task_status
+        from unittest import mock
+        log = os.path.join(self.root, "f-1.log")
+        with open(log, "w") as f:
+            f.write("resolving\n\x1b[31merror: lockfile had changes\x1b[0m\n\n")
+        t = self.task(state="running", agents=[{"address": "t1", "at": base.now()}], attention_at=1)
+        args = __import__("argparse").Namespace(id="SHEP-1", folder=self.main, code=1, log=log)
+        with mock.patch.object(commands, "open_store", lambda a: self.store):
+            commands.cmd_setup_failed(args)
+        self.assertEqual(t["setup_failed"]["code"], 1)
+        self.assertIn("setup before the agent failed (exit 1): error: lockfile had changes. The agent didn't start.", t["attention"])
+        self.assertIn(log, t["attention"])
+        self.assertEqual(task_status(t, [])[:2], ("needs", "attention"))
+        # started again at once: not "already running"
+        self.assertIsNone(commands.just_started(t))
+
+    def test_the_wrapper_goes_before_the_agent_in_its_command(self):
+        cmd = self.launch.setup_argv(self.store, {"id": 4}, "bun install", ["claude", "brief"])
+        self.assertEqual(cmd[:5], ["sh", "-c", self.launch.SETUP_SH, "herdr-setup", "bun install"])
+        self.assertTrue(cmd[5].endswith(os.path.join(".setup", "f-4.log")))
+        self.assertEqual(cmd[-4:], ["SHEP-4", self.main, "claude", "brief"])
+
+
 class MergedOnlyWithOwnWork(unittest.TestCase):
     """SHEP-23: a task counts as merged only when work of its own landed (its pull request merged, or
     commits made on its branch now in the base), never when its branch just caught up with main, and
@@ -2650,6 +2756,52 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
             self.task.pop("pr")
             self.task.update(mode="here")  # worked in the folder itself: never merges
             self.assertFalse(merges())
+
+    def test_the_accept_card_shows_its_markdown_documents(self):
+        """SHEP-273 (#1150): the evidence carries its new and changed Markdown files as they are on its branch, new
+        ones first, a deleted one gone, other files never; `only` when every file it changed is Markdown."""
+        from unittest import mock
+        import herdr_task.proof as proof
+        wt = self.task["worktree"]
+
+        def write(path, text):
+            os.makedirs(os.path.dirname(os.path.join(wt, path)) or wt, exist_ok=True)
+            with open(os.path.join(wt, path), "w") as f:
+                f.write(text)
+            self.git(wt, "add", path)
+
+        write("README.md", "# Old\n")
+        write("gone.md", "bye\n")
+        self.git(wt, "commit", "-q", "-m", "before")
+        self.git(self.main, "merge", "-q", "--ff-only", "task/1")
+        with mock.patch.object(proof, "artifacts_of", lambda folder: []):
+            docs = lambda: proof.evidence(self.store, self.task)["docs"]
+            self.assertIsNone(docs())  # nothing of its own yet
+            write("plans/q3.md", "# Plan\n\n- one\n")
+            write("README.md", "# New\n")
+            self.git(wt, "rm", "-q", "gone.md")
+            self.git(wt, "commit", "-q", "-m", "the plan")
+            d = docs()
+            self.assertEqual([(x["path"], x["new"]) for x in d["list"]], [("plans/q3.md", True), ("README.md", False)])
+            self.assertEqual(d["list"][0]["text"], "# Plan\n\n- one")
+            self.assertTrue(d["only"])
+            self.assertEqual(d["count"], 2)
+            write("app.py", "print(1)\n")
+            write("long.markdown", "line\n" * (proof.DOC_MAX // 4))
+            self.git(wt, "commit", "-q", "-m", "code too")
+            d = docs()
+            self.assertFalse(d["only"])
+            long = next(x for x in d["list"] if x["path"] == "long.markdown")
+            self.assertTrue(long["cut"])
+            self.assertLessEqual(len(long["text"]), proof.DOC_MAX)
+            self.assertTrue(long["text"].endswith("line"))
+            self.assertNotIn("app.py", [x["path"] for x in d["list"]])
+            # worked in the folder itself: its commits there, read as they are now
+            self.task.update(mode="here", started=0, ready_at=0)
+            self.store.loc["folder"] = wt
+            d = docs()
+            self.assertIn("plans/q3.md", [x["path"] for x in d["list"]])
+            self.assertNotIn("gone.md", [x["path"] for x in d["list"]])
 
     def test_a_branch_caught_up_with_main_is_not_merged(self):
         self.commit(self.main, "another task merged")
@@ -4744,18 +4896,19 @@ class AssistantSettings(unittest.TestCase):
         self.assertTrue(note.startswith("Your settings: "))
         for label, words in [("Review", "off"), ("Merge", "ask the person first"), ("Proof", "on"), ("Task agent", "claude"),
                              ("Base branch", "the folder's checked-out branch"), ("Worktrees", "on"), ("Tasks at once", "10 per folder"),
-                             ("Task notes", "none"), ("Autopilot", "off"), ("Reactions", "on"),
+                             ("Task notes", "none"), ("Before the agent starts", "none"), ("Autopilot", "off"), ("Reactions", "on"),
                              ("Feedback offers", "on (offer once to file a Shepherdr problem as an issue on eliasstravik/shepherdr")]:
             self.assertTrue(self.line(note, label).startswith(f"- {label}: {words}"), self.line(note, label))
         # nothing differs from Herdr's default: no line says who set it
         self.assertNotIn("; set for", note)
         self.assertNotIn("; your setting", note)
-        self.assertEqual(len(note.split("\n")), 14)  # head, 12 lines (Suggested next message included), the Reactions guide
+        self.assertEqual(len(note.split("\n")), 15)  # head, 13 lines (Suggested next message included), the Reactions guide
         self.assertIn("- Suggested next message: on (end each reply", note)
 
     def test_the_block_for_a_space_with_its_own(self):
         self.write({"everywhere": {"tasks": {"review_rounds": 2, "merge": "checks"}, "assistant": {"reactions": True}},
-                    "spaces": {"sp1": {"tasks": {"base": "dev", "start_notes": "bun install", "max_running": 3, "worktrees": False},
+                    "spaces": {"sp1": {"tasks": {"base": "dev", "start_notes": "bun install", "max_running": 3, "worktrees": False,
+                                                  "setup": "ln -s ../node_modules ."},
                                        "worker": {"agent": "codex", "model": "gpt-5", "effort": "high"},
                                        "reviewer": {"agent": "claude", "model": "opus"},
                                        "assistant": {"reactions": False}},
@@ -4771,6 +4924,7 @@ class AssistantSettings(unittest.TestCase):
         self.assertIn("- Worktrees: off (tasks work in the folder itself); set for this space", note)
         self.assertIn("- Tasks at once: 3 per folder", note)
         self.assertIn("- Task notes: start notes set", note)
+        self.assertIn("- Before the agent starts: ln -s ../node_modules . (runs in each new worktree first", note)
         self.assertEqual(self.line(note, "Autopilot"), "- Autopilot: on, every 30 minutes, direction: Ship the beta; set for this space")
         self.assertIn("- Reactions: off", note)
         self.assertIn("never react", note.split("\n")[-1])
@@ -4778,7 +4932,7 @@ class AssistantSettings(unittest.TestCase):
         labels = self.terminals["t5"]["labels"]
         self.assertEqual(labels["herdr.reactions"], "off")
         self.assertEqual(sorted(self.aset.parse(labels["herdr.settings"])),
-                         sorted(["review", "merge", "proof", "agent", "base", "worktrees", "max_running", "notes", "autopilot", "reactions", "suggestions", "feedback"]))
+                         sorted(["review", "merge", "proof", "agent", "base", "worktrees", "max_running", "notes", "setup", "autopilot", "reactions", "suggestions", "feedback"]))
         # another space inherits Everywhere's, with its own merge
         self.assistant("t6", "sp2")
         other = self.aset.session_note("t6")
@@ -5728,6 +5882,126 @@ class TaskFlow(unittest.TestCase):
         self.assertEqual(github.pr_open(self.store, self.task, "o/r")["number"], 2918)
         self.assertEqual(self.git(self.root, "--git-dir", remote, "rev-parse", "feature"), tip)
 
+    def taking(self, prs):
+        """A GitHub remote (a bare repo) and gh answering `pr view` from prs ({number: fields}); what gh was asked."""
+        import herdr_task.github as github
+        remote = os.path.join(self.root, "remote.git")
+        self.git(self.root, "init", "-q", "--bare", remote)
+        self.git(self.main, "remote", "add", "origin", remote)
+        self.git(self.main, "push", "-q", "origin", "main")
+        asked = []
+
+        def gh(*a, **k):
+            asked.append(a)
+            if a[:2] == ("pr", "view"):
+                v = prs.get(int(a[2]))
+                if not v:
+                    return False, "", "no pull requests found"
+                return True, (v["state"] if "-q" in a else json.dumps({"number": int(a[2]), "url": f"https://github.com/o/r/pull/{a[2]}",
+                                                                       "isCrossRepository": False, "baseRefName": "main", **v})), ""
+            return (True, "https://github.com/o/r/pull/99", "") if a[:2] == ("pr", "create") else (True, "[]", "")
+        self.patch(github, "gh", gh)
+        self.patch(self.commands, "gh", gh)
+        self.patch(self.commands, "github", lambda s: "o/r")
+        return remote, asked
+
+    def test_ready_takes_a_pull_request_on_another_branch(self):
+        """#1155: its agent pushed to fix/thing and opened a pull request there, then closed the one on the task branch.
+        ready --pr takes the open one: no second pull request, and later commits go to its branch."""
+        import herdr_task.github as github
+        wt = self.task["worktree"]
+        tip = self.commit(wt, "the fix", "a.txt")
+        remote, asked = self.taking({31: {"state": "OPEN", "headRefName": "fix/thing", "headRefOid": tip}, 30: {"state": "CLOSED"}})
+        self.git(wt, "push", "-q", "origin", "task/1:refs/heads/fix/thing")
+        self.task["pr"] = {"number": 30, "url": "https://github.com/o/r/pull/30", "repo": "o/r"}  # the closed one
+        self.commands.take_pr(self.store, self.task, "#31")
+        self.assertEqual(self.task["pr"], {"number": 31, "url": "https://github.com/o/r/pull/31", "repo": "o/r", "taken": True,
+                                           "branch": "fix/thing"})
+        self.assertEqual(github.pr_open(self.store, self.task, "o/r", "Fixed")["number"], 31)
+        self.assertNotIn(("pr", "create"), [a[:2] for a in asked])
+        self.assertNotIn(("pr", "edit"), [a[:2] for a in asked])  # its description is its author's
+        self.assertEqual(self.git(self.root, "--git-dir", remote, "branch", "--list", "task/1"), "")
+        tip = self.commit(wt, "a later fix", "a.txt")
+        github.pr_open(self.store, self.task, "o/r")
+        self.assertEqual(self.git(self.root, "--git-dir", remote, "rev-parse", "fix/thing"), tip)
+        # Taken again: nothing changes. "" lets go of it.
+        self.commands.take_pr(self.store, self.task, "31")
+        self.assertEqual(self.task["pr"]["number"], 31)
+        self.commands.take_pr(self.store, self.task, "")
+        self.assertNotIn("pr", self.task)
+
+    def test_a_pull_request_that_cant_be_taken_is_refused(self):
+        """--pr: closed, from a fork, merging elsewhere, another task's, or ahead of the task's branch: refused, nothing kept."""
+        wt = self.task["worktree"]
+        tip = self.commit(wt, "work", "a.txt")
+        remote, _ = self.taking({1: {"state": "CLOSED", "headRefName": "x"}, 2: {"state": "OPEN", "headRefName": "x", "isCrossRepository": True},
+                                 3: {"state": "OPEN", "headRefName": "x", "baseRefName": "dev", "headRefOid": tip},
+                                 4: {"state": "OPEN", "headRefName": "ahead", "headRefOid": "0" * 40}})
+        self.git(wt, "push", "-q", "origin", "task/1:refs/heads/ahead")
+        other = self.commit(wt, "theirs only", "b.txt")
+        self.git(wt, "push", "-q", "-f", "origin", "task/1:refs/heads/ahead")
+        self.git(wt, "reset", "-q", "--hard", "HEAD~1")
+        for n, said in ((1, "is closed"), (2, "from a fork"), (3, "merges into dev"), (77, "Couldn't find"), ("x", "number")):
+            with self.assertRaises(Exception) as e:
+                self.commands.take_pr(self.store, self.task, str(n))
+            self.assertIn(said, str(e.exception))
+        import herdr_task.github as github
+        prs = {4: {"state": "OPEN", "headRefName": "ahead", "headRefOid": other}}
+        self.patch(self.commands, "gh", lambda *a, **k: (True, json.dumps({"number": 4, "url": "u", "baseRefName": "main", **prs[4]}), ""))
+        with self.assertRaises(Exception) as e:
+            self.commands.take_pr(self.store, self.task, "4")
+        self.assertIn("doesn't hold pull request #4's latest commit", str(e.exception))
+        self.assertNotIn("pr", self.task)
+        self.store.data["tasks"].append({"id": 2, "title": "Other", "state": "ready", "pr": {"number": 4, "repo": "o/r"}})
+        self.git(wt, "merge", "-q", "--ff-only", other)
+        with self.assertRaises(Exception) as e:
+            self.commands.take_pr(self.store, self.task, "4")
+        self.assertIn("already", str(e.exception))
+
+    def test_a_new_task_works_on_the_pull_request_it_took(self):
+        """#1195 idea 6: add --pr <a bot's pull request>: its worktree starts on that branch, the bot's commits are its work
+        (nothing-to-merge never), its brief says so, and ready pushes on top of the bot's branch."""
+        import herdr_task.github as github
+        import herdr_task.launch as launch
+        prs = {}
+        remote, asked = self.taking(prs)
+        bot = os.path.join(self.root, "bot")
+        self.git(self.root, "clone", "-q", "-b", "main", remote, bot)
+        for k, v in (("user.name", "B"), ("user.email", "b@example.com"), ("commit.gpgsign", "false")):
+            self.git(bot, "config", k, v)
+        self.git(bot, "checkout", "-q", "-b", "deps/bump-x")
+        bump = self.commit(bot, "bump x", "deps.txt")
+        self.git(bot, "push", "-q", "origin", "deps/bump-x")
+        self.store.data["tasks"].append({"id": 2, "title": "Land the bump", "state": "todo", "mode": "worktree", "agents": []})
+        t = self.store.data["tasks"][-1]
+        prs[12] = {"state": "OPEN", "headRefName": "deps/bump-x", "headRefOid": bump}
+        self.patch(launch, "WORKTREES", os.path.join(self.root, "trees"))
+        self.patch(launch, "settings_for", lambda s, space: {"tasks": {}})
+        self.commands.take_pr(self.store, t, "12")
+        self.assertEqual(t["pr"]["branch"], "deps/bump-x")
+        wt = launch.folder_for(self.store, t)
+        self.assertEqual(self.git(wt, "rev-parse", "HEAD"), bump)
+        self.assertEqual(t["start"], self.git(self.main, "rev-parse", "main"))
+        self.assertFalse(self.commands.in_base(self.store, t))
+        self.assertIn("took pull request #12 (branch deps/bump-x)", launch.where_line(t))
+        mine = self.commit(wt, "fix the build after the bump", "a.txt")
+        self.assertEqual(github.pr_open(self.store, t, "o/r", "The bump lands")["number"], 12)
+        self.assertEqual(self.git(self.root, "--git-dir", remote, "rev-parse", "deps/bump-x"), mine)
+        self.assertNotIn(("pr", "create"), [a[:2] for a in asked])
+
+    def test_a_taken_pull_request_that_closed_is_said(self):
+        """A taken pull request closed meanwhile: ready says so, never a new pull request of the task's own instead."""
+        import herdr_task.github as github
+        wt = self.task["worktree"]
+        tip = self.commit(wt, "work", "a.txt")
+        remote, asked = self.taking({5: {"state": "CLOSED"}})
+        self.git(wt, "push", "-q", "origin", "task/1:refs/heads/theirs")
+        self.task["pr"] = {"number": 5, "url": "u", "repo": "o/r", "taken": True, "branch": "theirs"}
+        with self.assertRaises(Exception) as e:
+            github.pr_open(self.store, self.task, "o/r")
+        self.assertIn("which this task took, is closed", str(e.exception))
+        self.assertNotIn(("pr", "create"), [a[:2] for a in asked])
+
     def test_the_same_red_checks_are_told_once(self):
         """#796: after ready again, the same failing checks of the same commit aren't news again."""
         from herdr_task import ghnews, base
@@ -6633,6 +6907,75 @@ class ReadyMergeGit(unittest.TestCase):
         self.assertEqual(t["start"], self.git(self.main, "rev-parse", "main"))
 
 
+class CodexGuardianRollout(unittest.TestCase):
+    """GitHub #1201: a Codex process holds its approval reviewer's ("guardian") rollout open beside its own (and
+    its spawned helpers'). The task's recorded session and the Assistant's saved resume record (herdr.resume) must
+    name its own conversation, whichever file it opened first."""
+
+    OWN, GUARDIAN, HELPER = ("00000000-0000-0000-0000-00000000000" + c for c in "cab")
+
+    def setUp(self):
+        sys.path.insert(0, BIN)
+        import herdr_task.sessions as sessions
+        import herdr_task.revive as revive
+        self.sessions, self.revive = sessions, revive
+        sessions._table["at"] = None
+        self.addCleanup(lambda: sessions._table.update(at=None, children={}))
+        d = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(d))
+
+        def rollout(n, sid, source):
+            f = os.path.join(d, f"rollout-2026-11-21T10-00-0{n}-{sid}.jsonl")
+            with open(f, "w") as out:
+                out.write(json.dumps({"timestamp": "2026-11-21T10:00:00.000Z", "type": "session_meta",
+                                      "payload": {"id": sid, "cwd": "/w", "originator": "codex-tui", "source": source}}) + "\n")
+            return f
+        self.guardian = rollout(1, self.GUARDIAN, {"subagent": {"other": "guardian"}})
+        self.helper = rollout(2, self.HELPER, {"subagent": {"thread_spawn": {"parent_thread_id": self.OWN, "depth": 1}}})
+        self.own = rollout(3, self.OWN, "cli")
+
+    def holding(self, files):
+        code = "import sys,time\nfs=[open(p) for p in sys.argv[1:]]\nprint(1,flush=True)\ntime.sleep(30)"
+        p = subprocess.Popen([sys.executable, "-c", code, *files], stdout=subprocess.PIPE)
+        self.addCleanup(lambda: (p.kill(), p.wait(), p.stdout.close()))
+        p.stdout.readline()
+        return p.pid
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/fd"), "reads /proc")
+    def test_session_is_its_own_never_the_guardians(self):
+        for order in ([self.guardian, self.helper, self.own], [self.own, self.guardian], [self.helper, self.own]):
+            self.assertEqual(self.sessions.session_of(self.holding(order)), (self.OWN, self.own), order)
+        # its own not written yet: nothing, rather than the guardian
+        self.assertEqual(self.sessions.session_of(self.holding([self.guardian, self.helper])), (None, None))
+
+    def test_through_lsof_as_on_macos(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        out = "p4242\n" + "".join(f"f{i}\nn{f}\n" for i, f in enumerate([self.guardian, self.helper, self.own]))
+        real_isdir = os.path.isdir
+        with mock.patch.object(self.sessions.os.path, "isdir", lambda p: False if p.startswith("/proc") else real_isdir(p)), \
+                mock.patch.object(self.sessions.shutil, "which", lambda n: "/usr/sbin/" + n), \
+                mock.patch.object(self.sessions, "run", lambda args, **kw: SimpleNamespace(stdout=out if args[0] == "lsof" else "")):
+            self.assertEqual(self.sessions.session_of(4242), (self.OWN, self.own))
+
+    @unittest.skipUnless(os.path.isdir("/proc/self/fd"), "reads /proc")
+    def test_the_assistants_resume_record_names_its_own_session(self):
+        pid = self.holding([self.guardian, self.own])
+        k = {"address": "t1", "pid": 1, "cwd": "/w", "argv": ["codex", "resume", self.OWN],
+             "foreground": {"pid": pid, "argv": ["codex", "resume", self.OWN], "cwd": "/w"}}
+        rec = self.revive.record_of(k)
+        self.assertEqual((rec["session"], rec["log"]), (self.OWN, self.own))
+        self.assertEqual(self.revive.resume_argv(rec["kind"], rec["argv"], rec["session"]), ["codex", "resume", self.OWN])
+
+    def test_a_rollout_with_no_meta_yet_still_counts(self):
+        empty = os.path.join(os.path.dirname(self.own), f"rollout-2026-11-21T10-00-04-{self.OWN}.jsonl")
+        open(empty, "w").close()
+        self.assertFalse(self.sessions.subagent_rollout(empty))
+        self.assertFalse(self.sessions.subagent_rollout(self.own))
+        self.assertTrue(self.sessions.subagent_rollout(self.guardian))
+        self.assertTrue(self.sessions.subagent_rollout(self.helper))
+
+
 class ProcessTable(unittest.TestCase):
     """GitHub #1013: finding an agent's session walked its process tree with a `pgrep -P` per process (each one
     reading every process), per agent, per task, from every tracker and list. One read of the process table now
@@ -7143,3 +7486,160 @@ class LeftoverRolledBackData(unittest.TestCase):
             block = self.settings.settings_block(s, s.data["tasks"][0], "sp1")
         self.assertNotIn("lesson", block.lower())
         self.assertEqual(self.err.getvalue(), "")
+
+
+class Systemic(unittest.TestCase):
+    """SHEP-270 (#1195, #1174): one failing check behind several tasks (a red base, or one check failing
+    merge-queue groups for several pull requests): the Assistant hears once, the tasks' fix requests wait
+    until the base is green again, and a pull request dropped only because its group failed goes back in
+    the queue once. GitHub is faked; gh and hc never run."""
+    setUp_flow, patch, git, commit = TaskFlow.setUp, TaskFlow.patch, TaskFlow.git, TaskFlow.commit
+
+    def setUp(self):
+        self.setUp_flow()
+        from herdr_task import systemic, tick, ghnews, github
+        self.systemic, self.tick, self.ghnews = systemic, tick, ghnews
+        self.clock = [100_000_000]
+        for mod in (systemic, tick, ghnews, github):
+            self.patch(mod, "now", lambda: self.clock[0])
+        self.groups = []      # merge-group runs: (sha, prs, failed checks)
+        self.queue = {}       # pr number -> {"state", "in"}
+        self.base = {"head": "m1", "red": None, "checks": []}
+        self.merges, self.sent = [], []
+
+        def gh(*a, **k):
+            if a[:2] == ("run", "list"):
+                return True, json.dumps([{"headBranch": f"gh-readonly-queue/main/pr-{prs[-1]}-x", "headSha": sha,
+                                          "status": "completed", "conclusion": "failure", "workflowName": "Check",
+                                          "createdAt": "2026-11-21T10:00:00Z"} for sha, prs, _ in self.groups]), ""
+            if a[0] == "api" and "/compare/" in a[1]:
+                sha = a[1].rsplit("...", 1)[1]
+                prs = next(p for s, p, _ in self.groups if s == sha)
+                return True, json.dumps([f"Work {n} (#{n})" for n in prs]), ""
+            if a[:2] == ("api", "graphql"):
+                return True, json.dumps({"data": {"repository": {f"p{n}": {"state": q["state"], "isInMergeQueue": q["in"],
+                                                                            "autoMergeRequest": None} for n, q in self.queue.items()}}}), ""
+            return False, "", "unexpected"
+        self.patch(systemic, "gh", gh)
+        self.patch(systemic, "check_rows", lambda repo, sha: ([{"name": c, "conclusion": "FAILURE"} for s, _, cs in self.groups
+                                                               if s == sha for c in cs] or
+                                                              [{"name": c, "conclusion": "FAILURE"} for c in self.base["checks"]], True))
+        self.patch(systemic, "base_history", lambda repo, base: (
+            [self.base["head"], "m0"],
+            [{"headSha": self.base["red"] or self.base["head"], "status": "completed",
+              "conclusion": "failure" if self.base["red"] else "success", "url": "u", "workflowName": "Check"}]))
+        self.patch(systemic, "queue_merge", lambda t, head: (self.merges.append((t["id"], head)), (True, ""))[1])
+        self.patch(systemic, "coordinator_in", lambda space: "coord" if space else None)
+        self.patch(systemic, "news_send", lambda to, text: self.sent.append(text) or True)
+        self.patch(systemic, "queue_entry", lambda t: {"in": False, "auto": False, "state": "OPEN"})
+        self.task.update(state="ready", space="sp1", pr={"number": 7, "url": "u7", "repo": "o/r"})
+
+    def other(self, i, n):
+        t = {"id": i, "title": f"Task {i}", "state": "ready", "mode": "worktree", "worktree": "/nowhere", "branch": f"task/{i}",
+             "base": "main", "space": "sp1", "agents": [], "pr": {"number": n, "url": f"u{n}", "repo": "o/r"}}
+        self.store.data["tasks"].append(t)
+        return t
+
+    def drop(self, t, head="abc", checks=()):
+        """GitHub's merge queue just dropped t's pull request for failed checks."""
+        self.patch(self.tick, "queue_entry", lambda t: {"in": False, "auto": False, "reason": "FAILED_CHECKS", "state": "OPEN"})
+        t["merge_queued"] = self.clock[0] - 10 * 60000
+        report = {"attention": []}
+        v = {"state": "OPEN", "headRefOid": head, "mergeable": "MERGEABLE", "statusCheckRollup": list(checks)}
+        self.tick.queue_pass(self.store, t, v, report)
+        return report
+
+    def test_a_pull_request_dropped_with_its_group_goes_back_once(self):
+        """#1174: #3 failed the group it shared with #7; #7's own checks pass: queued again once, no Needs you."""
+        self.groups = [("g1", [3, 7], ["unit"])]
+        self.queue = {3: {"state": "OPEN", "in": False}}
+        report = self.drop(self.task)
+        self.assertEqual((self.merges, self.task.get("attention"), report.get("requeued")), ([(1, "abc")], None, ["SHEP-1"]))
+        self.assertTrue(self.task.get("merge_queued"))
+        # Dropped again at the same commit: its own doing now, Needs you.
+        self.drop(self.task)
+        self.assertEqual(len(self.merges), 1)
+        self.assertTrue(self.task["attention"].startswith("GitHub's merge queue removed it"))
+
+    def test_the_one_ahead_merged_so_the_failure_is_its_own(self):
+        """The other pull request in its group merged (its own group passed): #7 broke its group: Needs you."""
+        self.groups = [("g1", [3, 7], ["unit"])]
+        self.queue = {3: {"state": "MERGED", "in": False}}
+        self.drop(self.task)
+        self.assertEqual(self.merges, [])
+        self.assertEqual(self.task["attention"], "GitHub's merge queue removed it: FAILED_CHECKS.")
+        self.assertEqual(self.task["queue_fail"]["checks"], ["unit"])
+
+    def test_one_check_failing_several_groups_is_one_systemic_event(self):
+        """#1215's night: one check fails the groups of #7, then #8 and #9, each alone: one systemic news naming the
+        check and the tasks, no Needs you; once main moved on and isn't red, each goes back in the queue once."""
+        self.groups = [("g1", [7], ["help-corpus"])]
+        self.drop(self.task)
+        self.assertTrue(self.task["attention"].startswith("GitHub's merge queue removed it"))  # one failure: its own, so far
+        t8, t9 = self.other(2, 8), self.other(3, 9)
+        self.groups.append(("g2", [8], ["help-corpus"]))
+        self.drop(t8, head="h8")
+        self.groups.append(("g3", [9], ["help-corpus"]))
+        self.drop(t9, head="h9")
+        for t in (self.task, t8, t9):
+            self.assertNotIn("attention", t)
+            self.assertIn("base_hold", t)
+        report = {}
+        self.tick.systemic_pass(self.store, report)
+        self.assertEqual(self.sent, [])  # settles first, so the rest join
+        self.clock[0] += 2 * 60000
+        self.tick.systemic_pass(self.store, report)
+        self.tick.systemic_pass(self.store, report)
+        self.assertEqual(len(self.sent), 1)
+        news = self.sent[0]
+        self.assertTrue(news.startswith('<herdr-news event="systemic" branch="main">'))
+        for words in ('"help-corpus"', "SHEP-1", "SHEP-2", "SHEP-3", "#7, #8, #9"):
+            self.assertIn(words, news)
+        # main moved on (a group passed and merged), not red: the three go back in the queue, once.
+        self.base["head"] = "m2"
+        self.clock[0] += 3 * 60000
+        self.tick.systemic_pass(self.store, report)
+        self.assertEqual(sorted(self.merges), [(1, "abc"), (2, "h8"), (3, "h9")])
+        self.assertIn('event="systemic-over"', self.sent[1])
+        self.assertNotIn("hold", self.store.data["systemic"]["main"])
+        self.assertFalse(any(t.get("base_hold") for t in self.store.data["tasks"]))
+
+    def test_main_red_holds_the_failing_check_news_and_needs_you(self):
+        """#1195 1: main is red on the same test: the task's failing check neither goes to its agent nor makes it
+        Needs you; once main is green, it does."""
+        from herdr_task import ghnews
+        self.base.update(red="m1", checks=["unit"])
+        failing = [{"name": "unit", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "d"}]
+        v = {"state": "OPEN", "headRefOid": "abc", "mergeable": "MERGEABLE", "statusCheckRollup": failing}
+        self.patch(ghnews, "resting", lambda s, t: {"address": "t1"})
+        self.patch(ghnews, "pr_comments", lambda repo, n: [])
+        self.patch(ghnews, "log_tail", lambda repo, rid: None)
+        self.task["ready_at"] = 1
+        ghnews.pr_news(self.store, self.task, v, {})
+        self.assertNotIn("news", self.task["pr"])
+        self.assertTrue(ghnews.held_by_base(self.store, self.task, v))
+        self.assertIn("base_hold", self.task)
+        # A check main doesn't fail is the task's own: news as before.
+        own = failing + [{"name": "lint", "status": "COMPLETED", "conclusion": "FAILURE", "detailsUrl": "d2"}]
+        self.assertFalse(ghnews.held_by_base(self.store, self.task, {**v, "statusCheckRollup": own}))
+        # Green again: let go, and the failure (if still there) reaches its agent.
+        self.base.update(red=None, checks=[], head="m2")
+        self.clock[0] += 3 * 60000
+        self.tick.systemic_pass(self.store, {})
+        self.assertNotIn("base_hold", self.task)
+        self.assertEqual(self.merges, [])  # never dropped from a queue: nothing to queue again
+        self.clock[0] += 3 * 60000
+        ghnews.pr_news(self.store, self.task, v, {})
+        self.assertIn('Check "unit" failed', self.task["pr"]["news"]["text"])
+
+    def test_a_hold_runs_out(self):
+        """Main stays red for hours: the hold lets go anyway, a dropped pull request then Needs you."""
+        self.base.update(red="m1", checks=["unit"])
+        self.groups = [("g1", [7], ["unit"])]
+        self.drop(self.task)
+        self.assertIn("base_hold", self.task)
+        self.assertNotIn("attention", self.task)
+        self.clock[0] += 7 * 3600000
+        self.tick.systemic_pass(self.store, {})
+        self.assertEqual(self.merges, [])
+        self.assertTrue(self.task["attention"].startswith("GitHub's merge queue removed it"))
