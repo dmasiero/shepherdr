@@ -1,7 +1,8 @@
 // fork: Snooze (SHEP-78): the wake rule, the shared entries and Other time…'s words (herdr-task's when.py).
 import { expect, test } from "bun:test";
 import { startsAt } from "./tasks.js";
-import { judge, resolve, signature, snoozeIn, unsnooze, snoozedUntil, wokeOf, nextWake, snoozedLabels, whenOf, untilLine, WHY, canSnooze } from "./snooze.js";
+import { judge, resolve, signature, snoozeIn, unsnooze, snoozedUntil, wokeOf, nextWake, snoozedLabels, whenOf, untilLine, WHY, canSnooze, LAST, lastOf, sameAsLast } from "./snooze.js";
+import { SNOOZE_PICKS } from "./menus.js";
 
 const T0 = new Date(2026, 10, 20, 10, 0).getTime(); // Fri 20 Nov 2026 10:00, this machine's time
 const H = 3600_000;
@@ -103,4 +104,26 @@ test("Other time… reads times as herdr-task does", () => {
   expect(whenOf({ at: "2026-01-01 09:00" }, T0).error).toMatch(/has passed/);
   expect(whenOf({ at: "fri" }, T0).error).toMatch(/^Give a time of day too/);
   expect(whenOf({ at: "" }, T0).error).toMatch(/^Say when\./);
+});
+
+// fork: Same as last (SHEP-80)
+test("Same as last: the last snooze's moment while ahead, never one the picks come to", () => {
+  expect(LAST).toBe("tasks.lastSnooze");
+  expect(lastOf(T0 + 5 * H, T0)).toEqual({ until: T0 + 5 * H, at: T0 });
+  const sat = new Date(2026, 10, 21, 18, 30).getTime();
+  expect(sameAsLast(lastOf(sat, T0), SNOOZE_PICKS, T0)).toBe(sat);
+  // past or now: none; nothing kept, or nonsense: none
+  expect(sameAsLast(lastOf(sat), SNOOZE_PICKS, sat)).toBeNull();
+  expect(sameAsLast(lastOf(sat), SNOOZE_PICKS, sat + 1)).toBeNull();
+  for (const v of [null, undefined, {}, { until: "soon" }, { until: NaN }, [], 5]) expect(sameAsLast(v, SNOOZE_PICKS, T0)).toBeNull();
+  // the same minute as a pick shown below it: Tomorrow 9:00, Monday 9:00, In 3 hours (to the minute)
+  expect(sameAsLast(lastOf(new Date(2026, 10, 21, 9, 0).getTime()), SNOOZE_PICKS, T0)).toBeNull();
+  expect(sameAsLast(lastOf(new Date(2026, 10, 23, 9, 0, 20).getTime()), SNOOZE_PICKS, T0)).toBeNull();
+  expect(sameAsLast(lastOf(T0 + 3 * H + 30_000), SNOOZE_PICKS, T0)).toBeNull();
+  // a minute off any of them: offered
+  expect(sameAsLast(lastOf(new Date(2026, 10, 21, 9, 1).getTime()), SNOOZE_PICKS, T0)).toBe(new Date(2026, 10, 21, 9, 1).getTime());
+  // the next day the same 9:00 is no pick any more (Tomorrow is the 22nd then): offered
+  expect(sameAsLast(lastOf(new Date(2026, 10, 21, 9, 0).getTime()), SNOOZE_PICKS, T0 - 24 * H + H)).toBe(new Date(2026, 10, 21, 9, 0).getTime());
+  // the words as a Snoozed row says them
+  expect(untilLine(startsAt(sat, T0))).toBe("Snoozed until Tomorrow 18:30");
 });

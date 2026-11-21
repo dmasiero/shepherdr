@@ -248,9 +248,13 @@ async function snooze(compat: Compat, b: any) {
   if (b.off) { await snoozeOff(compat, id); return { ok: true }; }
   const seen = compat.sigs.get(t.pin);
   if (!seen || !SZ.canSnooze(seen.status)) return { ok: false, error: "Only a started task that isn't done can be snoozed." };
-  const w = SZ.whenOf(b.in !== undefined ? { in: str(b.in, 100) } : { at: str(b.at ?? "", 100) });
+  // fork: Same as last (SHEP-80): { until } snoozes to that very moment (still ahead), not a span from now
+  const w: { at?: number; error?: string } = typeof b.until === "number" ? (Number.isFinite(b.until) && b.until > Date.now() ? { at: b.until } : { error: "That time has passed." })
+    : SZ.whenOf(b.in !== undefined ? { in: str(b.in, 100) } : { at: str(b.at ?? "", 100) });
   if (w.error !== undefined || w.at === undefined) return { ok: false, error: w.error ?? "Say when." };
   await sh.set(SZ.SNOOZED, SZ.snoozeIn(sh.value(SZ.SNOOZED), t.pin, { until: w.at, seen, task: t.key }));
+  // fork: the moment it came to, for the next task's Same as last (SHEP-80)
+  await sh.set(SZ.LAST, SZ.lastOf(w.at)).catch(() => null);
   return { ok: true, until: w.at };
 }
 async function snoozeOff(compat: Compat, id: string) {

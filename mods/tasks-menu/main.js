@@ -11,7 +11,9 @@
 //             props().machine, folder and ref; a scheduled one Start now and Unschedule. What herdr-task
 //             refuses shows as a toast. fork: a started task not done snoozes (SHEP-78, core/snooze.js):
 //             props().snooze = { seen, task } into shared "tasks.snoozed"; a snoozed one (props().snoozed,
-//             props().until its words) unsnoozes or changes its time.
+//             props().until its words) unsnoozes or changes its time. fork: Same as last (SHEP-80):
+//             props().last = { until, words } (mods/tasks rowMenu) snoozes to that moment; every snooze
+//             keeps its moment in shared "tasks.lastSnooze" for the next.
 // ↑/↓ move, Enter picks, Esc closes.
 
 import { View, div } from "gpui-kit";
@@ -19,7 +21,7 @@ import { v_flex } from "gpui-base";
 import { props, closeOverlay, theme, shared, setShared, exec, appHome } from "herdr";
 import { menuRow, heading, toast, TEXT } from "./ui.js";
 import { taskMenu } from "./core/menus.js";
-import { SNOOZED, snoozeIn, unsnooze, whenOf } from "./core/snooze.js"; // fork: Snooze (SHEP-78)
+import { SNOOZED, snoozeIn, unsnooze, whenOf, LAST, lastOf } from "./core/snooze.js"; // fork: Snooze (SHEP-78); LAST, lastOf: SHEP-80
 import { settle } from "./core/pending.js";
 
 // Shepherdr's GROUP_WORDS (core/tasks.js GROUP_BY).
@@ -41,12 +43,12 @@ function rowSections(p) {
   const out = [];
   let cur = null;
   // fork: a started task snoozes; a snoozed one unsnoozes or changes its time (SHEP-78)
-  for (const it of taskMenu({ pinned: p.on, status: p.status ?? null, snoozed: Boolean(p.snoozed), until: p.until ?? null })) {
+  for (const it of taskMenu({ pinned: p.on, status: p.status ?? null, snoozed: Boolean(p.snoozed), until: p.until ?? null, last: p.last ?? null })) {
     if (it.typed) continue;
     if (it.sep || it.heading || !cur) out.push(cur = { title: it.heading ? (p.status === "scheduled" && p.sub ? `${it.heading} · ${p.sub}` : it.heading) : null,
       checks: false, current: null, items: [], pick: (key) => rowPick(p, key) });
     if (it.sep || it.heading) continue;
-    cur.items.push({ key: `${it.id}:${cur.items.length}`, label: it.label, at: it.at, in: it.in, id: it.id,
+    cur.items.push({ key: `${it.id}:${cur.items.length}`, label: it.label, at: it.at, in: it.in, until: it.until, id: it.id,
       icon: it.icon === "play" ? "mods/tasks/play.svg" : `mods/workspace-chrome/${it.icon}.svg` });
   }
   return out.filter((s) => s.items.length);
@@ -63,10 +65,12 @@ function rowPick(p, key) {
   }
   // fork: Snooze (SHEP-78): the shared "tasks.snoozed", as the web's snooze action writes it (the bridge carries it)
   if (it.id === "unsnooze") { setShared(SNOOZED, unsnooze(shared(SNOOZED), p.key)); return; }
-  if (it.id === "snooze") {
-    const w = whenOf(it.in ? { in: it.in } : { at: it.at });
+  if (it.id === "snooze" || it.id === "snooze-last") {
+    // fork: Same as last (SHEP-80): that very moment, still ahead; and every snooze's moment kept for the next
+    const w = it.id === "snooze-last" ? (it.until > Date.now() ? { at: it.until } : { error: "That time has passed." }) : whenOf(it.in ? { in: it.in } : { at: it.at });
     if (w.error !== undefined || !p.snooze) { toast({ level: "error", title: `Couldn't snooze ${p.ref}`, body: w.error ?? "It can't be snoozed now." }); return; }
     setShared(SNOOZED, snoozeIn(shared(SNOOZED), p.key, { until: w.at, seen: p.snooze.seen, task: p.snooze.task }));
+    setShared(LAST, lastOf(w.at));
     return;
   }
   const args = it.id === "start-now" ? ["start", p.ref, "--now"] : it.id === "unschedule" ? ["edit", p.ref, "--at", ""]

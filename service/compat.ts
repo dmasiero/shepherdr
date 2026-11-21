@@ -486,6 +486,8 @@ export class Compat {
       sections, last, read, off: input.offPlugins ?? [],
       // the Window page's look switches (shared keys the window reads too): the web follows the same ones
       look: lookOf((k) => this.shared?.value(k)),
+      // fork: the last snooze's moment (ms), for Same as last (SHEP-80, core/snooze.js LAST)
+      ...((v) => (typeof v?.until === "number" ? { lastSnooze: v.until } : {}))(this.shared?.value(SZ.LAST)),
       // Herdr's Files and Changes panels, as the window's tab bar offers them (unset: both)
       panels: Array.isArray(this.shared?.value("workspace.panels")) ? this.shared!.value("workspace.panels").filter((x: unknown) => x === "files" || x === "changes") : ["files", "changes"],
       // fork: this machine's install isn't whole (doctor's last verdict), for the top bar (SHEP-34)

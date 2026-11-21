@@ -1,11 +1,15 @@
 // fork: Snooze (SHEP-78) in the window: the Tasks panel (mods/tasks) folds snoozed tasks into Snoozed at the bottom,
 // greyed with a snooze bell and "Snoozed until …", out of every other group; a task back from a snooze says why; and
 // the window's counts (lib/inbox.js items and ready, the red and green counts) leave a snoozed task's out.
+// fork: Same as last (SHEP-80): a row's menu (mods/tasks rowMenu, drawn by mods/tasks-menu) offers the last snooze's
+// moment first, snoozes to it and keeps every snooze's moment in shared "tasks.lastSnooze".
 import { beforeEach, expect, mock, test } from "bun:test";
 import { fakeHerdr } from "./fake-herdr";
 import { fakeGpuiBase, fakeGpuiKit, built, byId, handler } from "./fake-gpui";
 
 const shared = new Map<string, unknown>();
+const overlays: any[] = [];
+let menuProps: any = null;
 const none = async () => ({ code: 1, stdout: "", stderr: "" });
 const theme = new Proxy({}, { get: () => "#000000" });
 const tree = {
@@ -25,6 +29,7 @@ mock.module("herdr", () => fakeHerdr({
   readTextFile: async () => null, watchFolder: () => {}, nextCommand: () => new Promise(() => {}),
   shared: (k: string) => shared.get(k), setShared: (k: string, v: unknown) => { shared.set(k, v); },
   agents: () => [], panes: () => [], terminals: () => terms, spaces: () => [],
+  openOverlay: (o: any) => { overlays.push(o); }, props: () => menuProps, closeOverlay: () => {},
 }));
 const inert = (): any => new Proxy({}, { get: (_t, k) => (k === "then" ? undefined : k === "value" ? () => "" : () => undefined) });
 mock.module("gpui-kit", () => fakeGpuiKit());
@@ -34,6 +39,7 @@ const store = new Map<string, string>();
 
 const { default: Tasks } = await import("../mods/tasks/main.js");
 const { items, ready } = await import("../mods/tasks/inbox.js");
+const { default: TasksMenu } = await import("../mods/tasks-menu/main.js");
 const cx: any = new Proxy({ timer: { every: () => {}, after: () => {} } }, { get: (t, k) => (t as any)[k] ?? (() => {}) });
 
 const HOUR = 3600_000;
@@ -114,4 +120,52 @@ test("opening a snoozed task from Snoozed takes its snooze away", () => {
   handler(row!, "on_click")!({}, cx);
   expect((shared.get("tasks.snoozed") as any)[key(1)]).toBeUndefined();
   expect((shared.get("tasks.snoozed") as any)[key(2)]).toBeDefined();
+});
+
+// fork: Same as last (SHEP-80)
+const menuOf = (pin: any) => {
+  overlays.length = 0;
+  panel().rowMenu({ key: key(4), on: false, status: "working", machine: null, folder: "/tmp/shop", ref: "SHOP-4", sub: null, snoozed: false, until: null,
+    snooze: { seen: { status: "working", cards: [], ready: null }, task: "shop#4" }, ...pin });
+  menuProps = overlays[0].props;
+  const m: any = new TasksMenu();
+  m.init({}, { ...cx, focus_handle: () => ({ focus: () => {} }) });
+  built.length = 0;
+  m.render(cx);
+  return { m, height: overlays[0].height, shown: words(byId("tasks-menu")) };
+};
+
+test("a row's menu offers the last snooze's moment first; picking it snoozes to that very moment", () => {
+  const plain = menuOf({}).height;
+  // none yet: the menu as before
+  expect(menuOf({}).shown).not.toContain("Same as last");
+  const until = new Date(Date.now() + 26 * HOUR).setSeconds(0, 0) + 17 * 60000;
+  shared.set("tasks.lastSnooze", { until, at: Date.now() - 60000 });
+  const { shown, height } = menuOf({});
+  const words_ = shown.filter((w) => w.startsWith("Same as last"));
+  expect(words_.length).toBe(1);
+  expect(words_[0]).toMatch(/^Same as last · (Tomorrow|Mon|Tue|Wed|Thu|Fri|Sat|Sun|[A-Z][a-z]{2} \d+) \d+:\d\d$/);
+  // first under the Snooze heading, the popup one row taller
+  expect(shown.slice(shown.indexOf("Snooze"), shown.indexOf("Snooze") + 3)).toEqual(["Snooze", words_[0], "In 3 hours"]);
+  expect(height).toBe(plain + 32);
+  // picked: snoozed to that moment, not a span from now; it stays the last
+  handler(byId("tm-snooze-last:0")!, "on_click")!({}, cx);
+  expect((shared.get("tasks.snoozed") as any)[key(4)]).toMatchObject({ until, task: "shop#4" });
+  expect((shared.get("tasks.lastSnooze") as any).until).toBe(until);
+});
+
+test("a snoozed task's Change snooze time offers it too; past, it's gone; any pick becomes the last", () => {
+  const until = Date.now() + 5 * HOUR;
+  shared.set("tasks.lastSnooze", { until, at: 1 });
+  const changing = menuOf({ snoozed: true, until: "Tomorrow 9:00" }).shown;
+  expect(changing.slice(changing.findIndex((w) => w.startsWith("Change snooze time")), -1)[1]).toMatch(/^Same as last · /);
+  shared.set("tasks.lastSnooze", { until: Date.now() - 1000, at: 1 });
+  expect(menuOf({}).shown.some((w) => w.startsWith("Same as last"))).toBe(false);
+  // In 3 hours picked: its moment is the last now, offered on the next task
+  const before = Date.now();
+  handler(byId("tm-snooze:0")!, "on_click")!({}, cx);
+  const last: any = shared.get("tasks.lastSnooze");
+  expect(last.until).toBe((shared.get("tasks.snoozed") as any)[key(4)].until);
+  expect(last.until - before).toBeGreaterThanOrEqual(3 * HOUR);
+  expect(last.until - before).toBeLessThan(3 * HOUR + 5000);
 });

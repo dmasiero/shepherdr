@@ -53,14 +53,17 @@ export const SCHEDULE_PICKS = [
 ];
 // fork: Snooze (SHEP-78, core/snooze.js): a started task not done snoozes ("Snooze": Start later's picks, In 1 hour
 // dropped, then Other time…); a snoozed one unsnoozes or changes its time ("Change snooze time", `until` its words).
+// fork: Same as last (SHEP-80): last = { until (ms), words } (core/snooze.js sameAsLast: the last snooze's moment, still
+// ahead and none of the picks): first in the Snooze section, "Same as last · Sat 18:30", snoozing to that very moment.
 export const SNOOZE_PICKS = SCHEDULE_PICKS.filter((p) => p.in !== "1h");
 const SNOOZABLE = ["need", "needs", "ready", "merging", "work", "working"]; // the web's words and the window's
-export const taskMenu = ({ pinned = false, status = null, snoozed = false, until = null } = {}) => {
+export const taskMenu = ({ pinned = false, status = null, snoozed = false, until = null, last = null } = {}) => {
   const later = ["todo", "queued", "scheduled"].includes(status);
   const snooze = !later && (snoozed || SNOOZABLE.includes(status));
   return [
     ...(snoozed ? [{ id: "unsnooze", label: "Unsnooze", icon: "bell" }, sep] : []),
     ...(snooze ? [{ heading: snoozed ? `Change snooze time${until ? ` · ${until}` : ""}` : "Snooze" },
+      ...(last && typeof last.until === "number" ? [{ id: "snooze-last", label: `Same as last · ${last.words}`, icon: "clock", until: last.until }] : []),
       ...SNOOZE_PICKS.map((p) => ({ id: "snooze", icon: "clock", ...p })),
       { id: "snooze-other", label: "Other time…", icon: "clock", typed: true }, sep] : []),
     ...(later ? [{ heading: status === "scheduled" ? "Reschedule" : "Start later" },

@@ -1237,6 +1237,8 @@ export interface Snapshot {
   /** Settings › Window's look switches, as the window follows them: the space's tabs, worktree spaces in the sidebar,
    *  bold unread spaces, red and green counts, the Tasks status filters, the space on task rows, subagents above the box */
   look?: { tabs: boolean; worktrees: boolean; unread: boolean; red: boolean; green: boolean; filters: boolean; place: boolean; helpers: boolean }
+  /** fork: Same as last (SHEP-80, core/snooze.js LAST): the last snooze's moment (ms), offered again while ahead */
+  lastSnooze?: number
   /** Shepherdr 3: Herdr's side panels the tab bar offers beside Tasks (shared "workspace.panels": "files", "changes") */
   panels?: string[]
   /** the web app's plugins left out (their add-on is off in Settings › Window): a page started with others reloads */
@@ -1312,7 +1314,7 @@ export type Action =
   /** pin a task to the top of its lists (on: true) or unpin it */
   | { type: 'pin'; chat: string; on: boolean }
   // fork: Snooze (SHEP-78)
-  | { type: 'snooze'; chat: string; at?: string; in?: string; off?: boolean }
+  | { type: 'snooze'; chat: string; at?: string; in?: string; off?: boolean; until?: number } // until: Same as last (SHEP-80)
   /** pause a working task: its agent is interrupted (it stays alive) and the task is To do until written to */
   | { type: 'pause'; chat: string }
   /** its agent goes and the task is To do; its work stays */
