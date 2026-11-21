@@ -112,9 +112,13 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   #1010 tests in service/spaces-sidebar.test.ts). ShepherdrSettings menus go through `mods/shepherdr-settings/over.js`.
 - A web component test without a DOM: extract the component's text from client.tsx, transpile it with `Bun.Transpiler`
   and run it with a tiny useState shim to press its buttons (see `web/plugins/chat/secret-decline.test.tsx`).
+- Web row tests without the app: extract client.tsx's `Line` with a regex, transpile it with `Bun.Transpiler` and
+  `renderToStaticMarkup` it (see `web/plugins/tasks/back-line.test.tsx`).
 - Window-mod render tests: `bun test service` (from the root) with `mock.module` for gpui-kit/gpui-base and herdr via
   service/fake-herdr.ts (bun's mocks are per process, so every herdr stand-in needs every name); see
   service/spaces-sidebar.test.ts.
+- The window's tasks-menu popup renders in a bun test with service/fake-herdr.ts's props/openOverlay and a cx whose
+  `focus_handle()` returns `{focus(){}}` (see the SHEP-80 tests in `service/tasks-snoozed.test.ts`).
 - herdr-app's overlay width/height are at zoom 1, but on_size_change, presses and wheel deltas are in pixels at the
   zoom: unzoom them (see service/chat-image-zoom.test.ts).
 - The person's herdr-app window runs on nextgate: `herdr-app shot <abs path>.png` grabs a read-only frame of it (never
@@ -135,6 +139,11 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   before starting the call.
 - Web stub: a place's `chat` is its chat key string (the chat object goes only in the watch reply). Headless screenshots
   never show native `title=` tooltips: check with `document.querySelectorAll('[title]')`.
+- Web stub, a row's menu: send a `contextmenu` event to `li[data-flip=<task id>]` without scrolling it into view first
+  (scrolling the row closes its menu); agent-browser `set media dark` gives the dark theme.
+- A web stub can run the branch's real service code: import `service/compat.ts` and `service/actions.ts` (throwaway
+  `HERDR_APP_HOME`), give Compat a stand-in shared `{value,set}`, send `c.snapshot({host,user,machines,spaces,sections,rows})`
+  over `/api/ws`, and route `/api/action` to `act({}, body, c)`.
 - Claude Code trusts /tmp, so a scratch folder there never shows its trust screen: reproduce trust-screen bugs in a
   fresh folder under /var/tmp, and remove its `~/.claude.json` entry after.
 - `herdr-artifact preview` with a branch's viewer: copy mods/artifacts into a scratch folder with `web/dist/artifact-viewer.html`
