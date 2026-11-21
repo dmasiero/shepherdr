@@ -32,7 +32,7 @@ import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, m
   queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems, startsAt } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
 // fork: Snooze (SHEP-78): snoozed tasks fold into Snoozed at the bottom, out of every other group and count
-import { SNOOZED, snoozedUntil, wokeOf, unsnooze, canSnooze, untilLine, BACK, LAST, sameAsLast } from "./core/snooze.js"; // fork: LAST, sameAsLast: SHEP-80
+import { SNOOZED, snoozedUntil, wokeOf, unsnooze, canSnooze, untilLine, backLine, LAST, sameAsLast } from "./core/snooze.js"; // fork: LAST, sameAsLast: SHEP-80
 import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirs } from "./dirs.js";
@@ -919,7 +919,7 @@ export default class Tasks extends View {
     return this.line(`task-${key}`, {
       go: go && (until || why) ? () => { setShared(SNOOZED, unsnooze(shared(SNOOZED), key)); go(); } : go,
       glyph: until ? svg("mods/tasks/snooze.svg").size(14).flex_none().text_color(t.dim) : this.glyph(p, w), ref: refOf(list, task), title: task.title,
-      sub: until ? untilLine(startsAt(until)) : why ? `${BACK} · ${why}` : sub, left: until ? null : left, leftColor: section === "scheduled" ? t.dim : null,
+      sub: until ? untilLine(startsAt(until)) : why ? backLine(why) : sub, left: until ? null : left, leftColor: section === "scheduled" ? t.dim : null,
       dim: section === "done" || Boolean(until), selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
       action: section === "ready" && !until ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
