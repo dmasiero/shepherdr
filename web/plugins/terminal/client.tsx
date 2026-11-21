@@ -239,7 +239,6 @@ function Screen({ screen, stream, pin = 0, flush, className, ...p }: { screen: T
 
 function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) {
   const ui = useUI()
-  const keyboard = useUI((u) => u.keyboard)
   const screen = useStore((s) => s.terms[chatKey])
   const streaming = useStore((s) => s.snap?.terminalTransport === 'core')
   const input = useRef<HTMLTextAreaElement>(null)
@@ -355,7 +354,8 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
           />
           {/* fork: Termux's extra-keys bar (SHEP-26), two rows of seven in groups with ENTER bottom-right (SHEP-32), the terminal's own background (dark in either theme), with no line between them. The app
               takes the visible viewport's height (viewport.ts) and the phone's bottom bar goes with the keyboard up,
-              so the bar, last in the view, docks on the keyboard's top. A press keeps the focus in the box, so the
+              so the bar, last in the view, docks on the keyboard's top; with it down, the bar sits at the bottom with no hint under
+              it (SHEP-83), the app's own padding keeping it clear of the home indicator. A press keeps the focus in the box, so the
               keyboard stays as it was, and CTRL and ALT stick for the next key (SHEP-23) */}
           <div role="group" aria-label="Extra keys" className="grid shrink-0 grid-cols-7 bg-term pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)] text-white select-none [-webkit-touch-callout:none]">
             {EXTRA_KEYS.flat().map((x) => {
@@ -388,8 +388,6 @@ function TerminalView({ chatKey, panel }: { chatKey: string; panel?: boolean }) 
               )
             })}
           </div>
-          {/* the hint while the keyboard is down; up, the bar sits right on it, as Termux's */}
-          {keyboard ? null : <Small className="truncate px-4 pt-1.5 pb-2 text-fg3">Tap to type · pinch to zoom</Small>}
         </>
       ) : (
         <Small className="truncate px-4 pt-2 pb-3 text-fg3">{`${typed ? 'Click to type' : 'Keys go to the terminal'} · ${shortcut(CTRL, '`')} back to the chat`}</Small>
