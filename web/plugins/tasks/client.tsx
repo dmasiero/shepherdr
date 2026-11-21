@@ -465,9 +465,11 @@ function TaskList(_: { placeId: string }) {
               </div>
             )
           }
-          // Done, shut: only its count, a quiet line, until opened
+          // Done, shut: its heading like the others' ("Done 155", "Done 3 · today"), until opened
+          // fork: SHEP-84: was a quiet "155 done" line
           if (g.key === 'done' && g.shut) {
-            return <DoneLine key="done" count={g.count} today={g.count === live.filter((t) => t.status === 'done' && !t.archived && !t.pinned && isToday(t.doneAt)).length} onClick={() => toggleShut(key, DONE_OPEN)} />
+            const today = g.count === live.filter((t) => t.status === 'done' && !t.archived && !t.pinned && isToday(t.doneAt)).length
+            return <div key="done"><GroupHeading label={g.label} note={today ? 'today' : g.note} count={g.count} flip="group:done" fold={{ shut: true, toggle: () => toggleShut(key, DONE_OPEN) }} /></div>
           }
           const doneFold: Fold | undefined = g.key === 'done' && !q ? { shut: false, toggle: () => toggleShut(key, DONE_OPEN) } : g.key === 'snoozed' && !q ? { shut: g.shut, toggle: () => toggleShut(key, SNOOZED_OPEN) } : fold
           return (
@@ -587,19 +589,6 @@ function SpaceHeading({ group: g, count, fold }: { group: Pick<TaskGroup, 'label
 
 /** a Done time today, on this device's clock */
 const isToday = (ms?: number) => !!ms && new Date(ms).toDateString() === new Date().toDateString()
-
-/** Done, shut: one quiet line, "3 done today" (or "12 done", some older), a tap shows them */
-function DoneLine({ count, today, onClick }: { count: number; today: boolean; onClick: () => void }) {
-  return (
-    <div data-flip="group:done" className="px-1.5 pt-2 phone:px-2">
-      <button type="button" aria-expanded={false} onClick={onClick}
-        className="press flex min-h-8 w-full items-center gap-3 rounded-row px-2 text-left text-[0.75rem] text-fg3 outline-none hover:bg-hover hover:text-fg2 keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] coarse:min-h-11 phone:min-h-11 phone:px-3 phone:text-[0.875rem]">
-        <NextIcon aria-hidden className={clsx(ic, '-mx-px phone:mx-0')} />
-        <span className="tabular-nums">{count} done{today ? ' today' : ''}</span>
-      </button>
-    </div>
-  )
-}
 
 /** Filter tasks: by id, title, status line or summary, as you type; ↑ ↓ pick one of what is left and Enter opens it */
 function TaskFilter({ listKey, order }: { listKey: string; order: Task[] }) {
