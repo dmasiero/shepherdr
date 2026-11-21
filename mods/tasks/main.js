@@ -31,7 +31,7 @@ import { machinesInOrder, machineOrderOf, chatPane } from "./core/spaces.js";
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
   queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems, startsAt } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
-// fork: Snooze (SHEP-78): snoozed tasks fold into Snoozed at the bottom, out of every other group and count
+// fork: Snooze (SHEP-78): snoozed tasks fold into Snoozed just above Done (SHEP-82), out of every other group and count
 import { SNOOZED, snoozedUntil, wokeOf, unsnooze, canSnooze, untilLine, backLine, LAST, sameAsLast } from "./core/snooze.js"; // fork: LAST, sameAsLast: SHEP-80
 import { SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
@@ -377,6 +377,15 @@ export default class Tasks extends View {
     const open = Boolean(q);
     const note = (text) => div().px(18).py(28).text_center().text_size(TEXT.label).text_color(t.dim).child(text);
     const body = [];
+    // fork: Snoozed (SHEP-78): folded until opened (as the web's), in every grouping; drawn once, just above Done (SHEP-82)
+    let snoozedDrawn = false;
+    const snoozedGroup = () => {
+      if (snoozedDrawn || !snoozedShown.length) return;
+      snoozedDrawn = true;
+      const opened = open || this.shut("snoozed:open");
+      body.push(this.group("snoozed", "Snoozed", opened ? snoozedShown.map((p) => this.row(p, t)) : [], t, { open, closed: !opened, count: snoozedShown.length,
+        onFold: () => this.fold("snoozed:open", !this.shut("snoozed:open")) }));
+    };
     if (this.archivedOpen) { this.names = { machine: true, space: true }; body.push(this.archivedView(found, q, t)); }
     else if (filter !== "all") {
       const rows = rowsFor(filter);
@@ -402,6 +411,7 @@ export default class Tasks extends View {
         }
         // Done: only its count, a quiet line, until opened (then a group that folds it away again).
         const done = tasksOf.done.filter((p) => !isPin(p));
+        snoozedGroup(); // fork: SHEP-82
         if (done.length) body.push(open || this.shut("done:open") ? this.group("done", STATUS.done, done.map((p) => this.row(p, t)), t, { open, done: done.length, onFold: () => this.fold("done:open", false) })
           : this.doneLine(done, t));
       } else {
@@ -413,6 +423,7 @@ export default class Tasks extends View {
           for (const s of ORDER.slice(1, -1)) {
             const ps = tasksOf[s].filter((p) => !isPin(p));
             // A group shows only when it holds something (To do too).
+            if (s === "done") snoozedGroup(); // fork: SHEP-82
             if (ps.length) body.push(this.group(s, STATUS[s], ps.map((p) => this.row(p, t)), t, { open, done: s === "done" ? ps.length : 0 }));
           }
         } else {
@@ -426,12 +437,8 @@ export default class Tasks extends View {
           }
         }
       }
-      // fork: Snoozed (SHEP-78): under Done, folded until opened (as the web's), in every grouping
-      if (snoozedShown.length) {
-        const opened = open || this.shut("snoozed:open");
-        body.push(this.group("snoozed", "Snoozed", opened ? snoozedShown.map((p) => this.row(p, t)) : [], t, { open, closed: !opened, count: snoozedShown.length,
-          onFold: () => this.fold("snoozed:open", !this.shut("snoozed:open")) }));
-      }
+      // fork: Snoozed (SHEP-78): just above Done (SHEP-82; by space, where Done is in each space's group: after them)
+      snoozedGroup();
       // Automations: their own group, last.
       if (rowsOf.automations.length) body.push(this.group("automations", "Automations", rowsOf.automations, t, { open }));
       // Nothing at all to show: say so once (never "yet").

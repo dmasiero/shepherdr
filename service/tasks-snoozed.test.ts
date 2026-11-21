@@ -1,4 +1,4 @@
-// fork: Snooze (SHEP-78) in the window: the Tasks panel (mods/tasks) folds snoozed tasks into Snoozed at the bottom,
+// fork: Snooze (SHEP-78) in the window: the Tasks panel (mods/tasks) folds snoozed tasks into Snoozed just above Done,
 // greyed with a snooze bell and "Snoozed until …", out of every other group; a task back from a snooze says why; and
 // the window's counts (lib/inbox.js items and ready, the red and green counts) leave a snoozed task's out.
 // fork: Same as last (SHEP-80): a row's menu (mods/tasks rowMenu, drawn by mods/tasks-menu) offers the last snooze's
@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 for (const group of ["status", "you", "space"]) {
-  test(`Snoozed is folded at the bottom, its tasks in no other group (grouped by ${group})`, () => {
+  test(`Snoozed is folded above Done, its tasks in no other group (grouped by ${group})`, () => {
     shared.set("tasks.group", group);
     const p = panel();
     render(p);
@@ -92,6 +92,28 @@ for (const group of ["status", "you", "space"]) {
     expect(one).toContain("Snoozed worker");
     expect(one.some((w) => /^Snoozed until (Today|Tomorrow) \d+:\d\d$/.test(w))).toBe(true);
     expect(built.some((e: any) => e.kind === "svg" || e.calls.some(([, a]: any) => a[0] === "mods/tasks/snooze.svg"))).toBe(true);
+  });
+}
+
+// fork: SHEP-82: Snoozed sits just above Done (by status and For you); by space Done is inside each space's group, so
+// Snoozed comes after them, before Automations
+const idOf = (e: any) => e.calls.find(([n]: any) => n === "id")?.[1][0];
+for (const group of ["status", "you", "space"]) {
+  test(`Snoozed comes right above Done (grouped by ${group})`, () => {
+    shared.set("tasks.group", group);
+    const p = panel();
+    p.lists[0].tasks = [...tasks, { id: 5, title: "Finished", state: "done", status: "done", agents: [] }];
+    render(p);
+    const ids = built.map(idOf);
+    const snoozed = ids.indexOf("head-snoozed");
+    expect(snoozed).toBeGreaterThanOrEqual(0);
+    const heads = ids.filter((id: any) => /^head-(?!.*-label$)/.test(id ?? ""));
+    if (group === "space") expect(heads.at(-1)).toBe("head-snoozed");
+    else {
+      // Done: a group by status, a quiet count line for you
+      const done = ids.findIndex((id: any) => id === "head-done" || id === "task-done-line");
+      expect(done).toBeGreaterThan(snoozed);
+    }
   });
 }
 

@@ -31,6 +31,15 @@ describe('Group by status or by place (SHEP-182)', () => {
     ])
     expect([gs[0].emoji, gs[0].place]).toEqual(['🐑', 'a:shep'])
   })
+  // fork: SHEP-82: Snoozed just above Done, by status and by place
+  test('Snoozed sits right above Done, by status and by place', () => {
+    const t = [...ts(), task('a:shep', 'work', { snoozedUntil: Date.now() + 3600_000 })]
+    expect(groupTasks(places, machines, t, 'status', 0).map((g) => g.key)).toEqual(['need', 'ready', 'work', 'queued', 'todo', 'snoozed', 'done'])
+    expect(groupTasks(places, machines, t, 'place', 0).map((g) => g.key)).toEqual(['a:shep', 'a:tor', 'b:gtm', 'snoozed', 'done'])
+    // no Done: Snoozed last
+    const noDone = t.filter((x) => x.status !== 'done')
+    expect(groupTasks(places, machines, noDone, 'place', 0).map((g) => g.key).at(-1)).toBe('snoozed')
+  })
   test('a pinned task gets Pinned on top in both', () => {
     const t = [task('a:shep', 'need', { pinned: 1 }), task('a:tor', 'work')]
     expect(groupTasks(places, machines, t, 'status', 0).map((g) => g.key)).toEqual(['pinned', 'work'])
