@@ -95,7 +95,7 @@ export interface TaskGroup {
  */
 export function groupTasks(places: Place[], machines: Machine[], ts: Task[], by: GroupBy, level = 1, waits?: string[]): TaskGroup[] {
   // archived tasks are in no group: only their place's Archived view shows them
-  // fork: Snooze (SHEP-78): snoozed tasks in no group but Snoozed, at the bottom (by place too), soonest back first
+  // fork: Snooze (SHEP-78): snoozed tasks in no group but Snoozed, just above Done (SHEP-82; by place too), soonest back first
   const snoozed = ts.filter((t) => t.snoozedUntil && !t.archived).sort((a, b) => a.snoozedUntil! - b.snoozedUntil!)
   const all = doneNewestFirst(GROUPS.flatMap(([s]) => ts.filter((t) => t.status === s && !t.archived && !t.snoozedUntil)))
   const names = namesFor(level)
@@ -111,8 +111,8 @@ export function groupTasks(places: Place[], machines: Machine[], ts: Task[], by:
   return [
     ...(pinned.length ? [{ key: 'pinned', label: 'Pinned', tasks: pinned, names }] : []),
     ...(by === 'status' ? GROUPS.filter(([s]) => s !== 'done').map(([s, label]) => ({ key: s, label, tasks: inGroup(s), names })).filter((g) => g.tasks.length) : projectGroups(places, machines, open)),
-    ...(done.length ? [{ key: 'done', label: 'Done', tasks: done, names }] : []),
     ...(snoozed.length ? [{ key: 'snoozed', label: 'Snoozed', tasks: snoozed, names }] : []),
+    ...(done.length ? [{ key: 'done', label: 'Done', tasks: done, names }] : []),
   ]
 }
 
