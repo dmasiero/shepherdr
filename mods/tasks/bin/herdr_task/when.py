@@ -6,7 +6,8 @@ import re
 
 from .base import Fail
 
-AT_HOW = ('Write a time like "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00" or "18:00" '
+# fork: (SHEP-79) "1800" too: a time typed without the colon (fiddly on a phone)
+AT_HOW = ('Write a time like "2026-11-06 09:00", "tomorrow 9:00", "fri 8:15", "today 18:00", "18:00" or "1800" '
           '(this machine\'s time zone).')
 IN_HOW = 'Write a span like "6h", "90m", "2 days", "6 hours" or "1h 30m".'
 UNITS = {"m": 1, "min": 1, "mins": 1, "minute": 1, "minutes": 1, "h": 60, "hr": 60, "hrs": 60, "hour": 60, "hours": 60,
@@ -22,13 +23,15 @@ def _ms(d):
 
 
 def parse_clock(text, how=AT_HOW):
-    """"9:00", "18.30", "9am", "9:30 pm", "noon", "midnight" -> (hour, minute)."""
+    """"9:00", "18.30", "1830", "230", "9am", "9:30 pm", "noon", "midnight" -> (hour, minute)."""
     t = text.strip().lower()
     if t in ("noon", "midday"):
         return 12, 0
     if t == "midnight":
         return 0, 0
     m = re.fullmatch(r"(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?", t)
+    # fork: (SHEP-79) 3 or 4 digits without the colon are H:MM / HH:MM, the last two the minutes ("230" is "2:30")
+    m = m or re.fullmatch(r"(\d{1,2})(\d{2})\s*(am|pm|a\.m\.|p\.m\.)?", t)
     if not m or (m.group(2) is None and m.group(3) is None):
         raise Fail(f"Unknown time {text.strip()!r}. " + how)
     h, mi, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").replace(".", "")

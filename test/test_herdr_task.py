@@ -3454,6 +3454,47 @@ class Store:
         return f"f#{t['id']}"
 
 
+# fork: (SHEP-79) times typed without the colon; core/snooze.test.js has the same table for Snooze's copy
+COLONLESS_NOW = (2026, 11, 5, 10, 0)  # a Thursday, 10:00, this machine's time
+COLONLESS = [  # typed -> when, from that Thursday 10:00 (the same as with the colon)
+    ("1830", "Thu 2026-11-05 18:30"), ("2345", "Thu 2026-11-05 23:45"), ("230", "Fri 2026-11-06 02:30"),
+    ("0915", "Fri 2026-11-06 09:15"), ("230pm", "Thu 2026-11-05 14:30"), ("fri 1830", "Fri 2026-11-06 18:30"),
+    ("2026-11-06 0900", "Fri 2026-11-06 09:00"), ("tomorrow 0900", "Fri 2026-11-06 09:00"),
+    ("at 1830", "Thu 2026-11-05 18:30"), ("1230am", "Fri 2026-11-06 00:30"), ("0000", "Fri 2026-11-06 00:00"),
+    ("2:30", "Fri 2026-11-06 02:30"), ("18.30", "Thu 2026-11-05 18:30"), ("9am", "Fri 2026-11-06 09:00"),
+]
+COLONLESS_REFUSED = ["2460", "1875", "9", "12345", "1830pm", "0030am", "18", "2026-11-06"]
+
+
+class ColonlessTimes(unittest.TestCase):
+    """SHEP-79: "1830" is 18:30, "230" 2:30 (never a guessed pm), wherever herdr-task reads a time."""
+
+    def setUp(self):
+        import datetime
+        sys.path.insert(0, BIN)
+        from herdr_task.base import Fail
+        from herdr_task import when
+        self.when, self.Fail, self.dt = when, Fail, datetime.datetime
+        self.now = int(datetime.datetime(*COLONLESS_NOW).timestamp() * 1000)
+
+    def test_the_table(self):
+        at = lambda words: self.dt.fromtimestamp(self.when.parse_at(words, self.now) / 1000).strftime("%a %Y-%m-%d %H:%M")
+        for words, want in COLONLESS:
+            self.assertEqual(at(words), want, words)
+        for words in COLONLESS_REFUSED:
+            with self.assertRaises(self.Fail, msg=words):
+                self.when.parse_at(words, self.now)
+        self.assertIn('"1800"', self.when.AT_HOW)
+
+    def test_spans_stay_spans(self):
+        for words, mins in (("90m", 90), ("6h", 360), ("in 2 days", 2880), ("1h 30m", 90)):
+            self.assertEqual(self.when.when_from(words, None, self.now), self.now + mins * 60000, words)
+
+    def test_automations_once(self):
+        from herdr_task.automations import parse_every
+        self.assertEqual(parse_every("once 2026-11-05 1830")["at"], "2026-11-05 18:30")
+
+
 class Scheduled(unittest.TestCase):
     """APP-38: a task that starts by itself at a time (--at "fri 8:15", --in 6h). A real task list on
     disk in a throwaway store and a throwaway git repo; only starting an agent, hc and the clock are faked."""

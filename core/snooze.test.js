@@ -127,3 +127,25 @@ test("Same as last: the last snooze's moment while ahead, never one the picks co
   // the words as a Snoozed row says them
   expect(untilLine(startsAt(sat, T0))).toBe("Snoozed until Tomorrow 18:30");
 });
+
+// SHEP-79: times typed without the colon, the same table as test/test_herdr_task.py's ColonlessTimes (when.py).
+const THU = new Date(2026, 10, 5, 10, 0).getTime(); // a Thursday, 10:00, this machine's time
+const COLONLESS = [
+  ["1830", "Thu 2026-11-05 18:30"], ["2345", "Thu 2026-11-05 23:45"], ["230", "Fri 2026-11-06 02:30"],
+  ["0915", "Fri 2026-11-06 09:15"], ["230pm", "Thu 2026-11-05 14:30"], ["fri 1830", "Fri 2026-11-06 18:30"],
+  ["2026-11-06 0900", "Fri 2026-11-06 09:00"], ["tomorrow 0900", "Fri 2026-11-06 09:00"],
+  ["at 1830", "Thu 2026-11-05 18:30"], ["1230am", "Fri 2026-11-06 00:30"], ["0000", "Fri 2026-11-06 00:00"],
+  ["2:30", "Fri 2026-11-06 02:30"], ["18.30", "Thu 2026-11-05 18:30"], ["9am", "Fri 2026-11-06 09:00"],
+];
+const COLONLESS_REFUSED = ["2460", "1875", "9", "12345", "1830pm", "0030am", "18", "2026-11-06"];
+const words = (ms) => {
+  const d = new Date(ms), p = (n) => String(n).padStart(2, "0");
+  return `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+test("Other time… takes a time without the colon, as when.py", () => {
+  for (const [typed, want] of COLONLESS) expect([typed, words(whenOf({ at: typed }, THU).at)]).toEqual([typed, want]);
+  for (const typed of COLONLESS_REFUSED) expect([typed, typeof whenOf({ at: typed }, THU).error]).toEqual([typed, "string"]);
+  for (const [typed, mins] of [["90m", 90], ["6h", 360], ["in 2 days", 2880], ["1h 30m", 90]]) expect(whenOf({ at: typed }, THU)).toEqual({ at: THU + mins * 60_000 });
+  expect(whenOf({ at: "9" }, THU).error).toContain('"18:00" or "1800"');
+});
