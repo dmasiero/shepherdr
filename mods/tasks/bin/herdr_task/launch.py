@@ -618,7 +618,14 @@ def where_line(task):
     if not task.get("worktree"):
         return ""
     base = f", from {task['base']}, which it merges into" if task.get("base") else ""
-    return f"You work in {task['worktree']} on branch {task['branch']}{base}."
+    line = f"You work in {task['worktree']} on branch {task['branch']}{base}."
+    pr = task.get("pr") or {}
+    if pr.get("taken"):
+        # --pr (#1155): never a second pull request; its agent should know where its work goes.
+        on = f" (branch {pr['branch']})" if pr.get("branch") else ""
+        line += (f" This task took pull request #{pr['number']}{on}, {pr.get('url') or ''}: ready pushes your commits there "
+                 "and its checks and review come to you; don't open another.")
+    return line
 
 
 def brief(s, task, parent=None, space=None, argv=None):
@@ -796,8 +803,16 @@ def folder_for(s, task):
         return path
     exists = git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")[0]
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    taken = (task.get("pr") or {}).get("branch") if (task.get("pr") or {}).get("taken") else None
     if exists:
         add = ["worktree", "add", path, branch]
+    elif taken:
+        # --pr (#1155): a pull request already open: its worktree starts from that pull request's branch.
+        remote = remote_of(main)
+        ok, _, err = git(main, "fetch", "--quiet", "--no-tags", remote, f"+refs/heads/{taken}:refs/remotes/{remote}/{taken}")
+        if not ok:
+            raise Fail(f"Couldn't fetch {taken}, pull request #{task['pr']['number']}'s branch: {err}")
+        add = ["worktree", "add", "--no-track", "-b", branch, path, f"refs/remotes/{remote}/{taken}"]
     else:
         # From the base's latest (fetched first); a detached folder (base is a commit) from HEAD.
         branchy = git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{base}")[0]
@@ -807,6 +822,9 @@ def folder_for(s, task):
         raise Fail(err or "git worktree add failed")
     # Where the branch starts: work past it that turns up in the base branch means merged.
     start = git(path, "rev-parse", "HEAD")[1] if not exists else task.get("start")
+    if taken and not exists:
+        # Its pull request's commits are its own work (ready, Accept): it starts where they leave its base.
+        start = git(main, "merge-base", fresh_start(main, base), start)[1] or start
     task.update(worktree=path, branch=branch, base=task.get("base") or base, start=start)
     return path
 
@@ -827,7 +845,49 @@ def registered_worktree(main, path):
     return None
 
 
-def launch(s, task, argv, space, message=None, parent=None, resume=None, role=None):
+# ---- Before the agent starts (#1197, SHEP-272) -------------------------------------------------
+# Settings > Tasks > "Before the agent starts" (tasks.setup, Everywhere's or a space's): a shell command run in
+# each new worktree before its agent, e.g. linking or installing dependencies an agent loads at startup. It runs
+# in the agent's own terminal, ahead of the agent (never under the task list's lock: an install can take
+# minutes), its output shown there and kept in a log. It fails: the agent doesn't start, and _setup-failed holds
+# the task with why (Needs you); starting it again runs the setup again.
+
+SETUP_SH = (
+    'setup=$1 log=$2 ht=$3 ref=$4 folder=$5; shift 5; '
+    'mkdir -p "${log%/*}" 2>/dev/null; rcf="$log.rc"; rm -f "$rcf"; '
+    'printf \'%s\\n%s\\n\\n\' "Before the agent starts, this space runs:" "  $setup"; '
+    '{ sh -c "$setup" </dev/null; echo $? > "$rcf"; } 2>&1 | tee "$log"; '
+    'rc=$(cat "$rcf" 2>/dev/null); rm -f "$rcf"; [ -n "$rc" ] || rc=1; '
+    'if [ "$rc" = 0 ]; then printf \'\\n%s\\n\\n\' "Setup done. Starting the agent."; exec "$@"; fi; '
+    'printf \'\\n%s\\n%s\\n\' "Setup failed (exit $rc), so the agent was not started." "Its output: $log"; '
+    '"$ht" _setup-failed "$ref" --folder "$folder" --code "$rc" --log "$log" >/dev/null 2>&1; '
+    'exit "$rc"')
+
+
+def setup_log(s, task):
+    """Where a task's setup output is kept: beside the task lists, one file per task."""
+    from .base import STORE
+    return os.path.join(STORE, ".setup", f"{s.slug}-{task['id']}.log")
+
+
+def setup_for(s, task, space, had):
+    """The setup command to run before this start's agent, or None: only in a worktree, when the space sets
+    one, and the worktree is new (had: it was there before this start) or its last setup failed."""
+    if task.get("mode") != "worktree" or not task.get("worktree"):
+        return None
+    cmd = str(settings_for(s, space)["tasks"].get("setup") or "").strip()
+    failed = task.pop("setup_failed", None)
+    if not cmd or (had and not failed):
+        return None
+    return cmd
+
+
+def setup_argv(s, task, setup, cmd):
+    """cmd run after the setup command, only when it succeeds (SETUP_SH)."""
+    return ["sh", "-c", SETUP_SH, "herdr-setup", setup, setup_log(s, task), own_path(), s.ref(task), s.loc["folder"], *cmd]
+
+
+def launch(s, task, argv, space, message=None, parent=None, resume=None, role=None, setup=None):
     """Starts one agent for the task with no tab or pane of its own (a space can hold thousands
     of tasks): an hc child of `parent`, which parent_for() makes the space's coordinator, reached
     through the Tasks panel. Labels: herdr.task (its task), herdr.task.space (its space; never
@@ -840,6 +900,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
         cmd = own_argv(cmd, folder_for(s, task))
     if message:
         cmd = cmd + [message]
+    if setup and not role:
+        cmd = setup_argv(s, task, setup, cmd)
     labels = ["--label", f"herdr.task={key}", "--label", f"herdr.task.space={bare(space)}",
               "--label", f"herdr.agent={agent_key(argv)}"]
     ctab = coordinator_tab(parent)
