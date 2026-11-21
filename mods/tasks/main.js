@@ -409,7 +409,7 @@ export default class Tasks extends View {
           const twin = shownLists.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
           body.push(this.spaceGroup(l, sorted(work.filter((p) => p.list === l)).map((p) => this.row(p, t, true)), t, twin ? machineName(l.machine) : null));
         }
-        // Done: only its count, a quiet line, until opened (then a group that folds it away again).
+        // Done: shut, its heading and count, until opened (then a group that folds it away again).
         const done = tasksOf.done.filter((p) => !isPin(p));
         snoozedGroup(); // fork: SHEP-82
         if (done.length) body.push(open || this.shut("done:open") ? this.group("done", STATUS.done, done.map((p) => this.row(p, t)), t, { open, done: done.length, onFold: () => this.fold("done:open", false) })
@@ -675,7 +675,8 @@ export default class Tasks extends View {
   // list's first thing to read). onFold: what a click on the heading does instead of folding it
   // (For you's opened Done goes back to its count).
   // fork: closed: shut whatever its own fold says (Snoozed, SHEP-78: shut until opened, its onFold opens it)
-  group(key, label, rows, t, { done = 0, open = false, note = null, top = false, count = rows.length, onFold = null, closed = null } = {}) {
+  // fork: id: its heading's id, if not head-<key> (For you's shut Done keeps task-done-line, SHEP-84)
+  group(key, label, rows, t, { done = 0, open = false, note = null, top = false, count = rows.length, onFold = null, closed = null, id = null } = {}) {
     const shut = closed ?? (!open && !onFold && this.shut(key));
     const all = open || this.allDone.has(key);
     const cut = !all && done > DONE_SHOWN ? done - DONE_SHOWN : 0;
@@ -685,7 +686,7 @@ export default class Tasks extends View {
       .pt(6)
       // As Shepherdr's: the whole heading is the button; the chevron in the rows' icon column
       // (brighter on hover), the label small, its count right by it ("Ready 2"), not across the panel.
-      .child(h_flex().id(`head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
+      .child(h_flex().id(id ?? `head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
         .when(!open, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
           .on_hover((on, cx) => { this.hoverHead = on ? key : this.hoverHead === key ? null : this.hoverHead; cx.notify(); })
           .on_click((_e, cx) => { if (onFold) onFold(); else this.fold(key, !shut); cx.notify(); }))
@@ -728,16 +729,13 @@ export default class Tasks extends View {
       .children(rows);
   }
 
-  // For you's Done, shut: one quiet line, "3 done today" (or "12 done", some older); a click shows them.
+  // For you's Done, shut: its heading like the others' ("Done 155", "Done 3 · today"); a click shows them.
+  // fork: SHEP-84: was a quiet "155 done" line; still id task-done-line
   doneLine(ps, t) {
     const today = new Date().toDateString();
     const all = ps.every((p) => p.task.done_at && new Date(p.task.done_at * (p.task.done_at < 1e12 ? 1000 : 1)).toDateString() === today);
-    return h_flex().id("task-done-line").flex_none().mt(6).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).cursor_pointer()
-      .text_size(TEXT.label).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.muted))
-      .on_click((_e, cx) => { this.fold("done:open", true); cx.notify(); })
-      .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
-        .child(svg("mods/workspace-chrome/chevron-right.svg").size(12).flex_none()))
-      .child(`${ps.length} done${all ? " today" : ""}`);
+    return this.group("done", STATUS.done, [], t, { closed: true, count: ps.length, note: all ? "today" : null, id: "task-done-line",
+      onFold: () => this.fold("done:open", true) });
   }
 
   // A row's status mark: Shepherdr's task dot (dot.js); a Working row's pie shows its % done.

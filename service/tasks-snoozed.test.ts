@@ -202,3 +202,33 @@ test("a snoozed task's Change snooze time offers it too; past, it's gone; any pi
   expect(last.until - before).toBeGreaterThanOrEqual(3 * HOUR);
   expect(last.until - before).toBeLessThan(3 * HOUR + 5000);
 });
+
+// fork: SHEP-84: For you's shut Done is a heading like the others ("Done 2", as "Snoozed 2"), not a quiet "2 done"
+test("For you's shut Done reads Done and its count, as the other headings; a click opens it", () => {
+  shared.set("tasks.group", "you");
+  const p = panel();
+  const old = Date.UTC(2020, 0, 1) / 1000;
+  p.lists[0].tasks = [...tasks,
+    { id: 5, title: "Finished", state: "done", status: "done", done_at: old, agents: [] },
+    { id: 6, title: "Finished too", state: "done", status: "done", done_at: Math.floor(Date.now() / 1000), agents: [] }];
+  render(p);
+  const line = byId("task-done-line");
+  expect(line).toBeDefined();
+  expect(words(line)).toEqual(["Done", "2"]);
+  // the same build as Snoozed's heading: chevron, label, count
+  const shape = (e: any) => e.calls.map(([n]: any) => n).filter((n: string) => n !== "id" && n !== "on_click" && n !== "on_hover");
+  expect(shape(line)).toEqual(shape(byId("head-snoozed")));
+  handler(line!, "on_click")!({}, cx);
+  render(p);
+  expect(byId("task-done-line")).toBeUndefined();
+  expect(words(byId("head-done"))).toEqual(["Done", "2"]);
+  expect(byId(`task-${key(5)}`)).toBeDefined();
+});
+
+test("For you's shut Done, all from today, says so as a heading's note: Done · today 1", () => {
+  shared.set("tasks.group", "you");
+  const p = panel();
+  p.lists[0].tasks = [...tasks, { id: 6, title: "Finished", state: "done", status: "done", done_at: Math.floor(Date.now() / 1000), agents: [] }];
+  render(p);
+  expect(words(byId("task-done-line"))).toEqual(["Done", "· today", "1"]);
+});
