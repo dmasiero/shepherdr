@@ -35,13 +35,6 @@ export class AskCards {
     this.open = new Set();
     // The questions card the keys go to (the last one pressed).
     this.keyed = null;
-    // fork: SHEP-74: the card box ("Other…") that has the keyboard, or null: the chat's refocus() leaves it be.
-    this.typing = null;
-  }
-
-  // fork: SHEP-74: whether one of these cards' boxes has the keyboard.
-  hasKeys() {
-    return Boolean(this.typing);
   }
 
   // The strips of one ask's card. opts: { who (whose ask: "Claude", "HERD-12"), links (more
@@ -117,7 +110,7 @@ export class AskCards {
   // Forgets an ask's state (its "Other" boxes too): when it's answered or gone.
   drop(ask) {
     const q = this.states.get(ask.id);
-    for (const b of q?.boxes ?? []) { if (b && b === this.typing) this.typing = null; b?.release(); }
+    for (const b of q?.boxes ?? []) b?.release();
     this.states.delete(ask.id);
     this.open.delete(ask.id);
     if (this.keyed?.id === ask.id) this.keyed = null;
@@ -152,6 +145,12 @@ export class AskCards {
     const map = Object.fromEntries(ask.words.questions.map((qq, i) => [qq.text, this.answerOf(ask, q, i)]));
     this.drop(ask);
     this.host.reply(ask, answers(ask.req, map, annotationsOf(ask.words, map)), cx);
+  }
+
+  // Whether one of these cards' own boxes (Other…) has the keyboard: one of a card that's gone counts no more.
+  holdsKeys() {
+    const b = this.typing;
+    return Boolean(b) && [...this.states.values()].some((q) => q.boxes?.includes(b));
   }
 
   // A press on one of this ask's strips: its card takes the keys (Esc; a questions card's arrows,
@@ -202,11 +201,11 @@ export class AskCards {
     q.other[i] = q.other[i] ?? "";
     if (!ask.words.questions[i].multi) q.picks[i] = new Set();
     if (!q.boxes[i]) {
-      q.boxes[i] = InputState.new({ placeholder: "Your answer" }); q.boxes[i].on("change", (_e, cx) => cx.notify());
+      const b = q.boxes[i] = InputState.new({ placeholder: "Your answer" });
+      b.on("change", (_e, cx) => cx.notify());
       // fork: SHEP-73: Enter in the box does what the step's button does (Shift+Enter stays the box's)
-      q.boxes[i].on("submit", (e, cx) => { if (!e?.shift) this.enterOther(ask, i, cx); });
-      // fork: SHEP-74: while the box has the keyboard the chat's composer doesn't take it back (refocus())
-      const b = q.boxes[i];
+      b.on("submit", (e, cx) => { if (!e?.shift) this.enterOther(ask, i, cx); });
+      // which card box holds the keyboard: the chat's refocus() leaves it there (GitHub #1224)
       b.on("focus", () => { this.typing = b; });
       b.on("blur", () => { if (this.typing === b) this.typing = null; });
     }

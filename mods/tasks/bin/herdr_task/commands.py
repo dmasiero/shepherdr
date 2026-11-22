@@ -17,18 +17,18 @@ from .settings import (
     task_settings, worker_argv, worktrees_on,
 )
 from .agents import (
-    agent_log, agent_running, background_jobs, busy_again, detail, fit, LINE_MAX, live_agents, ready_turns, STATUSES, SUMMARY_MAX,
+    agent_log, agent_running, background_jobs, busy_again, job_names, own_jobs, detail, fit, LINE_MAX, live_agents, ready_turns, STATUSES, SUMMARY_MAX,
     WORKING_AGAIN,
 )
 from .sessions import refresh_sessions
 from .github import (already_merged, checks_missing, github_unreachable, pr_for_branch, checks_since, drop_branch, expected_checks, finish, gh, github, merged_here, needs_approval, note_checks, own_work, pr_adopt, pr_open,
-                     pr_pending, pr_problem, pr_view, remote_of, update_main, watch_main)
+                     merge_checks, pr_pending, pr_problem, pr_view, queue_refusal, remote_of, update_main, watch_main)
 from .github import CHECKS_RUNNING as PR_CHECKS_RUNNING
 from .github import remote_of  # fork: for gitea.local_merge_refused (gitea.py)
 from . import gitea  # fork: Gitea pull requests through tea (gitea.py)
 from .launch import (
     base_ref, brief, caller_labels, caller_space, current_base, default_space, folder_for, handoff, launch, name_tabs,
-    own_path, parent_for, resume_argv, retag_tabs, set_branch, setup_for, tab_title, task_tabs,
+    own_path, parent_for, resume_argv, retag_tabs, set_branch, setup_for, space_for_folder, tab_title, task_tabs,
 )
 from .store import bare_by_mistake, is_task_list, locate, open_store, prefixes_in_use, read_list, Store, store_files
 from .queues import after_refs, parse_after, queue_reason, set_after
@@ -110,8 +110,8 @@ def cmd_add(args):
         # The person's setting wins: worktrees off for this repo means in the folder, --worktree or not.
         mode = "here" if args.here or not worktrees_on(s) else "worktree"
         t = s.new(args.title.strip(), prompt, mode)
-        set_opts(t, args)
-        space = bare(args.space) if args.space else caller_space()
+        space = bare(args.space) if args.space else (space_for_folder(s.loc["folder"], caller_space()) or caller_space())
+        set_opts(t, args, s, space)
         set_base(s, t, args.base, space, new=True)
         set_branch(s, t, getattr(args, "branch", None))
         take_pr(s, t, getattr(args, "pr", None))
@@ -296,6 +296,10 @@ def cmd_show(args):
         on, rounds = review_limits(s, t)
         if on:
             v["review_rounds"] = {"used": rounds_used(t), "of": rounds, "added": int(t.get("review_rounds_added") or 0)}
+            # #1116: what the last round found, so the Assistant grants or declines another round on evidence
+            last = next((x for x in reversed(t.get("reviews") or []) if x.get("result") in REVIEWED), None)
+            if last:
+                v["review_rounds"]["last"] = {"head": last.get("head"), "text": last.get("text") or ""}
         v["after_refs"] = after_refs(s, t)
         block = settings_block(s, t)
         if getattr(args, "evidence", False):
@@ -314,6 +318,9 @@ def cmd_show(args):
         r = v["review_rounds"]
         text.append(f"review rounds: {r['used']} of {r['of']} used" + (f" ({r['added']} added by the assistant)" if r["added"] else "")
                     + (" (ready refused: out of rounds)" if v.get("review_out") else ""))
+        last = r.get("last")
+        if last and v.get("review_out"):
+            text.append(f"last round ({(last.get('head') or '')[:7] or 'no commit'}): {last.get('text') or 'no findings given'}")
     if v.get("agents_md"):
         text.append(f"for AGENTS.md: {v['agents_md']}")
     if v.get("pr"):
@@ -322,6 +329,9 @@ def cmd_show(args):
         text.append(f"needs the person: {v['why']}")
     if v.get("proof"):
         text.append(f"proof: {v['proof']['title']} ({v['proof']['id']})")
+    if v.get("after_accept"):
+        from .after_accept import describe
+        text.append(f"when accepted: {describe(v['after_accept'])}")
     if v.get("archived"):
         text.append(f"archived: {time.strftime('%Y-%m-%d %H:%M', time.localtime(v['archived'] / 1000))} (still kept; writing to it brings it back)")
     for k in v["live"]:
@@ -393,6 +403,16 @@ def just_started(t):
     return fresh[-1] if t.get("state") == "running" and fresh else None
 
 
+def other_worktree(s, folder):
+    """#1210: the work tree `folder` is in, when that is another worktree of this repo than its own folder (a start
+    there --here would run in the repo's folder instead), else None."""
+    if not folder or s.loc.get("kind") != "repo":
+        return None
+    ok, top, _ = git(os.path.realpath(os.path.expanduser(folder)), "rev-parse", "--show-toplevel")
+    top = os.path.realpath(top) if ok and top else None
+    return top if top and top != os.path.realpath(s.loc["folder"]) else None
+
+
 def cmd_start(args):
     with open_store(args) as s:
         t = s.find(args.id)
@@ -405,10 +425,16 @@ def cmd_start(args):
             t["mode"] = "here"
         elif args.worktree and worktrees_on(s):
             t["mode"] = "worktree"
+        if t.get("mode") != "worktree":
+            other = other_worktree(s, getattr(args, "folder", None))
+            if other:
+                raise Fail(f"{other} is another worktree of {s.loc['folder']}: a start in the folder itself (--here) runs in "
+                           f"{s.loc['folder']}, never there. Start it without --here to give it a worktree of its own.")
         set_branch(s, t, getattr(args, "branch", None))
         take_pr(s, t, getattr(args, "pr", None))
         q = t.get("queue") or {}
-        space = bare(args.space) if args.space else (q.get("space") or default_space())
+        # --space, the one it was queued with, its repo's own space (#1209: its news go to that space's Assistant), the caller's
+        space = bare(args.space) if args.space else (q.get("space") or space_for_folder(s.loc["folder"], caller_space()) or default_space())
         argv = agent_argv(None, args.argv) if args.argv else worker_argv(s, t, space, args.agent) if args.agent else \
             (q.get("argv") or worker_argv(s, t, space))
         parent = args.parent or q.get("parent")
@@ -444,6 +470,12 @@ def cmd_start(args):
     out = {**v, "terminal": a["address"], "space": space, "parent": a.get("parent")}
     text = f"{s.ref(t)} started: {a['address']} in {folder_desc(t, s)}"
     # Codex's sandbox can't start here (SHEP-227, #998): whoever started it hears why and the fix, once per start.
+    from .launch import dont_ask_default, folder_for
+    if dont_ask_default(argv, folder_for(s, t)):
+        # #1110: the person's defaultMode, dontAsk, refuses a worker everything instead of asking
+        out["mode"] = ("Claude Code's settings start new sessions in don't-ask mode, which refuses instead of asking: "
+                       "this worker starts in the default mode, asking on its card.")
+        text += "\n\n" + out["mode"]
     broken = sandbox.check() if sandbox.sandboxed(argv) else None
     if broken:
         out["sandbox"] = sandbox.notice(broken)
@@ -466,6 +498,66 @@ def ready_words(args):
     return said, str(args.details or "").strip()
 
 
+def on_branch(t, wt):
+    """#1194: ready works on the task's branch. HEAD on another branch (a part 2 made in the same worktree) would be
+    neither pushed nor opened: the task's pull request is its branch's, so refused, saying which and how."""
+    br = t.get("branch")
+    ok, here, _ = git(wt, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if not br or (ok and here == br):
+        return
+    if not ok:
+        # detached: fine at the branch's own tip (a check run), else work the branch doesn't hold
+        if git(wt, "rev-parse", "HEAD")[1] == git(wt, "rev-parse", "--verify", "--quiet", f"refs/heads/{br}")[1]:
+            return
+        here = f"a detached commit ({git(wt, 'rev-parse', '--short', 'HEAD')[1]})"
+    pr = t.get("pr") or {}
+    has = f" (its pull request is #{pr['number']})" if pr.get("number") else ""
+    raise Fail(f"HEAD is on {here}, not on this task's branch {br}{has}: ready pushes and opens only {br}. Put the work "
+               f"on {br} (git switch {br}, then merge or cherry-pick it), or, for a second pull request, open it yourself "
+               "and ask your Assistant for a task to track it (add --pr <its number>).")
+
+
+def base_pr(s, t):
+    """#1204: a task started from an open pull request's branch (its base is that branch: --base <its head>) goes on that
+    pull request at ready, as ready --pr <n> would, never a second one stacked on it. Only when it has none yet, and only
+    a base set for this task: a space's base branch (a develop with its release pull request open) is never taken."""
+    base = t.get("base")
+    if t.get("pr") or not base or not t.get("base_set") or t.get("base_by") == "space":
+        return
+    repo = github(s)
+    if not repo:
+        return
+    ok, out, _ = gh("pr", "list", "--repo", repo, "--head", base, "--state", "open", "--json", PR_FIELDS)
+    try:
+        found = next((p for p in json.loads(out) if not p.get("isCrossRepository")), None) if ok and out else None
+    except (ValueError, TypeError, AttributeError):
+        found = None
+    if not found or found.get("baseRefName") == base:
+        return
+    t["pr"] = {"number": found["number"], "url": found.get("url"), "repo": repo, "taken": True, "branch": base,
+               "from_base": True}
+    for k in ("pr_note", "merge_queued"):
+        t.pop(k, None)
+    s.dirty = True
+
+
+def pr_words(t, args):
+    """--pr-title / --pr-body / --draft (#1087, #1155): kept on the task; the pull request opens with them, and a later
+    ready that gives them again changes the open one (github.pr_open). "" goes back to Shepherdr's own."""
+    for k in ("pr_title", "pr_body"):
+        v = getattr(args, k, None)
+        if v is None:
+            continue
+        v = v.strip() if k == "pr_body" else " ".join(v.split())
+        if v:
+            t[k] = v
+            t[f"{k}_new"] = True
+        else:
+            t.pop(k, None)
+    if getattr(args, "draft", False):
+        t["pr_draft"] = True
+
+
 def cmd_ready(args):
     said, details = ready_words(args)
     with open_store(args) as s:
@@ -479,9 +571,14 @@ def cmd_ready(args):
         if wt and os.path.isdir(wt):
             if git(wt, "status", "--porcelain", "--untracked-files=no")[1]:
                 raise Fail(f"{wt} has uncommitted changes. Commit them, then run ready again.")
+            on_branch(t, wt)
             t["head"] = git(wt, "rev-parse", "HEAD")[1]
-            # --pr: its work goes on a pull request already open (#1155), checked before anything changes.
+            # --pr: its work goes on a pull request already open (#1155), checked before anything changes;
+            # else one open from its base branch, the branch the task was started on (#1204).
             take_pr(s, t, getattr(args, "pr", None))
+            if getattr(args, "pr", None) is None:
+                base_pr(s, t)
+            pr_words(t, args)
             own_work(s, t)
         elif getattr(args, "pr", None):
             raise Fail("--pr is for tasks in a worktree; this one works in the folder itself.")
@@ -526,13 +623,16 @@ def cmd_ready(args):
         # base caught up with: a research or artifact-only task) still waits in Ready for the
         # person's Accept, its summary, details and artifacts on the card (SHEP-96); no pull request,
         # and Accept just marks it done and cleans up its worktree.
-        if wt and t.get("start") and in_base(s, t) and not merged_here(s, t):
+        # #1204: on the pull request open from its own base branch, its work is that pull request's (pushed there
+        # already, or by ready now): never "nothing to merge", nor done because its base holds it.
+        on_base_pr = bool((t.get("pr") or {}).get("from_base"))
+        if wt and t.get("start") and not on_base_pr and in_base(s, t) and not merged_here(s, t):
             t["nothing_to_merge"] = True
         else:
             t.pop("nothing_to_merge", None)
         # Its work already in its base (SHEP-59: its pull request squash-merged, or nothing left to
         # merge): done at once, never a second pull request.
-        gone = already_merged(s, t) if wt and t.get("start") and not t.get("nothing_to_merge") else None
+        gone = already_merged(s, t) if wt and t.get("start") and not t.get("nothing_to_merge") and not on_base_pr else None
         if gone is not None:
             t["merged"] = True
             if gone:
@@ -545,11 +645,14 @@ def cmd_ready(args):
             return
         msg = finalize(s, t)
         # Its own background work still running (SHEP-148): the task shows Working until it ends.
-        log = agent_log(t, me) if me else None
-        jobs = background_jobs(log)[0] if log else {}
+        # #1093: named, and Codex's only while something of its own really runs (ended ones never listed)
+        mine = next((k for k in live_agents(s.key(t)) if k.get("address") == me), None) if me else None
+        jobs, log = own_jobs(t, mine) if mine else ({}, None)
         if jobs and t["state"] == "ready":
-            msg += (f" {len(jobs)} background job{'s' if len(jobs) > 1 else ''} of yours still run{'' if len(jobs) > 1 else 's'}: "
-                    "the task shows Working until they end, then Ready. Stop any you don't need (a server, a watcher).")
+            names = job_names(log, sorted(jobs, key=jobs.get))
+            msg += (f" {len(jobs)} background job{'s' if len(jobs) > 1 else ''} of yours still run{'' if len(jobs) > 1 else 's'} "
+                    f"({', '.join(names[:6])}{', …' if len(names) > 6 else ''}): the task shows Working until they end, then Ready. "
+                    "Stop any you don't need (a server, a watcher).")
         if proof:
             msg += f" Proof: {proof['title']}."
         elif asked:
@@ -581,17 +684,23 @@ def review_refusal(s, t, wt):
         return None  # no commits of its own: nothing to review (nothing to merge)
     if not wt and t.get("folder_start") and unchanged_folder(s, t):
         return None  # in the folder itself, and it changed nothing (#744: a run that only reads)
-    revs = [r for r in t.get("reviews") or [] if r.get("result") in REVIEWED and (r.get("at") or 0) >= (t.get("started") or 0)]
+    revs = rounds_this_run(t)
     head = t.get("head") if wt else None
     if (any(r.get("head") == head for r in revs) if wt else bool(revs)):
         return None
-    if wt and head and base_merges_only(s, t, wt, {r.get("head") for r in revs if r.get("head")}, head):
+    if wt and head and carried_over(s, t, wt, {r.get("head") for r in revs if r.get("head")}, head):
         return None
     ref, ht, folder = s.ref(t), own_path(), shlex.quote(s.loc["folder"])
     what = f"your final commit {head[:7]}" if head else "this task's work"
     seen = sorted({r["head"][:7] for r in revs if r.get("head")}) if wt else []
     if seen:
         what += f" (rounds are recorded on {', '.join(seen)})"
+    # #1116: a round after an earlier one reviews what changed since the newest reviewed commit still on this branch,
+    # never the whole task again (its reviewer found fresh nits in code it had passed)
+    last = next((r["head"] for r in reversed(revs) if wt and r.get("head")
+                 and git(wt, "merge-base", "--is-ancestor", r["head"], head or "HEAD")[0]), None)
+    delta = (f" Since round on {last[:7]}, have only what changed reviewed (git diff {last[:7]}..HEAD, and any merge's "
+             "conflict resolutions), with that round's findings.") if last else ""
     if rounds_used(t) >= rounds:
         t["review_out"] = now()
         return (f"All {rounds} review rounds are used and {what} isn't reviewed. A fix made after the last round needs a round "
@@ -599,7 +708,7 @@ def review_refusal(s, t, wt):
                 f"your Assistant can add a round (herdr-task review-more {ref}).")
     return (f"Review is on and {what} isn't reviewed. Have it reviewed as your brief says, fix what must be fixed, record the "
             f"round with `{ht} reviewed {ref} --folder {folder} --report \"<findings, a line>\"` (on the commit you'd say "
-            f"ready at), then run ready again. {rounds - rounds_used(t)} of {rounds} rounds left.")
+            f"ready at), then run ready again.{delta} {rounds - rounds_used(t)} of {rounds} rounds left.")
 
 
 def unchanged_folder(s, t):
@@ -608,6 +717,47 @@ def unchanged_folder(s, t):
     ok, head, _ = git(folder, "rev-parse", "HEAD")
     clean, changed, _ = git(folder, "status", "--porcelain", "--untracked-files=no")
     return ok and head == t["folder_start"] and clean and not changed
+
+
+def rounds_this_run(t):
+    return [r for r in t.get("reviews") or [] if r.get("result") in REVIEWED and (r.get("at") or 0) >= (t.get("started") or 0)]
+
+
+def carried_over(s, t, wt, reviewed, head):
+    """A reviewed commit's review still holds for head: only clean merges of the base since (#741), or the same
+    changes of its own against the base as a reviewed commit (#1178: a merge or rebase on a newer base that left the
+    task's own diff as it was reviewed, whatever git's merge machinery made of it)."""
+    return base_merges_only(s, t, wt, reviewed, head) or same_own_changes(s, t, wt, reviewed, head)
+
+
+def own_diff(wt, base, commit):
+    """The commit's own changes against base (from where they part): each file's header and the lines it adds and
+    takes away, without line numbers or the unchanged lines around them (a newer base moves those); None when
+    unknown."""
+    ok, fork, _ = git(wt, "merge-base", base, commit)
+    if not ok or not fork:
+        return None
+    ok, out, _ = git(wt, "diff", "--no-color", "--no-ext-diff", "--no-renames", "--binary", "--full-index", fork, commit)
+    if not ok:
+        return None
+    return "\n".join(ln for ln in out.split("\n") if not ln.startswith(("index ", "@@ ", " ")) and ln != "")
+
+
+def same_own_changes(s, t, wt, reviewed, head):
+    """#1178: head adds and takes away exactly the lines a reviewed commit did, each against the base (here or on its
+    remote): the review covers it, also after a merge whose conflicts were resolved keeping both sides. A resolution
+    that changed the task's own lines or dropped the base's, or anything of its own since, differs."""
+    main, base = s.loc["folder"], t.get("base") or "main"
+    for b in (f"refs/remotes/{remote_of(main)}/{base}", base):
+        if not git(wt, "rev-parse", "--verify", "--quiet", f"{b}^{{commit}}")[0]:
+            continue
+        mine = own_diff(wt, b, head)
+        if not mine:
+            continue   # unknown, or nothing of its own to compare (empty commits say nothing)
+        for r in list(reviewed)[-10:]:
+            if own_diff(wt, b, r) == mine:
+                return True
+    return False
 
 
 def base_merges_only(s, t, wt, reviewed, head):
@@ -647,9 +797,6 @@ def cmd_reviewed(args):
         if not on:
             raise Fail(f"Review is off for {s.ref(t)}: there is no round to record.")
         used = rounds_used(t)
-        if used >= rounds:
-            raise Fail(f"All {rounds} review rounds of {s.ref(t)} are used. Say why in your chat and end your turn: only your "
-                       f"Assistant can add a round (herdr-task review-more {s.ref(t)}).")
         wt = t.get("worktree") if t.get("mode") == "worktree" else None
         head = None
         where = wt if wt and os.path.isdir(wt) else (s.loc["folder"] if s.loc["kind"] == "repo" else None)
@@ -668,6 +815,17 @@ def cmd_reviewed(args):
             head = git(wt, "rev-parse", "HEAD")[1]
         elif s.loc["kind"] == "repo":
             head = git(s.loc["folder"], "rev-parse", "HEAD")[1] or None
+        heads = {r.get("head") for r in rounds_this_run(t) if r.get("head")}
+        if wt and head and head not in heads and os.path.isdir(wt) and carried_over(s, t, wt, heads, head):
+            # #1178: a clean merge of the base (or the same changes on a newer base) after a reviewed commit: the review
+            # holds, and no round is spent on it (agents out of rounds waited for review-more on every merge of main)
+            say(args, {**view(s, t), "round": used, "rounds": rounds, "carried": True},
+                f"{s.ref(t)}: commit {head[:7]} only adds the base branch to a reviewed commit: its review holds, no round "
+                "used. Say ready.")
+            return
+        if used >= rounds:
+            raise Fail(f"All {rounds} review rounds of {s.ref(t)} are used. Say why in your chat and end your turn: only your "
+                       f"Assistant can add a round (herdr-task review-more {s.ref(t)}).")
         text = " ".join(str(args.report or "").split())[:2000]
         t.setdefault("reviews", []).append({"round": used + 1, "result": "report", "text": text, "at": now(), "head": head,
                                             "by": os.environ.get("HC_TERMINAL_ID")})
@@ -699,7 +857,7 @@ def cmd_review_more(args):
         t.pop("review_out", None)
         s.dirty = True
         live = workers(s, t)
-        told = None
+        told, held = None, False
         if live:
             ht, folder = own_path(), shlex.quote(s.loc["folder"])
             from .news import send_or_hold
@@ -707,9 +865,20 @@ def cmd_review_more(args):
                      f"Your Assistant added one review round to {s.ref(t)}: {rounds + 1} in all. Have your final commit reviewed, "
                      f"record it with `{ht} reviewed {s.ref(t)} --folder {folder} --report \"<findings, a line>\"`, then run ready again.")
             told = live[-1]["address"] if r else None
+            held = r == "held"
         v = view(s, t)
-    say(args, {**v, "rounds": rounds + 1, "told": told},
-        f"{s.ref(t)} may now use {rounds + 1} review rounds" + (f"; told {told}." if told else "; no agent is running to tell."))
+    # #1207: "told" only once it went; held (someone writes to that agent) is said, as when it couldn't go
+    if told and held:
+        end = (f"; the message to {told} is held while its input holds unsent words: it goes once they're sent or "
+               "cleared.")
+    elif told:
+        end = f"; told {told}."
+    elif live:
+        end = f"; couldn't send it to {live[-1]['address']}: tell it yourself."
+    else:
+        end = "; no agent is running to tell."
+    say(args, {**v, "rounds": rounds + 1, "told": None if held else told, "held": told if held else None},
+        f"{s.ref(t)} may now use {rounds + 1} review rounds" + end)
 
 
 def parse_left(text):
@@ -723,6 +892,9 @@ def parse_left(text):
     return int(sum(float(n) * {"h": 3600000, "m": 60000, "s": 1000}[u[0]] for n, u in parts))
 
 
+STATUS_WAIT = 15
+
+
 def cmd_status(args):
     """A task agent says what it's doing, how far along it is and the time left, at the start, at
     each natural step and at least every 5 minutes (as Shepherdr's `shepherdr status`). Herdr guesses nothing: it shows
@@ -733,7 +905,8 @@ def cmd_status(args):
     if args.done is not None and not 0 <= args.done <= 100:
         raise Fail("--done is a percentage, 0 to 100.")
     left = parse_left(args.left) if args.left else None
-    with open_store(args) as s:
+    # #1130: a status line never waits minutes behind a busy list: it gives up after STATUS_WAIT, saying so
+    with open_store(args, wait=STATUS_WAIT) as s:
         t = s.find(args.id)
         if t["state"] not in ("running", "ready"):
             raise Fail(f"{s.ref(t)} isn't being worked on ({STATUSES.get(t['state'], t['state'])}); nothing to report.")
@@ -852,6 +1025,12 @@ def finalize(s, t):
         msg = (f"{s.ref(t)} is ready: pull request #{pr['number']}, {pr['url']}. It shows Working until its checks "
                f"pass and {gitea.word(t)} says it can merge; a failing check or a conflict comes back to you to fix.")  # fork: or Gitea
     policy = merge_policy(s, t)
+    if t.pop("dequeued", None) and t.get("pr") and policy not in ("auto", "checks"):
+        # #1215: its push took it out of GitHub's merge queue, where an Accept had put it: back in once
+        # its checks pass and GitHub says it can merge (never while it conflicts: merge_now()).
+        t["auto_merge"] = "checks"
+        return msg + (" It was in GitHub's merge queue: Herdr took it out to push, and it goes back in once its "
+                      "checks pass.")
     if policy in ("auto", "checks"):
         t["auto_merge"] = policy
         if t.get("pr"):
@@ -953,9 +1132,9 @@ def cmd_edit(args):
         if args.prompt_file:
             with open(args.prompt_file) as f:
                 t["prompt"] = f.read()
-        pick = [t.get(k) for k in ("agent", "model", "effort")]
-        set_opts(t, args)
-        if [t.get(k) for k in ("agent", "model", "effort")] != pick:
+        pick = [t.get(k) for k in ("agent", "model", "effort", "flags")]
+        set_opts(t, args, s)
+        if [t.get(k) for k in ("agent", "model", "effort", "flags")] != pick:
             # The next agent started for it runs on the new choice (start_again), a queued one too.
             t["pick_at"] = now()
             q = t.get("queue") or {}
@@ -1034,7 +1213,7 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     unarchive(s, t)
     prev = last_agent(t)
     parent = parent_for(parent or (prev or {}).get("parent"), space)
-    # The last agent's argv again, unless the task's agent, model or effort changed since (edit).
+    # The last agent's argv again, unless the task's agent, model, effort or flags changed since (edit).
     keep = prev and prev.get("argv") and (t.get("pick_at") or 0) <= (prev.get("at") or 0)
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \
         (prev["argv"] if keep else worker_argv(s, t, space))
@@ -1175,7 +1354,7 @@ WAITS_APPROVAL = "It waits for an approving review."  # #743: not a problem, it 
 IN_QUEUE = "It is in GitHub's merge queue."  # #802: merging, done once GitHub merged it
 
 
-def merge_now(s, t):
+def merge_now(s, t, accept=False):
     """Merges the task's pull request on GitHub (squash) and tidies up here. Returns why it
     couldn't, or None when it's merged (and the task done). A base branch with GitHub's merge
     queue (#742, #801, #802): the pull request joins the queue and the task stays Merging until
@@ -1186,9 +1365,19 @@ def merge_now(s, t):
     if not v:
         return f"Couldn't reach pull request #{n} on {gitea.word(t)}."  # fork: or Gitea
     note_checks(s, t, v)
+    if v.get("state") == "CLOSED" and accept:
+        # #1106: closed on GitHub, on purpose: the person's Accept closes the task, nothing merged (its branch stays on
+        # GitHub with the closed pull request).
+        t["closed_unmerged"] = True
+        finish(s, t, even_if_busy=True)
+        return None
     if v.get("state") != "MERGED":
-        problem = pr_problem(v)
+        # only the base branch's required checks hold a merge (#1221)
+        v = merge_checks(t, v)
+        problem = pr_problem(v) or queue_refusal(t, v)
         if problem:
+            # #1174: never into GitHub's merge queue while it conflicts, nor again at the commit whose
+            # merge group just failed there.
             t["attention"], t["attention_at"] = problem, now()
             t.pop("merge_queued", None)
             return problem
@@ -1205,6 +1394,10 @@ def merge_now(s, t):
         # doesn't know the base has a merge queue (a ruleset's queue, an older gh): GitHub only queued
         # it, and a pull request whose branch goes is closed and leaves the queue. Its branch on GitHub
         # goes below, once GitHub says it merged (drop_branch()).
+        if not gitea.on(t) and (v.get("mergeStateStatus") == "DRAFT" or t.get("pr_draft")):  # fork: gh is GitHub's only
+            # #1155: opened as a draft (ready --draft): the person's Accept takes it out of draft first; GitHub
+            # merges no draft.
+            gh("pr", "ready", n, "--repo", repo)
         # fork: a Gitea pull request merges through tea, at once: no merge queue (gitea.py)
         ok, _, err = gitea.pr_merge(t, v) if gitea.on(t) else \
             gh("pr", "merge", n, "--repo", repo, "--squash", "--match-head-commit", v.get("headRefOid") or "")
@@ -1366,7 +1559,7 @@ def cmd_accept(args):
             finish(s, t)
         elif t.get("pr") or own_open_pr(s, t):
             how = "github"
-            error = merge_now(s, t)
+            error = merge_now(s, t, accept=True)
             if error == IN_QUEUE:
                 how, error = "queue", None
             elif error in (CHECKS_RUNNING, WAITS_APPROVAL):
@@ -1394,7 +1587,8 @@ def cmd_accept(args):
         sys.exit(1)
     text = {"done": f"{s.ref(t)} accepted: done.",
             "merged": f"{s.ref(t)} accepted: merged into {t.get('base') or 'main'}; done.",
-            "github": f"{s.ref(t)} accepted: pull request #{(t.get('pr') or {}).get('number')} merged; done.",
+            "github": f"{s.ref(t)} accepted: pull request #{(t.get('pr') or {}).get('number')} " +
+                      ("was closed on GitHub, so nothing merged; done." if t.get("closed_unmerged") else "merged; done."),
             "checks": f"{s.ref(t)} accepted: it merges once its checks pass.",
             "approval": f"{s.ref(t)} accepted: it merges once it's approved.",
             "queue": f"{s.ref(t)} accepted: pull request #{(t.get('pr') or {}).get('number')} is in GitHub's merge queue; done once GitHub merges it.",
@@ -1402,7 +1596,36 @@ def cmd_accept(args):
     say(args, {**v, "accepted": how, "terminal": sent, "new_agent": started}, text)
 
 
+def withdraw_fix(s, t):
+    """#1086: a fix asked for that no longer applies (done elsewhere, its agent told to stand down): its
+    request goes, the problem it was for isn't raised again at the same commit (tick: fix_withdrawn), and
+    a Ready task the fix took back to work is Ready again. Returns the problem it was for, or None."""
+    problem = t.get("attention")
+    if not (problem or t.get("fix_requested") or (t.get("back") and not t["back"].get("auto"))):
+        return None
+    if problem:
+        t["fix_withdrawn"] = {"attention": problem, **({"head": t["attention_head"]} if t.get("attention_head") else {})}
+    for k in ("attention", "attention_at", "attention_head", "handed_at", "fix_requested"):
+        t.pop(k, None)
+    (t.get("pr") or {}).pop("news", None)
+    b = t.get("back")
+    if t["state"] == "running" and b and not b.get("auto"):
+        t["state"], t["ready_turns"] = "ready", ready_turns([detail(k) for k in live_agents(s.key(t))])
+        t.pop("back")
+        if (t.get("progress") or {}).get("by") == "herdr":
+            t.pop("progress")
+    s.dirty = True
+    return problem or "its fix"
+
+
 def cmd_fix(args):
+    if getattr(args, "withdraw", False):
+        with open_store(args) as s:
+            t = s.find(args.id)
+            was = withdraw_fix(s, t)
+            v = view(s, t)
+        say(args, {**v, "withdrawn": was}, f"{s.ref(t)}: " + (f"fix request withdrawn ({was})" if was else "no fix request to withdraw"))
+        return
     with open_store(args) as s:
         t = s.find(args.id)
         if t.get("mode") != "worktree" or not t.get("worktree"):

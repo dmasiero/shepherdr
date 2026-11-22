@@ -17,8 +17,8 @@ from .agents import (
 )
 from .provider import NUDGE, provider_cut, provider_error, PROVIDER_WAITS
 from .sessions import find_lost_logs, refresh_sessions, session_of
-from .github import (already_merged, BEHIND, CHECKS_NEVER, checks_missing, checks_since, drop_branch, expected_checks, finish, github, merged_here, needs_approval, note_checks, pr_merged, pr_pending, pr_problem,
-                     pr_view, pr_wait, queue_entry, queue_merge, tidy_done, tidy_due, update_main, watch_main)
+from .github import (already_merged, BEHIND, CHECKS_NEVER, checks_missing, checks_since, drop_branch, merge_checks, expected_checks, finish, github, merged_here, needs_approval, note_checks, pr_for_branch, pr_merged, pr_pending, pr_problem,
+                     pr_view, pr_wait, queue_dropped_why, queue_entry, queue_merge, queue_refusal, unqueue, tidy_done, tidy_due, update_main, watch_main)
 from .launch import default_space
 from .store import locate, read_list, Store, store_files
 from .queues import machine_hold, refresh_ext, running_count, set_hold, waiting_ext, waiting_for
@@ -32,7 +32,7 @@ from .takeover import cant_go_on, takeover
 from .ghnews import held_by_base, main_pass, pr_deliver, pr_news
 from .systemic import dropped, systemic_pass
 from .scheduler import SCHEDULER
-from .revive import revive_pass
+from .revive import NEEDS_RESUME, revive_pass
 
 
 PR_WAIT_EVERY = 20000  # how often a pull request whose checks still run is read again (ms)
@@ -49,6 +49,17 @@ def holds_open(s, t):
     request merged (until its agent says ready), or Working with its agent still there (its brief
     may go on after the merge: it says ready, or ends, and is done then)."""
     return bool(t.get("kept_open")) or (t["state"] == "running" and any(agent_running(k) for k in live_agents(s.key(t))))
+
+
+def merge_held(s, t):
+    """Whether its pull request's merge waits to close the task (at_work(), holds_open()). #1124: once the task said
+    ready on this pull request, its merge outranks an agent that only waits (idle, or asking the person): done, its
+    running slot freed; only an agent mid-work still holds it, and a reopened task (kept_open) until it says ready."""
+    if t.get("kept_open"):
+        return True
+    if t.get("ready_at"):
+        return any(status_word(k) == "working" for k in mid_turn_agents(live_agents(s.key(t)), detail))
+    return at_work(s, t) or holds_open(s, t)
 
 
 QUEUE_GRACE = 2 * 60000  # a pull request just queued may take a moment to show in GitHub's queue
@@ -84,8 +95,35 @@ def queue_pass(s, t, v, report):
             report.setdefault("requeued", []).append(s.ref(t))
             return
         why += f"; queuing it again failed: {err}"
+    if queue_dropped_why(q.get("reason")) and head:
+        # #1174: its own merge group failed (or conflicted) at this commit: never queued again as it is
+        # (queue_refusal()); its agent hears to merge the base in (pr_news()).
+        t["queue_out"] = {"head": head, "why": why, "at": now()}
     t["attention"], t["attention_at"] = QUEUE_REMOVED + (f": {why}." if why else "."), now()
     report["attention"].append(t["id"])
+
+
+def refuse_queue(s, t, v, report):
+    """#1174: a pull request put back in GitHub's merge queue from outside Herdr (an agent's or the
+    Assistant's gh pr merge, GitHub's button) while it conflicts with its base, or at the commit whose
+    merge group just failed, comes out again: each such try fails a merge group and costs every pull
+    request behind it a new one. A failed group's commit is refused once (queued again after that, it
+    is the person's call); a conflict always (the queue can't merge it). True when it took it out."""
+    why = queue_refusal(t, v)
+    head = v.get("headRefOid")
+    if not why or (v.get("mergeable") != "CONFLICTING" and t.get("queue_refused") == head):
+        return False
+    q = queue_entry(t)
+    if not q or not (q["in"] or q["auto"]):
+        return False
+    ok, err = unqueue(q)
+    if not ok:
+        report.setdefault("github_error", []).append(f"{s.ref(t)}: couldn't take it out of the merge queue: {err}")
+        return False
+    t["queue_refused"] = head
+    s.dirty = True
+    report.setdefault("unqueued", []).append(s.ref(t))
+    return True
 
 
 def back_in_queue(s, t, report):
@@ -105,6 +143,7 @@ def back_in_queue(s, t, report):
 def facts(s, t, report):
     """A worktree task whose own work merged anywhere is done (once its agent is between turns, and
     a Working one once its agent is gone or says ready); a pull request's problems need the person."""
+    seen_pr(s, t)
     if t.get("pr"):
         pr = t["pr"]
         if now() - pr.get("checked", 0) < PR_EVERY:
@@ -115,8 +154,13 @@ def facts(s, t, report):
         if not v:
             return
         note_checks(s, t, v)
+        # #1106: its Accept card then says Accept, not "Accept and merge" (proof.evidence)
+        if v.get("state") == "CLOSED":
+            pr["closed"] = True
+        else:
+            pr.pop("closed", None)
         if v.get("state") == "MERGED":
-            if at_work(s, t) or holds_open(s, t):
+            if merge_held(s, t):
                 return
             t["merged"] = True
             watch_main(s, t, (v.get("mergeCommit") or {}).get("oid"))
@@ -128,10 +172,14 @@ def facts(s, t, report):
             finish(s, t)
             report["done"].append(t["id"])
             return
+        # merging by itself: only the base branch's required checks count (#1221), for its news too (a red optional
+        # check sent to its agent would take it out of Ready, and the merge with it)
+        if t.get("auto_merge"):
+            v = merge_checks(t, v)
         problem = pr_problem(v)
         if t.get("merge_queued"):
             queue_pass(s, t, v, report)
-        else:
+        elif not refuse_queue(s, t, v, report):
             back_in_queue(s, t, report)
         if needs_approval(v):
             pr["needs_approval"] = True
@@ -142,8 +190,10 @@ def facts(s, t, report):
         missing = checks_missing(v, since, expect)
         t["_pr_fresh"] = not problem and not pr_pending(v) and not needs_approval(v) and not missing
         # Ready only once its checks are done and GitHub knows it can merge (SHEP-175): Working till then.
+        if (v.get("mergeable") or "").upper() == "MERGEABLE" and v.get("headRefOid"):
+            pr["mergeable_head"] = v["headRefOid"]  # #1151: its later brief UNKNOWNs are no wait
         if t["state"] == "ready":
-            wait = pr_wait(v, since, expect)
+            wait = pr_wait(v, since, expect, pr.get("mergeable_head"))
             if wait != pr.get("wait"):
                 if wait:
                     pr["wait"] = wait
@@ -159,15 +209,27 @@ def facts(s, t, report):
         # agent going quiet with the problem still there reads Needs you (on_it()).
         if problem and problem.startswith("Checks failing") and held_by_base(s, t, v):
             problem = None  # SHEP-270: its base fails the same checks: no Needs you till it is green again
+        w = t.get("fix_withdrawn")
+        if w and problem == w.get("attention") and (v.get("headRefOid") or None) == w.get("head"):
+            problem = None  # #1086: its fix was withdrawn: the same problem at the same commit isn't raised again
+        elif w:
+            t.pop("fix_withdrawn")
+            s.dirty = True
         if t["state"] in ("ready", "running") and problem != t.get("attention"):
             if problem:
                 t["attention"], t["attention_at"] = problem, now()
+                # its pull request's commit then: one failed event per commit (automations.same_failure)
+                if v.get("headRefOid"):
+                    t["attention_head"] = v["headRefOid"]
+                else:
+                    t.pop("attention_head", None)
                 t.pop("merge_queued", None)
                 report["attention"].append(t["id"])
             elif t.get("attention", "").startswith(("Checks failing", "It conflicts", "The pull request was closed", MERGE_FAILED, BEHIND,
                                                     gitea.MERGE_FAILED)) \
                     or (t.get("attention") == CHECKS_NEVER and missing != "never"):  # fork: or Gitea's failed merge
                 t.pop("attention")
+                t.pop("attention_head", None)
         if t["state"] == "ready" and t.get("auto_merge") and missing == "never" and not t.get("attention"):
             # Checks that should have started never did: it doesn't merge by itself (the person's Accept still can).
             t["attention"], t["attention_at"] = CHECKS_NEVER, now()
@@ -191,11 +253,33 @@ def facts(s, t, report):
             report["done"].append(t["id"])
 
 
+PR_OPEN_EVERY = 3 * 60000  # how often a Working task's branch is looked up for a pull request its agent opened
+
+
+def seen_pr(s, t):
+    """#1176: a Working task's pull request its agent opened before ready: kept as pr_seen ({number, url, repo}), so
+    the task page shows its number and its Pull request tab from then on (ready adopts it as the task's own pr)."""
+    if t.get("pr") or t["state"] != "running" or t.get("mode") != "worktree" or not t.get("branch"):
+        if t.pop("pr_seen", None):
+            s.dirty = True
+        return
+    if now() - t.get("pr_looked", 0) < PR_OPEN_EVERY:
+        return
+    t["pr_looked"] = now()
+    s.dirty = True
+    repo = github(s)
+    found = pr_for_branch(t, repo) if repo else None
+    if found:
+        t["pr_seen"] = {"number": found["number"], "url": found["url"], "repo": repo}
+    elif repo:
+        t.pop("pr_seen", None)
+
+
 def squash_merged(s, t):
     """A Working task's branch whose pull request (opened by its agent) merged at its tip: that
     pull request, recorded on the task, or None."""
     repo = github(s)
-    found = pr_merged(t, repo) if repo else None
+    found = pr_merged(t, repo, any_base=True) if repo else None
     if not found or found.get("headRefOid") != (t.get("own") or t.get("head")):
         return None
     # fork: a Gitea one's record says so (gitea.py)
@@ -229,6 +313,10 @@ def back_pass(s, t, report):
     if moved or any(last_question(t, k["address"]) for k in turned):
         back_to_work(s, t, "its agent asked something" if not moved else "its agent changed its work", auto=True)
         report.setdefault("working_again", []).append(s.ref(t))
+        return
+    # #1108: a turn that left its own work running (a background job) isn't over yet: kept unrecorded, so a change
+    # that work makes later is still this turn's and takes the task back to work
+    if own_work(t, [detail(k) for k in turned], ready=True):
         return
     t["ready_turns"] = {**seen, **{k["address"]: k.get("turn") or 0 for k in turned}}
     s.dirty = True
@@ -276,10 +364,26 @@ def due_pass(s, report):
             report.setdefault("due", []).append(s.ref(t))
 
 
+def revive_attention(s, t, needed):
+    """#1080: a Working task whose agent a restart left a plain shell says it needs a resume (revive.needs_resume);
+    that word goes once its agent runs again (a resume, a switch) or the task is no longer Working."""
+    why = needed.get(s.key(t)) if t["state"] == "running" else None
+    has = (t.get("attention") or "").startswith(NEEDS_RESUME)
+    if why and not t.get("attention"):
+        t["attention"], t["attention_at"] = why + ".", now()
+        s.dirty = True
+    elif has and not why and (t["state"] != "running" or any(agent_running(k) for k in live_agents(s.key(t)))):
+        t.pop("attention", None)
+        t.pop("attention_at", None)
+        s.dirty = True
+
+
 def tick_store(s, report):
     """One folder's turn: Ready tasks back at work are Working again, merged tasks become done,
     auto-merges go when they can, and queued tasks start while there's room."""
+    needed = {x["task"]: x["why"] for x in report.get("revive_needed") or []}
     for t in s.data["tasks"]:
+        revive_attention(s, t, needed)
         if t["state"] == "ready":
             back_pass(s, t, report)
         elif t["state"] == "running" and (t.get("back") or {}).get("auto"):

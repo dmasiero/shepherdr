@@ -1736,10 +1736,10 @@ export function SecretCard({ ask, chat, source }: { ask: SecretAsk; chat: Chat; 
   const [level, setLevel] = useState(ask.levels[0]?.id ?? 'all')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  // fork: SHEP-76: declined from here: the card ends on the window's quiet line until the chat's own replaces it
   const [declined, setDeclined] = useState(false)
-  // value null: Decline (the agent hears it was declined; with the card, no kept secret is ever removed)
-  const send = async (v: string | null) => {
+  // Save sends the value; Decline sends none (GitHub #1226): the agent hears it was declined and carries on, and a
+  // secret already kept under that name stays (service/secrets.ts keep with a card)
+  const answer = async (v: string | null) => {
     if ((v !== null && !v) || busy) return
     setBusy(true)
     setErr('')
@@ -1756,7 +1756,7 @@ export function SecretCard({ ask, chat, source }: { ask: SecretAsk; chat: Chat; 
       setBusy(false)
     }
   }
-  const save = () => send(value)
+  const save = () => answer(value)
   return (
     <CardShell title={`Secret: ${ask.name}`} icon={KeyIcon} source={source}>
       {ask.why ? <p className="text-pretty break-words">{ask.why}</p> : null}
@@ -1786,8 +1786,7 @@ export function SecretCard({ ask, chat, source }: { ask: SecretAsk; chat: Chat; 
             <span role="status" className={clsx('mr-auto text-[0.75rem] text-pretty phone:text-[0.8125rem]', err ? 'text-need' : 'text-fg3')}>
               {err || 'Agents use it by name, never seeing it.'}
             </span>
-            <button type="button" disabled={busy} onClick={() => void send(null)}
-              className="press-dim relative inline-flex h-[34px] shrink-0 items-center rounded-full px-3 font-medium text-fg2 after:absolute after:-inset-1 enabled:hover:bg-hover disabled:cursor-default disabled:opacity-40 coarse:h-11 phone:h-11">
+            <button type="button" disabled={busy} onClick={() => answer(null)}>
               Decline
             </button>
             <Primary soft disabled={busy || !value} onClick={save}>

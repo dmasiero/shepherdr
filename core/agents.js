@@ -346,6 +346,23 @@ function kept(kind, argv) {
   return out.filter((x) => x !== undefined);
 }
 
+// The extra flags a task's agent was started with (#1222: herdr-task's flags.py keeps them one word each,
+// --advisor=opus, or a bare --verbose), for the line under the box: none of what Shepherdr sets itself, a flag's
+// separate value or a first message.
+const OWN_BARE = new Set(["--dangerously-skip-permissions", "--continue", "--fork-session", "--no-daemon", "--dangerously-bypass-approvals-and-sandbox", "--last"]);
+export function extraFlags(kind, argv) {
+  argv = argv ?? [];
+  const at = agentAt(argv);
+  if (at < 0) return [];
+  const value = kind === "claude" ? new Set([...CLAUDE_VALUE, ...CLAUDE_DROP]) : CODEX_VALUE;
+  return argv.slice(at + 1).map(String).filter((a, i, rest) => {
+    if (!a.startsWith("--") || a === "--" || (i > 0 && value.has(rest[i - 1]))) return false;
+    const name = a.split("=")[0];
+    if (a.includes("=")) return !CLAUDE_DROP.has(name) && !(name === "--config" && /^(model|model_reasoning_effort|service_tier|projects|hooks)[=.]/.test(a.slice(9)));
+    return !value.has(a) && !OWN_BARE.has(a);
+  });
+}
+
 // The same agent, model and flags as `argv`, without what resumed a conversation (and without a
 // first message), or null when argv resumed none: for a fresh start once that session is gone.
 export function freshArgv(kind, argv) {
@@ -384,6 +401,9 @@ function stripSession(kind, argv) {
 // `session`: the old conversation's id when it can be resumed (same agent only).
 export function argvFor(pick, old) {
   const same = pick.agent === old.agent;
+  // #1219: a mode in the other CLI's words (a switch carries the old agent's) is said in this one's: Claude's full access
+  // is Codex's full access, never its sandbox
+  if (pick.perm) pick = { ...pick, perm: PERM_ACROSS[pick.agent]?.[pick.perm] ?? pick.perm };
   const flags = same ? kept(pick.agent, old.argv ?? []) : [];
   if (pick.agent === "claude") {
     const a = ["claude", ...flags];

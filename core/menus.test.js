@@ -21,18 +21,22 @@ test("the sidebar's other menus and a task row's", () => {
   expect(words(taskMenu({ pinned: true }))).toEqual(["Unpin"]);
   // SHEP-38: a task not started yet starts later; a scheduled one is rescheduled, started now or unscheduled
   const later = (m) => m.map((x) => x.sep ? "—" : x.heading ? `# ${x.heading}` : x.label);
-  expect(later(taskMenu({ status: "todo" }))).toEqual(["# Start later", "In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Pin"]);
-  expect(later(taskMenu({ status: "scheduled", pinned: true }))).toEqual(["# Reschedule", "In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Start now", "Unschedule", "—", "Unpin"]);
+  expect(later(taskMenu({ status: "todo" }))).toEqual(["# Start later", "In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Pin", "Mark done…"]);
+  expect(later(taskMenu({ status: "scheduled", pinned: true }))).toEqual(["# Reschedule", "In 1 hour", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Start now", "Unschedule", "—", "Unpin", "Mark done…"]);
+  // #1157: done by hand on any task not done yet; the web's only (the window's menus leave it out)
+  expect(later(taskMenu({ status: "done" }))).toEqual(["Pin"]);
+  expect(taskMenu({ status: "ready" }).find((x) => x.id === "done")).toMatchObject({ web: true });
   // fork: SHEP-78: a started task not done snoozes; a snoozed one unsnoozes or changes its time; others don't
   const snooze = ["# Snooze", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—"];
-  for (const status of ["working", "work", "need", "needs", "ready", "merging"]) expect(later(taskMenu({ status }))).toEqual([...snooze, "Pin"]);
-  expect(later(taskMenu({ status: "ready", snoozed: true, until: "Mon 9:00", pinned: true }))).toEqual(["Unsnooze", "—", "# Change snooze time · Mon 9:00", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Unpin"]);
-  for (const status of ["done", "archived", null]) expect(later(taskMenu({ status }))).toEqual(["Pin"]);
+  for (const status of ["working", "work", "need", "needs", "ready", "merging"]) expect(later(taskMenu({ status }))).toEqual([...snooze, "Pin", "Mark done…"]);
+  expect(later(taskMenu({ status: "ready", snoozed: true, until: "Mon 9:00", pinned: true }))).toEqual(["Unsnooze", "—", "# Change snooze time · Mon 9:00", "In 3 hours", "Tomorrow 9:00", "Monday 9:00", "Other time…", "—", "Unpin", "Mark done…"]);
+  for (const status of ["done", null]) expect(later(taskMenu({ status }))).toEqual(["Pin"]);
+  expect(later(taskMenu({ status: "archived" }))).toEqual(["Pin", "Mark done…"]);
   for (const status of ["todo", "queued"]) expect(later(taskMenu({ status }))).not.toContain("# Snooze");
   expect(taskMenu({ status: "ready" }).find((x) => x.id === "snooze-other")?.typed).toBe(true);
   // fork: SHEP-80: Same as last first in Snooze and in Change snooze time, its moment on it; never in Start later
   const last = { until: 1_800_000_000_000, words: "Sat 18:30" };
-  expect(later(taskMenu({ status: "working", last }))).toEqual(["# Snooze", "Same as last · Sat 18:30", ...snooze.slice(1), "Pin"]);
+  expect(later(taskMenu({ status: "working", last }))).toEqual(["# Snooze", "Same as last · Sat 18:30", ...snooze.slice(1), "Pin", "Mark done…"]);
   expect(later(taskMenu({ status: "ready", snoozed: true, until: "Mon 9:00", last })).slice(2, 4)).toEqual(["# Change snooze time · Mon 9:00", "Same as last · Sat 18:30"]);
   expect(taskMenu({ status: "need", last }).find((x) => x.id === "snooze-last")).toMatchObject({ until: last.until, icon: "clock" });
   for (const status of ["todo", "queued", "scheduled", "done", null]) expect(later(taskMenu({ status, last }))).not.toContain("Same as last · Sat 18:30");

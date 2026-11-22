@@ -86,8 +86,6 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   `git config url.<bare>.insteadOf <full url>`; fake `tea`/`gh` first on PATH (see `GiteaTasks`).
 - Headless clipboard checks: agent-browser's `clipboard read` is blocked; focus a textarea and `press Control+v` to
   read what was copied. Phone long-press: CDP `Emulation.setTouchEmulationEnabled` + `Input.dispatchTouchEvent`.
-- A herdr-artifact note end to end without a real agent: reuse `test/test_herdr_artifact_held.py`'s NoteToABlockedAgent
-  setUp (fake hc on PATH, throwaway task store) from a scratch script and call `A.main()` with a patched `sys.argv`.
 - Another machine in herdr-task tests: run herdr-task as a subprocess with `HERDR_TASK_STORE=<tmp>` and a fake hc first on
   PATH (see AutomationFromAnotherMachine).
 - nextgate's `/usr/bin` is envfs: a tool shows there only to a caller whose PATH has it, so a test that narrows PATH
@@ -102,8 +100,8 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
   with `mock.patch.object(..., create=True)` so the same test runs on both.
 - Tests that run accept or merge with the real `finish()` must stub `github.live_agents` and `live_helpers` (hc is
   refused under test).
-- pick-files.py tests: a private dbus-daemon from a minimal `--config-file` (no servicedir, `env -i`) plus
-  `test/fake_portal.py`; never call OpenFile on the real bus (it opens a picker on the person's desktop).
+- pick-files.py tests: a private dbus-daemon from a minimal `--config-file` (no servicedir) plus
+  `test/test_pick_files.py`'s `fake_portal`; never call OpenFile on the real bus (it opens a picker on the person's desktop).
 - test/test_ask_hook.py runs mods/chat/ask-hook.sh with a fake hc; a killed test can orphan the hook (it waits up to a
   week): find it with ps by the worktree's ask-hook.sh path and kill that pid.
 - Bun.spawn ignores a PATH changed inside a test: point the service at fakes with `SHEPHERDR_HERDR_APP` / `SHEPHERDR_HC`.
@@ -211,3 +209,23 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - A real herdr-task CLI run with HERDR_TASK_STORE=<tmp>, a fake gh via HERDR_TASK_GH and a fake hc on PATH still makes worktrees under the real ~/.local/share/shepherdr/worktrees/<repo folder name>: give the scratch repo a unique name and rm that folder after. (from SHEP-271)
 
 - A real herdr-task start in worktree mode without touching people's tasks: env -i with HERDR_TASK_STORE, HERDR_TASK_SETTINGS (tasks.worktree_root to scratch), SHEPHERDR_NO_MIGRATE=1 and a fake hc exporting HC_SESSION; start --argv '["sh","-c","..."]' stands in for the agent. (from SHEP-272)
+
+- Fake a dropped herdr-core link: hc machine add --via <script> --session b on a throwaway core, make the script fail while a flag file exists, kill the core's `herdr-core connect` child; hc machine login only retries with a terminal (give it a pty). (from SHEP-276)
+
+- Web viewer before/after on the dev VM: `bunx vite build --config web/vite.viewer.config.ts` writes a single-file web/dist/artifact-viewer.html; serve it with a tiny Bun stub answering /api/artifacts/<id> and /recipe. (from SHEP-274)
+
+- herdr-task --detach/_job (window actions as local jobs): test with TMPDIR=<scratch> and HERDR_TASK_ACTION_WAIT to keep job files and waits throwaway (see DetachedActions). (from SHEP-277)
+
+- Real Codex versions for repros: `npm i --prefix <scratch> @openai/codex@<ver>`, then hc run it with env PATH=<scratch>/node_modules/.bin:<node dir>:$PATH (hc run children get a bare PATH and do not inherit the caller's). (from SHEP-278)
+
+- herdr-task's typing() reads a worker's session log from its hc herdr.resume label (log key): fake it with a temp JSONL and patch news.screen_raw (see ReadyAndPrFlow). (from SHEP-283)
+
+- The dev VM has a real hc in /usr/local/bin: a test whose fake hc cannot exec (no shebang) falls through to it if that folder is on PATH (Python's subprocess tries later PATH entries on ENOEXEC). (from SHEP-286)
+
+- Codex sandbox repros without an agent: `codex sandbox -c sandbox_mode='"workspace-write"' [-c sandbox_workspace_write.writable_roots=[...]] -- <cmd>` runs a command in the same bwrap+seccomp a worker gets (unix socket connect is refused there). (from SHEP-285)
+
+- Never pkill -f a pattern that appears in your own command line (e.g. a unittest name): it kills your shell; use TaskStop or kill by pid. (from SHEP-288)
+
+- Window-mod methods that read terminals()/subagentsOf can be tested like chat's refocus(): extract the method from mods/chat/main.js and stub those two (see test/test_chat_jobs.py). (from SHEP-284)
+
+- bin/sync-shared (no --check) can wrongly call a mods/*/core copy "edited by hand" in a worktree: when git diff main shows the copy untouched, cp core/<file> over the copies instead of using --from (that would undo your change). (from SHEP-287)

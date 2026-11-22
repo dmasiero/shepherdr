@@ -58,7 +58,7 @@ import { titleInTask } from '@core/task-artifacts.js'
 
 const { withIds, preview } = R as any
 const { WORDS, artifactLine } = CV as any
-const { MARKUP, markupHint, markupSent, describe, plainNote } = M as any
+const { MARKUP, markupHint, markupSent, describe } = M as any
 
 export type Pick = { text: string; selector: string; component?: string; x: number; y: number }
 
@@ -138,17 +138,16 @@ function MarkupLayer({ art, v, onEnd }: { art: Artifact; v: number; onEnd: () =>
     setSaid(MARKUP.sending)
     const r = (await act(spot
       ? { type: 'artifact-note', place: art.place, artifact: art.id, v, note: t, target: describe(spot, r0 ? { width: r0.width, height: r0.height } : null) }
-      : { type: 'artifact-say', place: art.place, artifact: art.id, v, text: t }).catch((e: Error) => ({ ok: false, error: e?.message }))) as { ok?: boolean; error?: string; held?: string }
+      : { type: 'artifact-say', place: art.place, artifact: art.id, v, text: t }).catch((e: Error) => ({ ok: false, error: e?.message }))) as { ok?: boolean; error?: string; said?: string }
     setSending(false)
     if (r.ok === false) {
       setFailed(true)
-      // fork: SHEP-72: its plain message, never the JSON it came wrapped in
-      return setSaid(plainNote(r.error) || MARKUP.failed)
+      return setSaid(r.error || MARKUP.failed)
     }
     setText('')
     setSpot(null)
-    // fork: SHEP-72: held for an agent with a question open: it goes once that's answered
-    setSaid(r.held ? MARKUP.held : markupSent(keeper))
+    // held for an agent on a question (#1213): its own plain line
+    setSaid(r.said || markupSent(keeper))
   }
   // a touch screen taps where the window clicks
   const hint = device === 'desktop' ? markupHint(keeper) : markupHint(keeper).replace(/^Click/, 'Tap')

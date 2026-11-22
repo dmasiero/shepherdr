@@ -194,7 +194,8 @@ export const ABOUT = {
 };
 // Each a box under its words, saved in tasks.<field>: the shell command run in each new worktree before its agent
 // (tasks.setup, #1197: herdr-task runs it, a failure holds the task), then what a task's agent is told to do first
-// and last (tasks.start_notes / finish_notes). mono: a command, in monospace.
+// and last (tasks.start_notes / finish_notes), and the command Herdr runs in the repo once a task is done
+// (tasks.accept_command, #1102: herdr-task's after_accept.py). mono: a command, in monospace.
 export const NOTES = [
   { id: "setup", field: "setup", mono: true, title: "Before the agent starts",
     about: "A shell command run in each new worktree first. If it fails, the agent doesn't start and the task says why.",
@@ -203,6 +204,9 @@ export const NOTES = [
     example: "Install packages, copy .env from the main folder" },
   { id: "finish", field: "finish_notes", title: "When a task finishes", about: "Steps its agent does before it says the task is ready.",
     example: "Stop the dev server you started, delete temp files" },
+  { id: "accept", field: "accept_command", mono: true, title: "When a task is accepted",
+    about: "A command Herdr runs in the repo once it's done, to clean up what it made. $HERDR_TASK_ID, $HERDR_TASK_BRANCH and $HERDR_TASK_WORKTREE say which task.",
+    example: "dropdb --if-exists \"test_$HERDR_TASK_ID\"" },
 ];
 export const SAVED = "Saved";
 // Base branch, a space's only (tasks.base): checked before it's saved.
@@ -222,6 +226,19 @@ export const BRANCH = {
   about: "New tasks' branches. {n} is its number, {key} its id (SHEP-4), {slug} its title.",
   pattern: "task/{n}-{slug}",
 };
+// Extra flags (tasks.claude_flags, tasks.codex_flags, #1222): a CLI's own launch flags for a space's task agents, such
+// as --advisor opus. herdr-task checks them (`herdr-task flags`, flags.py: real flags only, none Shepherdr sets) and
+// keeps them one word each (--advisor=opus); a task's own (--flags, --set flags=) replace them.
+export const FLAGS = {
+  rows: [["claude", "Claude Code flags"], ["codex", "Codex flags"]],
+  about: (cli) => `Extra flags for ${cli} when it runs a task, as you'd type them. A task can set its own. Empty: the level above's; "none": no extra flags.`,
+  example: { claude: "--advisor opus", codex: "--search" },
+  none: "none",
+};
+// Flags as one line, quoted only where a shell needs it: ["--advisor=opus", "--name=a b"] -> --advisor=opus '--name=a b'.
+export function flagWords(list) {
+  return (Array.isArray(list) ? list : []).map((w) => (/^[\w@%+=:,./-]+$/.test(String(w)) ? String(w) : `'${String(w).replace(/'/g, `'"'"'`)}'`)).join(" ");
+}
 // Why a Branch names pattern can't be used, or "" (herdr-task's branch_pattern_problem says the same).
 export function branchPattern(pattern) {
   const p = String(pattern ?? "").trim();
@@ -291,7 +308,7 @@ export const MACHINES = {
 export const OLD_NAMES = { coordinator: "Assistant", worker: "Workers", reviewer: "Reviewer", backup: "Backup agent",
   automations: "Run automations", merge: "Merge", review_rounds: "Review", must_fix: "Must fix", proof: "Proof",
   max_running: "Tasks at once", archive_after: "Archive Done after", worktrees: "Worktrees",
-  setup: "Before the agent starts", start_notes: "When a task starts", finish_notes: "When a task finishes", base: "Base branch", branch: "Branch names", agents: "Reactions" };
+  setup: "Before the agent starts", start_notes: "When a task starts", finish_notes: "When a task finishes", accept_command: "When a task is accepted", base: "Base branch", branch: "Branch names", agents: "Reactions" };
 // Home Assistant's line: on or off, and what herdr-task's home round last found there (~/.local/share/shepherdr/tasks/.home.json).
 export function homeAbout(on, st) {
   return !on ? "Off: nobody watches its disk, load and processes."

@@ -9,7 +9,6 @@ import { existsSync, watch, readFileSync, statSync } from "node:fs";
 import { join, extname, normalize } from "node:path";
 import { HOME, where } from "./paths.ts";
 import { SH } from "../core/paths.js";
-import { MARKUP, plainNote } from "../core/markup.js";
 import type { Hub } from "./hub.ts";
 import { served } from "./media.ts";
 
@@ -26,6 +25,22 @@ const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg
   ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav", ".ogg": "audio/ogg", ".pdf": "application/pdf" };
 /** what a file a recipe shows is served with: sandboxed, sniffed as nothing else, a clip or sound played from this origin */
 const SHOWN = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
+
+/** herdr-artifact --json's error as plain words (#1213: the page showed {"error": "{\"error\":{...}}"}): its last line's
+ *  "error", unwrapped from any JSON it came in (hc's {"error": {"message"}} too); "" when there's none. */
+export function plainError(out: string): string {
+  let s: unknown = out.trim().split("\n").pop() ?? "";
+  for (let i = 0; i < 6; i++) {
+    if (typeof s === "string") {
+      if (!s.trim().startsWith("{")) break;
+      try { s = JSON.parse(s); } catch { break; }
+    } else if (s && typeof s === "object") {
+      const o = s as Record<string, unknown>;
+      s = "error" in o ? o.error : o.message ?? "";
+    } else break;
+  }
+  return typeof s === "string" ? s.trim() : "";
+}
 
 export type Art = { id: string; title: string; version: number; folder: string; publisher?: string; task?: string | null; at: number; files: string[]; versions: { v: number; at: number; publisher?: string; note?: string }[]; machine?: string; folderName?: string };
 
@@ -143,17 +158,8 @@ export class Artifacts {
     machine ??= this.here.some((a) => a.id === id) ? null : this.list.find((a) => a.id === id)?.machine ?? null;
     if (machine && !MACHINE.test(machine)) throw new Error("Not a machine.");
     const args = [...(machine ? ["--on", machine] : []), "note", id, "--text", text, "--version", String(v), "--json", ...(spot ? ["--spot", spot] : [])];
-    return noteAnswer(await run(args));
+    const r = await run(args);
+    if (r.code !== 0) throw new Error(plainError(r.out) || r.err.trim().split("\n").pop() || "It didn't go through.");
+    try { return JSON.parse(r.out.trim().split("\n").pop() ?? "{}"); } catch { return {}; }
   }
-}
-
-/** fork: SHEP-72: what herdr-artifact note's run answers the page (and a voice call) with: its JSON, with `said` in
- *  plain words when the note was held for an agent with a dialog open; a failure throws its plain message (hc's
- *  innermost one), never the JSON it came wrapped in. */
-export function noteAnswer(r: { code: number; out: string; err: string }): Record<string, unknown> {
-  let out: any = null;
-  try { out = JSON.parse(r.out.trim().split("\n").pop() ?? ""); } catch {}
-  if (r.code !== 0 || out?.error) throw new Error(plainNote(out?.error ?? (r.err || r.out)) || "It didn't go through.");
-  if (!out || typeof out !== "object") return {};
-  return out.held ? { ...out, ok: true, said: MARKUP.held } : out;
 }

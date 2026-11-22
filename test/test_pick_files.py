@@ -1,146 +1,103 @@
-"""The chat's attach button on Linux (mods/chat/pick-files.py, SHEP-75). It spoke D-Bus through PyGObject (gi), which
-NixOS's python3 lacks, so the button only said "Couldn't open the file picker.". It now speaks D-Bus itself (standard
-library only) and says why when no picker can open.
-
-Each test runs the script as the chat does (`python3 -I`, here also `-S`: no site-packages at all, so no gi) against a
-private dbus-daemon with no service activation, in a clean environment (no WAYLAND_DISPLAY), so no real portal or
-dialog can ever start. The portal is a fake that uses the script's own D-Bus code: it answers OpenFile, then sends
-Request.Response as the real one does after the person picks."""
+"""The chat's file picker (mods/chat/pick-files.py) without PyGObject (GitHub #1225): it talks to the portal's
+FileChooser over the session bus itself. Against a fake portal on a private dbus-daemon (its own config: no service
+activation, so no real portal starts, and the real session bus is never used); skipped where dbus-daemon is missing."""
 import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
+import importlib.machinery
 import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
+import threading
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT = os.path.join(ROOT, "mods", "chat", "pick-files.py")
+PICK = os.path.join(ROOT, "mods", "chat", "pick-files.py")
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("pick_files_under_test", PICK)
+spec = importlib.util.spec_from_loader(loader.name, loader)
+P = importlib.util.module_from_spec(spec)
+loader.exec_module(P)
 
-CONFIG = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+CONF = """<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-<busconfig>
-  <type>session</type>
-  <listen>unix:path=%s</listen>
-  <auth>EXTERNAL</auth>
-  <policy context="default">
-    <allow send_destination="*" eavesdrop="true"/>
-    <allow eavesdrop="true"/>
-    <allow own="*"/>
-  </policy>
-</busconfig>
-"""
-
-def load():
-    spec = importlib.util.spec_from_file_location("pick_files", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+<busconfig><type>session</type><listen>unix:path=%s</listen><auth>EXTERNAL</auth>
+<policy context="default"><allow send_destination="*" eavesdrop="true"/><allow eavesdrop="true"/><allow own="*"/></policy>
+</busconfig>"""
 
 
-@unittest.skipUnless(shutil.which("dbus-daemon"), "no dbus-daemon")
+def fake_portal(sock, uris, ready, seen, code=0):
+    """Owns org.freedesktop.portal.Desktop on the private bus; answers one OpenFile with its request's path, then
+    says Response (code, the uris)."""
+    bus = P.Bus(sock)
+    bus.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", "su", (P.PORTAL, 4))
+    ready.set()
+    while True:
+        kind, f, body = bus.read()
+        if kind == P.CALL and f.get(P.F_MEMBER) == "OpenFile":
+            seen.append(body)
+            sender = f[P.F_SENDER]
+            path = "/org/freedesktop/portal/desktop/request/%s/%s" % (sender[1:].replace(".", "_"), body[2]["handle_token"])
+            bus.serial += 1
+            bus.s.sendall(P.message(P.RETURN, bus.serial, {P.F_REPLY: bus.last, P.F_DEST: sender}, "o", (path,)))
+            bus.serial += 1
+            bus.s.sendall(P.message(P.SIGNAL, bus.serial, {P.F_PATH: path, P.F_INTERFACE: "org.freedesktop.portal.Request",
+                                                          P.F_MEMBER: "Response", P.F_DEST: sender},
+                                    "ua{sv}", (code, {"uris": ("as", uris)})))
+            bus.s.close()
+            return
+
+
 class PickFiles(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="pick-files-")
-        sock = os.path.join(self.dir, "bus")
-        with open(os.path.join(self.dir, "bus.conf"), "w") as f:
-            f.write(CONFIG % sock)
-        self.daemon = subprocess.Popen(["dbus-daemon", "--nofork", "--config-file", os.path.join(self.dir, "bus.conf")],
-                                       env=self.env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(100):
-            if os.path.exists(sock):
-                break
-            time.sleep(0.02)
-        self.address = f"unix:path={sock}"
-        self.portal = None
-
-    def tearDown(self):
-        if self.portal:
-            self.portal.stdout.close()
-        for p in (self.portal, self.daemon):
-            if p and p.poll() is None:
-                p.kill()
-                p.wait()
-        shutil.rmtree(self.dir, ignore_errors=True)
-
-    def env(self, **extra):
-        return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ["HOME"], **extra}
-
-    def fake_portal(self, mode):
-        self.portal = subprocess.Popen([sys.executable, "-I", os.path.join(ROOT, "test", "fake_portal.py"), SCRIPT, mode],
-                                       env=self.env(DBUS_SESSION_BUS_ADDRESS=self.address),
-                                       stdout=subprocess.PIPE, text=True)
-        self.assertEqual(self.portal.stdout.readline().strip(), "ready")
+        if not shutil.which("dbus-daemon"):
+            self.skipTest("no dbus-daemon here")
+        self.tmp = tempfile.mkdtemp(prefix="shep-pick-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.sock = os.path.join(self.tmp, "bus")
+        conf = os.path.join(self.tmp, "bus.conf")
+        with open(conf, "w") as f:
+            f.write(CONF % self.sock)
+        self.daemon = subprocess.Popen(["dbus-daemon", "--config-file", conf, "--nofork", "--print-address"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.addCleanup(self.daemon.stdout.close)
+        self.addCleanup(self.daemon.wait)
+        self.addCleanup(self.daemon.kill)
+        self.daemon.stdout.readline()  # listening
 
     def pick(self, **env):
-        env.setdefault("DBUS_SESSION_BUS_ADDRESS", self.address)
-        return subprocess.run([sys.executable, "-I", "-S", SCRIPT, "Attach files"], env=self.env(**env),
-                              capture_output=True, text=True, timeout=20)
+        e = {"PATH": "/usr/bin:/bin", "HOME": self.tmp, "HERDR_PICK_NO_GI": "1",
+             "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + self.sock, **env}
+        return subprocess.run([sys.executable, "-I", PICK, "Attach files"], env=e, capture_output=True, text=True, timeout=30)
 
-    def test_chosen_files_print_one_per_line(self):
-        self.fake_portal("pick")
+    def test_the_chosen_files_come_back_without_pygobject(self):
+        ready, seen = threading.Event(), []
+        t = threading.Thread(target=fake_portal, args=(self.sock, ["file:///tmp/a%20b.png", "file:///home/x/notes.txt"], ready, seen), daemon=True)
+        t.start()
+        self.assertTrue(ready.wait(10))
         r = self.pick()
-        self.assertEqual((r.returncode, r.stderr), (0, ""))
-        self.assertEqual(r.stdout.splitlines(), ["/tmp/demo/a b.png", "/tmp/demo/notes.txt"])
-        asked = self.portal.stdout.read()
-        self.assertIn("title=Attach files multiple=True", asked)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(), ["/tmp/a b.png", "/home/x/notes.txt"])
+        parent, title, opts = seen[0]
+        self.assertEqual((parent, title, opts["multiple"], opts["accept_label"]), ("", "Attach files", True, "Attach"))
 
-    def test_cancelling_prints_nothing(self):
-        self.fake_portal("cancel")
+    def test_cancelled_is_nothing(self):
+        ready, seen = threading.Event(), []
+        threading.Thread(target=fake_portal, args=(self.sock, [], ready, seen, 1), daemon=True).start()
+        self.assertTrue(ready.wait(10))
         r = self.pick()
-        self.assertEqual((r.returncode, r.stdout.strip(), r.stderr), (0, "", ""))
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, ""))
 
-    def test_portal_without_filechooser_says_so(self):
-        self.fake_portal("nofilechooser")
+    def test_no_portal_says_why(self):
         r = self.pick()
-        self.assertEqual(r.returncode, 2)
-        self.assertEqual(r.stderr.splitlines()[0], "No file picker: xdg-desktop-portal has no FileChooser for this desktop.")
-        self.assertIn("UnknownMethod", r.stderr)   # the detail, for the log
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stderr.strip(), "xdg-desktop-portal isn't running")
 
-    def test_no_portal_running_says_so(self):
-        r = self.pick()
-        self.assertEqual(r.returncode, 2)
-        self.assertEqual(r.stderr.splitlines()[0], "No file picker: xdg-desktop-portal isn't running.")
-
-    def test_picker_error_says_so(self):
-        self.fake_portal("fail")
-        r = self.pick()
-        self.assertEqual(r.returncode, 2)
-        self.assertEqual(r.stderr.splitlines()[0], "The file picker failed: xdg-desktop-portal's picker ended with an error.")
-
-    def test_no_session_bus_says_so(self):
-        r = subprocess.run([sys.executable, "-I", "-S", SCRIPT], env=self.env(XDG_RUNTIME_DIR=self.dir + "/none"),
-                           capture_output=True, text=True, timeout=20)
-        self.assertEqual(r.returncode, 2)
-        self.assertEqual(r.stderr.splitlines()[0], "No file picker: the desktop's session bus (D-Bus) isn't reachable from here.")
-
-    def test_no_third_party_module(self):
-        # What broke on NixOS: `from gi.repository import ...`. Only the standard library now.
-        with open(SCRIPT, encoding="utf-8") as f:
-            src = f.read()
-        self.assertNotIn("import gi", src)
-        self.assertNotIn("from gi", src)
-        self.assertNotIn("import dbus", src)
-
-
-class Wire(unittest.TestCase):
-    """The marshalling round-trips the portal's own types."""
-
-    def test_round_trip(self):
-        pf = load()
-        sig = "ssa{sv}ua(ss)"
-        val = ("", "Attach files", {"multiple": ("b", True), "uris": ("as", ["file:///a", "file:///b%20c"])}, 7,
-               [("k", "v")])
-        out = pf.Out()
-        for t, v in zip(pf.types(sig), val):
-            out.put(t, v)
-        r = pf.In(bytes(out.b))
-        got = tuple(r.get(t) for t in pf.types(sig))
-        self.assertEqual(got[0:2], ("", "Attach files"))
-        self.assertEqual(got[2], {"multiple": True, "uris": ["file:///a", "file:///b%20c"]})
-        self.assertEqual(got[3:], (7, [("k", "v")]))
+    def test_no_session_bus_says_why(self):
+        r = self.pick(DBUS_SESSION_BUS_ADDRESS="", XDG_RUNTIME_DIR=self.tmp + "/none")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no session bus", r.stderr)
 
 
 if __name__ == "__main__":

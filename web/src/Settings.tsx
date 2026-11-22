@@ -677,7 +677,9 @@ function CopyButton({ text }: { text: string }) {
 const follows = (row: SettingRow, value: string) => (row.inherits && value === row.inherits.value ? null : value)
 
 /** the rows whose few short choices sit side by side, as the window's segmented controls */
-const SEGMENTS = new Set(['notify', 'tasks.merge', 'tasks.review_rounds', 'tasks.must_fix', 'tasks.archive_after', 'autopilot.events'])
+const SEGMENTS = new Set(['notify', 'tasks.merge', 'tasks.review_rounds', 'tasks.must_fix', 'tasks.archive_after', 'autopilot.events',
+  // #1222: a line of flags gets a line of its own under its label on a phone
+  'tasks.claude_flags', 'tasks.codex_flags'])
 
 /** a page's settings: its rows under their group's heading (Tasks, Coordinators, Reviewer), and what it notes under them */
 function PageBody({ page, phone, set, refused, clear, hint }: { page: Page; phone: boolean; set: (key: string, value: string | null) => void; refused: (key: string) => string | undefined; clear: (key: string) => void; hint?: string }) {
@@ -858,7 +860,7 @@ function LevelBar({ level, sections, page, phone, onPick }: { level: string; sec
   )
 }
 
-/** Tasks' note (When a task starts / finishes), as the window's: its title and line, then a box as wide as the page,
+/** Tasks' note (When a task starts / finishes / is accepted), as the window's: its title and line, then a box as wide as the page,
  *  its example dim while empty, saved a moment after typing stops and on leaving it; "Saved" beside its title a moment */
 function NoteBox({ row, under, save, mono = false }: { row: SettingRow; under: ReactNode; save: (v: string) => void; mono?: boolean }) {
   const [v, setV] = useState(row.value)
