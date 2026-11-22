@@ -18,8 +18,8 @@
 //   details  { summary, blocks }                        divider  {}
 //   choice   { question, options: [{ label, description }] }   one pick, sent to the agent as a reply
 //   form     { fields: [{ name, label, kind: text | textarea | select | checkbox, options, value }], submit }
-//            value: where the field starts (one of a select's options, a checkbox's true or false, a text's words);
-//            a select with one shows no blank, and an untouched field sends it (fork: SHEP-70, upstream #1212)
+//            value (optional): what the field starts with, and replies when left untouched: one of a select's options,
+//            true or false for a checkbox, words for text (GitHub #1212)
 //   button   { label, reply, href, quiet }              a press sends `reply` to the agent; with href (https only) it
 //                                                       opens that page in the person's browser too; quiet: the softer look
 //   buttons  { items: [button] }                        buttons side by side (the first not quiet is the one to press)
@@ -83,8 +83,7 @@ export function problems(recipe, files = null) {
       case "details": need(str(b.summary) && arr(b.blocks), "needs a summary and blocks"); if (arr(b.blocks)) walk(b.blocks, `${where}.`); break;
       case "choice": need(str(b.question) && arr(b.options) && b.options.every((o) => str(o?.label)), "needs a question and options with labels"); break;
       case "form": need(arr(b.fields) && b.fields.every((f) => str(f?.name) && FIELDS.includes(f.kind ?? "text")), `fields need a name and a kind (${FIELDS.join(", ")})`);
-        // fork: a field's preset value fits its kind (SHEP-70, upstream #1212)
-        if (arr(b.fields)) b.fields.forEach((f) => { const p = valueProblem(f); if (p) need(false, `field ${JSON.stringify(f?.name)}: ${p}`); });
+        if (arr(b.fields)) for (const f of b.fields) if (f?.value != null) need(fieldValueOk(f), `field ${f.name}'s value must be ${f.kind === "select" ? "one of its options" : f.kind === "checkbox" ? "true or false" : "words"}`);
         break;
       case "button": buttonProblem(b, need); break;
       case "buttons": need(arr(b.items) && b.items.length > 0 && b.items.length <= 4, "items must be 1 to 4 buttons"); if (arr(b.items)) b.items.forEach((x) => buttonProblem(x ?? {}, need)); break;
@@ -95,15 +94,6 @@ export function problems(recipe, files = null) {
   if (recipe.cover != null && (!str(recipe.cover) || recipe.cover.includes("..") || recipe.cover.startsWith("/") || (files && !files.includes(recipe.cover)))) out.push('"cover" must be a picture beside recipe.json.');
   if (n > MAX_BLOCKS) out.push(`at most ${MAX_BLOCKS} blocks.`);
   return out;
-}
-
-// What's wrong with a form field's preset value (null: nothing, or none given). fork: SHEP-70, upstream #1212
-function valueProblem(f) {
-  if (!f || typeof f !== "object" || f.value == null) return null;
-  const kind = f.kind ?? "text";
-  if (kind === "select") return arr(f.options) && f.options.includes(f.value) ? null : `value must be one of its options (${arr(f.options) ? f.options.map((o) => JSON.stringify(o)).join(", ") : "it has none"})`;
-  if (kind === "checkbox") return typeof f.value === "boolean" ? null : "a checkbox's value must be true or false";
-  return str(f.value) ? null : "a text field's value must be words (a string)";
 }
 
 // A button's own fields: words, and a reply, a link or both (a link is a plain https page, opened by the person's press).
@@ -137,10 +127,19 @@ export function blockName(b) {
 
 // The reply a choice or a form sends to its agent: plain words, as the person would write them.
 export function choiceReply(b, label) { return `${b.question}: ${label}`; }
-// A field the person left untouched (no value in values) sends its preset value (fork: SHEP-70, upstream #1212).
+// A form field's starting value (its value, when it has a fitting one): what it shows first and replies untouched.
+export function fieldValueOk(f) {
+  const v = f?.value;
+  if (f?.kind === "checkbox") return typeof v === "boolean";
+  if (f?.kind === "select") return typeof v === "string" && (f.options ?? []).includes(v);
+  return typeof v === "string";
+}
+export function fieldStart(f) {
+  return f?.value != null && fieldValueOk(f) ? f.value : f?.kind === "checkbox" ? false : "";
+}
 export function formReply(b, values) {
   const lines = (b.fields ?? []).map((f) => {
-    const v = values[f.name] === undefined ? f.value : values[f.name];
+    const v = values[f.name] ?? fieldStart(f);
     return `${f.label ?? f.name}: ${f.kind === "checkbox" ? (v ? "yes" : "no") : String(v ?? "").trim() || "(empty)"}`;
   });
   return [b.title ?? b.submit ?? "Form", ...lines].join("\n");
@@ -194,6 +193,18 @@ export function chartShapes(b) {
   const groups = labels.length || Math.max(0, ...series.map((s) => s.values.length));
   const per = series.length || 1, slot = 1 / Math.max(1, groups), bw = (slot * 0.7) / per;
   return { max, bars: series.flatMap((s, si) => s.values.map((v, i) => ({ series: si, label: labels[i] ?? "", value: v, x: i * slot + slot * 0.15 + si * bw, w: bw, h: Math.max(0, v) / max }))) };
+}
+
+// Where a chart's labels go along its bottom (GitHub #1148): a line chart's under their points, which run edge to
+// edge, so the first is anchored at its start and the last at its end (centred, they'd be cut off); a bar chart's
+// centred under their group. [{ text, x: 0..1, anchor: "start" | "middle" | "end" }]
+export function chartLabels(b) {
+  const labels = arr(b?.labels) ? b.labels : [], n = labels.length;
+  if (b?.kind === "line") return labels.map((l, i) => ({
+    text: String(l ?? ""), x: n > 1 ? i / (n - 1) : 0.5,
+    anchor: n > 1 && i === 0 ? "start" : n > 1 && i === n - 1 ? "end" : "middle",
+  }));
+  return labels.map((l, i) => ({ text: String(l ?? ""), x: (i + 0.5) / Math.max(1, n), anchor: "middle" }));
 }
 
 // What an artifact's card in the chat shows of it before it opens (SHEP-142): its key pictures (the cover it names,

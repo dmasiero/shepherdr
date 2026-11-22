@@ -36,7 +36,7 @@ import { words, howAnswered, codexOnScreen, codexSteps } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
 import { WORDS, clock, bgGroups, subagentsOf, subagentWord, senderName, briefLabel, firstUser, firstKeys, literal, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, videoLine, mediaIn, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
-import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE } from "./core/send.js";
+import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped, SETTLE, markSaid } from "./core/send.js";
 // hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
 import { asPerson } from "./core/person.js";
 import { AskCards, linkCtl } from "./cards.js";
@@ -51,7 +51,7 @@ import * as attach from "./attach.js";
 import * as slash from "./slash.js";
 import * as mentions from "./core/mentions.js";
 import * as paths from "./core/path-pick.js";
-import { SH } from "./core/paths.js";
+import { SH, TEMPLATES_SH } from "./core/paths.js";
 import { settle } from "./core/pending.js";
 import { dirsReady } from "./dirs.js";
 import * as agent from "./agent.js";
@@ -81,8 +81,9 @@ const KEEP = 2000;
 const COLUMN = 760;
 const KINDS = { "claude-code": "claude", claude: "claude", codex: "codex" };
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
-// The role templates' folder on the machine a command runs on (sh -c prefix: $dir).
-const TEMPLATE = 'dir="$HOME/.config/herdr-core/templates"; ';
+// The role templates' folder on the machine a command runs on (sh -c prefix: $dir), where herdr-core reads them
+// there ($XDG_CONFIG_HOME's when set: #1182).
+const TEMPLATE = TEMPLATES_SH + 'dir="$SHEP_TEMPLATES"; ';
 // Whether a machine's layout is here now (it's connected); this computer always is.
 const online = (machine) => !machine || machines().find((m) => m.name === machine)?.layout === "ready";
 const same = (a, b) => norm(a) === norm(b);
@@ -361,12 +362,13 @@ export default class Chat extends View {
         cx.spawn(async (cx) => { const f = await attach.textFile(pasted); if (f) { this.addFiles([f]); this.saveSoon(cx); cx.notify(); } });
         return;
       }
-      // Copied files pasted as text (file:// lines) become attachments.
+      // Copied files pasted as text (file:// lines) become attachments, as does a macOS screenshot's fleeting path (#1095).
       const v = this.box.value();
-      if (/^file:\/\/\S/m.test(v)) {
-        const found = v.split("\n").filter((l) => /^file:\/\/\S+$/.test(l.trim())).map((l) => decodeURIComponent(l.trim().slice(7)));
-        this.addFiles(attach.paths(found));
-        this.box.set_value(v.split("\n").filter((l) => !/^file:\/\/\S+$/.test(l.trim())).join("\n"));
+      if (/^file:\/\/\S/m.test(v) || v.split("\n").some(attach.fleetingPath)) {
+        const isFile = (l) => /^file:\/\/\S+$/.test(l.trim()) || attach.fleetingPath(l);
+        const found = v.split("\n").filter(isFile).map((l) => l.trim().startsWith("file://") ? decodeURIComponent(l.trim().slice(7)) : l.trim());
+        this.attachFiles(attach.paths(found), cx);
+        this.box.set_value(v.split("\n").filter((l) => !isFile(l)).join("\n"));
       }
       this.slashSel = 0;
       // "@~/": the folder typed so far, listed on the agent's machine (core/path-pick.js).
@@ -380,9 +382,8 @@ export default class Chat extends View {
     });
     // A paste with no text: the clipboard's image or copied files become attachments.
     this.box.on("paste_other", (_e, cx) => cx.spawn(async (cx) => {
-      // fork: SHEP-75: an attach error shows in the composer (attachError), not at the pane's edge.
-      const got = await attach.fromClipboard().catch((e) => { this.attachError = String(e?.message ?? e); cx.notify(); return []; });
-      if (got.length) { this.addFiles(got); this.saveSoon(cx); cx.notify(); }
+      const got = await attach.fromClipboard().catch((e) => { this.error = String(e?.message ?? e); cx.notify(); return []; });
+      if (got.length) { this.error = null; this.attachFiles(got, cx); this.saveSoon(cx); cx.notify(); }
     }));
     this.wasFocused = false;
     // Up/Down/Tab/Escape reach the textarea first, which keeps them. While the "/" list shows
@@ -704,8 +705,13 @@ export default class Chat extends View {
     if (this.typing) hc(["label", addr, `herdr.typing=${at}`]).catch(() => {});
   }
 
+  // Files from a drop, a paste or the picker: macOS's fleeting TemporaryItems ones copied first (attach.keep, #1095).
+  attachFiles(list, cx) {
+    if (!list.some(attach.fleeting)) { this.addFiles(list); return; }
+    cx.spawn(async (cx) => { this.addFiles(await attach.keep(list)); this.saveSoon(cx); cx.notify(); });
+  }
+
   addFiles(list) {
-    if (list.length) this.attachError = null; // fork: SHEP-75
     for (const f of list) if (!this.files.some((x) => x.path === f.path)) this.files.push(f);
     this.files = this.files.slice(0, 20);
   }
@@ -1124,7 +1130,7 @@ export default class Chat extends View {
     const named = /^([a-z][a-z0-9]*)-(\d+)(?:-|$)/.exec(t.name ?? "");
     const ref = this.workerTasks().get(t.address)?.ref ?? (t.labels?.["herdr.task"] && named ? `${named[1].toUpperCase()}-${named[2]}` : null);
     // An Assistant's role is in its first message (its template): it gets that again.
-    const template = assistant(t) && !t.address.includes("/") ? await readTextFile(`${home()}/.config/herdr-core/templates/assistant.md`).catch(() => null) : null;
+    const template = assistant(t) && !t.address.includes("/") ? await readTextFile(`${(await dirsReady()).templates}/assistant.md`).catch(() => null) : null;
     const msg = lostMessage({ ref, template });
     const mine = t.address === this.addr;
     if (mine) { this.note = { id: `note-${Date.now()}`, text: WORDS.sessionGone }; cx.notify(); }
@@ -1447,6 +1453,7 @@ export default class Chat extends View {
   // Enter: now (while the agent works, it takes it mid-turn). Ctrl+Enter while it
   // works: held, and sent by itself once it is free.
   send(cx, hold = false) {
+    this.pickError = null;
     // A picked "#space" goes as its mention, which names its target (core/mentions.js).
     const text = mentions.expandTasks(mentions.expand(this.box.value().trim(), this.picked), this.pickedTasks);
     this.picked = [];
@@ -1529,6 +1536,7 @@ export default class Chat extends View {
         p.sent = [body, ...paths].filter(Boolean).join("\n\n");
         // (a message with pictures: its Enter again if Claude Code lost it, sendTyped(); one that stayed in its box
         // last time gets only its Enter now, never typed twice)
+        markSaid(this.sendIo(cx), this.addr);
         r = await sendTyped(this.sendIo(cx), this.addr, this.kind, p.sent, SETTLE, !!msg.stuck);
         msg.stuck = !!r.stuck;
         // Its own dialog is open in its terminal (a question or a permission with no card
@@ -2257,15 +2265,18 @@ export default class Chat extends View {
   restartAssistant(cx) {
     const mine = this.myPane() ?? this.lastPane;
     if (this.restarting || !mine || !this.addr) return;
+    // what it restarts, read now (#1108): "Start a new one" pressed while hc answers empties the chat, and that wins
+    const addr = this.addr, kind = this.kind, path = this.path;
     this.restarting = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const r = await hc(["get", this.addr, "--json"]);
+        const r = await hc(["get", addr, "--json"]);
+        if (this.addr !== addr || this.phase === "fresh") { this.restarting = false; cx.notify(); return; }
         let t = null;
         try { t = JSON.parse(r.stdout || "null"); } catch {}
         if (!t || t.error) throw new Error("Its old terminal is gone. Start a new Assistant instead.");
-        const argv = agent.resumeArgv(this.kind, this.argv ?? t.argv ?? [this.kind], agent.sessionOf(this.kind, this.path));
+        const argv = agent.resumeArgv(kind, this.argv ?? t.argv ?? [kind], agent.sessionOf(kind, path));
         this.swapping = true;
         const next = await agent.restart(t, { argv, resume: true, base: argv }, mine);
         this.endedAssistant = false;
@@ -3774,7 +3785,9 @@ export default class Chat extends View {
     const jobs = this.bgJobs;
     if (jobs.due(this.kind, this.conv) && await jobs.look((s, a) => this.runThere(s, a), this.kind, pid, this.conv)) cx.notify();
     const open = this.jobs().find((j) => j.id === this.jobOpen);
-    if (this.jobOpen && !open) { this.jobOpen = null; cx.notify(); }
+    // #1103: an open subagent row (c:<address>) is no job: it stays open while its subagent is listed.
+    const kid = String(this.jobOpen ?? "").startsWith("c:") && subagentsOf(terminals(), this.addr, Date.now()).some((k) => `c:${k.address}` === this.jobOpen);
+    if (this.jobOpen && !open && !kid) { this.jobOpen = null; cx.notify(); }
     if (open?.path) {
       const text = await jobs.output((s, a) => this.runThere(s, a), open);
       if (text !== null && text !== this.jobOut.get(open.id)) { this.jobOut.set(open.id, text); cx.notify(); }
@@ -4236,21 +4249,15 @@ export default class Chat extends View {
       .when(Boolean(this.boxSpare && this.lineH), (el) => el.mb(-unzoom(this.lineH)));
   }
 
-  // fork: SHEP-75. The attach error's line, inside the composer: wraps rather than cut off, so the why stays readable.
-  attachErrorLine(t) {
-    return div().id("chat-attach-error").w_full().px(12).pt(4).text_size(12).text_color(t.blocked).child(this.attachError);
-  }
-
   // The desktop's own file picker (attach.pick(): xdg-desktop-portal's, or macOS's own): the chosen files join
-  // the message as tiles, as a drop or a paste makes them. When none opens, the composer says why (fork: SHEP-75:
-  // it said "Couldn't open the file picker." in this.error, drawn at the pane's left edge above the status line).
+  // the message as tiles, as a drop or a paste makes them.
   pickFiles(cx) {
-    this.attachError = null;
     cx.spawn(async (cx) => {
-      const { code, paths: list, error } = await attach.pick();
-      if (code !== 0) this.attachError = error ?? "Couldn't open the file picker.";
+      const { code, paths: list, why } = await attach.pick();
+      // said beside the + button (#1225), not at the pane's edge
+      this.pickError = code !== 0 ? `Couldn't open the file picker${why ? `: ${why}` : "."}` : null;
       if (!list.length) { cx.notify(); return; }
-      this.addFiles(attach.paths(list));
+      this.attachFiles(attach.paths(list), cx);
       this.saveSoon(cx);
       this.box.focus();
       cx.notify();
@@ -4426,7 +4433,7 @@ export default class Chat extends View {
         cx.stop_propagation();
         this.enter(cx, Boolean(m.control || m.platform));
       })
-      .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); })
+      .on_drop((e, cx) => { this.attachFiles(attach.paths(e.paths ?? []), cx); this.saveSoon(cx); this.box.focus(); cx.notify(); })
       // Where the box is in the window, for a typed /model's picker (modelCommand()).
       .on_mouse_move((e) => { if (e.bounds) this.composerAt = e.bounds; })
       .border_color(this.focused ? t.accent : t.input).bg(t.background)
@@ -4443,8 +4450,6 @@ export default class Chat extends View {
         .child(this.boxArea(t))
         .when(!this.box.value().trim(), (el) => el.child(div().absolute().top(9).left(12).text_size(13).text_color(t.dim)
           .child(this.asks.length || st === "blocked" ? WORDS.replyInstead : this.placeholder()))))
-      // Why an attach or a paste of files didn't work, in the box, above the + it came from (fork: SHEP-75).
-      .when(Boolean(this.attachError), (el) => el.child(this.attachErrorLine(t)))
       // While recording: the recording row. Else one row, on the right: what the agent runs on
       // (opens the picker), dictation, Send (or Call). Send never turns into Stop: while the
       // agent works it still sends (or queues) and calls; Stop is on the working line above.
@@ -4452,7 +4457,7 @@ export default class Chat extends View {
       .when(rec === "idle", (el) => el.child(h_flex().h(36).pl(6).pr(6).gap(4).items_center()
         // Attach on the left, as ChatGPT and Claude have it: the desktop's file picker.
         .child(this.round("chat-attach", "mods/chat/plus.svg", t, "ghost", (cx) => this.pickFiles(cx)))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child(rec === "idle" ? this.dict.error ?? "" : ""))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child(rec === "idle" ? this.dict.error ?? this.pickError ?? "" : ""))
         .when(Boolean(this.addr), (el) => el.children(this.pickParts(t, true)))
         .when(!this.addr && this.phase === "fresh" && Boolean(this.choice?.sel) && Boolean(cx), (el) => el.child(this.freshPick(t, cx)))
         .when(addonOn("voice"), (el) => el.child(this.round("chat-mic", "mods/chat/mic.svg", t, "ghost", (cx) => this.toggleDictation(cx))))
@@ -4553,7 +4558,6 @@ export default class Chat extends View {
     // Never while a dialog over it holds the keyboard (New space's field, #752): Herdr counts this pane focused under it.
     // Never over a text selection (GitHub #916, SHEP-192): a drag over the messages selects them, and the box taking the
     // keyboard then made Ctrl+C copy nothing. The timers check again when they fire: a drag can start after they're set.
-    // Nor while a card's box has it (an "Other…" answer, a secret's value): fork: SHEP-74, its keys went to both boxes.
     const dialog = dialogHolds(shared(KEY_HOLDER));
     if (paneFocused && showsBox && !dialog && !this.pressMoved && (!this.wasFocused || !this.hadBox)) {
       cx.timer.after(0, () => { if (!this.pressMoved && !dialogHolds(shared(KEY_HOLDER)) && !this.keepsText() && !this.cardKeys()) this.box.focus(); });
@@ -4563,18 +4567,20 @@ export default class Chat extends View {
     // keyboard: give it back, unless the person just pressed something inside the chat.
     // Not while the keyboard is somewhere else in the window that isn't a pane (#633): a task's chat, the list or its
     // search in the Tasks panel (shared "keyboard.holder", keyHolder()); Herdr still counts this pane as focused then.
+    // Never while a card's own box has it (a question's Other…, a secret's masked box: GitHub #1224): each key redraws.
     // Nor while a highlight in the messages has it, for its Ctrl+C (fork: SHEP-37, keepsText(): a double click's too).
     else if (paneFocused && showsBox && !this.call && !this.pressMoved && this.focused === false && !this.keepsText() && Date.now() - (this.press?.at ?? 0) > 1500
+      && !this.cardKeys()
       && !keysElsewhere(liveHolder(shared(KEY_HOLDER)), this.areaKey())
-      && Date.now() - (this.refocusAt ?? 0) > 1000 && !this.cardKeys()) {
+      && Date.now() - (this.refocusAt ?? 0) > 1000) {
       this.refocusAt = Date.now();
-      cx.timer.after(0, () => { if (!this.cardKeys()) this.box.focus(); });
+      cx.timer.after(0, () => this.box.focus());
     }
   }
 
-  // fork: SHEP-74: whether a card's own box (a question's "Other…", a secret's value) has the keyboard.
+  // Whether a card's own box (Other…, a secret's) has the keyboard.
   cardKeys() {
-    return [this.cards, this.workerCards, this.codexCards, this.secretCards].some((c) => c?.hasKeys?.());
+    return [this.cards, this.workerCards, this.codexCards, this.secretCards].some((c) => c?.holdsKeys?.());
   }
 
   // A copy in a tab the window doesn't show (another space or tab) isn't drawn, so the wasFocused of its last draw
@@ -4681,7 +4687,7 @@ export default class Chat extends View {
       // A key while a highlight in the messages has the keyboard (fork: SHEP-37, textKey()).
       .on_key_down((e, cx) => this.textKey(e, cx))
       // Files dropped anywhere on the chat go with the next message.
-      .on_drop((e, cx) => { this.addFiles(attach.paths(e.paths ?? [])); this.saveSoon(cx); this.box.focus(); cx.notify(); });
+      .on_drop((e, cx) => { this.attachFiles(attach.paths(e.paths ?? []), cx); this.saveSoon(cx); this.box.focus(); cx.notify(); });
 
     // Starting (or the new agent's log not there yet): the person's message shows at once.
     const starting = (this.phase === "starting" || (this.phase === "finding" && this.role && !this.path)) && this.pending.length > 0;

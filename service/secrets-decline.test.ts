@@ -1,7 +1,7 @@
 // SHEP-76: a secret card's Decline (the web's, as the window's): keep(level, name, null, card) tells the agent it was
 // declined, clears its ask and leaves a quiet "Declined" line in its chat; it never runs herdr-secret (no rm of a kept
-// secret). An agent with a dialog open (hc's "blocked") gets the line held in herdr-task's held messages (as SHEP-72's
-// Mark up notes), never typed into the dialog. A fake hub, hc, herdr-secret and hold: nothing reaches a real agent.
+// secret). An agent with a dialog open (hc's "blocked") gets the line held in herdr-task's held messages (as upstream's
+// Mark up notes, #1213), never typed into the dialog. A fake hub, hc, herdr-secret and hold: nothing reaches a real agent.
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

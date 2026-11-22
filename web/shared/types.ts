@@ -890,7 +890,8 @@ export interface Chat {
   /** what this CLI lets the + menu change; only what it supports is listed */
   controls?: ChatControls
   /** Recorded launch values, never inferred from Settings. Missing values are CLI defaults, not observed telemetry. */
-  agent?: { kind: string; model?: string; modelLabel?: string; effort?: string; speed?: string; runtime?: AgentRuntime; planned?: PlannedAgent; /** the window's model button: "Opus 5.5 · High" */ words?: string }
+  agent?: { kind: string; model?: string; modelLabel?: string; effort?: string; speed?: string; runtime?: AgentRuntime; planned?: PlannedAgent; /** the window's model button: "Opus 5.5 · High" */ words?: string
+    /** #1222: the extra flags it was started with, one word each ("--advisor=opus") */ flags?: string[] }
   /** Settings for its role now say something else than what its agent runs on: a calm hint offers a restart */
   restart?: RestartHint
 }
@@ -975,7 +976,7 @@ export interface SettingRow {
   trigger?: TriggerRow
   /** a whole file's words (a coordinator's HEARTBEAT.md), in a box as wide as the page */
   doc?: boolean
-  /** a command (Tasks › Before the agent starts): its box in monospace */
+  /** a command (Tasks › Before the agent starts, When a task is accepted): its box in monospace */
   mono?: boolean
   /** Complete generated launch settings, plain text after the editable Heartbeat. */
   instructions?: string

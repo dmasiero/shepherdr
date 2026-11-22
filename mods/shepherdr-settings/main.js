@@ -41,7 +41,8 @@ import { dirs } from "./dirs.js";
 // herdr-task's merge policy (MERGE): "ask" waits for the person's Accept (which merges), the others merge without it.
 // NOTES: the command run in each new worktree before its agent (tasks.setup: herdr-task runs it in the agent's
 // terminal), then what a task's agent is told to do first and last (tasks.start_notes / finish_notes): herdr-task
-// puts those into its starting prompt.
+// puts those into its starting prompt; then the command Herdr runs once a task is done (tasks.accept_command,
+// after_accept.py).
 import { SECTIONS, ROLES, NOTES, MERGE, MUST_FIX, ROUNDS, ARCHIVE, ABOUT, BACKUP, REACTIONS, upgradeReactions, NOTIFY_ABOUT, TITLE, SPACE_TITLE,
   EVERYWHERE, CHANGED_HERE, RESET, EDIT_INSTRUCTIONS, USE_OTHER_CLI, LOADING_AGENTS, SAVED, sameAs as sameAsWords,
   spacesOwn, otherCliWords, backupProblem, notifyMachineAbout, machineLabel, TASK_ROWS, LEVEL } from "./core/settings.js";
@@ -52,7 +53,7 @@ const page = (id) => SECTIONS.find((s) => s.id === id).title;
 const rowTitle = (key) => TASK_ROWS.find(([s, f]) => `${s}.${f}` === key)[2];
 // Pages that moved: older openers still name them.
 const MOVED = { layout: "window", instructions: "agents", automations: "tasks" };
-const TEMPLATES = () => `${home()}/.config/herdr-core/templates`;
+const TEMPLATES = () => dirs().templates;   // where herdr-core reads them ($XDG_CONFIG_HOME's when set: #1182)
 const CLI_CHECK = () => dirs()["cli-check"];
 const tilde = (p) => (p && p.startsWith(home() + "/") ? "~" + p.slice(home().length) : p ?? "");
 const machineKeys = () => [LOCAL_MACHINE, ...machines().filter((m) => m.name && !m.temporary).map((m) => m.name)];

@@ -49,10 +49,10 @@ function scope(level: string): { args: string[]; words: string } {
   throw new Error("Not a place a secret can be kept.");
 }
 
-/** fork: SHEP-76: a message for an agent with a dialog open, held in herdr-task's held messages (as SHEP-72's Mark up
- *  notes): its scheduler sends it once hc takes it. True once it is kept. */
+/** fork: SHEP-76: a message for an agent with a dialog open, held in herdr-task's held messages (herdr-task _hold, the
+ *  text on stdin, as upstream's Mark up notes, #1213): its scheduler sends it once hc takes it. True once it is kept. */
 async function holdFor(to: string, text: string): Promise<boolean> {
-  const p = Bun.spawn([process.env.SHEPHERDR_HERDR_TASK || "herdr-task", "_hold", to, text], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+  const p = Bun.spawn([process.env.SHEPHERDR_HERDR_TASK || "herdr-task", "_hold", to], { stdout: "ignore", stderr: "ignore", stdin: new Blob([text]) });
   return (await p.exited) === 0;
 }
 

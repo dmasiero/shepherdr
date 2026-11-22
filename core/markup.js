@@ -10,25 +10,7 @@ export const MARKUP = {
   failed: "That didn't go through. Try again.",
   spot: "A note on the marked spot.",
   area: "A note on the marked area.",
-  // fork: SHEP-72: the agent has a dialog open (a question, a permission): herdr-artifact holds the note for it
-  held: "It's waiting on a question: your note goes to it once that's answered.",
 };
-
-// fork: SHEP-72: a failed note's words for the person, from whatever came back: herdr-artifact's {"error": ...} line,
-// hc's {"error": {"kind", "message", "hint"}} inside it, or plain words. Only the innermost message, never JSON; the
-// hint is for agents.
-export function plainNote(raw) {
-  let s = String(raw ?? "").trim().split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
-  for (let i = 0; i < 4 && /^[{"]/.test(s); i++) {
-    let v;
-    try { v = JSON.parse(s); } catch { break; }
-    const e = v && typeof v === "object" ? (v.error ?? v.message) : v;
-    if (e && typeof e === "object") s = String(e.message ?? "").trim();
-    else if (typeof e === "string") s = e.trim();
-    else break;
-  }
-  return s;
-}
 
 // The card's line before anything is marked, and once it went: keeper is the agent's program ("Claude Code"), else
 // "the agent".

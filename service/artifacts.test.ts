@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { artifactOf, artifactStore } from "./compat.ts";
+import { plainError } from "./artifacts.ts";
 
 test("a space's artifact store is herdr-artifact's: the repo's main folder, named as the window's Artifacts header", () => {
   expect(artifactStore({ folder: "/h/u" }, "/h/u")).toEqual({ folder: "/h/u", key: "|/h/u", name: "~" });
@@ -16,15 +17,9 @@ test("each version says its kind and its window picture: a converted one was a p
   expect(a.versions.map((x) => [x.n, x.kind, x.picture])).toEqual([[2, "recipe", undefined], [1, "gpui", 5]]);
 });
 
-// fork: SHEP-72: a note to an agent with a dialog open is held, said plainly; a failure is its plain message
-test("a held note answers in plain words; a refusal reaches the page as its message, never JSON", async () => {
-  const { noteAnswer } = await import("./artifacts.ts");
-  const held = noteAnswer({ code: 0, out: '{"to": "t19v", "why": "made it", "version": 1, "image": null, "held": "question"}\n', err: "" });
-  expect(held).toMatchObject({ ok: true, held: "question", to: "t19v", said: "It's waiting on a question: your note goes to it once that's answered." });
-  expect(noteAnswer({ code: 0, out: '{"to": "t2", "why": "made it", "version": 1, "image": null}\n', err: "" })).toEqual({ to: "t2", why: "made it", version: 1, image: null });
-  // as Doug's phone got it: hc's JSON inside herdr-artifact's
-  const raw = String.raw`{"error": "{\"error\":{\"hint\":\"typing would answer its dialog; read its screen first (hc read t19v), or --force\",\"kind\":\"blocked\",\"message\":\"t19v is blocked (question)\"}}"}`;
-  expect(() => noteAnswer({ code: 1, out: raw + "\n", err: "" })).toThrow(/^t19v is blocked \(question\)$/);
-  expect(() => noteAnswer({ code: 1, out: '{"error": "The agent that made this artifact has ended."}\n', err: "" })).toThrow(/^The agent that made this artifact has ended\.$/);
-  expect(() => noteAnswer({ code: 1, out: "", err: "herdr-artifact: no such artifact\n" })).toThrow("herdr-artifact: no such artifact");
+test("a note's error is plain words, never JSON in JSON (#1213)", () => {
+  const hc = JSON.stringify({ error: { hint: "typing would answer its dialog", kind: "blocked", message: "t7 is blocked (question)" } });
+  expect(plainError(JSON.stringify({ error: hc }))).toBe("t7 is blocked (question)");
+  expect(plainError(JSON.stringify({ error: "The agent that made this artifact has ended." }))).toBe("The agent that made this artifact has ended.");
+  expect(plainError("")).toBe("");
 });

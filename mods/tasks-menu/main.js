@@ -22,7 +22,7 @@ import { props, closeOverlay, theme, shared, setShared, exec, appHome } from "he
 import { menuRow, heading, toast, TEXT } from "./ui.js";
 import { taskMenu } from "./core/menus.js";
 import { SNOOZED, snoozeIn, unsnooze, whenOf, LAST, lastOf } from "./core/snooze.js"; // fork: Snooze (SHEP-78); LAST, lastOf: SHEP-80
-import { settle } from "./core/pending.js";
+import { detach, settle } from "./core/pending.js";
 
 // Shepherdr's GROUP_WORDS (core/tasks.js GROUP_BY).
 const GROUPS = [{ key: "you", label: "For you" }, { key: "space", label: "Space" }, { key: "status", label: "Status" }];
@@ -44,7 +44,7 @@ function rowSections(p) {
   let cur = null;
   // fork: a started task snoozes; a snoozed one unsnoozes or changes its time (SHEP-78)
   for (const it of taskMenu({ pinned: p.on, status: p.status ?? null, snoozed: Boolean(p.snoozed), until: p.until ?? null, last: p.last ?? null })) {
-    if (it.typed) continue;
+    if (it.typed || it.web) continue;
     if (it.sep || it.heading || !cur) out.push(cur = { title: it.heading ? (p.status === "scheduled" && p.sub ? `${it.heading} · ${p.sub}` : it.heading) : null,
       checks: false, current: null, items: [], pick: (key) => rowPick(p, key) });
     if (it.sep || it.heading) continue;
@@ -77,7 +77,7 @@ function rowPick(p, key) {
     : ["edit", p.ref, ...(it.in ? ["--in", it.in] : ["--at", it.at])];
   // herdr-task, here or (--on) on the folder's machine; the list shows the change on its next read.
   const cli = (a) => exec(`${appHome()}/mods/tasks/bin/herdr-task`, a);
-  cli([...(p.machine ? ["--on", p.machine] : []), ...args, "--json", "--folder", p.folder])
+  cli(detach([...(p.machine ? ["--on", p.machine] : []), ...args, "--json", "--folder", p.folder]))
     .then((r) => settle(cli, r))
     .then((r) => {
       let out = null;

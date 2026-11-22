@@ -9,7 +9,7 @@ import { image } from "gpui-kit";
 import { theme, settings } from "herdr";
 import { asset, reply } from "./artifact.js";
 import * as recipeData from "./recipe-data.js";
-import { cellMd, chartShapes, choiceReply, formReply, isLink, mdParts, mediaKind, withIds } from "./recipe.js";
+import { cellMd, chartShapes, choiceReply, fieldStart, formReply, isLink, mdParts, mediaKind, withIds } from "./recipe.js";
 
 const TONE = { info: "surface", good: "done", warn: "working", bad: "blocked" };
 const data = recipeData.default;
@@ -34,13 +34,10 @@ export default class RecipeView extends View {
     try { this.recipe = withIds(data); } catch { this.error = "This artifact's recipe can't be read."; }
     // every form field's InputState now: GPUI refuses InputState.new during render (#1026)
     const walk = (bs) => (Array.isArray(bs) ? bs : []).forEach((b) => {
-      // fork: a select's pick is in this.picks, no InputState (SHEP-48)
-      // fork: each field starts on its preset value: a select's pick, a checkbox's tick, a text's words (SHEP-70)
+      // fork: a select's pick is in this.picks, no InputState (SHEP-48); it starts on upstream's fieldStart (#1212)
       if (b?.type === "form") (b.fields ?? []).forEach((f) => {
-        const k = `${b.id}:${f.name}`;
-        if (f.kind === "select") { if (f.value != null) this.picks.set(k, f.value); }
-        else if (f.kind === "checkbox") { if (f.value != null) this.checks.set(k, !!f.value); }
-        else this.input(b, f);
+        if (f.kind === "select") { if (fieldStart(f) !== "") this.picks.set(`${b.id}:${f.name}`, fieldStart(f)); }
+        else if (f.kind !== "checkbox") this.input(b, f);
       });
       else if (b?.type === "columns") (b.columns ?? []).forEach(walk);
       else if (b?.type === "tabs") (b.tabs ?? []).forEach((x) => walk(x?.blocks));
@@ -92,9 +89,15 @@ export default class RecipeView extends View {
   }
 
   // a form field's InputState, made in init() (render only reads it)
+  // A checkbox: as pressed, else as the recipe started it (its value).
+  checked(b, f) {
+    const k = `${b.id}:${f.name}`;
+    return this.checks.has(k) ? !!this.checks.get(k) : !!fieldStart(f);
+  }
+
   input(b, f) {
     const k = `${b.id}:${f.name}`;
-    if (!this.inputs.has(k)) this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, ...(f.kind === "textarea" ? { multi_line: true } : {}), ...(typeof f.value === "string" ? { value: f.value } : {}) }));
+    if (!this.inputs.has(k)) this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, value: String(fieldStart(f)), ...(f.kind === "textarea" ? { multi_line: true } : {}) }));
     return this.inputs.get(k);
   }
 
@@ -106,8 +109,7 @@ export default class RecipeView extends View {
       return h_flex().flex_wrap().gap(6).children((f.options ?? []).map((o, i) => div().id(`sel-${b.id}-${f.name}-${i}`)
         .h(26).px(10).flex().items_center().rounded(6).cursor_pointer().border_1()
         .bg(on === o ? t.surface : t.background).border_color(on === o ? t.accent : t.border)
-        // fork: a preset select always holds one of its options, as the web's has no blank (SHEP-70)
-        .on_click((_e, cx) => { if (on === o && f.value == null) this.picks.delete(k); else this.picks.set(k, o); cx.notify(); })
+        .on_click((_e, cx) => { if (on === o) this.picks.delete(k); else this.picks.set(k, o); cx.notify(); })
         .child(div().text_size(13).text_color(on === o ? t.foreground : t.muted).child(String(o)))));
     }
     const state = this.input(b, f);
@@ -118,7 +120,7 @@ export default class RecipeView extends View {
   // What a field holds, for its form's reply.
   value(b, f) {
     const k = `${b.id}:${f.name}`;
-    if (f.kind === "checkbox") return !!this.checks.get(k);
+    if (f.kind === "checkbox") return this.checked(b, f);
     if (f.kind === "select") return this.picks.get(k) ?? "";
     return this.input(b, f)?.value() ?? "";
   }
@@ -257,8 +259,8 @@ export default class RecipeView extends View {
         return v_flex().gap(8)
           .children(b.fields.map((f) => f.kind === "checkbox"
             ? h_flex().id(`cb-${b.id}-${f.name}`).gap(8).items_center().cursor_pointer()
-              .on_click((_e, cx) => { this.checks.set(`${b.id}:${f.name}`, !this.checks.get(`${b.id}:${f.name}`)); cx.notify(); })
-              .child(div().size(14).rounded(3).border_1().border_color(t.border).when(!!this.checks.get(`${b.id}:${f.name}`), (e) => e.bg(t.accent)))
+              .on_click((_e, cx) => { this.checks.set(`${b.id}:${f.name}`, !this.checked(b, f)); cx.notify(); })
+              .child(div().size(14).rounded(3).border_1().border_color(t.border).when(this.checked(b, f), (e) => e.bg(t.accent)))
               .child(div().text_size(13).child(f.label ?? f.name))
             : v_flex().gap(4).child(div().text_size(12).text_color(t.muted).child(f.label ?? f.name))
               .child(this.field(b, f, t))))
