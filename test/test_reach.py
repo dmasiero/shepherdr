@@ -157,9 +157,14 @@ class Relink(unittest.TestCase):
     calls = Reach.calls  # Reach's set-up, not its tests
 
     def setUp(self):
+        # fork: on NixOS (nextgate's envfs /usr/bin) the narrow PATH finds no touch for the fake hc: link it in
+        # (looked up before Reach's set-up narrows the PATH).
+        found = shutil.which("touch")
         Reach.setUp(self)
         with open(os.path.join(self.tmp, "bin", "hc"), "w") as f:
             f.write(RELINK_HC)
+        if found:
+            os.symlink(found, os.path.join(self.tmp, "bin", "touch"))
 
     def links(self, d):
         return [(l["to"], l["state"], l["ok"]) for l in d["graph"]["links"]]

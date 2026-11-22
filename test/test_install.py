@@ -1061,8 +1061,8 @@ class AgentBrowser(unittest.TestCase):
         # herdr-browser needs go in a bin of their own, from the caller's PATH.
         self.tools = os.path.join(self.tmp, "tools")
         os.makedirs(self.tools)
-        for tool in ("awk", "cat", "chmod", "curl", "cut", "find", "grep", "ldd", "mkdir", "mv", "python3", "readlink",
-                     "rm", "rmdir", "sed", "sha256sum", "shasum", "sleep", "stat", "tail", "uname"):
+        for tool in ("awk", "cat", "chmod", "cp", "curl", "cut", "find", "grep", "head", "ldd", "mkdir", "mv", "python3",
+                     "readlink", "rm", "rmdir", "sed", "sha256sum", "shasum", "sleep", "stat", "tail", "tr", "uname", "wc"):
             found = shutil.which(tool)
             if found:
                 os.symlink(found, os.path.join(self.tools, tool))
