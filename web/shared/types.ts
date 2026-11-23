@@ -306,6 +306,8 @@ export interface Task {
   repo?: 'branch' | 'folder'
   /** the task it waits for, by title */
   afterTitle?: string
+  /** how many more tasks it waits for besides afterTitle's */
+  afterMore?: number
   /** short name, as people say it: GTM-15 */
   id: string
   name: string
@@ -357,8 +359,11 @@ export interface Task {
   created: string
   /** its agent's job, while it works or pauses; none once it is done */
   report?: Report
-  /** its pull request on GitHub, once one is open (fork: forge "gitea" on Gitea) */
-  pr?: { number: number; url: string; forge?: 'gitea' }
+  /** its pull request on GitHub, once one is open; its checks in one word (SHEP-348: the mark on its row), closed on
+   *  GitHub without merging (fork: forge "gitea" on Gitea) */
+  pr?: { number: number; url: string; checks?: 'running' | 'failed' | 'passed'; closed?: boolean; forge?: 'gitea' }
+  /** SHEP-348: it works in its own git worktree (a folder of its own), not in its list's folder */
+  worktree?: boolean
   /** queued: the tasks it still waits for ("SHE-12", "vm-str:SHE-12" on another machine) */
   after?: string[]
   /** how it ended, for a task queued after it: done (merged, or closed with nothing to merge), stopped, failed */
@@ -371,6 +376,13 @@ export interface Task {
   browser?: { ready: boolean; hint?: string }
   /** what its row says it is in (3.0's Tasks): the space working in its list's folder, else the list's name */
   listName?: string
+  /** SHEP-325: where it works, on its machine (`on`): its list's name (the repo's or folder's, ~ for the home folder),
+   *  its folder (`short`: as it shows, its machine's home as ~), and whether that folder is a git repo */
+  work?: { name: string; folder: string; short?: string; repo: boolean }
+  /** SHEP-325: the space whose Assistant asked for it (still there); its news and cards go to that chat */
+  asked?: string
+  /** SHEP-325: the other spaces whose Tasks hold it besides `place`: those working in its folder on its machine */
+  also?: string[]
 }
 
 /** An automation as a project's Tasks lists it: its name, when it runs, the task it adds */
@@ -618,9 +630,17 @@ export interface Message {
    *  from: who sent it ("Reviewer", "Assistant on m3"), only on a message from another agent, drawn as a message;
    *  to: whom, on a message this chat's own agent sent another (from is then itself: "Assistant" → "SHEP-4") */
   brief?: { label: string; bare?: boolean; from?: string; to?: string }
+  /** a message between agents (SHEP-368), as one quiet row that opens to its words (text): to whom this chat's agent
+   *  sent it (dir "to": "Message to #root on vm-demo", "Message to Fix login") or who sent it here (dir "from").
+   *  how: what sent it (hc, assistant, reply, fix); state: whether it got there, once its sender's command said
+   *  (delivered; waiting: held for later, as the person is writing to it or its agent stopped; failed: not delivered,
+   *  why in words); files: the names of the files it came with */
+  relay?: Relay
+  /** a task's brief, the first message of its chat (SHEP-330): what its agent was given, from the moment the task exists */
+  taskBrief?: TaskBrief
   /** 3.0's task news line in an Assistant's chat (core/chat-view.js newsWords): its mark, what happened, the rest;
    *  live: still needs you (red); accept: the newest ready line of a task still Ready */
-  news?: { task: string; ref: string; mark: 'started' | 'needs' | 'ready' | 'done' | 'other'; what: string; text: string; live?: boolean; accept?: boolean }
+  news?: { task: string; ref: string; event?: string; mark: 'started' | 'needs' | 'ready' | 'done' | 'other'; what: string; text: string; live?: boolean; accept?: boolean }
   /** the agent's own question as the log has it (3.0's "Asked you" box): open, answered, or closed without one */
   asked?: 'open' | 'answered' | 'dismissed'
   /** an error the CLI wrote: red words, no bubble */
@@ -635,6 +655,16 @@ export interface Message {
   /** the tasks your message mentions (#HAT-1), as 3.0's chips under it: a press opens the task */
   mentions?: { task: string; ref: string; title: string }[]
   at?: number
+}
+
+/** a message between agents, drawn as one quiet row (Message.relay) */
+export interface Relay {
+  dir: 'to' | 'from'
+  name: string
+  how?: 'hc' | 'assistant' | 'reply' | 'fix'
+  state?: 'delivered' | 'waiting' | 'failed'
+  why?: string
+  files?: string[]
 }
 
 /** a secret an agent asked for by name: the human types or pastes it in a masked box, for one of the levels offered;
@@ -850,6 +880,19 @@ export const cardMessage = (card: UpdateCard, at?: number): Message => ({
   text: `${card.task ?? card.health?.machine ?? card.red ?? ''} ${card.text}`,
   card,
 })
+
+/** The brief a task's agent was given, drawn as the first message of its chat (core/chat-view.js taskBrief) */
+export interface TaskBrief {
+  title: string
+  /** the prompt as the space's Assistant wrote it */
+  text: string
+  /** its Settings block's lines ("Review: off"), folded away */
+  settings?: string[]
+  /** who wrote it: "Assistant" */
+  from: string
+  /** waiting: no agent yet; sent: its agent started and hasn't taken it in yet; read: its agent took it in */
+  state: 'waiting' | 'sent' | 'read'
+}
 
 export interface Chat {
   key: string
@@ -1368,8 +1411,8 @@ export type ServerEvent =
   | { type: 'chat'; chat: Chat }
   | ({ type: 'terminal'; chat: string } & TermScreen)
   | { type: 'offline'; since: number }
-  /** the build of the screen the server serves: a screen on another build reloads */
-  | { type: 'build'; id: string }
+  /** the build of the web app the server serves, and its version: a screen on another build updates (SHEP-337) */
+  | { type: 'build'; id: string; version?: string }
   | { type: 'update'; update: UpdateStatus | null }
   /** the answer to a screen's ping: its link still works */
   | { type: 'pong' }
@@ -1444,10 +1487,29 @@ export interface LevelConfig {
   proof: boolean
 }
 
+export interface RepoConfig extends LevelConfig {
+  /** its key in the settings file's repos: its folder here, "<machine>:<folder>" on another machine */
+  key: string
+  folder: string
+  /** its machine; none: the one serving the app */
+  machine: string | null
+  /** its folder's last part */
+  name: string
+  /** the spaces sitting on it */
+  spaces: string[]
+  /** how many tasks work in it */
+  tasks: number
+  /** the rows it sets itself ("agents.Tasks", "merge", …): the rest are Everywhere's */
+  own: string[]
+}
+
 export interface Config {
   all: LevelConfig
   /** a space's own values, and which of them it set itself ("agents.Chats", "merge", …): the rest are Everything's */
   spaces: Record<string, LevelConfig & { own: string[] }>
+  /** SHEP-335: the repos and folders tasks work in (or a space sits on), per machine, with their task settings (what
+   *  shapes a task: Tasks and Reviews run on, Review, Merge, Proof), and which of them each set itself */
+  repos?: RepoConfig[]
   /** secrets by name (never their values): for every space, or one space */
   secrets: { name: string; scope: string; at?: number }[]
   /** every feature is a plugin: the optional ones and whether each is on */

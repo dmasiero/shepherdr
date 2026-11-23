@@ -1,13 +1,16 @@
 // The shell: the list on the left (behind the menu button on a phone), the chat in the middle, the pane on the right
-// (the whole screen on a phone), and the phone's bottom bar. It only lays out what the plugins put in the kernel's
+// (the whole screen on a phone), and the phone's bottom bar. SHEP-336: beside a pane the chat can swap to the right
+// (the pane then sits between the list and the chat); the page's order follows, so Tab goes the way it reads. It only lays out what the plugins put in the kernel's
 // places; the layout itself is the design system's (ds.css).
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { Snapshot } from '@shared/types.ts'
-import { downWords, folderName, folderOf, isEverything, needsCount, placeDown, placeOf, taskOf, type Space } from '@shared/view.ts'
+import { downWords, isEverything, needsCount, placeDown, placeOf, taskOf, type Space } from '@shared/view.ts'
 import { getState, openSettings, registry, setUI, sideHidden, togglePane, useNotice, useSnap, useUI, type Thread } from './kernel.ts'
-import { folderMenu, List, spaceMenu } from './list.tsx'
+import { List, spaceMenu } from './list.tsx'
+import { HeaderPath } from './where.tsx'
 import { closeTop, Layers } from './overlay.tsx'
 import { edge } from './resize.ts'
+import { columnsOf, swapSides, useSides } from './sides.ts'
 import { SettingsWindow } from './settings.tsx'
 import { cx, Empty, I, IB, useScrolled } from './ui.tsx'
 
@@ -25,21 +28,6 @@ export function placeholderOf(snap: Snapshot, thread: Thread): string {
   return isEverything(snap, thread.place) ? 'Message Shepherdr' : `Message #${placeOf(snap, thread.place)?.name ?? ''}`
 }
 
-/** The open space's folder beside its name (SHEP-316): a quiet chip, Home folder / Root folder in words, its machine
- *  when it is another; a long path gives way from its start. A tap shows the whole path with Copy. */
-function FolderChip({ snap, place }: { snap: Snapshot; place: Space }) {
-  const f = folderOf(snap, place)
-  if (!f.short) return null
-  const name = folderName(f.short)
-  return (
-    <button type="button" className="fchip" aria-haspopup="menu" aria-label={`Folder: ${f.full}${f.machine ? ` on ${f.machine}` : ''}`} onClick={(e) => folderMenu(e.currentTarget, place.id)}>
-      <I n="folder" c="s16" />
-      <span className={cx('fct', name === f.short && 'cut')}><bdi>{name}</bdi></span>
-      {f.machine && <span className="fcm">{f.machine}</span>}
-    </button>
-  )
-}
-
 function ChatHeader({ snap, thread, place, scrolled }: { snap: Snapshot; thread: Thread; place: Space; scrolled: boolean }) {
   const phone = useUI((u) => u.phone)
   const hidden = useUI(sideHidden)
@@ -50,12 +38,12 @@ function ChatHeader({ snap, thread, place, scrolled }: { snap: Snapshot; thread:
     <header className={cx('hd', scrolled && 'sc')}>
       {phone ? <IB icon="burger" label="Spaces" onClick={() => setUI({ drawer: true })} /> : hidden ? <IB icon="panel" label="Show the list" onClick={showList} /> : null}
       <div className="ttl">
-        <button type="button" className="tbtn" aria-haspopup="menu" onClick={(e) => spaceMenu(e.currentTarget, place.id)}>
+        <button type="button" className="tbtn" aria-haspopup="menu" onClick={(e) => spaceMenu(e.currentTarget, place.id, true)}>
           {!every && <I n="hash" c="s16" />}
           <span>{every ? 'Everything' : place.name}</span>
           <I n="down" c="s16 c-mute" />
         </button>
-        {!every && <FolderChip snap={snap} place={place} />}
+        <HeaderPath snap={snap} place={place} />
       </div>
       {registry.header.filter((h) => !phone || h.phone).map((h, i) => <h.View key={i} thread={thread} />)}
     </header>
@@ -143,14 +131,15 @@ export function PaneFrame({ head, children, foot, drawer, scrollKey, flush }: { 
   )
 }
 
-/** the phone's bottom bar: the pill Chat / Tasks / Artifacts, then the voice button (Mute and End in a call) */
+/** the phone's bottom bar: the pill Chat / Tasks / Artifacts (the voice call's button is in the message box) */
 function Bar({ snap }: { snap: Snapshot }) {
   const pane = useUI((u) => u.pane)
   const at = useUI((u) => u.at)
+  // the Tasks count follows the Tasks filter (SHEP-331): redraw when it changes
+  useUI((u) => u.tf)
   const on = pane === 'tasks' || pane === 'artifacts' ? pane : pane ? '' : 'chat'
   return (
     <>
-      {registry.barAbove.map((V, i) => <V key={i} />)}
       <nav className="bar" aria-label="Views">
         <div className="pill" style={{ gridTemplateColumns: `repeat(${registry.bar.length + 1},minmax(0,1fr))` }}>
           <button type="button" className="pt" aria-pressed={on === 'chat'} onClick={() => togglePane(null)}>
@@ -170,7 +159,6 @@ function Bar({ snap }: { snap: Snapshot }) {
             )
           })}
         </div>
-        {registry.barEnd.map((V, i) => <V key={i} />)}
       </nav>
     </>
   )
@@ -181,9 +169,16 @@ function Toast() {
   return text ? <div className="toast" role="status">{text}</div> : null
 }
 
+/** a finger is the main pointer (a phone or a tablet): the app takes its touch sizes (SHEP-317) */
+const COARSE = typeof matchMedia === 'function' ? matchMedia('(pointer:coarse)') : null
+const onCoarse = (f: () => void) => (COARSE?.addEventListener('change', f), () => COARSE?.removeEventListener('change', f))
+const useCoarse = () => useSyncExternalStore(onCoarse, () => !!COARSE?.matches, () => false)
+
 export function App() {
   const snap = useSnap()
   const ui = useUI()
+  const { side } = useSides()
+  const coarse = useCoarse()
   // the document says which layout it is in, for the few styles outside the shell
   useEffect(() => {
     document.documentElement.classList.toggle('is-phone', ui.phone)
@@ -202,24 +197,30 @@ export function App() {
     addEventListener('keydown', key)
     return () => removeEventListener('keydown', key)
   }, [])
-  if (!snap) return <div className="app"><div className="device" /></div>
+  if (!snap) return <div className={cx('app', (ui.phone || coarse) && 'tap')}><div className="device" /></div>
   const hidden = sideHidden(ui)
+  const swap = !ui.phone && !!ui.pane && side === 'right'
   const Search = registry.views.search
   const Middle = registry.middle.find((m) => m.when(ui))
   return (
-    <div className={cx('app', ui.phone && 'phone')}>
+    <div className={cx('app', ui.phone && 'phone', (ui.phone || coarse) && 'tap')}>
       <div className="device">
         {registry.topBars.map((V, i) => <V key={i} />)}
-        <div className={cx('shell', ui.pane && 'has-pane', hidden && 'noside')}>
+        <div className={cx('shell', ui.pane && 'has-pane', hidden && 'noside', swap && 'swap')}>
           {!ui.phone && !hidden && (
             <nav className="side" aria-label="Spaces">
               <List snap={snap} />
             </nav>
           )}
-          {Middle ? <section className="col chat"><Middle.View /></section> : <ChatColumn snap={snap} />}
-          {ui.pane && <PaneColumn />}
+          {columnsOf(swap ? 'right' : 'left').map((c) =>
+            c === 'chat' ? (
+              Middle ? <section key="chat" className="col chat"><Middle.View /></section> : <ChatColumn key="chat" snap={snap} />
+            ) : (
+              ui.pane && <PaneColumn key="pane" />
+            ),
+          )}
           <div className="rz rzs" {...edge('side')} />
-          <div className="rz rzp" {...edge('pane')} />
+          <div className="rz rzp" {...edge('pane', swapSides)} />
         </div>
         {ui.phone && <Bar snap={snap} />}
         <div className="layer">

@@ -127,7 +127,34 @@ LIVE_RULE = ("- Never stop, restart, update or reconfigure the live session you 
              "from an earlier shell call is gone, and your terminal's own HC_SESSION is the live one), and a throw"
              'away HOME. Your terminal refuses these; never work around it. If the live one really needs it, ask t'
              'he person.\n')
-WORKER_MD = WORKER_MD_BEFORE_LIVE.replace(LIVE_ANCHOR, LIVE_ANCHOR + LIVE_RULE)
+WORKER_MD_BEFORE_CLOCK = WORKER_MD_BEFORE_LIVE.replace(LIVE_ANCHOR, LIVE_ANCHOR + LIVE_RULE)
+# Since the time left is worked out from the clock and the agent's own pace, in agent time, not a person's days (SHEP-361).
+CLOCK_OLD = ("Each time, revise it honestly from how the work is really going (slower than you thought: say more), never "
+             "just count it down. A rough guess beats none.")
+CLOCK_RULE = ("Work it out from the clock, not a feeling: run `date +%s` once when you start and keep the number, then read "
+              "the clock again at every status. `--done` is the honest share of the whole task finished: steps done out of "
+              "all you now see, tests, proof and fixes too, not only the coding. `--left` is your own pace: minutes worked "
+              "x (100 - done) / done (worked 12 min, 40% done: about 18m left); adjust only for what you know is different "
+              "ahead (a long test run, a wait on checks), and say the likelier, smaller number, never a padded one. Think in "
+              "your own working time, minutes and hours, never a person's days or weeks: more than a few hours needs a reason "
+              "you can name. Before a few minutes or about 10%, guess from the task's size: a rough guess beats none. Each time, "
+              "compare with your last estimate and the clock, and revise it honestly by as much as you were off (slower than "
+              "you thought: say more), never just count it down.")
+WORKER_MD_BEFORE_ROW = WORKER_MD_BEFORE_CLOCK.replace(CLOCK_OLD, CLOCK_RULE)
+# Since a status line fits a phone's task row uncut, as a task's title does: at most ROW_MAX characters (SHEP-370).
+ROW_OLD = "with what you're doing now (at most 40 characters; a longer one is cut at a word), how far"
+ROW_RULE = ("with what you're doing now (at most 30 characters, so a phone's task row shows it uncut: a few plain words, "
+            "\"Running the full tests\", not \"Rebasing onto main, then running the whole test suite\"), how far")
+WAIT_ROW_OLD = 'at most 40 characters, e.g. "Needs a go to screenshot the menu")'
+WAIT_ROW_RULE = ('at most 30 characters, as it shows uncut on a phone, e.g. "Needs a go for a screenshot", not "Waiting for '
+                 'the person to say whether I can take the window")')
+WORKER_MD_BEFORE_TESTS = WORKER_MD_BEFORE_ROW.replace(ROW_OLD, ROW_RULE).replace(WAIT_ROW_OLD, WAIT_ROW_RULE)
+# Since a task runs targeted tests before ready: the full suite belongs to main (GitHub's run) and the release.
+TESTS_OLD = LIVE_ANCHOR
+TESTS_RULE = ("- Before you say you're done, run only the tests for what you touched (the test files for its area, plus a "
+              "type check or build if your change could break one), not the whole suite: the full suite belongs to main "
+              "and the release.\n")
+WORKER_MD = WORKER_MD_BEFORE_TESTS.replace(TESTS_OLD, TESTS_RULE)
 
 REVIEWER_MD_BEFORE_SUBAGENT = """You review one Herdr task's work before it can merge. Read only: never edit files, commit or push.
 - Read the task, then the diff of its branch against its base, and run the project's checks.
@@ -164,7 +191,7 @@ OLD_WORKER_READY = """You work on one Herdr task. Stay within the task's scope a
 - When the work is finished, run the `herdr-task ready` command given at the end of your brief, with a short summary. That puts the task in Ready for the person, who accepts it. Never mark a task done yourself.
 """
 OLD_WORKER_MD = OLD_WORKER_READY.split("- When the work is finished")[0]
-OLD_WORKERS = (WORKER_MD_BEFORE_LIVE, WORKER_MD_BEFORE_WAIT, WORKER_MD_BEFORE_ASK, WORKER_MD_BEFORE_OFTEN, WORKER_MD_BEFORE_SUGGEST, WORKER_MD_BEFORE_COMMAND, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
+OLD_WORKERS = (WORKER_MD_BEFORE_TESTS, WORKER_MD_BEFORE_ROW, WORKER_MD_BEFORE_CLOCK, WORKER_MD_BEFORE_LIVE, WORKER_MD_BEFORE_WAIT, WORKER_MD_BEFORE_ASK, WORKER_MD_BEFORE_OFTEN, WORKER_MD_BEFORE_SUGGEST, WORKER_MD_BEFORE_COMMAND, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
 
 
 TEMPLATE_HEADS = {

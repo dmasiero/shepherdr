@@ -16,6 +16,11 @@ interface Layer {
   /** a picture or file shown on its own, over the whole screen (chat/preview.tsx) */
   view?: boolean
   label?: string
+  /** a small menu that floats at its button on a phone too, above it where it fits (a message's emoji strip) */
+  float?: boolean
+  /** a menu kept inside this box (its panel) and lined up with its button's end, as tall as the room under it allows
+   *  (its own body scrolls): the Tasks filter */
+  within?: Element | null
   render: (close: () => void) => ReactNode
   onClose?: () => void
 }
@@ -56,15 +61,15 @@ export const anyOpen = () => layers.length > 0
 export const layersNow = (): readonly Layer[] => layers
 
 /** Open a menu at its button. Its rows, or anything drawn (`render`); `cap`: a quiet line on top; `top`: above the rows. */
-export function openMenu(anchor: Element | null, rows: MenuRow[] | ((close: () => void) => ReactNode), opts: { cap?: string; top?: (close: () => void) => ReactNode; label?: string } = {}) {
+export function openMenu(anchor: Element | null, rows: MenuRow[] | ((close: () => void) => ReactNode), opts: { cap?: string; top?: (close: () => void) => ReactNode; label?: string; float?: boolean; within?: Element | null } = {}) {
   // the same button again closes it
   const was = anchor && layers.find((l) => l.kind === 'menu' && l.anchor === anchor)
   if (was) return close(was.id)
   for (const l of layers.filter((x) => x.kind === 'menu')) close(l.id)
   const id = seq++
   // the space's name and the filter show they are open; a row's ⋯ stays as it is
-  if (anchor?.matches('.tbtn, .fchip, [data-marks]')) anchor.setAttribute('aria-expanded', 'true')
-  layers = [...layers, { id, kind: 'menu', anchor, label: opts.label, render: (done) => (typeof rows === 'function' ? rows(done) : <MenuRows rows={rows} close={done} cap={opts.cap} top={opts.top?.(done)} />) }]
+  if (anchor?.matches('.tbtn, .hpath, [data-marks]')) anchor.setAttribute('aria-expanded', 'true')
+  layers = [...layers, { id, kind: 'menu', anchor, label: opts.label, float: opts.float, within: opts.within, render: (done) => (typeof rows === 'function' ? rows(done) : <MenuRows rows={rows} close={done} cap={opts.cap} top={opts.top?.(done)} />) }]
   emit()
 }
 
@@ -144,7 +149,9 @@ export function MenuRows({ rows, close: done, cap, top }: { rows: MenuRow[]; clo
               label={r.label}
               value={r.value}
               danger={r.danger}
-              role="menuitem"
+              // a view it opens: a check at its end while that view is open
+              end={r.on && <I n="check" c="s16" />}
+              {...(r.on === undefined ? { role: 'menuitem' } : { role: 'menuitemcheckbox', 'aria-checked': r.on })}
               onClick={() => {
                 done()
                 r.run?.()
@@ -157,6 +164,26 @@ export function MenuRows({ rows, close: done, cap, top }: { rows: MenuRow[]; clo
   )
 }
 
+/** a menu kept inside its panel: no wider than the panel less 8 px each side, its end lined up with its button's,
+ *  under the button and only as tall as the room left (above it instead when there is much more room there) */
+export function inside(pop: HTMLElement, t: DOMRect, box: DOMRect): { left: number; top: number } {
+  const room = { left: Math.max(8, box.left + 8), right: Math.min(innerWidth - 8, box.right - 8) }
+  pop.style.maxWidth = ''
+  pop.style.maxHeight = ''
+  const css = getComputedStyle(pop)
+  const own = { w: parseFloat(css.maxWidth) || Infinity, h: parseFloat(css.maxHeight) || Infinity }
+  pop.style.maxWidth = `${Math.max(0, Math.min(own.w, room.right - room.left))}px`
+  const w = pop.offsetWidth
+  const h = pop.offsetHeight
+  const below = innerHeight - 8 - (t.bottom + 4)
+  const above = t.top - 4 - 8
+  const up = h > below && above > below * 1.5
+  const max = Math.min(own.h, Math.max(120, up ? above : below))
+  pop.style.maxHeight = `${max}px`
+  const left = Math.min(Math.max(room.left, t.right - w), room.right - w)
+  return { left, top: up ? t.top - 4 - Math.min(h, max) : t.bottom + 4 }
+}
+
 /** a popover placed at its button: under it, flipped above when it would leave the screen, kept on screen sideways */
 function Popover({ layer }: { layer: Layer }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -166,17 +193,25 @@ function Popover({ layer }: { layer: Layer }) {
       const pop = ref.current
       if (!pop) return
       const t = layer.anchor?.getBoundingClientRect()
+      if (!t) return setAt({ left: 16, top: 16 })
+      if (layer.within) return setAt(inside(pop, t, layer.within.getBoundingClientRect()))
       const w = pop.offsetWidth
       const h = pop.offsetHeight
-      if (!t) return setAt({ left: 16, top: 16 })
-      const left = Math.min(Math.max(8, t.left), innerWidth - w - 8)
+      const left = Math.min(Math.max(8, layer.float ? t.left + t.width / 2 - w / 2 : t.left), innerWidth - w - 8)
       let top = t.bottom + 4
-      if (top + h > innerHeight - 8) top = Math.max(8, t.top - h - 4)
+      if (layer.float && t.top - h - 4 >= 8) top = t.top - h - 4
+      else if (top + h > innerHeight - 8) top = Math.max(8, t.top - h - 4)
       setAt({ left, top })
     }
     place()
     addEventListener('resize', place)
-    return () => removeEventListener('resize', place)
+    // a menu in a panel follows its own size too (a search narrowing its rows)
+    const ro = layer.within && ref.current && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => place()) : null
+    if (ro && ref.current) ro.observe(ref.current.firstElementChild ?? ref.current)
+    return () => {
+      removeEventListener('resize', place)
+      ro?.disconnect()
+    }
   }, [layer])
   return (
     <div ref={ref} className="pop in" role="menu" aria-label={layer.label} style={at ? { left: at.left, top: at.top } : { visibility: 'hidden' }}>
@@ -211,8 +246,8 @@ export function Layers() {
         if (l.kind === 'menu')
           return (
             <div key={l.id} style={{ display: 'contents' }}>
-              <div className={cx('scrim', !phone && 'clear')} onClick={done} />
-              {phone ? (
+              <div className={cx('scrim', (!phone || l.float) && 'clear')} onClick={done} />
+              {phone && !l.float ? (
                 <div className="pop sheet in" role="menu" aria-label={l.label}>
                   {l.render(done)}
                 </div>

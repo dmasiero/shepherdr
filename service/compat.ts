@@ -11,7 +11,7 @@ import * as SPc from "../core/spaces.js";
 import { kindOf as kindOfTerm } from "../core/chat-reader.js";
 import * as CL from "../core/chat-log.js";
 import * as CV from "../core/chat-view.js";
-import { taskArtifacts } from "../core/task-artifacts.js";
+import { taskArtifacts, titleInTask } from "../core/task-artifacts.js";
 const { summary, names } = CL as any;
 const { senderName, briefLabel, firstUser, firstKeys, newsTimeline, resolveArtifacts, unsigned, fromName, sentTo, selfName, subagentsOf, isHelper } = CV as any;
 import { mentionedIn } from "../core/send.js";
@@ -87,8 +87,10 @@ const stepRow = (s: any, i: number) => ({ key: `${s.id ?? i}`, kind: STEP[s.kind
 export async function activity(reader: any, id: string): Promise<ActivityAnswer> {
   const x = (reader?.conv?.items ?? []).find((i: any) => i.id === id && i.kind === "tools");
   if (!x) return { error: "That turn isn't in the chat any more." };
-  const outs: Map<string, string> = await reader.results?.(x.steps).catch(() => new Map()) ?? new Map();
-  return { steps: x.steps.map((s: any, i: number) => ({ id: `${s.id ?? i}`, kind: STEP[s.kind] ?? "other", tool: s.kind, at: 0, end: 1, title: s.line, doing: s.line, target: "", ...(outs.has(s.id) ? { out: outs.get(s.id) } : {}) })) };
+  // (a call that only sent a message is that message's own row: not here)
+  const steps = x.steps.filter((s: any) => !s.relay);
+  const outs: Map<string, string> = await reader.results?.(steps).catch(() => new Map()) ?? new Map();
+  return { steps: steps.map((s: any, i: number) => ({ id: `${s.id ?? i}`, kind: STEP[s.kind] ?? "other", tool: s.kind, at: 0, end: 1, title: s.line, doing: s.line, target: "", ...(outs.has(s.id) ? { out: outs.get(s.id) } : {}) })) };
 }
 
 /** An artifact (herdr-artifact list) as 2.1's: its versions newest first, which space it belongs to (its folder's,
@@ -162,7 +164,8 @@ export function artifactOf(a: any, spaces: Space[], program: (addr: string) => s
   const versions: any[] = Array.isArray(a.versions) ? a.versions : [];
   // one kind only (3.2): a web page. A task's proof stays on its task until kept; its picture is its newest version's
   return {
-    id: a.id, title: a.title, place, v: a.version, at: a.at, when: ago(a.at, false), by, keeper: by,
+    // SHEP-322: an older title's task key in front ("SHEP-60: Coverage") never shows
+    id: a.id, title: a.task ? titleInTask(a.title, a.task) : a.title, place, v: a.version, at: a.at, when: ago(a.at, false), by, keeper: by,
     folder: a.folder ?? "", folderName: name, store: `${m ?? ""}|${a.folder ?? ""}`, ...(m ? { machine: m } : {}), ...(a.task ? { task: a.task } : {}),
     ...(a.proof ? { proof: true } : {}), ...(a.pinned ? { pinned: true } : {}), ...(a.thumb ?? versions[versions.length - 1]?.thumb ? { thumb: true } : {}),
     versions: [...versions].reverse().map((x: any) => ({ n: x.v, at: x.at, when: ago(x.at, false), by, html: x.v, ...(x.note ? { note: x.note } : {}) })),
@@ -224,7 +227,23 @@ export class Compat {
   /** A space's Assistant chat with no Assistant yet (SHEP-263): nothing said, and what its first message starts it
    *  on, as the window's chat says it on its model button before then (the choice kept for the space, else Shepherdr
    *  settings' Assistant, else the CLI's own), with its CLI. null: the key is no space's, or its Assistant runs. */
+  /** Each task's whole prompt by its key (service/model.ts prompts), set by main. */
+  promptOf: ((key: string) => string | null) | null = null;
+
+  /** The task whose chat this is ("<task id>/worker"), else null. */
+  private taskRowOf(key: string) { return key.endsWith("/worker") ? this.rows.find((r) => taskId(r) === key.slice(0, -7)) ?? null : null; }
+
+  /** A task's brief as the first message of its chat (SHEP-330, core/chat-view.js taskBrief). launch: the text its
+   *  agent was started with, as its log has it. */
+  briefMessage(r: Row, id: string, state: "waiting" | "sent" | "read", launch = "", at?: number): Message {
+    const tb = CV.taskBrief({ title: r.title, prompt: this.promptOf?.(r.key) ?? r.prompt ?? "", launch, from: "Assistant", state });
+    return { id, who: "you", ...(at ? { at } : {}), text: tb.text, taskBrief: tb } as Message;
+  }
+
   freshChat(key: string): Chat | null {
+    // a task whose agent hasn't started (queued, scheduled, to do, starting): its brief, waiting to go
+    const r = this.taskRowOf(key);
+    if (r) return { key, messages: [this.briefMessage(r, `brief:${taskId(r)}`, "waiting")], cli: "claude", working: false, top: true } as Chat;
     const s = this.spaceList.find((x) => placeKey(x.id) === key);
     if (!s || s.assistant || !(this.agents as any)?.fresh) return null;
     const f = (this.agents as any).fresh(s.machine ?? null, this.assistantPick?.(s.id) ?? null);
@@ -340,6 +359,8 @@ export class Compat {
     // what its row says it is in, as the window's Tasks: the space working in its list's folder, else the list's name
     const placeName = (r: Row) => places.find((p) => spaces.find((s) => s.id === p.id && (s.machine ?? null) === (r.machine ?? null) && s.folder === r.folder))?.name ?? r.list ?? "";
     const placeOf = (r: Row) => (r.space && spaces.some((s) => s.id === r.space) ? r.space : spaces.find((s) => (s.machine ?? null) === (r.machine ?? null) && s.folder === r.folder)?.id ?? "");
+    // SHEP-325: the spaces working in its folder on its machine: their Tasks list it too (the window's rule, core inSpace)
+    const folderSpaces = (r: Row) => (r.folder ? spaces.filter((s) => (s.machine ?? null) === (r.machine ?? null) && s.folder === r.folder).map((s) => s.id) : []);
 
     const places: Place[] = spaces.map((s) => {
       const key = placeKey(s.id);
@@ -371,6 +392,12 @@ export class Compat {
       const t: Task = {
         id, name: r.title, status: SECTION[r.section] ?? "todo", place: placeOf(r), listName: placeName(r), age: r.started ? ago(r.started, false) : "",
         state: r.section, on: r.machine ?? host, created: "", ...(r.folder ? { taskFolder: r.folder } : {}),
+        // SHEP-325: where it works (its list: the repo's or folder's name), the space that asked for it, and the other
+        // spaces whose Tasks hold it
+        ...(r.folder ? { work: { name: r.list || base(r.folder) || r.folder, folder: r.folder, repo: r.kind === "repo",
+          short: r.machine ? SPc.tilde(r.folder) : r.folder === HOME ? "~" : r.folder.startsWith(HOME + "/") ? `~${r.folder.slice(HOME.length)}` : r.folder } } : {}),
+        ...(r.space && spaces.some((s) => s.id === r.space) ? { asked: r.space } : {}),
+        ...((also) => (also.length ? { also } : {}))(folderSpaces(r).filter((id) => id !== placeOf(r))),
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
         ...(r.sub ? { sub: r.sub } : {}),
@@ -382,8 +409,9 @@ export class Compat {
         ...(r.done_at ? { doneAt: r.done_at } : {}),
         // it ran (an agent once started): never "hasn't started", its summary when its chat is gone (SHEP-26)
         ...(r.started ? { started: r.started } : {}), ...(r.summary ? { summary: r.summary } : {}), ...(r.details ? { details: r.details } : {}),
-        // fork: a Gitea pull request says so (herdr_task/gitea.py), for the Pull request view's words
-        ...(r.pr ? { pr: { number: r.pr.number, url: r.pr.url, ...(r.pr.forge === "gitea" ? { forge: "gitea" as const } : {}) } } : {}),
+        // fork: a Gitea pull request says so (herdr_task/gitea.py)
+        ...(r.pr ? { pr: { number: r.pr.number, url: r.pr.url, ...(["running", "failed", "passed"].includes(r.pr.checks) ? { checks: r.pr.checks } : {}), ...(r.pr.closed ? { closed: true } : {}), ...(r.pr.forge === "gitea" ? { forge: "gitea" as const } : {}) } } : {}),
+        ...(r.worktree && r.folder && r.worktree !== r.folder ? { worktree: true } : {}),
         ...(r.branch ? { branch: r.branch } : {}), ...(r.base ? { base: r.base } : {}),
         // its Artifacts tab (SHEP-60): its proof first, then newest first; its chat logs as the fallback (this machine's)
         ...((arts) => (arts.length ? { artifacts: arts } : {}))(taskArtifacts(this.rawArts, { ref: r.ref, folder: r.folder, machine: r.machine ?? null, agents: r.agents, proof: r.proof },
@@ -491,7 +519,8 @@ export class Compat {
     // it never said from the task's own record), and their workers, by address, for who sent a message
     const space = key.startsWith("p:") ? key.slice(2).replace(":", "/") : null;
     const spaceRows = space ? this.rows.filter((r) => r.space === space && r.ref) : [];
-    const workerOf = new Map<string, string>(this.rows.filter((r) => r.worker).map((r) => [r.worker, r.ref]));
+    // SHEP-322: a task's agent goes by its task's title
+    const workerOf = new Map<string, string>(this.rows.filter((r) => r.worker).map((r) => [r.worker, r.title || "Task"]));
     // here: this machine's name in herdr-core (another machine's agent writes ours as "<here>/t75")
     const here = (this as any).coreName?.() ?? null;
     const sender = (from: string, text: string) => senderName(from, text, { find: term, machine, taskOf: (a: string) => workerOf.get(a) ?? null, here, machineName: (m: string) => this.machineNames.get(m) ?? null });
@@ -499,18 +528,28 @@ export class Compat {
     // who this chat's own agent is when it sends one ("Assistant → SHEP-4")
     const taskLabel = String(t?.labels?.["herdr.task"] ?? "");
     const peers = { machineName: (m: string) => this.machineNames.get(m) ?? null, here: machine ?? here };
-    const self = selfName({ assistant: key.startsWith("p:"), task: taskLabel ? workerOf.get(this.chats.get(key) ?? "") ?? (/^[a-z]+-\d+$/i.test(taskLabel) ? taskLabel.toUpperCase() : null) : null, kind: reader.kind });
+    // a reply or a fix the chat's agent sent a task, by its id ("4", "#4", "SHOP-4"): that task's title
+    const taskTitle = (id: string) => {
+      const v = String(id ?? "").replace(/^#/, "").toLowerCase();
+      const is = (r: any) => String(r.ref ?? "").toLowerCase() === v || String(r.id ?? "") === v;
+      return (spaceRows.find(is) ?? this.rows.find(is))?.title ?? null;
+    };
+    const self = selfName({ assistant: key.startsWith("p:"), task: taskLabel ? workerOf.get(this.chats.get(key) ?? "") ?? (/^[a-z]+-\d+$/i.test(taskLabel) ? "Task" : null) : null, kind: reader.kind });
     const news = space ? newsTimeline(items, new Map(spaceRows.map((r) => [r.ref, { ...r, status: r.section }])), { start: reader.start }) : [];
     const newsLine = (e: any): Message => {
       const task = machine ? `${machine}:${e.ref}` : e.ref;
-      return { id: e.id, who: "agent", at: e.at, news: { task, ref: e.ref, mark: e.mark, what: e.what, text: e.text, ...(e.live ? { live: true } : {}), ...(e.accept ? { accept: true } : {}) } };
+      return { id: e.id, who: "agent", at: e.at, news: { task, ref: e.ref, event: e.event, mark: e.mark, what: e.what, text: e.text, ...(e.live ? { live: true } : {}), ...(e.accept ? { accept: true } : {}) } };
     };
     const inline = new Map(news.filter((e: any) => !e.made).map((e: any) => [e.id, e]));
     const made = news.filter((e: any) => e.made);
     let mi = 0;
     // which artifact each publish made (core/chat-view.js resolveArtifacts, as the window's chat)
     const arts = resolveArtifacts(items, this.rawArts.filter((a: any) => (a.machine ?? null) === machine), String(reader.addr ?? "").split("/").pop());
-    const template = t?.template ?? null, task = Boolean(t?.labels?.["herdr.task"]);
+    // a task's chat: its brief is its first message (SHEP-330), read once its log has it (a finished task's log too,
+    // whose terminal is gone)
+    const taskRow = this.taskRowOf(key);
+    const template = t?.template ?? null, task = Boolean(t?.labels?.["herdr.task"]) || !!taskRow;
+    let briefShown = false;
     const mentionable = this.tasksFor(key);
     const own = this.chats.get(key);
     // what pages sent it, known again in the log: the page's id comes back on it
@@ -539,9 +578,16 @@ export class Compat {
       }
       // not typed by the person: a launch brief or another agent's message, as one quiet row
       const brief = x.kind === "user" && !first ? briefLabel(x, i, { start: reader.start, template, task, sender, ...peers, first: fi }) : null;
-      if (brief) {
+      if (brief === "Task brief" && taskRow) {
+        messages.push(this.briefMessage(taskRow, x.id, "read", String(x.text ?? ""), x.at));
+        briefShown = true;
+      } else if (brief) {
         const restart = /^<restart>/.test(x.text ?? "");
-        messages.push({ id: x.id, who: "you", at: x.at, text: restart ? x.text.replace(/<\/?restart>/g, "") : x.from ? unsigned(x.text) : x.text, brief: { label: brief, ...(restart ? { bare: true } : {}), ...(x.from ? { from: fromName(x, sender, peers) } : {}) } });
+        // another agent's message: its row says who sent it, opening to its words and the files it came with
+        const from = x.from ? fromName(x, sender, peers) : null;
+        const files = (x.paths ?? []).map((f: string) => f.split("/").pop());
+        messages.push({ id: x.id, who: "you", at: x.at, text: restart ? x.text.replace(/<\/?restart>/g, "") : x.from ? unsigned(x.text) : x.text, brief: { label: brief, ...(restart ? { bare: true } : {}), ...(from ? { from } : {}) },
+          ...(from ? { relay: { dir: "from", name: from, ...(files.length ? { files } : {}) } } : {}) } as Message);
       } else if (x.kind === "user" && (x.text || x.paths?.length || x.images)) {
         const sentCid = sends.length && !x.from ? sentAs(sends, x, takenSends) : undefined;
         const cid = sentCid ? { cid: sentCid } : {};
@@ -565,8 +611,9 @@ export class Compat {
       }
       else if (x.kind === "sent" && x.text) {
         // a message it sent another agent: "Assistant → SHEP-4", a quiet row that opens to its words
-        const to = sentTo(x, (a: string) => sender(a, ""));
-        messages.push({ id: x.id, who: "agent", at: x.at, text: unsigned(x.text), brief: { label: `Message to ${to}`, from: self, to } });
+        const to = sentTo(x, (a: string) => sender(a, ""), taskTitle);
+        messages.push({ id: x.id, who: "agent", at: x.at, text: unsigned(x.text), brief: { label: `Message to ${to}`, from: self, to },
+          relay: { dir: "to", name: to, how: x.how, ...(x.state ? { state: x.state } : {}), ...(x.why ? { why: x.why } : {}) } } as Message);
       }
       else if (x.kind === "agent" && x.text) {
         // the pictures and videos it put in its words (core/chat-view.js mediaIn), each right under them as a file of
@@ -596,11 +643,18 @@ export class Compat {
         else if (Date.now() - (x.at ?? 0) < 180000) messages.push({ id: x.id, who: "agent", at: x.at, publishing: true });
       } else if (x.kind === "tools" && x.steps?.length) {
         // 3.0's tools row: one quiet line ("Ran a command"), opening to each step's line and what it printed
-        const rows = x.steps.map(stepRow);
-        messages.push({ id: x.id, who: "agent", at, activity: { id: x.id, at, end: at, rows, steps: x.steps.length, summary: summary(x.steps) } });
+        // a call that only sent another agent a message is that message's own row, not a command here too
+        const steps = x.steps.filter((s: any) => !s.relay);
+        if (!steps.length) continue;
+        const rows = steps.map(stepRow);
+        messages.push({ id: x.id, who: "agent", at, activity: { id: x.id, at, end: at, rows, steps: steps.length, summary: summary(steps) } });
       }
     }
     while (mi < made.length) messages.push(newsLine(made[mi++]));
+    // its agent started but its log doesn't have the brief yet (still opening, or not found): the brief, sent. Not when
+    // the log has a conversation that starts elsewhere (a later page, a restart, a handoff).
+    const said = items.some((x: any) => ["user", "agent", "tools", "sent", "ask", "artifact"].includes(x.kind));
+    if (taskRow && !briefShown && !said && !reader.start) messages.unshift(this.briefMessage(taskRow, `brief:${taskId(taskRow)}`, "sent"));
     const addr = this.chats.get(key);
     // what was typed while it works, waiting in its CLI's queue until it takes it (at its next step): shown at once,
     // quietly; one a page sent comes back with its id and files
@@ -652,9 +706,10 @@ export class Compat {
       const a = (this.asks?.of(r.worker) ?? []).sort((p: any, q: any) => p.at - q.at)[0];
       if (a) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: { ...this.question(a, key), by } as any });
       else for (const s of (this.secrets?.asks() ?? []).filter((x) => x.address === r.worker)) messages.push({ id: `secret:${s.address}:${s.name}`, who: "agent", at: Date.now(), secret: { ...this.secretAsk(s), by } } as Message);
-      for (const e of (this.asks as any)?.endsOf?.(r.worker) ?? []) messages.push(quiet(`ae:${e.id}`, e.at, `${r.ref} · ${e.title} · ${e.how}`));
-      for (const e of this.secrets?.endsOf?.(r.worker) ?? []) messages.push(quiet(`sd:${r.worker}:${e.name}:${e.at}`, e.at, `${r.ref} · Secret: ${e.name} · Declined`));
-      screens(r.worker, r.ref, by);
+      // SHEP-322: by its title, never its key
+      for (const e of (this.asks as any)?.endsOf?.(r.worker) ?? []) messages.push(quiet(`ae:${e.id}`, e.at, `${r.title} · ${e.title} · ${e.how}`));
+      for (const e of this.secrets?.endsOf?.(r.worker) ?? []) messages.push(quiet(`sd:${r.worker}:${e.name}:${e.at}`, e.at, `${r.title} · Secret: ${e.name} · Declined`)); // fork: SHEP-76
+      screens(r.worker, r.title, by);
     }
     const st = t?.status?.state ?? null;
     // the CLI's own subagents still at work, then its background shells and watchers, above the box (3.0: the helpers

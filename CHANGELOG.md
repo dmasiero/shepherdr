@@ -1,5 +1,131 @@
 # Changelog
 
+## 3.2.5
+
+Full screen Browser and Desktop on a phone, a sidebar that's easier to use, and no more macOS keychain prompts.
+
+### Once, after updating
+
+- On Android, reinstall the app once to get the dark bottom bar: remove the installed app and add it to the home
+  screen again. An app installed before 3.2.3 keeps its old white bar, as Chrome rarely refreshes its colours itself.
+
+### The web app
+
+- Browser and Desktop open full screen: pinch to zoom and two fingers to pan; a tap clicks, a drag drags, a long press
+  right-clicks. A keyboard button brings up the phone's keyboard with a row of keys (Esc, Tab, Ctrl, Alt, Cmd, arrows,
+  Enter, Paste). Back leaves full screen.
+- Rename a machine from the sidebar: long-press or right click its heading. The menu also shows its real name, puts
+  its own name back, and opens Machine settings.
+- A long space name stays on one line in the sidebar, cut with "…", and the list never scrolls sideways.
+- "Switch to terminal" is now "View as terminal" ("View as chat" while it's on), with its own icon below a line.
+- Stop is a round stop button: a ring around a filled square.
+- A reaction you just added is a small pill again, not a wide bar until you reload.
+
+### On a Mac
+
+- Every Chrome Shepherdr starts (the desktop, artifact pictures) skips the macOS keychain, so the "Chromium Safe
+  Storage" question no longer pops up again and again.
+
+## 3.2.4
+
+Fixes for 3.2.3 so updating every machine works again, and a tidier message box and chat.
+
+### Once, after updating
+
+- The "Update Shepherdr everywhere" schedule (or any schedule of yours that runs `shepherdr update`) needs your yes
+  once: `herdr-task auto edit <schedule> --may-update-shepherdr on`, from your own terminal or your Assistant (a task's
+  agent can't set it). Its runs then update Shepherdr outside their own terminal and say how it went; the schedule's
+  own words can stay as they are.
+- On Android, reinstall the app once to get the dark bottom bar: remove the installed app and add it to the home
+  screen again.
+
+### Updating machines
+
+- A schedule you allow can update Shepherdr again: 3.2.3's guard refused the update inside its run, so that machine
+  stayed on the old version. The next run is told how the last update went.
+- Machines sync works again: every machine read "can't reach" because one install step asked for more time than
+  herdr-core allows. A call that is refused now shows as failed with the reason.
+
+### The web app
+
+- Dictation fixed: its row stays inside the message box, the wave moves, and Done and Cancel sit where the box's
+  buttons are, in a soft green and red. A call's wave fills the row up to the mic.
+- The + menu is Photos, then Files; no separate photo button and no Paste image (pasting a picture still works).
+- Stop sits at the right end of the working row, and the tab chip lines up in the box.
+- Chat rows share one even spacing and one left edge; on a touch screen each row stays big enough to tap.
+- Reaction chips are small pills that hug their emoji, tucked over the bubble's corner.
+- The header's count badge sits on its icon's corner, inside the header.
+- Links in an artifact to other sites open in a new tab; a link to Shepherdr opens in the app. A page the artifact
+  can't show says so, with Back to the artifact.
+
+## 3.2.3
+
+A big one: tasks named by their titles, task settings that follow the repo, a web app that updates itself, and a
+calmer, roomier app on a phone and tablet.
+
+### Once, after updating
+
+- Shepherdr's own Instructions setting is gone: agents follow the repo's or folder's `AGENTS.md` / `CLAUDE.md` and
+  their own global file. Anything you wrote there is saved in `~/.config/shepherdr/old-instructions.md`, and the
+  update says so once: move what you still want into an `AGENTS.md`.
+- Task settings (agent, reviewer, review, merge, proof) now follow the repo a task works in, whichever space started
+  it. The update moves each space's task settings to its repo and lists anything it put elsewhere in
+  `settings-moved.md` beside the settings file. Look at Settings › Tasks › Applies to, once.
+- Pages already open update themselves after this release (see below). On Android, Shepherdr becomes a place to share
+  into: if it doesn't show in the share sheet after a day, remove the installed app and add it to the home screen again.
+- On Android, reinstall the app once to get the dark bottom bar: remove the installed app and add it to the home
+  screen again.
+- On a Mac, an agent's desktop needs Screen Sharing on, with its password given to Shepherdr as the secret
+  `SCREEN_SHARING_PASSWORD`; `shepherdr doctor` says what is still missing.
+
+### Tasks
+
+- No more task numbers: tasks are named by their titles everywhere you read (chat, news, cards, notifications,
+  pull requests). Commands take a title, or a unique part of one, as well as the hidden key.
+- Each task's status icon is a ring filled by how far along it is, with its time left under it; agents estimate
+  that time honestly from their own pace. Working is yellow, Needs you red with a softly tinted inside, and only a
+  task waiting for Start has a dotted ring.
+- The Tasks panel shows every task by default, with a filter by state, machine and space. Every task has a repo tag,
+  and a task's row shows its worktree, branch and pull request with its checks.
+- A task's page opens with the brief its agent got, and says why while it waits (queued, scheduled, starting).
+- The Assistant runs tasks in parallel by default. A task that collides with a merge is sent back to rebase at once,
+  with the files and the task that merged named, and a merge you already asked for goes through after the fix.
+- A task set to merge on its own merges as soon as GitHub allows, not after optional checks too.
+- Your message reaches a working agent within seconds, and the chat shows it sent, then read.
+- A message is never typed into a terminal whose agent has gone: an Assistant starts again with it, and a task keeps it
+  for its next start.
+- A task's agent can't stop the session it runs in.
+
+### The web app
+
+- It updates itself after a release: a page on an older version reloads when nothing would be lost, else shows a
+  New version · Update chip. Settings › About shows both versions.
+- Share pictures, words and links into Shepherdr on Android; paste a picture from the + menu, or pick photos with the
+  new photo button.
+- A link to this app (a task, artifact or space) opens inside it, and Back returns.
+- The message box's round button starts a voice call while it's empty and sends once it has words. A call shows no
+  words on screen, only a live wave, with Mute and End call. Dictation shows that it's listening and gives clean text
+  on Done, without losing your first words.
+- Reactions sit as chips on a bubble's edge: tap for quick actions, hold for the menu, swipe right to reply.
+- Messages between agents and task news are quiet rows you can open, never full bubbles.
+- The working sign's dots sit in a small bubble, with the step in plain words beside it.
+- Swap sides: the chat on the right of a pane, from the header's menu or a double tap on the divider.
+- Each machine in the sidebar has its own filter and New space button. A space's folder shows quietly beside its
+  name, as its path (`~`, `/`, `~/notes`).
+- Terminal and Screen moved into the space's and the task's menus. The terminal fits the screen, opens at its last
+  line and has its keys on every touch screen.
+- The Desktop tab starts the desktop by itself, says why when it can't show one, and shows another machine's too.
+  `shepherdr install`, `update` and `doctor` now look after the desktop tool on every machine.
+- Comfortable tap sizes on phones and tablets; names and titles wrap to two lines before they're cut.
+- Dark by default even before the page loads; artifacts fill their panel and never show a broken picture; sent
+  pictures don't jump; bubbles never run past the chat.
+- No phone notification for an alert while the app is on screen on that phone.
+
+### The Herdr window
+
+- After 3.2, the old Shepherdr views in an open Herdr window show a notice with an Open Shepherdr button instead of
+  red error banners. `shepherdr window --remove` takes the notices out.
+
 ## 3.2.2
 
 Fixes for 3.2.1: a machine link that broke for good after an update, a smoother app on a phone, and clearer signs of

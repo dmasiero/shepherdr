@@ -3,9 +3,12 @@
 // them out.
 import { useSyncExternalStore, type FC, type ReactNode } from 'react'
 import { buildId } from '@shared/build.ts'
+import { afterLoad, mayRetry, OWN_VERSION, readMark, safeNow, writeMark, type Now } from './update.ts'
 import type { Action, Chat, Message, ReplyQuote, ServerEvent, Snapshot, Task, UpdateStatus } from '@shared/types.ts'
-import { everything, placeOf, taskOf, type Space } from '@shared/view.ts'
+import { everything, placeOf, taskChat, taskOf, type ListFilter, type Space } from '@shared/view.ts'
+import { clean, NO_FILTER, type TaskFilter } from '@shared/task-filter.ts'
 import type { IconName } from './icons.ts'
+import { catchLink } from './applink.ts'
 import { OPEN_WITHIN, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
 import { expire, loadOutbox, prune, saveOutbox, settle, type Outgoing } from './outbox.ts'
 import { setupGuarded } from './guard.tsx'
@@ -34,6 +37,8 @@ export interface MenuRow {
   danger?: boolean
   /** a line above it */
   line?: boolean
+  /** a view it opens (Terminal, Screen): checked while that view is open */
+  on?: boolean
   /** rows it folds open to (Move to group) */
   sub?: MenuRow[]
   run?: () => void
@@ -60,9 +65,12 @@ export interface Registry {
   views: {
     /** a chat's messages, with what plugins draw between and after them */
     messages?: FC<{ thread: Thread }>
-    /** the message box: the text, then +, the agent line, the mic and Send */
+    /** the message box: the text, then +, the agent line, the mic and the round button (Send; a voice call while empty) */
     box?: FC<{ thread: Thread; placeholder: string }>
-    /** an open task's header: back, title, Terminal, Screen, its menu (and Expand and Close in the pane) */
+    /** the message box's right end (voice): the mic, and the round button where Send is, a voice call while the box
+     *  is empty (SHEP-363); without it the box ends with Send */
+    boxEnd?: FC<{ thread: Thread; setText: (value: string) => void; filled: boolean; send: () => void }>
+    /** an open task's header: back, title, its menu (Terminal and Screen are in it), and Expand and Close in the pane */
     taskHead?: FC<{ task: Task; where: 'chat' | 'pane'; scrolled?: boolean }>
     /** an open task's status line, over its messages */
     taskTop?: FC<{ task: Task }>
@@ -74,27 +82,28 @@ export interface Registry {
     search?: FC<{ close: () => void }>
     /** the picker row a dialog shows for an agent choice lives in picker.tsx; the settings window in settings.tsx */
   }
-  /** buttons at the right of a chat's header, in order: Terminal, Screen, Tasks, Artifacts, voice. `phone`: also in a
-   *  phone's header (Terminal and Screen; the rest live in its bottom bar) */
+  /** buttons at the right of a chat's header, in order: Tasks, Artifacts. Terminal and Screen are rows of the space's
+   *  name menu instead; the voice call is the message box's round button. `phone`: also in a phone's header (none: the
+   *  rest live in its bottom bar) */
   header: { order: number; phone?: boolean; View: FC<{ thread: Thread }> }[]
-  /** buttons in an open task's header, after its title (Terminal, Screen) */
+  /** buttons in an open task's header, after its title (none today: Terminal and Screen are in its ⋯ menu) */
   taskHeader: { order: number; View: FC<{ thread: Thread }> }[]
   /** what the right-hand pane can show */
   panes: Pane[]
   /** the phone's bottom pill, after Chat */
   bar: { order: number; pane: string; label: string; icon: IconName; count?: (snap: Snapshot, place: string) => number }[]
-  /** at the right of the phone's bottom bar (the voice button; Mute and End in a call) */
-  barEnd: FC[]
-  /** one line just above the phone's bottom bar (a call's wave) */
-  barAbove: FC[]
-  /** rows of a space's menu, between Switch to terminal and Settings (none today) and its other parts */
-  spaceMenu: { order: number; rows: (place: Space) => MenuRow[] }[]
+  /** rows of a space's menu, first, before Settings: Terminal and Screen (only from the header's name: `head`), then
+   *  View as terminal */
+  spaceMenu: { order: number; rows: (place: Space, head: boolean) => MenuRow[] }[]
   /** rows of a task's menu (its row's and its thread's) */
   taskMenu: { order: number; rows: (task: Task, where: 'row' | 'thread') => MenuRow[] }[]
   /** drawn in a chat between its messages: under a message (cards, artifact tiles) */
   messageParts: { order: number; View: FC<{ msg: Message; chat: Chat; thread: Thread }> }[]
   /** a small mark under a message's bubble (reactions) */
   messageEdge: { order: number; View: FC<{ msg: Message; chat: Chat }> }[]
+  /** a message's quick actions, first in the bar a tap or a mouse over it shows (SHEP-332: add a reaction); a phone's
+   *  narrow bar shows only the first */
+  messageQuick: { order: number; View: FC<{ msg: Message; chat: Chat }> }[]
   /** rows of a message's menu, and what sits above them (the emoji row) */
   messageMenu: { order: number; Top?: FC<{ msg: Message; chat: Chat; close: () => void }>; rows?: (msg: Message, chat: Chat) => MenuRow[] }[]
   /** cards the app puts in a chat from a task's status, not an agent: each sits where it came up (`at`), among the
@@ -106,8 +115,8 @@ export interface Registry {
   chatBody: { when: (ui: UI, thread: Thread) => boolean; View: FC<{ thread: Thread }> }[]
   /** above the message box (the warnings line) */
   aboveBox: { order: number; View: FC<{ thread: Thread }> }[]
-  /** in the message box's bar, before Send (the mic) */
-  boxButtons: { order: number; View: FC<{ thread: Thread; write: (text: string) => void }> }[]
+  /** in the message box's bar, before its right end (none today: the voice plugin fills views.boxEnd) */
+  boxButtons: { order: number; View: FC<{ thread: Thread; setText: (value: string) => void }> }[]
   /** under a column, below its message box (your own terminal) */
   drawer: { when: (ui: UI, thread: Thread) => boolean; View: FC<{ thread: Thread }> }[]
   /** the list's brand row, before Search */
@@ -128,7 +137,7 @@ export interface Registry {
 
 export const registry: Registry = {
   views: {},
-  header: [], taskHeader: [], panes: [], bar: [], barEnd: [], barAbove: [], spaceMenu: [], taskMenu: [], messageParts: [], messageEdge: [],
+  header: [], taskHeader: [], panes: [], bar: [], spaceMenu: [], taskMenu: [], messageParts: [], messageEdge: [], messageQuick: [],
   messageMenu: [], chatCards: [], chatTail: [], chatBody: [], aboveBox: [], boxButtons: [], drawer: [], sideHead: [], overlays: [], topBars: [], settings: [],
   keys: [], voiceWake: null, middle: [],
 }
@@ -150,13 +159,16 @@ export function installPlugins(plugins: ClientPlugin[], enabled: string[], user:
     else p.setup(registry)
   }
   const byOrder = (a: { order: number }, b: { order: number }) => a.order - b.order
-  for (const k of ['header', 'taskHeader', 'bar', 'spaceMenu', 'taskMenu', 'messageParts', 'messageEdge', 'messageMenu', 'chatTail', 'aboveBox', 'boxButtons', 'settings', 'keys'] as const)
+  for (const k of ['header', 'taskHeader', 'bar', 'spaceMenu', 'taskMenu', 'messageParts', 'messageEdge', 'messageQuick', 'messageMenu', 'chatTail', 'aboveBox', 'boxButtons', 'settings', 'keys'] as const)
     (registry[k] as { order: number }[]).sort(byOrder)
 }
 
 /* ---------- what is on screen ---------- */
 
-export type Filter = 'Active' | 'Archived' | 'All'
+export type Filter = ListFilter
+
+/** what a machine's heading in the list shows (SHEP-342): its own filter, Active until changed */
+export const shownOn = (ui: { shown?: Record<string, ListFilter> }, machine: string): ListFilter => ui.shown?.[machine] ?? 'Active'
 
 /** an agent's browser or desktop on screen: whose (chat:<place>, task:<id>, machine:<key>), which, and who drives */
 export interface ScreenAt {
@@ -188,7 +200,8 @@ export interface UI {
   drawer: boolean
   /** the list is hidden (desktop) */
   sideOff: boolean
-  filter: Filter
+  /** SHEP-342: which spaces each machine's heading shows (by machine key; none: Active) */
+  shown: Record<string, Filter>
   /** your own terminal is open under the chat (desktop), under an open task */
   term: boolean
   tterm: boolean
@@ -197,7 +210,10 @@ export interface UI {
   /** chats switched to their agent's own terminal */
   aterm: Record<string, boolean>
   scr: ScreenAt | null
-  settings: { scope: string; sec: string | null } | null
+  /** the Screen view fills the device: a step of its own, so the system's Back leaves it */
+  scrFull: boolean
+  /** repo: on Everywhere's Tasks page, the repo whose task settings it shows (Config.repos key, SHEP-335); none: Everywhere's */
+  settings: { scope: string; sec: string | null; repo?: string | null } | null
   search: boolean
   /** Now's groups folded or opened by hand, by name */
   open: Record<string, boolean>
@@ -205,6 +221,8 @@ export interface UI {
   shut: Record<string, boolean>
   /** how many Done tasks show */
   doneShown: number
+  /** the Tasks panel's filter (SHEP-331): nothing picked shows every task everywhere; kept on this device */
+  tf: TaskFilter
   /** a voice call is on */
   call: boolean
   callMuted: boolean
@@ -230,6 +248,8 @@ interface State {
   chats: Record<string, Chat>
   outbox: Outgoing[]
   update: UpdateStatus | null
+  /** the web app the service serves (SHEP-337): its build and version; a page on another build updates itself */
+  served: { build: string; version: string } | null
   ui: UI
 }
 
@@ -253,7 +273,7 @@ function store(key: string, v: unknown) {
 }
 
 /** kept on this device across visits */
-const KEPT: (keyof UI)[] = ['sideOff', 'filter', 'shut', 'banner', 'term']
+const KEPT: (keyof UI)[] = ['sideOff', 'shown', 'shut', 'banner', 'term', 'tf']
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 export const launchHref = typeof location === 'undefined' ? '' : location.href
 
@@ -264,6 +284,7 @@ let state: State = {
   chats: {},
   outbox: loadOutbox(),
   update: null,
+  served: null,
   ui: {
     phone: !!MQ?.matches,
     narrow: !!MQ2?.matches,
@@ -277,17 +298,19 @@ let state: State = {
     tab: 'Now',
     drawer: false,
     sideOff: false,
-    filter: 'Active',
+    shown: {},
     term: false,
     tterm: false,
     termTask: false,
     aterm: {},
     scr: null,
+    scrFull: false,
     settings: null,
     search: false,
     open: {},
     shut: {},
     doneShown: 20,
+    tf: NO_FILTER,
     call: false,
     callMuted: false,
     files: {},
@@ -300,6 +323,8 @@ let state: State = {
     ...stored<Partial<UI>>('shepherdr.ui', {}),
   },
 }
+// a filter kept from an older build, or left half-written: whatever is off counts as nothing picked
+state.ui.tf = clean(state.ui.tf)
 
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
@@ -311,7 +336,7 @@ export const subscribe = (l: () => void) => {
 export const getState = () => state
 
 /** what makes a step in the browser's history: Back closes a task, a pane, the settings */
-const STEPS: (keyof UI)[] = ['at', 'pane', 'task', 'art', 'wide', 'artWide', 'settings', 'drawer', 'search']
+const STEPS: (keyof UI)[] = ['at', 'pane', 'task', 'art', 'wide', 'artWide', 'scrFull', 'settings', 'drawer', 'search']
 
 export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
   const p = typeof patch === 'function' ? patch(state.ui) : patch
@@ -327,7 +352,9 @@ export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
 
 /** Pick only what a part shows: it redraws when that changes. */
 export function useStore<T>(pick: (s: State) => T): T {
-  return useSyncExternalStore(subscribe, () => pick(state))
+  const get = () => pick(state)
+  // the same on a server render (tests draw parts with react-dom/server)
+  return useSyncExternalStore(subscribe, get, get)
 }
 export function useUI(): UI
 export function useUI<T>(pick: (ui: UI) => T): T
@@ -383,8 +410,8 @@ if (typeof window !== 'undefined')
 
 /* ---------- the address bar and Back ---------- */
 
-type Step = Pick<UI, 'at' | 'pane' | 'task' | 'art' | 'wide' | 'artWide' | 'settings' | 'drawer' | 'search'>
-const stepOf = (ui: UI): Step => ({ at: ui.at, pane: ui.pane, task: ui.task, art: ui.art, wide: ui.wide, artWide: ui.artWide, settings: ui.settings, drawer: ui.drawer, search: ui.search })
+type Step = Pick<UI, 'at' | 'pane' | 'task' | 'art' | 'wide' | 'artWide' | 'scrFull' | 'settings' | 'drawer' | 'search'>
+const stepOf = (ui: UI): Step => ({ at: ui.at, pane: ui.pane, task: ui.task, art: ui.art, wide: ui.wide, artWide: ui.artWide, scrFull: ui.scrFull, settings: ui.settings, drawer: ui.drawer, search: ui.search })
 
 function urlOf(s: Step) {
   const q = new URLSearchParams()
@@ -397,24 +424,26 @@ function urlOf(s: Step) {
 }
 
 let written = ''
+/** the next change is a step of its own, which Back undoes (a link followed in the app) */
+let stepNext = false
 function writeUrl(replace: boolean) {
   if (typeof history === 'undefined') return
   const step = stepOf(state.ui)
   const key = JSON.stringify(step)
   if (key === written) return
   // going deeper is a step Back undoes; anything else takes the place of the one on screen
-  const deeper = !replace && written !== '' && depth(step) > depth(JSON.parse(written) as Step)
+  const deeper = !replace && written !== '' && (stepNext || depth(step) > depth(JSON.parse(written) as Step))
   written = key
   if (deeper) history.pushState({ shep: 2, step }, '', urlOf(step))
   else history.replaceState({ shep: 2, step }, '', urlOf(step))
 }
-const depth = (s: Step) => (s.drawer || s.search ? 1 : 0) + (s.settings ? 1 + (s.settings.sec ? 1 : 0) : 0) + (s.pane ? 1 : 0) + (s.task || s.art ? 1 : 0) + (s.wide || s.artWide ? 1 : 0)
+const depth = (s: Step) => (s.drawer || s.search ? 1 : 0) + (s.settings ? 1 + (s.settings.sec ? 1 : 0) : 0) + (s.pane ? 1 : 0) + (s.task || s.art ? 1 : 0) + (s.wide || s.artWide ? 1 : 0) + (s.scrFull && s.pane === 'screen' ? 1 : 0)
 
 if (typeof window !== 'undefined') {
   addEventListener('popstate', (e) => {
     const st = (e as PopStateEvent).state as { shep?: number; step?: Step } | null
     const q = new URLSearchParams(location.search)
-    const step: Partial<Step> = st?.shep === 2 && st.step ? st.step : { at: q.get('place') ?? state.ui.at, task: q.get('task'), art: q.get('artifact'), pane: paneOfUrl(q), wide: false, artWide: false, settings: null, drawer: false, search: false }
+    const step: Partial<Step> = st?.shep === 2 && st.step ? st.step : { at: q.get('place') ?? state.ui.at, task: q.get('task'), art: q.get('artifact'), pane: paneOfUrl(q), wide: false, artWide: false, scrFull: false, settings: null, drawer: false, search: false }
     state = { ...state, ui: { ...state.ui, ...step } }
     written = JSON.stringify(stepOf(state.ui))
     stayOnShown()
@@ -426,14 +455,40 @@ if (typeof window !== 'undefined') {
   MQ2?.addEventListener('change', sized)
 }
 
-/** go where a link points (an alert's): its space, task and card */
-export function openLink(href: string) {
+/** go where a link points (an alert's, or a link in the app to the app): its space, task, artifact or card.
+    `step`: a step of its own, so Back returns to what was on screen (SHEP-339). */
+export function openLink(href: string, step = false) {
   const q = new URL(href, location.href).searchParams
   const place = q.get('place')
   const task = q.get('task')
   const art = q.get('artifact')
-  setUI({ settings: null, drawer: false, search: false, ...(place ? { at: place } : {}), task, art, pane: art ? 'artifacts' : task ? 'tasks' : state.ui.phone ? null : state.ui.pane, wide: false, artWide: false, jump: q.get('focus') })
+  const pane = q.get('pane')
+  stepNext = step
+  try {
+    setUI({
+      settings: null,
+      drawer: false,
+      search: false,
+      ...(place ? { at: place } : {}),
+      task,
+      art,
+      ...(art ? { artV: null } : {}),
+      pane: art ? 'artifacts' : task ? 'tasks' : pane && pane !== 'screen' ? pane : state.ui.phone ? null : state.ui.pane,
+      wide: false,
+      artWide: false,
+      scrFull: false,
+      jump: q.get('focus'),
+    })
+  } finally {
+    stepNext = false
+  }
 }
+
+// a tap on a link to this same app opens it here, never reloading the page; another site's goes to a new tab
+if (typeof document !== 'undefined')
+  document.addEventListener('click', (e) =>
+    catchLink(e, location.href, (u) => openLink(u.href, true), (href) => void window.open(href, '_blank', 'noopener,noreferrer')),
+  )
 
 /* ---------- the link to the server ---------- */
 
@@ -544,8 +599,10 @@ export function connect() {
       state = { ...state, chats: { ...state.chats, [msg.chat.key]: chat } }
       if (!msg.chat.fresh) putOutbox(settle(state.outbox, msg.chat))
     } else if (msg.type === 'update') state = { ...state, update: msg.update }
-    else if (msg.type === 'build' && BUILD && msg.id && msg.id !== BUILD) reloadSoon()
-    else return
+    else if (msg.type === 'build') {
+      state = { ...state, served: { build: msg.id, version: msg.version ?? '' } }
+      if (BUILD && msg.id && msg.id !== BUILD) reloadSoon()
+    } else return
     emit()
   }
   sock.onclose = () => drop(sock)
@@ -625,13 +682,13 @@ export function watchAlso(key: string) {
   }
 }
 
-/** the chats on screen: the space's, and the open task's */
+/** the chats on screen: the space's, and the open task's (one with no agent yet too: its brief, SHEP-330) */
 export function visibleChats(ui: UI, snap: Snapshot): string[] {
   const keys = new Set<string>(extra)
   const p = placeOf(snap, ui.at)
   if (p) keys.add(p.chat)
   const t = taskOf(snap, ui.task)
-  if (t?.agent) keys.add(t.agent.chat)
+  if (t) keys.add(taskChat(t))
   return [...keys]
 }
 
@@ -657,15 +714,32 @@ function stayOnShown() {
   writeUrl(true)
 }
 
-/* ---------- a new build: the page reloads once nothing would be lost ---------- */
+/* ---------- a new build: the page reloads once nothing would be lost (SHEP-337, update.ts) ---------- */
 
-const BUILD = typeof document === 'undefined' ? '' : buildId(document.head.innerHTML)
+export const BUILD = typeof document === 'undefined' ? '' : buildId(document.head.innerHTML)
 let reloading: ReturnType<typeof setInterval> | null = null
 let holds = 0
-let typed = 0
-if (typeof window !== 'undefined') addEventListener('input', () => (typed = Date.now()), true)
+let touched = Date.now()
+if (typeof window !== 'undefined') {
+  for (const ev of ['input', 'keydown', 'pointerdown', 'wheel', 'touchstart']) addEventListener(ev, () => (touched = Date.now()), { capture: true, passive: true })
+  // the line after an update, once; a reload that brought the same page back is kept, so it isn't tried again soon
+  const after = afterLoad(readMark(), BUILD, OWN_VERSION, Date.now())
+  writeMark(after.keep)
+  // said once the page is on screen: an update while it was hidden is told when you come back
+  const say = () => {
+    const said = after.said
+    if (!said || document.visibilityState !== 'visible') return
+    document.removeEventListener('visibilitychange', say)
+    after.said = null
+    setTimeout(() => notice(said, 4000), 600)
+  }
+  if (after.said) {
+    document.addEventListener('visibilitychange', say)
+    say()
+  }
+}
 
-/** Hold off reloading while something can't be picked up again (an upload on its way). Returns the release. */
+/** Hold off reloading while something can't be picked up again (an upload on its way, dictation). Returns the release. */
 export function holdReload() {
   holds++
   let done = false
@@ -675,14 +749,37 @@ export function holdReload() {
   }
 }
 
+/** the service serves a newer web app than this page runs */
+export const newerServed = (s: State) => !!(BUILD && s.served?.build && s.served.build !== BUILD)
+
+/** what reloading now would lose */
+function nowFacts(): Now {
+  const words = [...document.querySelectorAll('textarea')].some((t) => t.value.trim() !== '')
+  return {
+    holds,
+    call: state.ui.call,
+    modal: !!document.querySelector('[aria-modal="true"]') || !!state.ui.settings,
+    composer: words,
+    hidden: document.visibilityState === 'hidden',
+    idleMs: Date.now() - touched,
+  }
+}
+
+/** Reload onto the new web app now (the chip's Update, Settings › About): what was typed and where you were stay. */
+export function updateNow() {
+  writeMark({ from: BUILD, to: state.served?.build ?? '', at: Date.now() })
+  location.reload()
+}
+
 function reloadSoon() {
   if (reloading) return
   const tryNow = () => {
-    // not in a call, not mid-upload, not while typing or with a dialog open
-    if (holds || state.ui.call || Date.now() - typed < 5000 || document.querySelector('[aria-modal="true"]')) return
-    location.reload()
+    if (!newerServed(state)) return
+    if (!mayRetry(readMark(), BUILD, Date.now()) || !safeNow(nowFacts())) return
+    updateNow()
   }
-  reloading = setInterval(tryNow, 1000)
+  reloading = setInterval(tryNow, 2000)
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', tryNow)
   tryNow()
 }
 
@@ -720,8 +817,8 @@ export function togglePane(pane: string | null) {
   })
 }
 
-export function openSettings(scope = 'all', sec: string | null = null) {
-  setUI({ settings: { scope, sec }, drawer: false })
+export function openSettings(scope = 'all', sec: string | null = null, repo: string | null = null) {
+  setUI({ settings: { scope, sec, ...(repo ? { repo } : {}) }, drawer: false })
 }
 
 /** the list is hidden: by its button, or by an open pane on a narrow window */

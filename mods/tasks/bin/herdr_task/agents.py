@@ -66,6 +66,30 @@ def agent_running(k):
     return bool(k.get("agent")) and k.get("agent") not in SHELLS
 
 
+# SHEP-324: what is in front of an agent's terminal, checked right before anything is typed into it. A terminal whose
+# agent exited (or that herdr-core gave a fresh shell after losing its program) is still live: a message pasted there
+# runs as a shell command. Only "agent" may be typed into. The same rule is core/send.js inFront().
+RUNTIMES = {"node", "bun", "deno"}  # a CLI run as a script shows its runtime's name
+
+
+def front(k):
+    """What is in front in terminal k (its hc get): "agent", "shell" (its agent exited: a plain shell), "other" (another
+    program than its agent, an editor say) or "gone" (no such terminal, or finished)."""
+    if not k or k.get("state") != "live":
+        return "gone"
+    fg = k.get("foreground") or {}
+    name = os.path.basename(str(fg.get("name") or ""))
+    if not name:
+        # not told (an older hc's record): hc ls's own word for its program, else as before (core/send.js: null)
+        return "shell" if os.path.basename(str(k.get("agent") or "")) in SHELLS else "agent"
+    if name in SHELLS:
+        return "agent" if runs_command(fg.get("argv")) else "shell"
+    kind = (k.get("labels") or {}).get("herdr.agent")
+    if kind in ("claude", "codex") and not name.startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
+        return "other"
+    return "agent"
+
+
 def runs_command(argv):
     """A shell's argv that runs a command (-c, -ic, -lic, --command), not a plain shell."""
     # fork: (SHEP-16) past a long option (bash --login -c, fish --private -c) and pwsh's -Command too
@@ -268,7 +292,8 @@ def ready_wait(task, live):
         return IN_QUEUE_LINE
     if task.get("auto_merge") and task.get("pr") and not task.get("merged"):
         # #743: waits calmly for a review GitHub requires
-        return APPROVAL_LINE if task["pr"].get("needs_approval") else MERGES_ITSELF
+        # merge "on its own": it waits on no check its base doesn't require: Merging
+        return APPROVAL_LINE if task["pr"].get("needs_approval") else MERGING if task["auto_merge"] == "auto" else MERGES_ITSELF
     return (task.get("pr") or {}).get("wait") or None
 
 
@@ -402,6 +427,10 @@ def status_word(k):
 # A Needs-you reason or an agent's status line: at most this many characters (as Shepherdr's
 # STATUS_MAX), never the agent's message pasted, never a model's words.
 LINE_MAX = 40
+# What a task row shows uncut on a regular phone (360 px wide, SHEP-370: 231 px for the title at 16px Inter,
+# about 7.7 px a letter): a task's title and the status line agents are asked for are at most this long. Only asked,
+# never enforced: a longer status is cut at LINE_MAX.
+ROW_MAX = 30
 # A ready summary: at most this many characters of plain words on what the person now sees or can
 # do (as Shepherdr's SUMMARY_MAX); the rest goes in --details or the proof.
 SUMMARY_MAX = 160

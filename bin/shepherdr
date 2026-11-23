@@ -19,6 +19,8 @@
   shepherdr secrets where               which machine keeps them
   shepherdr uninstall  [--root DIR] [--dry-run]
   shepherdr doctor     [--root DIR]: checks the install; once it's whole, lets the sync to other machines go
+  shepherdr window     [--remove] [--root DIR]: the Herdr window's notices where 3.1's Shepherdr views were (each says
+                       Shepherdr lives in the web app); --remove takes them out, and updates don't put them back
   shepherdr version
 
 What goes where (each under --root, default your home):
@@ -44,6 +46,8 @@ herdr-task from sending them to other machines until `shepherdr doctor` finds th
 From 3.1 (the Herdr-window layout and its mods): one switch. The update waits while tasks are working (it says which;
 --force switches anyway), then takes out what 3.1 put in the Herdr app (its mods, layout, lib/, core/, bin/, keys and
 hooks; a file you changed is backed up first), leaves your data alone and converts old artifacts to pages once.
+A window that ran 3.1's views gets a notice in each one's place (herdr/window-notice: Shepherdr lives in the web app),
+also on a later update of a machine 3.2.0-3.2.2 switched; `shepherdr window --remove` takes them out.
 
 Shepherdr's own data (tasks, artifacts, settings, secrets, browsers, the service's files) lives in its
 own folders: ~/.config/shepherdr, ~/.local/share/shepherdr, ~/.local/state/shepherdr, ~/.cache/shepherdr
@@ -68,7 +72,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "3.2.2"
+VERSION = "3.2.5"
 HC_MIN = "0.1.17"
 
 APP, BIN, TPL, HERDR = ".config/herdr-app", ".local/bin", ".config/herdr-core/templates", ".herdr"
@@ -242,6 +246,177 @@ def keep_instructions(r, a, root):
         r.notes.append(f"Settings › Instructions is gone: agents follow AGENTS.md / CLAUDE.md. What you wrote there is in {short(out)}")
 
 
+# SHEP-335: the settings that shape a task are the repo's (or plain folder's) it works in, not the space's that started it.
+# The update moves each space's task settings (tasks, worker, reviewer) to settings.json "repos", once: to the repo its
+# folder is in, or, for a space whose tasks all work elsewhere (root, on /), to each repo they work in. A move that isn't
+# to the space's own folder, and a value two spaces disagree on, is said once and kept in SETTINGS_MOVED. Nothing dropped.
+REPO_SECTIONS = ("tasks", "worker", "reviewer")
+SETTINGS_MOVED = "settings-moved.md"
+MERGE_NAMES = {"ask": "When I mark it as done", "checks": "When checks pass", "auto": "Right away"}
+
+
+def repo_folder(folder):
+    """The repo's main checkout a folder is in (as herdr-task keys a folder's tasks), else the folder itself."""
+    if not folder or not os.path.isdir(folder):
+        return folder
+    try:
+        p = subprocess.run(["git", "-C", folder, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return folder
+    lines = p.stdout.strip().split("\n") if p.returncode == 0 else []
+    if len(lines) == 2:
+        common, top = lines
+        return common[:-5] if common.endswith("/.git") else top
+    return os.path.realpath(folder)
+
+
+def tasks_by_space(root):
+    """{space id: {folder: how many of its tasks work there}} from this machine's task lists."""
+    out = {}
+    try:
+        where = where_for(root).path("tasks")
+        names = os.listdir(where)
+    except (OSError, Exception):
+        return out
+    for name in names:
+        if name.startswith(".") or not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(where, name)) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        folder = d.get("folder") if isinstance(d, dict) else None
+        for t in (d.get("tasks") or []) if folder else []:
+            sp = t.get("space") if isinstance(t, dict) else None
+            if sp:
+                n = out.setdefault(str(sp).split("/")[-1], {})
+                n[folder] = n.get(folder, 0) + 1
+    return out
+
+
+def setting_words(sec, field, v):
+    """One moved value as Settings says it: Merge "Right away", Tasks run on codex gpt-5..."""
+    if sec in ("worker", "reviewer"):
+        pick = " ".join(str(v.get(k)) for k in ("agent", "model", "effort") if isinstance(v, dict) and v.get(k)) or "their own"
+        return f"{'Tasks' if sec == 'worker' else 'Reviews'} run on {pick}"
+    if field == "merge":
+        return f'Merge "{MERGE_NAMES.get(v, v)}"'
+    if field == "review_rounds":
+        return f"Review on ({v} rounds)" if int(v or 0) > 0 else "Review off"
+    if field == "proof":
+        return "Proof " + ("on" if v else "off")
+    if field == "base":
+        return f"Base branch {v}"
+    return f"{field.replace('_', ' ')} {json.dumps(v, ensure_ascii=False)}"
+
+
+def repos_out(d, used, home=None):
+    """settings.json d with each space's task settings moved to "repos" (SHEP-335): (moved dict, notes, record lines).
+    used: tasks_by_space. A space on another machine ("<machine>/<id>") moves to "<machine>:<its folder>"."""
+    d = json.loads(json.dumps(d)) if isinstance(d, dict) else {}
+    spaces = d.get("spaces") if isinstance(d.get("spaces"), dict) else {}
+    repos = d.get("repos") if isinstance(d.get("repos"), dict) else {}
+    short = (lambda f: "~" + f[len(home):] if home and (f == home or f.startswith(home + "/")) else f)
+    plans = []  # (order, space id, name, targets, elsewhere)
+    for sid, layer in spaces.items():
+        if not isinstance(layer, dict) or not any(sec in layer for sec in REPO_SECTIONS):
+            continue
+        other = sid.split("/")[0] if "/" in sid else None
+        folder = layer.get("folder")
+        name = str(layer.get("name") or sid)
+        if other:
+            targets, elsewhere = ([f"{other}:{folder}"] if folder else []), False
+        else:
+            own = repo_folder(folder) if folder else None
+            where = used.get(sid, {})
+            if where and own not in where:
+                targets, elsewhere = sorted(where, key=lambda f: (-where[f], f)), True
+            else:
+                targets, elsewhere = ([own] if own else []), False
+        n = sum(used.get(sid.split("/")[-1], {}).values())
+        plans.append(((1 if elsewhere else 0, -n, sid), sid, name, targets, elsewhere))
+    notes, record = [], []
+    for _, sid, name, targets, elsewhere in sorted(plans):
+        layer = spaces[sid]
+        values = {sec: layer.pop(sec) for sec in REPO_SECTIONS if sec in layer}
+        if not targets:
+            words = [setting_words(sec, f, v) for sec, part in values.items() for f, v in
+                     ((part.items() if sec == "tasks" and isinstance(part, dict) else [(None, part)])) if v not in (None, {}, "")]
+            if words:
+                notes.append(f"{name}'s task settings ({', '.join(words)}) had no folder to go to: set them again in Settings › Tasks")
+                record.append(f"- {name}: {', '.join(words)}: no folder, not kept")
+            continue
+        for target in targets:
+            repo = repos.setdefault(target, {})
+            took, clashed = [], []
+            for sec, part in values.items():
+                pairs = list(part.items()) if sec == "tasks" and isinstance(part, dict) else [(None, part)]
+                for field, v in pairs:
+                    if v is None or v == {} or (sec != "tasks" and not v):
+                        continue
+                    have = (repo.get(sec) or {}).get(field) if field else repo.get(sec)
+                    if have is None or have == {}:
+                        if field:
+                            repo.setdefault(sec, {})[field] = v
+                        else:
+                            repo[sec] = v
+                        took.append(setting_words(sec, field, v))
+                    elif have != v:
+                        clashed.append(setting_words(sec, field, v))
+            if not repo:
+                del repos[target]
+            where = short(target)
+            if took:
+                record.append(f"- {name}: {', '.join(took)} → {where}")
+                if elsewhere:
+                    notes.append(f"{name}'s {', '.join(took)} now appl{'ies' if len(took) == 1 else 'y'} to {where}, where its tasks work")
+            if clashed:
+                record.append(f"- {name}: {', '.join(clashed)} not taken for {where}: it already had its own")
+                notes.append(f"{name}'s {', '.join(clashed)} didn't move to {where}: another space there set it differently, which it keeps")
+    if repos:
+        d["repos"] = repos
+    return d, notes, record
+
+
+def move_repo_settings(r, a, root):
+    """Moves the spaces' task settings to the repos their tasks work in (repos_out), once: says what went elsewhere,
+    and keeps the whole record in SETTINGS_MOVED beside the settings. Never stops the install."""
+    path = where_for(root).path("settings")
+    raw = read(path)
+    if raw is None:
+        return
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return
+    if not isinstance(d, dict):
+        return
+    moved, notes, record = repos_out(d, tasks_by_space(root), root)
+    if moved == d:
+        return
+    real = os.path.realpath(path)
+    out = os.path.join(os.path.dirname(real), SETTINGS_MOVED)
+    if a.dry_run:
+        say("  settings: would move each space's task settings to the repo its tasks work in")
+        return
+    try:
+        if record:
+            had = (read(out) or b"").decode("utf-8", "replace")
+            text = ("# Task settings moved to repos\n\nTask settings now follow the repo a task works in, not the space that "
+                    "started it. The update moved what each space had set:\n\n" + "\n".join(record) + "\n")
+            atomic_write(out, ((had.rstrip("\n") + "\n\n---\n\n") if had.strip() else "").encode() + text.encode(), 0o600)
+        atomic_write(real, (json.dumps(moved, indent=2, ensure_ascii=False) + "\n").encode(), os.stat(real).st_mode & 0o777)
+    except OSError as e:
+        r.notes.append(f"the spaces' task settings couldn't be moved to their repos ({e.strerror}); tasks get them as before")
+        return
+    for n in notes:
+        r.notes.append(f"task settings follow the repo now: {n}")
+    if notes:
+        r.notes.append(f"what moved where is in {short(out)}")
+
+
 # Helpers on the PATH: their name, and where the link leads (under Shepherdr's own folder). herdr-task and
 # herdr-artifact keep their 3.1 paths, so machines on 3.1 and 3.2 find each other's copies.
 LINKS = {"herdr-task": "mods/tasks/bin/herdr-task", "herdr-artifact": "mods/artifacts/bin/herdr-artifact",
@@ -257,6 +432,19 @@ LIVE_BLOCKS = ("tasks-thread-term", "artifacts-view-body")
 # (herdr/open-shepherdr in the source), and one key that opens it, only when that key is free.
 BUTTON = "open-shepherdr"
 KEY = ("global", "ctrl-shift-o", f"mod.open:{BUTTON}")
+# SHEP-355: 3.1's window views, retired. A Herdr window that showed them keeps them on screen after the switch (and a
+# space's Assistant tab is a "chat" mod tab herdr-core keeps), so each old mod's place gets a stand-in
+# (herdr/window-notice in the source): the main chat says Shepherdr lives in the web app, with a button to open it; the
+# rest draw nothing. Every mod name a 3.0 or 3.1 release shipped.
+NOTICE = "window-notice"
+RETIRED = ("accept-card", "artifacts", "chat", "chat-call", "chat-image", "chat-models", "chat-react", "confirm-chat",
+           "coordinator", "jump", "keybinds", "machine-add-chat", "menu-tasks", "new-menu-tasks", "newspace", "pane-chat",
+           "prompt-chat", "shepherdr-settings", "spaces-chat", "tabs-tasks", "task-artifacts", "task-browser",
+           "task-changes", "task-files", "task-pr", "tasks", "tasks-menu", "toasts", "workspace-chrome-shepherdr",
+           "workspace-status-chat")
+NOTICE_SHOWS = ("chat",)   # the main chat; the Tasks panel's (props.panel) draws nothing too
+# Herdr keeps a mod's storage in data/<mod>: one of these means 3.1's window ran here
+WINDOW_RAN = ("spaces-chat", "tabs-tasks", "workspace-chrome-shepherdr", "chat", "coordinator")
 # The question card's hook waits until it's answered, up to a week (fork: SHEP-40; herdr-task's ASK_TIMEOUT).
 ASK_TIMEOUT = 604800
 HOOKS = [  # (file under home, event, entry): the agents' question and permission cards
@@ -1137,6 +1325,88 @@ def ensure_agent_browser(r, home):
         r.notes.append(f"the task browser: {line}")
 
 
+# ---- agent-desktop (the agents' desktop, SHEP-346) ----------------------------------------------
+# herdr-desktop owns it, as herdr-browser owns agent-browser: the pin, Shepherdr's own copy, how it's fetched. Install,
+# update and doctor only ask it (--install, --status), as the installed copy, with the root's home.
+SCREEN_SHARING_SECRET = "SCREEN_SHARING_PASSWORD"   # a Mac's Screen Sharing password, kept as a secret by that name
+
+
+def desktop_helper(root):
+    p = os.path.join(root, SHARE, "bin", "herdr-desktop")
+    return p if os.path.isfile(p) else None
+
+
+def ensure_agent_desktop(r, home):
+    """A working agent-desktop for the agents' desktop: the one already here when it fits, else Shepherdr's own copy
+    (installed, or updated when the pin changed). Never stops the install: a failure is a note with the fix. Only for
+    the real home (a scratch --root downloads nothing), unless SHEPHERDR_AGENT_DESKTOP=1."""
+    if not home and os.environ.get("SHEPHERDR_AGENT_DESKTOP") != "1":
+        return
+    hd = desktop_helper(r.root)
+    if not hd or browser_off(r.root):
+        return
+    if r.dry:
+        say("  agent-desktop: would make sure it's here (herdr-desktop --install)")
+        return
+    try:
+        p = subprocess.run(["sh", hd, "--install"], capture_output=True, text=True, env=browser_env(r.root),
+                           stdin=subprocess.DEVNULL, timeout=900)
+        ok = p.returncode == 0
+        out = [x.replace("herdr-desktop: ", "", 1) for x in (p.stdout + "\n" + p.stderr).splitlines()
+               if x.strip() and not x.startswith(("herdr-desktop: installing", "herdr-desktop: downloading"))]
+    except (OSError, subprocess.SubprocessError) as e:
+        out, ok = [f"herdr-desktop --install didn't finish ({e})"], False
+    if ok:
+        say(f"  {out[0]}" if out else "  agent-desktop is ready")
+        # still missing here (a display server, a Mac's permissions): only the person can do those, doctor says them too
+        r.notes.extend(f"the agents' desktop: {x}" for x in out[1:])
+    else:
+        r.notes.append(f"the agents' desktop: {out[-1] if out else 'herdr-desktop --install failed'}")
+
+
+def secret_names(root):
+    """The secrets' names this machine can use (herdr-secret names), or None when it can't say."""
+    hs = os.path.join(root, ".local", "bin", "herdr-secret")
+    if not os.path.isfile(hs):
+        return None
+    try:
+        p = subprocess.run([sys.executable, hs, "names", "--json"], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=30)
+        return {x.get("name") for x in json.loads(p.stdout)} if p.returncode == 0 else None
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return None
+
+
+def agent_desktop_state(root, root_is_home):
+    """doctor's lines on the agents' desktop: agent-desktop, and on a Mac what only the person can switch on there
+    (Accessibility, Screen Recording, Screen Sharing with its VNC password, that password kept as a secret). [] when
+    there's no herdr-desktop here or the browser add-on is off."""
+    hd = desktop_helper(root)
+    if not hd or browser_off(root):
+        return []
+    try:
+        p = subprocess.run(["sh", hd, "--status"], capture_output=True, text=True, env=browser_env(root),
+                           stdin=subprocess.DEVNULL, timeout=60)
+        st = json.loads(p.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return ["the agents' desktop: herdr-desktop --status didn't answer"]
+    lines = []
+    if st.get("ok"):
+        where = "Shepherdr's own copy" if st.get("from") == "shepherdr" else st.get("bin")
+        lines.append(f"agent-desktop {st.get('version') or ''} for the agents' desktop ({where})".replace("  ", " "))
+    else:
+        lines.append("the agents' desktop: " + (st.get("problem") or "agent-desktop isn't usable").replace("herdr-desktop: ", "", 1))
+    problem = st.get("problem") or ""
+    lines += [f"the agents' desktop: {x}" for x in st.get("needs") or [] if x not in problem]
+    if st.get("driver") == "shared" and root_is_home:
+        names = secret_names(root)
+        if names is not None and SCREEN_SHARING_SECRET not in names:
+            lines.append(f"the agents' desktop: Shepherdr has no Screen Sharing password for this Mac: give it as the secret "
+                         f"{SCREEN_SHARING_SECRET} (herdr-secret set {SCREEN_SHARING_SECRET}), the one set under \"VNC viewers "
+                         "may control screen with password\"")
+    return lines
+
+
 def codex_sandbox_state(root_is_home):
     """doctor's line when Codex's sandbox (bwrap) can't start on this machine (SHEP-227, #998), else None.
     herdr-task's own check, asked once and kept: `herdr-task sandbox` gives the fix."""
@@ -1296,7 +1566,7 @@ def carry_old(rec, old):
             rec["created"].append(f)
 
 
-def leave_window(r, old):
+def leave_window(r, old, notices=None):
     """Takes out what a 3.1 install put in the Herdr app: its mods (and the art-<id> mods the old herdr-artifact
     wrote), its layout, lib/, core/, bin/, the keys it merged into keys.json (the person's from before put back) and
     the --guard link. A file the person changed, or put into one of those mods, is backed up first. The Herdr app
@@ -1315,7 +1585,8 @@ def leave_window(r, old):
     say(f"  switching from Shepherdr {old.get('version') or '3.1'} (the Herdr-window install): "
         f"{'would take' if r.dry else 'taking'} out its {len(mods)} mods"
         + (f", {len(arts)} artifact mod{'s' if len(arts) != 1 else ''}" if arts else "") + f", its layout and {len(rest)} other files in {APP}, "
-        "its keys and its hooks; your data stays")
+        "its keys and its hooks; your data stays"
+        + ("; a Herdr window showing them gets a notice in their place that Shepherdr lives in the web app" if notices else ""))
     if r.dry:
         return
     kept = 0
@@ -1330,7 +1601,10 @@ def leave_window(r, old):
             r.backup(rel)
             kept += 1
         try:
-            shutil.rmtree(r.p(top))
+            if notices and m in RETIRED:
+                swap_notice(r, m, notices)   # one swap, so a window showing it reloads once, into the stand-in
+            else:
+                shutil.rmtree(r.p(top))
         except OSError as e:
             raise Stop(f"can't remove {top} (Shepherdr 3.2 has no window mods): {e.strerror}. Fix that and run this again.")
     for d in arts:   # generated from the artifacts, which stay where they are (herdr-artifact convert makes them pages)
@@ -1367,6 +1641,83 @@ def leave_window(r, old):
                    + (f", {len(arts)} artifact mod{'s' if len(arts) != 1 else ''} (kept in the backup)" if arts else "")
                    + ", the Shepherdr layout, lib/, core/, bin/, its keys and its hooks"
                    + (f"; {kept} file{'s' if kept != 1 else ''} you changed {'are' if kept != 1 else 'is'} in the backup" if kept else ""))
+
+
+def notice_files(src, name):
+    """The stand-in for one of 3.1's window views: {file in its folder: bytes}."""
+    top = os.path.join(src, "herdr", NOTICE)
+    return {"main.js": read(os.path.join(top, "full.js" if name in NOTICE_SHOWS else "blank.js")),
+            "notice.js": read(os.path.join(top, "notice.js")), "mod.json": read(os.path.join(top, "mod.json"))}
+
+
+def is_notice(r, name):
+    """Whether the folder by that name in the Herdr app's mods is a stand-in (any version's)."""
+    head = read(r.p(f"{APP}/mods/{name}/notice.js")) or b""
+    return b"Shepherdr 3.1's window views, retired" in head[:400]
+
+
+def swap_notice(r, name, src):
+    """Puts the stand-in in the mod's place in one rename (what was there goes, after leave_window backed up yours)."""
+    top = r.p(f"{APP}/mods/{name}")
+    stage = r.p(f"{APP}/.shepherdr-stage/{name}")
+    shutil.rmtree(stage, ignore_errors=True)
+    os.makedirs(stage)
+    for f, data in notice_files(src, name).items():
+        with open(os.path.join(stage, f), "wb") as fh:
+            fh.write(data)
+    aside = None
+    if os.path.lexists(top):
+        aside = r.p(f"{APP}/.shepherdr-stage/{name}.old")
+        shutil.rmtree(aside, ignore_errors=True)
+        os.rename(top, aside)
+    os.rename(stage, top)
+    if aside:
+        shutil.rmtree(aside, ignore_errors=True)
+
+
+def window_ran(root, old=None):
+    """3.1's window ran on this machine: a 3.1 record with mods, or Herdr's storage of its views."""
+    if old and (old.get("mods") or any(rel.startswith(f"{APP}/mods/") for rel in (old.get("files") or {}))):
+        return True
+    return any(os.path.isdir(os.path.join(root, APP, "data", m)) for m in WINDOW_RAN)
+
+
+def put_notices(r, rec, src):
+    """SHEP-355: every one of 3.1's window views that isn't in its place gets its stand-in, and one there is brought up
+    to date; a folder by that name that isn't one (someone's own mod) is left alone. Not after `shepherdr window
+    --remove`. Said once, the first time."""
+    if rec.get("notices_removed") or not os.path.isdir(os.path.join(src, "herdr", NOTICE)):
+        return
+    first = not rec.get("notices")
+    done = []
+    for name in RETIRED:
+        top = r.p(f"{APP}/mods/{name}")
+        if os.path.lexists(top) and not is_notice(r, name):
+            continue
+        if not r.dry and (not os.path.lexists(top) or any(read(os.path.join(top, f)) != d for f, d in notice_files(src, name).items())):
+            os.makedirs(r.p(f"{APP}/mods"), exist_ok=True)
+            swap_notice(r, name, src)
+        done.append(name)
+    if not r.dry:
+        shutil.rmtree(r.p(f"{APP}/.shepherdr-stage"), ignore_errors=True)
+    if not r.dry:
+        rec["notices"] = done
+    if done and first:
+        r.notes.append(f"the Herdr window: Shepherdr's old views there {'would ' if r.dry else ''}now say Shepherdr lives in the web app, "
+                       "with a button that opens it; nothing of yours stops. Herdr's own layout: Ctrl+Shift+L there. "
+                       "`shepherdr window --remove` takes them out (offered, never needed)")
+
+
+def take_notices_out(r, rec):
+    """The stand-ins Shepherdr put in (rec "notices"), each only while it still is one. -> the names taken out."""
+    out = []
+    for name in rec.get("notices") or []:
+        top = r.p(f"{APP}/mods/{name}")
+        if name in RETIRED and os.path.isdir(top) and is_notice(r, name):
+            if not r.dry:
+                shutil.rmtree(top)
+            out.append(name)
+    return out
 
 
 def forget_old_record(r):
@@ -1649,8 +2000,11 @@ def cmd_install(a, update=False):
 
 def finish_install(a, r, rec, old, src, home, root, actions, old_files, gone, button, notes, switching):
     """cmd_install from the first file it changes on: the service is stopped meanwhile (stop_service)."""
+    wants_notices = herdr_app_here(root) and window_ran(root, old)
     if old:
-        leave_window(r, old)
+        leave_window(r, old, src if wants_notices and not rec.get("notices_removed") else None)
+    if wants_notices or rec.get("notices"):
+        put_notices(r, rec, src)
     files = dict(old_files)
     for g, rel, how, data, mode in actions if not a.dry_run else []:
         if how == "keep":
@@ -1692,6 +2046,7 @@ def finish_install(a, r, rec, old, src, home, root, actions, old_files, gone, bu
     rec["hooks"] = set_hooks(r, rec, None if a.no_hooks else True)
     move_data(r, a, home)   # before the service starts again: it then finds the data where it now is
     keep_instructions(r, a, root)   # SHEP-319: written Instructions into a plain file, said once
+    move_repo_settings(r, a, root)   # SHEP-335: the spaces' task settings to the repos their tasks work in, said once
     # SHEP-305: an install switched by 3.2.0 has no carry_over_records yet: its records may name old ids, so once more
     if switching or rec.get("carry_over") == "waiting" or rec.get("carry_over_agents") != "done" or rec.get("carry_over_records") != "done":
         carry_over_session(r, rec, home)   # and its documents and machines in Shepherdr's own herdr-core session
@@ -1703,6 +2058,7 @@ def finish_install(a, r, rec, old, src, home, root, actions, old_files, gone, bu
     install_service(r, rec, home)
     say_web(root, home, a, started)
     ensure_agent_browser(r, home)
+    ensure_agent_desktop(r, home)
     if switching:
         convert_artifacts(r)
     rec.update({"version": VERSION, "source": src, "at": r.stamp, "root": root})
@@ -1938,6 +2294,9 @@ def cmd_doctor(a):
         bad += agents_bad
         bad += records_naming_nobody(root)
     t_notes = d_notes + t_notes
+    n_line = notices_line(root, rec)
+    if n_line:
+        t_notes.append(n_line)
     if home:
         s_bad, s_notes = serve_check(root)
         bad += s_bad
@@ -1952,8 +2311,9 @@ def cmd_doctor(a):
     for x in bad:
         say(f"  ✗ {x}")
     ab = agent_browser_state(root)
+    ad = agent_desktop_state(root, home)
     cs = codex_sandbox_state(home)
-    for x in warn + t_notes + ([ab] if ab else []) + ([cs] if cs else []) + [update_hint(rec)]:
+    for x in warn + t_notes + ([ab] if ab else []) + ad + ([cs] if cs else []) + [update_hint(rec)]:
         say(f"  - {x}")
     holds = [p for p in hold_paths(root) if os.path.exists(p)]
     if bad:
@@ -1966,6 +2326,40 @@ def cmd_doctor(a):
         say("  ✓ whole: the sync to other machines may go again")
     else:
         say("  ✓ whole")
+    return 0
+
+
+# ---- window -------------------------------------------------------------------------------------
+
+def notices_line(root, rec):
+    """doctor's line on the Herdr window's notices (SHEP-355), or None."""
+    r = Run(root, True)
+    here = [n for n in rec.get("notices") or [] if is_notice(r, n)]
+    if here:
+        return (f"the Herdr window: {len(here)} of Shepherdr 3.1's old views show a notice that Shepherdr lives in the web app "
+                "(nothing breaks there; Herdr's own layout: Ctrl+Shift+L). `shepherdr window --remove` takes them out, once "
+                "you closed the old Assistant tabs")
+    if not rec.get("notices_removed") and herdr_app_here(root) and window_ran(root):
+        return ("the Herdr window ran Shepherdr 3.1's views here and has no notices in their place: a window still showing "
+                "them shows red errors. Run `shepherdr update` to put them in, or pick Herdr's own layout there (Ctrl+Shift+L)")
+    return None
+
+
+def cmd_window(a):
+    root = os.path.realpath(a.root or real_home())
+    rec = load_record(root)
+    if not rec:
+        raise Stop(f"Shepherdr isn't installed under {root}")
+    if not a.remove:
+        say(notices_line(root, rec) or "the Herdr window has no Shepherdr notices in it")
+        return 0
+    r = Run(root, False)
+    gone = take_notices_out(r, rec)
+    rec["notices"] = []
+    rec["notices_removed"] = True
+    save_record(root, rec)
+    say(f"took out {len(gone)} notice{'s' if len(gone) != 1 else ''} from the Herdr window; updates won't put them back."
+        + (" An old Assistant tab still open in Herdr now says it can't load: close it." if "chat" in gone else ""))
     return 0
 
 
@@ -2010,6 +2404,7 @@ def cmd_uninstall(a):
     top = r.p(f"{APP}/mods/{BUTTON}")
     if rec.get("button") and os.path.isdir(top) and not walk_files(top) and not a.dry_run:
         shutil.rmtree(top)
+    take_notices_out(r, rec)
     take_keys_out(r, rec)
     # Links: ours removed, anything they replaced put back.
     for name, dest in links.items():
@@ -2033,6 +2428,7 @@ def cmd_uninstall(a):
                 pass
         # the agent-browser Shepherdr installed for the task browser (not data: nothing of the person's is in it)
         shutil.rmtree(os.path.join(where_for(root).roots["data"], "agent-browser"), ignore_errors=True)
+        shutil.rmtree(os.path.join(where_for(root).roots["data"], "agent-desktop"), ignore_errors=True)
         # Folders that only held ours.
         for rel in (f"{APP}/data/shepherdr", SHARE):
             for d, _, _ in sorted(os.walk(r.p(rel)), reverse=True):
@@ -2347,6 +2743,9 @@ def main(argv):
     mg.add_argument("--cleanup-legacy", action="store_true", help="remove the links at the old paths (once every machine is updated)")
     mg.add_argument("--force", action="store_true", help="move even on a network disk (no other machine uses this home)")
     mg.add_argument("--yes", action="store_true")
+    wn = sub.add_parser("window", help="the Herdr window's notices where 3.1's Shepherdr views were")
+    wn.add_argument("--remove", action="store_true", help="take them out (an old Assistant tab still open in Herdr then says it can't load)")
+    wn.add_argument("--root", help=argparse.SUPPRESS)
     sub.add_parser("version")
     a = ap.parse_args(argv)
     try:
@@ -2365,6 +2764,8 @@ def main(argv):
             return cmd_where(a)
         if a.cmd == "migrate":
             return cmd_migrate(a)
+        if a.cmd == "window":
+            return cmd_window(a)
         if a.cmd == "version":
             say(f"shepherdr {VERSION}")
             return 0

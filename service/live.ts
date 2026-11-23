@@ -21,6 +21,9 @@ export const FRESH_AFTER_MS = 5000;
 /** how long a wake word (or an open, SHEP-246) waits for a page of its device to show up */
 export const WAKE_HELD_MS = 15_000;
 
+/** a page on screen whose socket dropped (a phone's network blinking) still counts as on screen this long (SHEP-338) */
+export const LOOK_GRACE_MS = 15_000;
+
 export class Live {
   private pages = new Set<WS>();
   private views = new Map<string, string>();   // name -> its JSON, as last sent
@@ -36,6 +39,11 @@ export class Live {
   private snap: string | null = null;
   /** a wake word or an open no page of its device had on screen yet (voiceWake, go): the next one that shows up takes it */
   private wake: { from: string; at: number; msg: string } | null = null;
+  /** device -> when its last page on screen went away without saying it was hidden */
+  private lookedAt = new Map<string, number>();
+  /** the web app's build this service serves (webbuild.ts): each page hears it, and again when it changes */
+  private build = "";
+  web: (() => { id: string; version: string }) | null = null;
 
   constructor(private hub: Hub, private store: Store, private me: () => Me | null, private version: string, private link: () => string | null = () => null) {
     hub.on((e) => {
@@ -45,6 +53,22 @@ export class Live {
     // the shared document changed: a choice for an Assistant that hasn't started may be one of them
     store.on((d) => { this.put("state", d); this.refresh(); });
     setInterval(() => void this.machines(), 15_000);
+    setInterval(() => this.newBuild(), 20_000);
+  }
+
+  private buildText() {
+    const b = this.web?.();
+    this.build = b?.id ?? "";
+    // a web app from before it said its version: the service's own
+    return this.build ? JSON.stringify({ type: "build", id: this.build, version: b?.version || this.version }) : "";
+  }
+
+  /** a new web app put in place while the service runs: every page hears of it */
+  private newBuild() {
+    const was = this.build;
+    const text = this.buildText();
+    if (!text || this.build === was) return;
+    for (const ws of this.pages) if (ws.readyState === 1) ws.send(text);
   }
 
   join(ws: WS) {
@@ -52,6 +76,8 @@ export class Live {
     this.pages.add(ws);
     const me = this.me();
     ws.send(JSON.stringify({ type: "hello", version: this.version, login: ws.data.who, machine: me?.host ?? null, link: this.link() }));
+    const build = this.buildText();
+    if (build) ws.send(build);
     for (const [name, text] of this.views) ws.send(`{"type":"view","name":${JSON.stringify(name)},"value":${text}}`);
     if (this.snap) ws.send(this.snap);
     if (!this.views.has("state")) void this.store.load().then((d) => this.put("state", d));
@@ -64,8 +90,19 @@ export class Live {
     this.onVisible?.(new Set([...this.pages].filter((w) => w.data.visible && w.data.push).map((w) => w.data.push!)));
   }
 
+  /** Is the app on screen on tailnet device D now (SHEP-338): a page of it says it is visible, or one that was dropped
+   *  while visible less than 15 s ago. That device then shows no system notification: no web push, and its phone app's
+   *  own (Shepherdr Wake) hears the new alert as seen (glance.ts). */
+  looking(device: string | null | undefined) {
+    if (!device) return false;
+    for (const w of this.pages) if (w.data.from === device && w.data.visible && w.readyState === 1) return true;
+    const at = this.lookedAt.get(device);
+    return at !== undefined && Date.now() - at < LOOK_GRACE_MS;
+  }
+
   leave(ws: WS) {
     this.pages.delete(ws);
+    if (ws.data.visible && ws.data.from) this.lookedAt.set(ws.data.from, Date.now());
     this.visibleNow();
     for (const w of ws.data.chats?.values() ?? []) this.chats?.unwatch(w.addr, w.watcher);
     for (const w of ws.data.history?.values() ?? []) this.chats?.unwatch(w.addr, w.watcher);
@@ -136,12 +173,13 @@ export class Live {
   }
 
   /** The open chats with no agent: a space's Assistant that hasn't started gets its fresh chat (compat.freshChat: what
-   *  its first message starts it on), sent again only when it changed. One whose Assistant just went waits a moment. */
+   *  its first message starts it on), a task whose agent hasn't started its brief, sent again only when it changed. One whose Assistant just went waits a moment. */
   private fresh(ws: WS, keys: string[]) {
     const compat = this.compat as any, sent = (ws.data.fresh ??= new Map());
     for (const k of [...sent.keys()]) if (!keys.includes(k)) sent.delete(k);
     for (const k of keys) {
-      if (!k.startsWith("p:")) continue;
+      // a space's Assistant not started, a task whose agent hasn't started (its brief, waiting: SHEP-330)
+      if (!k.startsWith("p:") && !k.endsWith("/worker")) continue;
       const left = ws.data.left?.get(k) ?? 0, wait = left + FRESH_AFTER_MS - Date.now();
       if (wait > 0) {
         ws.data.freshTimer ??= setTimeout(() => { ws.data.freshTimer = null; if (this.pages.has(ws) && ws.data.keys) this.watch(ws, ws.data.keys); }, wait + 50);
@@ -170,6 +208,8 @@ export class Live {
       this.watch(ws, m.chats.filter((k: unknown) => typeof k === "string" && k.length < 200));
       ws.data.push = typeof m.push === "string" ? m.push : null;
       ws.data.visible = m.visible !== false;
+      // hidden on purpose: no grace for its device
+      if (!ws.data.visible && ws.data.from) this.lookedAt.delete(ws.data.from);
       this.visibleNow();
       if (ws.data.push && ws.data.from) this.onPushDevice?.(ws.data.push, ws.data.from);
       if (this.wake && ws.data.from === this.wake.from && ws.data.visible && Date.now() - this.wake.at < WAKE_HELD_MS) {

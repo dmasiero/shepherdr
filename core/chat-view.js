@@ -167,11 +167,11 @@ export function ownWords(users, pending, matches) {
 }
 
 // Who sent a message with hc (<hc from="t7 herd-12-fix-login">): its role or task as people know it ("Reviewer",
-// "HERD-12", "Assistant on vm-ssa"), never its terminal address. An artifact's form says its title; the person's own
+// "Fix login" (its task's title), "Assistant on vm-ssa"), never its terminal address. An artifact's form says its title; the person's own
 // lines (a kept secret) are "You". A sender outside any terminal (from="<machine>/ppid:123") or one gone goes by the
 // name it signed the message with, else "Another agent".
 //   find(address): that terminal ({ name, labels, template }), else null; machine: the chat's agent's machine (null:
-//   here); taskOf(address): the task ref whose worker that is, else null; here: this machine's own name in
+//   here); taskOf(address): the title of the task whose worker that is, else null; here: this machine's own name in
 //   herdr-core: another machine's agent writes our terminals as "<here>/t75", our list has them as "t75"; machineName(key):
 //   the name people read for a machine ("Mac mini"), else null (its key then).
 export function senderName(from, text = null, { find = () => null, machine = null, taskOf = () => null, here = null, machineName = () => null } = {}) {
@@ -190,36 +190,44 @@ export function senderName(from, text = null, { find = () => null, machine = nul
   const away = at !== machine && (at ?? here) ? ` on ${machineName(at ?? here) || (at ?? here)}` : "";
   if (l["herdr.role"] === "reviewer" || /\breview/i.test(name)) return "Reviewer";
   if (l["herdr.role"] === "coordinator" || /^(herdr-)?(assistant|coordinator)\b/.test(k?.template ?? "") || /^coord/i.test(name)) return `Assistant${away}`;
-  const task = taskOf(full) ?? (local ? taskOf(local) : null) ?? /^([a-z][a-z0-9]*)-(\d+)(?:-|$)/i.exec(name)?.slice(1, 3).join("-").toUpperCase();
+  // SHEP-322: its task's title (taskOf), never its key; one not in the lists by its hc name ("shep-4-…") is "Task"
+  const task = taskOf(full) ?? (local ? taskOf(local) : null) ?? (/^([a-z][a-z0-9]*)-(\d+)(?:-|$)/i.test(name) ? "Task" : null);
   if (task) return `${task}${away}`;
   if (!name && signed && / on /.test(signed)) return signed;
   return `${name || signed || "Another agent"}${away}`;
 }
 
+// A space's Assistant by its space, as its chat's header names it: "#Home", "Everything" (the Assistant of every space).
+export const spaceWord = (space) => (/^everything$/i.test(String(space ?? "").trim()) ? "Everything" : `#${String(space ?? "").trim().replace(/^#/, "")}`);
+
 // Agent to agent, as a group chat (SHEP-27). Who sent a user item another agent sent: another Assistant's
-// (<herdr-assistant>, x.assistant: { machine, space }) by its machine and space ("Assistant on Mac mini · Home"; its
-// machine unsaid when it is this one), else senderName's ("SHEP-4", "Reviewer", "Assistant on m3").
+// (<herdr-assistant>, x.assistant: { machine, space }) by its space and machine ("#Home on Mac mini"; its machine
+// unsaid when it is this one), else senderName's ("Fix login", "Reviewer", "Assistant on m3").
 //   sender(from, text): senderName with the chat's lookups; machineName(key): the name people read for a machine
 //   key (null: unknown); here: this machine's key in herdr-core.
 export function fromName(x, sender = (f) => f, { machineName = (m) => m, here = null } = {}) {
   const a = x?.assistant;
   if (!a) return sender(x?.from, x?.text);
   const m = a.machine && a.machine !== here ? machineName(a.machine) || a.machine : null;
-  return `Assistant${m ? ` on ${m}` : ""}${a.space ? ` · ${a.space}` : ""}`;
+  return `${a.space ? spaceWord(a.space) : "Assistant"}${m ? ` on ${m}` : ""}`;
 }
 
-// Whom a message the chat's agent sent went to (a "sent" item: { to, how }): a terminal by senderName ("SHEP-4",
-// "Assistant on m3"); tell-assistant's target is an Assistant, by its address or its space's name ("Assistant ·
-// Home").
-export function sentTo(x, sender = (f) => f) {
+// Whom a message the chat's agent sent went to (a "sent" item: { to, how }): a terminal by senderName ("Fix login",
+// "Assistant on m3"); tell-assistant's target is an Assistant, by its address or its space ("#Home", "#Home on m3" for
+// "m3/Home"); a reply or a fix goes to a task (task(id): its title, else its id as given).
+export function sentTo(x, sender = (f) => f, task = (id) => null) {
   const to = String(x?.to ?? "");
   const address = /^([\w.>-]+\/)?t\d[0-9a-z]*$/.test(to);
+  if (x?.how === "reply" || x?.how === "fix") return task(to) || to;
   if (x?.how !== "assistant") return address ? sender(to.split(">").pop()) : to;
-  if (!address) return `Assistant · ${to}`;
+  if (!address) {
+    const at = to.lastIndexOf("/");
+    return at > 0 ? `${spaceWord(to.slice(at + 1))} on ${to.slice(0, at).split(">").pop()}` : spaceWord(to);
+  }
   return String(sender(to.split(">").pop())).replace(/^(Another agent|t\d[0-9a-z]*)\b/, "Assistant");
 }
 
-// Who the chat's own agent is in its group chat: "Assistant" for a space's, its task's ref for a task's worker, else
+// Who the chat's own agent is in its group chat: "Assistant" for a space's, its task's title for a task's worker, else
 // its CLI's name ("Claude").
 export function selfName({ assistant = false, task = null, kind = null } = {}) {
   if (assistant) return "Assistant";
@@ -227,7 +235,7 @@ export function selfName({ assistant = false, task = null, kind = null } = {}) {
   return { claude: "Claude", codex: "Codex" }[kind] ?? "Agent";
 }
 
-// A name's initial for its avatar: a task ref's letters ("SHEP-4" → "S"), else its first letter.
+// A name's initial for its avatar: its first letter or digit.
 export const initialOf = (name) => (String(name ?? "").trim().match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase();
 
 // The session's first message: the first user item, not items[0] (#589: lines read out of it, like task news, come
@@ -262,20 +270,66 @@ export function briefLabel(x, i, { start = null, template = null, task = false, 
   return null;
 }
 
-// A task's news line: { mark (its dot), what (happened), text (the rest) }. Herdr's line is "HERD-4 needs you: Needs
-// a go (Fix login)", "HERD-4 is ready: Fix login · summary", ...: without the id and the title, split at its first
-// ": ". e: { ref, event, text, made } (made: from the task's own record, not a line Herdr sent); x: the task.
+// A task's brief as the first message of its chat (SHEP-330): what its agent was given, so a task's page is never blank.
+// The launch text (herdr-task's brief(): the worker's instructions, "Your task, \"<title>\":\n<prompt>", where it works, how
+// to finish, the Settings block) is cut to what the space's Assistant wrote, and the Settings block's lines are kept
+// apart, folded away on the page.
+const SETTINGS_RE = /(?:^|\n)Settings:[^\n]*\n((?:- [^\n]*(?:\n|$))+)/;
+// what comes after the prompt in a brief, each its own paragraph (herdr-task's launch.py brief())
+const AFTER_PROMPT = /\n\n(?:You work in \S|Before you say ready:|When the work is (?:finished|done)|Settings: \(|Your space's instructions)/;
+
+// The Settings block's lines ("Review: off", ...), else [].
+export function briefSettings(text) {
+  const m = SETTINGS_RE.exec(String(text ?? ""));
+  return m ? m[1].split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean) : [];
+}
+
+// The prompt a launch text carries ('Your task, "<title>":\n' up to where it works or how it finishes), else "".
+export function briefPrompt(text) {
+  const s = String(text ?? "");
+  // SHEP-322: 'Your task, "Fix login":' (an older herdr-task's: "Your task, SHOP-4:")
+  const at = /(?:^|\n)Your task, (?:"[^"\n]*"|[^\n:]+):\n/.exec(s);
+  if (!at) return "";
+  const rest = s.slice(at.index + at[0].length);
+  const end = AFTER_PROMPT.exec(rest);
+  return (end ? rest.slice(0, end.index) : rest).trim();
+}
+
+// The brief's message: { title, text, settings, from, state }. prompt: the task's own (as the Assistant wrote it),
+// else cut from the launch text; state: waiting (no agent yet), sent (its agent started and hasn't taken it in), read
+// (its agent took it in: its log has it).
+export function taskBrief({ title = "", prompt = "", launch = "", from = "Assistant", state = "waiting" } = {}) {
+  const text = String(prompt ?? "").trim() || briefPrompt(launch) || String(title ?? "");
+  const settings = briefSettings(launch);
+  return { title: String(title ?? ""), text, ...(settings.length ? { settings } : {}), from, state };
+}
+
+// A task's news line: { mark (its dot), what (happened), text (the rest) }. Herdr's line is '"Fix login" needs you:
+// Needs a go', '"Fix login" is ready · summary' (an older herdr-task's: "HERD-4 needs you: Needs a go (Fix login)",
+// "HERD-4 is ready: Fix login · summary"), ...: without the title (and the id), split at its first ": ".
+// e: { ref, event, text, made } (made: from the task's own record, not a line Herdr sent); x: the task.
 export function newsWords(e, x) {
   const mark = { started: "started", "working-again": "started", "needs-you": "needs", failed: "needs", ready: "ready", done: "done" }[e.event] ?? "other";
   const title = x?.title ?? "", one = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
   if (e.made) return { mark, what: e.event, text: e.event === "ready" ? one(x?.summary) || title : title };
-  let s = one(e.text);
-  if (s.startsWith(`${e.ref} `)) s = s.slice(e.ref.length + 1);
-  // Every line but ready's ends with the title in brackets.
-  let named = title;
-  if (e.event !== "ready") {
-    const m = title && s.endsWith(` (${one(title)})`) ? [null, one(title)] : / \(([^()]*)\)$/.exec(s);
-    if (m) { named = m[1]; s = s.slice(0, s.length - m[1].length - 3); }
+  let s = one(e.text), named = title;
+  // SHEP-322: '"Fix login" needs you: Needs a go', '"Fix login" is ready · summary': the title in quotes first, no id.
+  const q = title && s.startsWith(`"${one(title)}" `) ? `"${one(title)}" ` : /^"[^"]*" /.exec(s)?.[0];
+  if (q) {
+    named = q.slice(1, -2);
+    s = s.slice(q.length).replace(/^, /, "");
+    if (e.event === "ready") {
+      const text = s.replace(/^is ready(?: · )?/, "").replace(/ · For AGENTS\.md: .*$/, "").replace(/^For AGENTS\.md: .*$/, "");
+      return { mark, what: "ready", text: text || named };
+    }
+  } else {
+    // Before SHEP-322: "HERD-4 needs you: Needs a go (Fix login)", "HERD-4 is ready: Fix login · summary".
+    if (s.startsWith(`${e.ref} `)) s = s.slice(e.ref.length + 1);
+    // Every line but ready's ends with the title in brackets.
+    if (e.event !== "ready") {
+      const m = title && s.endsWith(` (${one(title)})`) ? [null, one(title)] : / \(([^()]*)\)$/.exec(s);
+      if (m) { named = m[1]; s = s.slice(0, s.length - m[1].length - 3); }
+    }
   }
   const i = s.indexOf(": ");
   const what = (i < 0 ? s : s.slice(0, i)).replace(/^is /, "") || e.event;

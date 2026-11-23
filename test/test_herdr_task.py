@@ -465,6 +465,17 @@ class HomeLead(unittest.TestCase):
                 rep = self.home.local_report(news_only=True)
         self.assertEqual(rep["stale_links"], [{"name": "vm-demo", "answers": "e5a9"}])
 
+    def test_a_news_line_with_more_attributes_keeps_its_task_and_event(self):
+        """A feedback report's news line carries key= too: the overview still reads its task and event, never
+        the tag's attributes as words."""
+        world = home_world()
+        world["mini"]["news"] = [{"space": "sp-shop", "folder": "~/shop", "lines": [
+            '<herdr-news task="SHOP-1" event="feedback" key="fb-1">"Fix login" feedback: the button is small</herdr-news>']}]
+        [l] = [l for _, l in self.overview(self.round(world, "mini")) if "SHOP-1" in l]
+        self.assertIn('task="SHOP-1"', l)
+        self.assertIn('event="feedback"', l)
+        self.assertNotIn("key=", l.split(">", 1)[1])
+
     def test_a_hub_that_doesnt_link_back_gets_none_of_the_others_news(self):
         """#1188: the mini can't reach the laptop, so its home Assistant never gets the laptop's news
         (it could only sum up items it can't check); the laptop's own home Assistant keeps them."""
@@ -808,7 +819,7 @@ class BackToWork(unittest.TestCase):
         self.tick.back_pass(self.store, t, report)
         self.assertEqual((t["state"], report["working_again"]), ("running", ["SHEP-7"]))
         self.assertEqual(self.news.news_line(self.store, t, {}, "working-again"),
-                         '<herdr-news task="SHEP-7" event="working-again">SHEP-7 is working again: its agent is at work again (Web client)</herdr-news>')
+                         '<herdr-news task="SHEP-7" event="working-again">"Web client" is working again: its agent is at work again</herdr-news>')
 
     def test_a_dead_agents_shell_is_no_agent(self):
         """#1022: a Codex worker that died mid-turn left its plain shell, hc still saying "working" (as real hc does
@@ -887,7 +898,7 @@ class BackToWork(unittest.TestCase):
         self.tick.back_pass(self.store, t, report)
         self.assertEqual((t["state"], report["working_again"]), ("running", ["SHEP-7"]))
         self.assertEqual(self.news.news_line(self.store, t, {}, "working-again"),
-                         '<herdr-news task="SHEP-7" event="working-again">SHEP-7 is working again: its agent asked something (Web client)</herdr-news>')
+                         '<herdr-news task="SHEP-7" event="working-again">"Web client" is working again: its agent asked something</herdr-news>')
         # and the words: GitHub's news and the brief tell a woken Ready worker to ask with its question tool
         from herdr_task import ghnews, templates
         with open(os.path.join(ROOT, "templates", "worker.md")) as f:
@@ -898,6 +909,23 @@ class BackToWork(unittest.TestCase):
         self.assertIn(templates.WORKER_MD_BEFORE_ASK, templates.OLD_WORKERS)  # an unedited old one gets today's
         with open(ghnews.__file__) as f:
             self.assertIn("ask the person with your CLI's question tool", f.read())
+
+    def test_targeted_tests_before_ready(self):
+        """A task runs the tests for what it touched; the full suite belongs to main and the release."""
+        from herdr_task import ghnews, templates
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            worker = f.read()
+        for words in (templates.WORKER_MD, worker):
+            self.assertIn(templates.TESTS_RULE, words)
+            self.assertNotIn(templates.TESTS_OLD, words)
+            self.assertIn(templates.LIVE_RULE, words)
+        self.assertIn(templates.WORKER_MD_BEFORE_TESTS, templates.OLD_WORKERS)  # an unedited old one gets today's
+        with open(os.path.join(ROOT, "templates", "assistant.md")) as f:
+            assistant = f.read()
+        self.assertIn("never the whole suite; the full suite belongs to main", assistant)
+        self.assertIn("add one small fix-forward task at once", assistant)
+        with open(ghnews.__file__) as f:
+            self.assertIn("add one small fix-forward task at once", f.read())
 
     # A merge that failed once (t75: "GraphQL: Something went wrong") never blocks the next Accept, and a pull
     # request merged meanwhile (by hand) makes the task done.
@@ -1166,6 +1194,26 @@ class BackToWork(unittest.TestCase):
         self.assertFalse(github.pr_pending(done))
         # a job that waits on another's needs isn't a check yet, but its run isn't finished
         self.assertTrue(github.pr_pending(dict(done, runs_pending=True)))
+
+    def test_its_checks_in_one_word_for_its_row(self):
+        # SHEP-348: the mark on a task row's repo line: running, failed, passed, or none
+        import herdr_task.github as github
+        row = lambda st, c="": {"name": "test", "status": st, "conclusion": c}
+        self.assertEqual(github.checks_state({"statusCheckRollup": [row("COMPLETED", "SUCCESS"), row("COMPLETED", "FAILURE")]}), "failed")
+        self.assertEqual(github.checks_state({"statusCheckRollup": [row("COMPLETED", "SUCCESS"), row("IN_PROGRESS")]}), "running")
+        self.assertEqual(github.checks_state({"statusCheckRollup": [row("COMPLETED", "SUCCESS"), row("COMPLETED", "SKIPPED")]}), "passed")
+        self.assertEqual(github.checks_state({"statusCheckRollup": [row("COMPLETED", "SUCCESS")], "runs_pending": True}), "running")
+        self.assertEqual(github.checks_state({"statusCheckRollup": []}, missing=True), "running")
+        self.assertIsNone(github.checks_state({"statusCheckRollup": []}))
+
+    def test_a_tick_keeps_its_checks_word_on_its_pull_request(self):
+        t = self.pr_task(ready_at=1_000_000)
+        running = dict(self.NONE_YET, statusCheckRollup=[{"name": "test", "status": "IN_PROGRESS", "conclusion": ""}])
+        self.early_tick(running, 1_010_000, "yes")
+        self.assertEqual(t["pr"]["checks"], "running")
+        passed = dict(self.NONE_YET, statusCheckRollup=[{"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}])
+        self.early_tick(passed, 1_200_000, "yes")
+        self.assertEqual(t["pr"]["checks"], "passed")
 
     def test_accept_before_checks_start_merges_once_they_pass(self):
         import herdr_task.github as github
@@ -2338,7 +2386,7 @@ class NewWorktrees(unittest.TestCase):
 
     def test_default_branch_name_stays(self):
         t, _ = self.new_worktree(self.task("Fix the login page"))
-        self.assertEqual(t["branch"], "task/1-fix-the-login-page")
+        self.assertEqual(t["branch"], "task/fix-the-login-page")  # SHEP-322: no number in it
 
     def write_settings(self, d):
         with open(self.settings_file, "w") as f:
@@ -2352,15 +2400,19 @@ class NewWorktrees(unittest.TestCase):
         self.assertEqual(self.git(path, "rev-parse", "--abbrev-ref", "HEAD"), "SHEP-1")
         self.write_settings({"everywhere": {"tasks": {"branch": "feat/{key}-{slug}"}}})
         self.assertEqual(self.new_worktree(self.task("Fix login"))[0]["branch"], "feat/SHEP-2-fix-login")
-        # one that can't be used (no {n} or {key}: every task would share it) falls back to the default
+        # SHEP-322: {slug} alone is fine: a name already taken gets -2
         self.write_settings({"everywhere": {"tasks": {"branch": "feat/{slug}"}}})
-        self.assertEqual(self.new_worktree(self.task("Fix login"))[0]["branch"], "task/3-fix-login")
+        self.assertEqual(self.new_worktree(self.task("Fix login"))[0]["branch"], "feat/fix-login")
+        self.assertEqual(self.new_worktree(self.task("Fix login"))[0]["branch"], "feat/fix-login-2")
+        # one that can't be used (nothing of the task in it: every task would share it) falls back to the default
+        self.write_settings({"everywhere": {"tasks": {"branch": "feat/x"}}})
+        self.assertEqual(self.new_worktree(self.task("Fix login"))[0]["branch"], "task/fix-login")
 
     def test_pattern_problems(self):
         problem = self.settings.branch_pattern_problem
-        for ok in ("", "task/{n}-{slug}", "{key}", "users/me/{key}-{slug}"):
+        for ok in ("", "task/{n}-{slug}", "{key}", "users/me/{key}-{slug}", "feat/{slug}"):
             self.assertIsNone(problem(ok), ok)
-        for bad in ("feat/{slug}", "x/{n}/{bad}", "{n} x", "-{n}", "a..{n}", "{key}.lock"):
+        for bad in ("feat/x", "x/{n}/{bad}", "{n} x", "-{n}", "a..{n}", "{key}.lock"):
             self.assertIsNotNone(problem(bad), bad)
 
     def test_an_exact_branch(self):
@@ -2386,7 +2438,7 @@ class NewWorktrees(unittest.TestCase):
         with self.assertRaisesRegex(self.Fail, "origin already has"):
             set_branch(self.store, t, "ABC-1")
         set_branch(self.store, self.task(), "ABC-2")
-        with self.assertRaisesRegex(self.Fail, "SHEP-2 already uses it"):
+        with self.assertRaisesRegex(self.Fail, 'the task "Check base" already uses it'):
             set_branch(self.store, t, "ABC-2")
         self.assertNotIn("branch", t)
         set_branch(self.store, t, "ABC-3")
@@ -2901,6 +2953,50 @@ class TimeLeft(unittest.TestCase):
         self.assertIn(templates.WORKER_MD_BEFORE_OFTEN, templates.OLD_WORKERS)
         self.assertNotEqual(templates.WORKER_MD_BEFORE_OFTEN, templates.WORKER_MD)
 
+    def test_the_time_left_comes_from_the_clock_in_agent_time(self):
+        """SHEP-361: the system prompt and the brief's footer have the agent note the clock, work --left
+        out from its own pace, in its own working time; an unedited earlier template gets today's words."""
+        from herdr_task import templates
+        with open(os.path.join(BIN, "herdr_task", "launch.py")) as f:
+            launch = f.read()
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            worker = f.read()
+        for words in (templates.WORKER_MD, worker, launch):
+            self.assertIn("date +%s", words)
+            self.assertIn("x (100 - done) / done", words)
+            self.assertIn("never a person's", words)
+            self.assertIn("by as much as you were off", words)
+        self.assertIn("worked 12 min, 40% done: about 18m left", templates.WORKER_MD)
+        self.assertIn(templates.WORKER_MD_BEFORE_CLOCK, templates.OLD_WORKERS)
+        self.assertNotEqual(templates.WORKER_MD_BEFORE_CLOCK, templates.WORKER_MD)
+
+    def test_titles_and_status_lines_fit_a_phone_row(self):
+        """SHEP-370: a task's title and its agent's status line fit a phone's task row uncut: the Assistant, the
+        worker's system prompt, its brief's footer and herdr-task's help all ask for at most ROW_MAX characters."""
+        from herdr_task import templates
+        from herdr_task.agents import ROW_MAX
+        from herdr_task.cli import TITLE_HELP
+        self.assertEqual(ROW_MAX, 30)
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            worker = f.read()
+        with open(os.path.join(ROOT, "templates", "assistant.md")) as f:
+            assistant = f.read()
+        for words in (templates.WORKER_MD, worker):
+            self.assertNotIn("at most 40 characters", words)
+            self.assertIn("with what you're doing now (at most 30 characters, so a phone's task row shows it uncut", words)
+            self.assertIn('at most 30 characters, as it shows uncut on a phone, e.g. "Needs a go for a screenshot"', words)
+        with open(os.path.join(BIN, "herdr_task", "launch.py")) as f:
+            self.assertIn("at most {ROW_MAX} characters", f.read())
+        self.assertIn("Titles: at most 30 characters", assistant)
+        self.assertIn('becomes "Call button in the message box"', assistant)
+        self.assertIn("at most 30 characters", TITLE_HELP)
+        # every example of a good title or status is within the limit
+        for good in ("Call button in the message box", "Fetch last month's invoices", "Fix login redirect loop",
+                     "Running the full tests", "Needs a go for a screenshot"):
+            self.assertLessEqual(len(good), ROW_MAX)
+        self.assertIn(templates.WORKER_MD_BEFORE_ROW, templates.OLD_WORKERS)
+        self.assertNotEqual(templates.WORKER_MD_BEFORE_ROW, templates.WORKER_MD)
+
 
 class ReviewAsAHelperAgent(unittest.TestCase):
     """SHEP-54: workers run their review as an interactive hc child people see, never headless; an
@@ -3390,6 +3486,55 @@ class RequiredChecksOnly(PrLooks):
         self.look(t, after=1000)
         self.assertEqual(t["attention"], "Checks failing: lint.")
 
+    LINT_RUNS = {"name": "lint", "status": "IN_PROGRESS", "conclusion": ""}
+
+    def test_on_its_own_never_waits_for_a_check_nobody_requires(self):
+        # Merge "on its own" on a base that requires no checks: a running optional one is no wait, and its row says
+        # Merging, not "Merges once its checks pass".
+        t = self.auto()
+        t["auto_merge"] = "auto"
+        self.requires()
+        self.github_says(checks=[self.BUILD, self.LINT_RUNS])
+        self.look(t)
+        self.assertNotIn("wait", t["pr"])
+        self.assertEqual(self.agents.ready_wait(t, []), "Merging")
+        self.assertEqual(self.merge(t), self.commands.IN_QUEUE)  # merged on GitHub (this fake's pull request stays open)
+        self.assertTrue(self.merged())
+
+    def test_after_checks_still_waits_for_a_running_one_nobody_requires(self):
+        t = self.auto()
+        self.requires()
+        self.github_says(checks=[self.BUILD, self.LINT_RUNS])
+        self.assertEqual(self.agents.ready_wait(t, []), "Merges once its checks pass")
+        self.assertEqual(self.merge(t), self.commands.CHECKS_RUNNING)
+        self.assertFalse(self.merged())
+
+    def test_on_its_own_still_waits_for_a_required_check(self):
+        t = self.auto()
+        t["auto_merge"] = "auto"
+        self.requires("build")
+        self.github_says(checks=[{"name": "build", "status": "IN_PROGRESS", "conclusion": ""}, self.LINT_RUNS])
+        self.assertEqual(self.merge(t), self.commands.CHECKS_RUNNING)
+        self.assertFalse(self.merged())
+
+    def test_a_merge_by_hand_follows_its_merge_setting(self):
+        # herdr-task merge on a task set to merge on its own (auto_merge not set yet): no wait for an optional check.
+        t = self.auto()
+        t.pop("auto_merge")
+        t["set"] = {"merge": "auto"}
+        self.requires()
+        self.github_says(checks=[self.BUILD, self.LINT_RUNS])
+        self.assertEqual(self.merge(t), self.commands.IN_QUEUE)
+        self.assertTrue(self.merged())
+
+    def test_github_unable_to_say_waits_on_every_one_on_its_own_too(self):
+        t = self.auto()
+        t["auto_merge"] = "auto"
+        with open(os.path.join(self.dir, "required.json"), "w") as f:
+            f.write("not json")
+        self.github_says(checks=[self.BUILD, self.LINT_RUNS])
+        self.assertEqual(self.merge(t), self.commands.CHECKS_RUNNING)
+
     def test_github_unable_to_say_waits_on_every_one(self):
         t = self.auto()
         with open(os.path.join(self.dir, "required.json"), "w") as f:
@@ -3526,6 +3671,9 @@ class Store:
 
     def ref(self, t):
         return f"SHEP-{t['id']}"
+
+    def name(self, t):
+        return '"' + " ".join(str(t.get("title") or "").split()) + '"'
 
     def key(self, t):
         return f"f#{t['id']}"
@@ -3828,6 +3976,58 @@ class AcceptCardArtifacts(unittest.TestCase):
             arts[3].update(files=["index.html"], proof=True)
             arts[0]["proof"] = arts[1]["files"] = None
             self.assertIsNone(proof.find_proof(s, t))
+
+
+class ProofFromAnotherFolder(unittest.TestCase):
+    """A proof published from a scratch folder (herdr-artifact publish --task, the real command on a throwaway
+    home) is found by ready --proof in its task's folder; one an older herdr-artifact filed under the scratch folder
+    is found by its id too."""
+
+    def setUp(self):
+        import shutil
+        self.home = os.path.realpath(tempfile.mkdtemp(prefix="shepherdr-proof-elsewhere-"))
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.task_folder, self.scratch = os.path.join(self.home, "proj"), os.path.join(self.home, "scratch")
+        os.makedirs(os.path.join(self.scratch, "page"))
+        os.makedirs(self.task_folder)
+        os.makedirs(os.path.join(self.home, ".herdr", "tasks"))
+        with open(os.path.join(self.home, ".herdr", "tasks", "proj.json"), "w") as f:
+            json.dump({"prefix": "SHEP", "folder": self.task_folder, "tasks": [{"id": 1}]}, f)
+        with open(os.path.join(self.scratch, "page", "index.html"), "w") as f:
+            f.write("<!doctype html><title>x</title><h1>Proof</h1>")
+
+    def publish(self, *args):
+        tool = os.path.join(ROOT, "mods", "artifacts", "bin", "herdr-artifact")
+        env = {**os.environ, "HOME": self.home, "HERDR_ARTIFACT_CHROME": ""}
+        for k in ("SHEPHERDR_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HC_TERMINAL_ID", "HERDR_BROWSER_TASK"):
+            env.pop(k, None)
+        p = subprocess.run([sys.executable, "-B", tool, "publish", "page", "--title", "Reactions · Proof", "--json", *args],
+                           cwd=self.scratch, env=env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        return json.loads(p.stdout.strip().splitlines()[-1])
+
+    def found(self, given=None):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.proof as proof
+        s = Store([{"id": 1, "title": "Reactions", "state": "doing", "started": 0, "agents": []}])
+        s.loc["folder"] = self.task_folder
+        with mock.patch.object(proof, "ARTIFACTS", os.path.join(self.home, ".herdr", "artifacts")), \
+                mock.patch.object(proof, "HOME", self.home):
+            return proof.find_proof(s, s.data["tasks"][0], given)
+
+    def test_published_from_a_scratch_folder_ready_finds_it(self):
+        a = self.publish("--task", "SHEP-1", "--proof")
+        self.assertEqual(a["folder"], self.task_folder)
+        self.assertEqual(self.found(a["id"]), {"id": a["id"], "title": "Reactions · Proof"})
+        self.assertEqual(self.found()["id"], a["id"])  # ready without --proof finds it too
+
+    def test_a_proof_an_older_version_filed_under_the_scratch_folder_is_found_by_its_id(self):
+        a = self.publish("--task", "SHEP-1", "--proof", "--folder", self.scratch)  # where an older one put it
+        self.assertEqual(a["folder"], self.scratch)
+        self.assertEqual(self.found(a["id"])["id"], a["id"])
+        with self.assertRaisesRegex(Exception, "No artifact nope-0009"):
+            self.found("nope-0009")
 
 
 class ReviewerFlags(unittest.TestCase):
@@ -4730,25 +4930,32 @@ class AssistantSettings(unittest.TestCase):
         # nothing differs from Herdr's default: no line says who set it
         self.assertNotIn("; set for", note)
         self.assertNotIn("; your setting", note)
-        self.assertEqual(len(note.split("\n")), 13)  # head, 11 lines (Suggested next message included), the Reactions guide
+        self.assertEqual(len(note.split("\n")), 14)  # head, 12 lines (Suggested next message, Repo settings), the Reactions guide
+        self.assertIn("- Repo settings: none (every repo has the task lines above)", note)
+        self.assertIn("the task lines below are Everywhere's", note)
         self.assertIn("- Suggested next message: on (end each reply", note)
 
     def test_the_block_for_a_space_with_its_own(self):
+        """SHEP-335: the task lines are the repo's the space sits on (repos[<folder>]), its own lines (Reactions) the
+        space's; a space elsewhere (root on /) gets Everywhere's task lines and sees the repo's in Repo settings."""
+        shop = os.path.realpath(tempfile.mkdtemp())
         self.write({"everywhere": {"tasks": {"review_rounds": 2, "merge": "checks"}, "assistant": {"reactions": True}},
-                    "spaces": {"sp1": {"tasks": {"base": "dev", "start_notes": "bun install", "max_running": 3, "worktrees": False,
-                                                  "setup": "ln -s ../node_modules ."},
-                                       "worker": {"agent": "codex", "model": "gpt-5", "effort": "high"},
-                                       "reviewer": {"agent": "claude", "model": "opus"},
-                                       "assistant": {"reactions": False}},
-                               "sp2": {"tasks": {"merge": "auto"}}}})
+                    "repos": {shop: {"tasks": {"base": "dev", "start_notes": "bun install", "max_running": 3, "worktrees": False,
+                                               "setup": "ln -s ../node_modules ."},
+                                     "worker": {"agent": "codex", "model": "gpt-5", "effort": "high"},
+                                     "reviewer": {"agent": "claude", "model": "opus"}}},
+                    "spaces": {"sp1": {"folder": shop, "assistant": {"reactions": False}},
+                               "sp2": {"folder": "/", "tasks": {"merge": "auto"}}}})
         self.assistant()
         note = self.aset.session_note("t5")
-        self.assertEqual(self.line(note, "Review"), "- Review: on, at most 2 rounds, must fix major and up (blocker, major), reviewer claude, model opus; set for this space")
-        self.assertEqual(self.line(note, "Merge"), "- Merge: after checks (Herdr merges a ready task once its checks pass); your setting everywhere")
+        self.assertIn(f"the task lines below are {shop}'s", note)
+        self.assertEqual(self.line(note, "Review"), "- Review: on, at most 2 rounds, must fix major and up (blocker, major), reviewer claude, model opus; this repo's setting")
+        self.assertEqual(self.line(note, "Merge"), "- Merge: after checks (Herdr merges a ready task once all its checks pass); your setting everywhere")
         self.assertEqual(self.line(note, "Proof"), "- Proof: on")
-        self.assertEqual(self.line(note, "Task agent"), "- Task agent: codex, model gpt-5, effort high; set for this space")
+        self.assertEqual(self.line(note, "Task agent"), "- Task agent: codex, model gpt-5, effort high; this repo's setting")
         self.assertIn("- Base branch: dev ", note)
-        self.assertIn("- Worktrees: off (tasks work in the folder itself); set for this space", note)
+        self.assertIn("- Worktrees: off (tasks work in the folder itself); this repo's setting", note)
+        self.assertIn(f"- Repo settings: {shop}: Task agent codex, model gpt-5, effort high, Reviewer claude, model opus, Base branch dev, also", note)
         self.assertNotIn("Tasks at once", note)
         self.assertIn("- Task notes: start notes set", note)
         self.assertIn("- Before the agent starts: ln -s ../node_modules . (runs in each new worktree first", note)
@@ -4758,11 +4965,20 @@ class AssistantSettings(unittest.TestCase):
         labels = self.terminals["t5"]["labels"]
         self.assertEqual(labels["herdr.reactions"], "off")
         self.assertEqual(sorted(self.aset.parse(labels["herdr.settings"])),
-                         sorted(["review", "merge", "proof", "agent", "base", "worktrees", "notes", "setup", "reactions", "suggestions", "feedback"]))
-        # another space inherits Everywhere's, with its own merge
+                         sorted(["review", "merge", "proof", "agent", "base", "worktrees", "notes", "setup", "reactions", "suggestions", "feedback", "repos"]))
+        # a space on / (root), its file not moved yet: its task values are the / folder's, not the shop repo's
         self.assistant("t6", "sp2")
         other = self.aset.session_note("t6")
-        self.assertIn("- Merge: on its own (Herdr merges a ready task); set for this space", other)
+        self.assertIn("- Merge: on its own (Herdr merges a ready task at once, waiting only on checks its base branch requires); this repo's setting", other)
+        self.assertIn("the task lines below are /'s", other)
+        self.assertIn(f"- Repo settings: {shop}: ", other)
+        # moved (repos), root sits on no repo of its own: Everywhere's task lines, and the repos listed with theirs
+        self.write({"everywhere": {"tasks": {"merge": "checks"}}, "repos": {shop: {"tasks": {"merge": "auto"}}},
+                    "spaces": {"sp2": {"folder": "/"}}})
+        other = self.aset.session_note("t6")
+        self.assertIn("- Merge: after checks (Herdr merges a ready task once all its checks pass); your setting everywhere", other)
+        self.assertIn("the task lines below are Everywhere's", other)
+        self.assertIn(f"- Repo settings: {shop}: Merge on its own\n", other)
         self.assertIn("- Reactions: on", other)
         self.assertIn("👀", other)
 
@@ -4842,13 +5058,14 @@ class AssistantSettings(unittest.TestCase):
         # another space's change, and Everywhere's where this space sets its own
         self.write({"everywhere": {"tasks": {"merge": "checks"}}, "spaces": {"sp2": {"tasks": {"merge": "auto"}}}})
         self.aset.settings_pass({}, {})
+        shop = os.path.realpath(tempfile.mkdtemp())
         self.write({"everywhere": {"tasks": {"merge": "checks"}, "worker": {"agent": "codex"}},
-                    "spaces": {"sp1": {"worker": {"agent": "claude", "model": "opus"}}}})
+                    "spaces": {"sp1": {"folder": shop, "worker": {"agent": "claude", "model": "opus"}}}})
         self.aset.settings_pass({}, {})
-        self.assertEqual(len(self.sent), 1)  # only the last: sp1's own agent
-        self.assertIn('name="agent" value="claude/opus" scope="space"', self.sent[0][1])
+        self.assertEqual(len(self.sent), 1)  # only the last: sp1's repo's own agent (a file not moved yet: the space's)
+        self.assertIn('name="agent" value="claude/opus" scope="repo"', self.sent[0][1])
         self.write({"everywhere": {"tasks": {"merge": "checks"}, "worker": {"agent": "codex"}},
-                    "spaces": {"sp1": {"worker": {"agent": "claude", "model": "opus"}}}})
+                    "spaces": {"sp1": {"folder": shop, "worker": {"agent": "claude", "model": "opus"}}}})
         self.aset.settings_pass({}, {})
         self.assertEqual(len(self.sent), 1)
 
@@ -4988,8 +5205,8 @@ class Feedback(unittest.TestCase):
         self.assertEqual(len(self.held), 1)
         to, text, how = self.held[0]
         self.assertEqual((to, how), ("t5", "news"))
-        self.assertRegex(text, r'^<herdr-news task="SHEP-7" event="feedback" key="[0-9a-f]{10}">SHEP-7 feedback: The Accept card shows an empty diff · '
-                               r'Goal: accept SHEP-7\. Expected: its 3 files\. \(Fix login\)</herdr-news>$')
+        self.assertRegex(text, r'^<herdr-news task="SHEP-7" event="feedback" key="[0-9a-f]{10}">"Fix login" feedback: The Accept card shows an empty diff · '
+                               r'Goal: accept SHEP-7\. Expected: its 3 files\.</herdr-news>$')
         # the same problem again (other small words): nothing more is sent
         code, out = self.say("the accept card shows the empty diff")
         self.assertIn("already has this one", out)
@@ -5581,7 +5798,7 @@ class TaskFlow(unittest.TestCase):
         # #1056: the mode a new session would get (none set on this home: default), not the old session's
         self.assertEqual(resume, ["claude", "--model", "opus", "--permission-mode", "default", "--resume", "S1"])
         self.assertEqual(message, self.commands.SWITCH_NUDGE)
-        self.assertEqual(self.said[-1], "SHEP-1: claude t2 resumed its session, t1 ended")
+        self.assertEqual(self.said[-1], '"Flow": claude t2 resumed its session, t1 ended')
 
     def test_a_resumed_claude_starts_in_the_configured_mode(self):
         """#1056: Claude Code resumes a session in the permission mode it ended in (a stuck agent left in plan or
@@ -5870,7 +6087,7 @@ class TaskFlow(unittest.TestCase):
         self.assertIn("Couldn't push task/1", str(e.exception))
 
     def test_the_pull_request_title_and_body_are_short(self):
-        """SHEP-198 (GitHub #924): the title follows the repo's commit titles ("SHEP-198: ..."), and the
+        """SHEP-198 (GitHub #924), SHEP-322: the title is the task's title (no task number), and the
         body is the summary, details and proof's title, never the brief."""
         import herdr_task.github as github
         wt, remote = self.task["worktree"], os.path.join(self.root, "remote.git")
@@ -5889,15 +6106,16 @@ class TaskFlow(unittest.TestCase):
         self.assertEqual(github.pr_open(self.store, self.task, "o/r", "The flow works now")["number"], 9)
         create = next(a for a in asked if a[:2] == ("pr", "create"))
         title, body = create[create.index("--title") + 1], create[create.index("--body") + 1]
-        self.assertEqual(title, f"{ref}: Flow")
+        # SHEP-322: the title alone, no task key in the title or the body
+        self.assertEqual(title, "Flow")
         self.assertNotIn("BRIEF-ONLY-LINE", body)
-        self.assertIn(f"Task: {ref}", body)
+        self.assertNotIn(ref, body)
         self.assertIn("The flow works now", body)
         self.assertIn("- Checked the flow", body)
-        self.assertIn(f"{ref}: Flow · Proof", body)
+        self.assertIn("Flow · Proof", body)
         self.assertLess(len(body), 400)
-        # A title that already names the ref doesn't name it twice.
-        self.assertEqual(github.pr_title(self.store, {**self.task, "title": f"{ref} Flow"}), f"{ref}: Flow")
+        # An older title that starts with its key keeps only the rest.
+        self.assertEqual(github.pr_title(self.store, {**self.task, "title": f"{ref} Flow"}), "Flow")
 
     def test_ready_keeps_the_pull_request_the_task_continues(self):
         """#828: the work pushed to an open pull request's own branch: ready takes that one, never a second."""
@@ -7069,8 +7287,8 @@ class ReadyMergeGit(unittest.TestCase):
         from herdr_task import launch
         wts = os.path.join(self.root, "worktrees")
         self.patch(launch, "settings_for", lambda s, space=None: {"tasks": {"worktree_root": wts}})
-        path = os.path.join(wts, "repo", "task-1-flow")
-        self.git(self.main, "worktree", "add", "-q", "-b", "task/1-flow", path, "main")
+        path = os.path.join(wts, "repo", "task-flow")
+        self.git(self.main, "worktree", "add", "-q", "-b", "task/flow-old", path, "main")
         self.commit(path, "work", "a.txt")
         self.git(path, "switch", "-q", "-c", "task/1-flow-reland")
         t = {"id": 1, "title": "Flow", "state": "running", "mode": "worktree", "agents": []}
@@ -7799,10 +8017,14 @@ class LeftoverRolledBackData(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.file = os.path.join(self.dir, "shepherdr.json")
         with open(self.file, "w") as f:
-            # where write_lessons kept them: Everywhere's and a space's (its bare id or, the window's file, its full one)
-            json.dump({"version": 1, "everywhere": {"lessons": self.OLD, "agents": {"reactions": True}},
+            # where write_lessons kept them: Everywhere's and a space's (its bare id or, the window's file, its full one);
+            # from upstream's SHEP-335 a task's settings are its repo's, so a repo's entry holds them too, and the
+            # merge line the note must still show is Everywhere's (the note lists only Everywhere's task lines)
+            json.dump({"version": 1, "everywhere": {"lessons": self.OLD, "agents": {"reactions": True},
+                                                    "tasks": {"merge": "checks"}},
                        "spaces": {"sp1": {"lessons": self.OLD, "tasks": {"merge": "checks"}},
-                                  "vm/sp2": {"machine": "vm", "lessons": {"on": False}}}}, f)
+                                  "vm/sp2": {"machine": "vm", "lessons": {"on": False}}},
+                       "repos": {os.path.join(self.dir, "proj"): {"lessons": self.OLD, "tasks": {"merge": "checks"}}}}, f)
         self.terminals = {"t5": {"state": "live", "turn": 3, "labels": {"herdr.role": "coordinator", "herdr.space": "sp1"}}}
         self.err = io.StringIO()
         for target, name, value in [
@@ -7839,7 +8061,10 @@ class LeftoverRolledBackData(unittest.TestCase):
             s.dirty = True
         text = text.replace(ROOT, "<repo>").lower()  # the repo's own folder may be named after a task
         self.assertNotIn("lesson", text)
-        self.assertNotIn("touch", text)
+        # touches and touch_logs, never the word: upstream's brief now says "the tests for what you touched"
+        self.assertNotIn("touches", text)
+        self.assertNotIn("touch_log", text)
+        self.assertNotIn("/x/log.jsonl", text)
         with self.store.Store(self.loc, write=False) as s:
             self.assertEqual(s.data["tasks"][0]["title"], "Old, renamed")
         self.assertEqual(self.err.getvalue(), "")
@@ -8241,8 +8466,8 @@ class AcceptCommandNews(unittest.TestCase):
         self.news.news_pass({})
         self.assertEqual(len(self.sent), 1)
         self.assertIn('event="accept-failed"', self.sent[0][1])
-        self.assertIn('SHEP-4 is done, but its "When a task is accepted" command failed: it ended with exit code 3: '
-                      'dropdb: database is in use. All its output: /logs/f-4.log (Test databases)', self.sent[0][1].replace("&quot;", '"'))
+        self.assertIn('"Test databases" is done, but its "When a task is accepted" command failed: it ended with exit code 3: '
+                      'dropdb: database is in use. All its output: /logs/f-4.log', self.sent[0][1].replace("&quot;", '"'))
         self.assertTrue(self.task["after_accept"]["told"])
         self.news.news_pass({})
         self.assertEqual(len(self.sent), 1)
@@ -9492,7 +9717,7 @@ class Next32(unittest.TestCase):
             t = s.find(1)
             v, event, _ = news.news_state(s, t, list(self.live))
             self.assertEqual(event, "failed")
-            self.assertIn("APP-1 failed: Out of allowance until 3pm", news.news_line(s, t, v, event))
+            self.assertIn('"Fix login" failed: Out of allowance until 3pm', news.news_line(s, t, v, event))
 
     # ---- replying ----
 
@@ -9669,6 +9894,112 @@ class Next32(unittest.TestCase):
         self.assertFalse(hasattr(settings, "instructions_part"))
 
 
+class NamedByTitle(unittest.TestCase):
+    """SHEP-322: no task numbers for people. A task is named by its title; its key (APP-1) stays the hidden id that
+    commands, links and tags carry. Commands take either; a title that fits several is refused, never guessed. A real
+    task list on disk and a throwaway git repo (Scheduled's)."""
+    setUp, run_cmd, add, task = Scheduled.setUp, Scheduled.run_cmd, Scheduled.add, Scheduled.task
+
+    def find(self, what):
+        with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
+            return s.find(what)["id"]
+
+    def test_a_title_a_part_of_one_or_the_key(self):
+        a, b = self.add("Add the API route"), self.add("Use it in the page")
+        self.assertEqual((a["ref"], b["ref"]), ("APP-1", "APP-2"))
+        for what in ("Add the API route", "add the  api ROUTE", '"Add the API route"', "API route", "APP-1", "app-1", "1", "#1"):
+            self.assertEqual(self.find(what), 1, what)
+        self.assertEqual(self.find("in the page"), 2)
+        # a title that reads like a key is found by its title
+        self.add("GPT-5 support")
+        self.assertEqual(self.find("GPT-5 support"), 3)
+        self.assertEqual(self.find("gpt-5"), 3)
+        with self.assertRaisesRegex(self.Fail, 'No task "Nothing like it"'):
+            self.find("Nothing like it")
+
+    def test_a_title_that_fits_several_is_refused_with_each_listed(self):
+        self.add("Fix login")
+        self.add("Fix login")
+        self.add("Fix login on phones")
+        # the exact title fits two: refused, each listed with its key, nothing changed
+        with self.assertRaises(self.Fail) as e:
+            self.run_cmd(self.commands.cmd_edit, id="Fix login", prompt="Changed")
+        msg = str(e.exception)
+        self.assertIn('2 tasks here fit "Fix login", so nothing was done', msg)
+        self.assertIn("APP-1", msg)
+        self.assertIn("APP-2", msg)
+        self.assertNotIn("APP-3", msg)  # the exact title wins over a part of a longer one
+        self.assertEqual([self.task(n)["prompt"] for n in (1, 2)], ["", ""])
+        # a part that fits all three is refused too; the key always names one
+        with self.assertRaisesRegex(self.Fail, "3 tasks here fit"):
+            self.find("login")
+        self.assertEqual(self.find("on phones"), 3)
+        self.run_cmd(self.commands.cmd_edit, id="APP-2", prompt="Changed")
+        self.assertEqual([self.task(n)["prompt"] for n in (1, 2)], ["", "Changed"])
+
+    def test_old_keys_still_resolve_from_anywhere(self):
+        self.add("Add the API route")
+        elsewhere = tempfile.mkdtemp(dir=self.tmp)
+        cwd = os.getcwd()
+        os.chdir(elsewhere)
+        self.addCleanup(os.chdir, cwd)
+        v = self.run_cmd(self.commands.cmd_show, folder=None, id="APP-1")
+        self.assertEqual((v["ref"], v["title"]), ("APP-1", "Add the API route"))
+        self.assertEqual(self.run_cmd(self.commands.cmd_show, id="Add the API route")["ref"], "APP-1")
+
+    def test_after_by_title_and_its_reason_names_the_title(self):
+        self.add("Add the API route")
+        self.add("Write the docs")
+        v = self.add("Use it in the page", after="Add the API route, Write the docs")
+        t = self.task(3)
+        self.assertEqual(t["after"], [1, 2])
+        self.add("Ship it", after="1 2")  # keys alone, split by spaces as before
+        self.assertEqual(self.task(4)["after"], [1, 2])
+        self.run_cmd(self.commands.cmd_start, id="Add the API route")
+        q = self.run_cmd(self.commands.cmd_start, id="Use it in the page")
+        self.assertTrue(q["queued"])
+        self.assertEqual(q["reason"], 'after "Add the API route", "Write the docs"')
+        self.assertNotIn("APP-", q["reason"])
+        with self.assertRaisesRegex(self.Fail, 'No task "Nothing"'):
+            self.add("Later", after="Nothing")
+
+    def test_what_it_says_names_the_title(self):
+        out = self.io.StringIO()
+        with self.redirect(out):
+            self.commands.cmd_add(self.argparse.Namespace(**{**dict(folder=self.folder, json=False, title="Fix login", prompt=None,
+                prompt_file=None, here=False, worktree=False, after=None, space=None, at=None, in_=None, agent=None, model=None,
+                effort=None, argv=None, parent=None, now=False, base=None, start_notes=None, finish_notes=None, set=None)}))
+        self.assertTrue(out.getvalue().startswith('"Fix login" added'), out.getvalue())
+        from herdr_task.output import line
+        with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
+            from herdr_task.output import view
+            text = line(view(s, s.find(1)))
+        self.assertTrue(text.startswith("To do") and "Fix login" in text and text.endswith("[key APP-1]"), text)
+
+    def test_the_brief_names_its_task_by_title(self):
+        from herdr_task import launch
+        self.add("Fix login", prompt="Make the login work.")
+        with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
+            t = s.find(1)
+            b = launch.brief(s, t, space="sp1", argv=["claude"])
+            h = launch.handoff(s, t, None, argv=["claude"])
+        self.assertIn('Your task, "Fix login":\nMake the login work.', b)
+        self.assertNotIn("Your task, APP-1", b)
+        self.assertIn('You are taking over the task "Fix login" from another agent.', h)
+        # its commands still carry the key, which only commands read
+        self.assertIn("ready APP-1 --folder", b)
+
+    def test_the_prefix_setting_is_gone(self):
+        self.add("Fix login")
+        v = self.run_cmd(self.commands.cmd_config, prefix="ZZ")
+        self.assertTrue(v["prefix_ignored"])
+        self.assertNotIn("prefix", v)
+        self.assertEqual(self.task(1)["id"], 1)
+        self.assertEqual(self.find("APP-1"), 1)  # its key is as it was
+        r = subprocess.run([sys.executable, os.path.join(BIN, "herdr-task"), "config", "--help"], capture_output=True, text=True)
+        self.assertNotIn("--prefix", r.stdout)
+
+
 class Schedules32(unittest.TestCase):
     """3.2: a schedule (stored as an automation) runs on a time, a repeat or an event; every run is a new ordinary task
     named after it; a one-off leaves the list; a run that changed nothing ends without review (ready --nothing / --told)."""
@@ -9711,6 +10042,24 @@ class Schedules32(unittest.TestCase):
         with self.store_mod.Store(self.store_mod.locate(self.folder)) as s:
             self.au.automations_pass(s, seen, report)
         return report["fired"]
+
+    def test_a_schedule_by_its_title(self):
+        """SHEP-322: a schedule is named by its title too; one that fits several is refused."""
+        self.auto("add", title="Dependency check", prompt="x", when="mondays 9:00")
+        self.auto("add", title="Look for stuck work", prompt="x", when="every 30 minutes")
+        self.auto("add", title="Look for stuck work", prompt="x", when="every 2 hours")
+        self.assertEqual(self.auto("show", id="Dependency check")["ref"], "APP-A1")
+        self.assertEqual(self.auto("show", id="dependency")["ref"], "APP-A1")
+        self.assertEqual(self.auto("show", id="APP-A2")["title"], "Look for stuck work")
+        with self.assertRaisesRegex(self.Fail, '2 schedules here fit "Look for stuck work"'):
+            self.auto("pause", id="Look for stuck work")
+        self.assertFalse(self.auto("show", id="APP-A2")["paused"])
+        out = self.io.StringIO()
+        with self.redirect(out):
+            self.au.cmd_auto(self.argparse.Namespace(**dict(auto="pause", folder=self.folder, json=False, id="Dependency check", title=None,
+                prompt=None, prompt_file=None, every=None, on=None, when=None, match=None, from_=None, agent=None, space=None,
+                parent=None, set=None, here=True, worktree=False, all=False)))
+        self.assertEqual(out.getvalue().strip(), '"Dependency check" paused.')
 
     def test_when_in_plain_words(self):
         w = self.au.parse_when
@@ -9864,7 +10213,7 @@ class Schedules32(unittest.TestCase):
         self.assertTrue(news.untold(t))  # its words go to its space's chat, once (news_pass)
         with self.store_mod.Store(self.store_mod.locate(self.folder), write=False) as s:
             line = news.news_line(s, s.find(1), {}, "told", t["told"])
-        self.assertEqual(line, '<herdr-news task="APP-1" event="told">APP-1 (Morning brief), a schedule\'s run, says: '
+        self.assertEqual(line, '<herdr-news task="APP-1" event="told">"Morning brief", a schedule\'s run, says: '
                                'Two tasks are ready for review; nothing is stuck.</herdr-news>')
         self.assertFalse(news.untold({**t, "told_sent": 5}))
         self.assertEqual(self.auto("show", id="1")["last"]["ended"], "told")
@@ -9969,8 +10318,13 @@ class ParallelCollisions(unittest.TestCase):
         self.assertIsNone(self.github.collision(self.store, b, fetch=True))  # nothing merged yet
         self.merge_first(a)
         hit = self.github.collision(self.store, b, fetch=True)
-        self.assertEqual((hit["files"], hit["by"], hit["ref"]), (["app.txt"], ["SHEP-1"], "origin/main"))
-        self.assertEqual(self.github.collision_reason(hit), "Conflicts with main after SHEP-1 merged: its agent is rebasing")
+        self.assertEqual((hit["files"], hit["by"], hit["ref"]), (["app.txt"], ['"Task 1"'], "origin/main"))
+        self.assertEqual(self.github.collision_reason(hit), "Conflicts with main after \"Task 1\" merged: its agent is rebasing")
+        # SHEP-322: a merge titled the new way ("Task 1 (#11)", no key) is found by its pull request's number
+        self.assertEqual(self.github.merged_by(self.store, "Task 1 (#11)"), None)
+        a["pr"] = {"number": 11}
+        self.assertEqual(self.github.merged_by(self.store, "Task 1 (#11)"), '"Task 1"')
+        self.assertEqual(self.github.merged_by(self.store, "Someone else's (#12)"), None)
         words = self.github.collision_words(hit)
         self.assertIn("Files that collide with origin/main: app.txt.", words)
         self.assertIn("SHEP-1: Task 1 (#11)", words)
@@ -10003,7 +10357,7 @@ class ParallelCollisions(unittest.TestCase):
         self.patch(self.commands, "task_settings", lambda s, t: [])
         with self.assertRaises(self.commands.Fail) as e:
             self.commands.cmd_ready(self.ready_args())
-        self.assertIn("SHEP-2's branch conflicts with origin/main, which moved on since it started (SHEP-1 merged)", str(e.exception))
+        self.assertIn("\"Task 2\"'s branch conflicts with origin/main, which moved on since it started (\"Task 1\" merged)", str(e.exception))
         self.assertIn("app.txt", str(e.exception))
         self.assertEqual(b["state"], "running")
         # behind but clean: ready
@@ -10016,13 +10370,13 @@ class ParallelCollisions(unittest.TestCase):
         self.merge_first(a)
         conflict = {"state": "OPEN", "mergeable": "CONFLICTING", "statusCheckRollup": [], "headRefOid": "abc"}
         self.patch(self.commands, "pr_view", lambda t: conflict)
-        self.patch(self.commands, "merge_checks", lambda t, v: v)
+        self.patch(self.commands, "merge_checks", lambda t, v, **k: v)
         self.patch(self.commands, "note_checks", lambda *x: None)
         import argparse
         with self.assertRaises(SystemExit):
             self.commands.cmd_accept(argparse.Namespace(id="SHEP-2", json=False, folder=None))  # the person's Mark as done
         self.assertEqual(b["state"], "running")
-        self.assertEqual(b["merge_failed"], "Conflicts with main after SHEP-1 merged: its agent is rebasing")
+        self.assertEqual(b["merge_failed"], "Conflicts with main after \"Task 1\" merged: its agent is rebasing")
         self.assertIn("Files that collide with origin/main: app.txt.", self.told[-1])
         self.assertIn("rebase task/2 onto origin/main", self.told[-1])
         self.assertIn("the merge already asked for then goes through by itself", self.told[-1])
@@ -10055,7 +10409,7 @@ class ParallelCollisions(unittest.TestCase):
         report = {"attention": [], "done": []}
         self.tick.facts(self.store, b, report)  # no auto_merge: the person hasn't asked to merge it
         self.assertEqual(b["attention"], "It conflicts with the base branch.")
-        self.assertEqual(b["merge_failed"], "Conflicts with main after SHEP-1 merged: its agent is rebasing")
+        self.assertEqual(b["merge_failed"], "Conflicts with main after \"Task 1\" merged: its agent is rebasing")
         news = b["pr"]["news"]["text"]
         self.assertIn("It conflicts with main: rebase onto main", news)
         self.assertIn("Files that collide with origin/main: app.txt.", news)
@@ -10081,7 +10435,7 @@ class ParallelCollisions(unittest.TestCase):
             self.tick.heads_up(self.store, t, report)
         self.assertEqual(report["collides"], ["SHEP-2"])  # the clean one hears nothing
         self.assertEqual(sent[0][0], "t2")
-        self.assertIn("main moved on (SHEP-1 merged) and now conflicts with your branch task/2", sent[0][1])
+        self.assertIn("main moved on (\"Task 1\" merged) and now conflicts with your branch task/2", sent[0][1])
         self.assertIn("app.txt", sent[0][1])
         self.assertNotIn("base_moved", b)
         b["base_moved"] = 1  # another merge elsewhere, the same collision: not told twice
@@ -10101,3 +10455,388 @@ class ParallelCollisions(unittest.TestCase):
         self.assertIn("that fix round is the accepted price", words)
         self.assertNotIn("as parallel edits there conflict at merge", words)
         self.assertIn("tasks touching different files run in parallel", words)
+
+
+class NeverTypedIntoAShell(unittest.TestCase):
+    """SHEP-324: herdr-core lost the agents' programs and kept their terminals as plain shells; messages meant for the
+    agents (another Assistant's, news, a task's) were typed into those shells as commands. Now nothing is typed into a
+    terminal whose agent isn't in front: an Assistant starts again with the message, a task's agent's message is kept
+    for the agent that restarts the task, and the sender is told. A fake hc (no real one runs), a throwaway held file."""
+
+    WORKER_KEY = "dev-shop#7"
+
+    def setUp(self):
+        import shutil
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.agents as agents
+        import herdr_task.news as news
+        import herdr_task.revive as revive
+        import herdr_task.machines as machines
+        import herdr_task.commands as commands
+        self.agents, self.news, self.revive, self.machines, self.commands = agents, news, revive, machines, commands
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.terms = {}
+        self.calls = []
+        self.next_address = "t9"
+
+        def hc_json(*args):
+            return json.loads(json.dumps(self.terms.get(args[1]))) if args[:1] == ("get",) and args[1] in self.terms else None
+
+        def run(args, **kw):
+            self.calls.append(list(args))
+            out = ""
+            if args[:2] == ["hc", "run"]:
+                out = json.dumps({"address": self.next_address}) if self.next_address else ""
+            if args[:2] == ["hc", "get"]:
+                out = json.dumps(self.terms.get(args[2]))
+            return types.SimpleNamespace(returncode=0 if (args[:2] != ["hc", "run"] or self.next_address) else 1, stdout=out, stderr="")
+
+        for mod, name, value in ((news, "HELD", os.path.join(self.tmp, "held.json")), (news, "hc_json", hc_json),
+                                 (news, "run", run), (news, "guard", lambda a: None), (news.time, "sleep", lambda s: None),
+                                 (news, "typing", lambda *a, **k: None),
+                                 (news.subprocess, "run", lambda args, **kw: run(args)),
+                                 (revive, "hc_json", hc_json), (revive, "run", run),
+                                 (revive, "RESTARTS", os.path.join(self.tmp, "restarts.json")),
+                                 (revive, "STORE", self.tmp)):
+            p = mock.patch.object(mod, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def term(self, address, fg, labels=None, **more):
+        self.terms[address] = {"address": address, "state": "live", "cwd": "/w", "labels": dict(labels or {}),
+                               "foreground": fg, "status": None, **more}
+        return self.terms[address]
+
+    SHELL = {"name": "bash", "argv": ["/bin/bash"], "pid": 11}
+    CLAUDE = {"name": "claude", "argv": ["claude", "--model", "opus"], "pid": 12}
+    RECORD = json.dumps({"kind": "claude", "session": "s-1", "argv": ["claude", "--model", "opus"], "cwd": "/w/shop"})
+
+    def typed(self):
+        return [c for c in self.calls if c[:2] == ["hc", "send"]]
+
+    def held(self):
+        try:
+            with open(self.news.HELD) as f:
+                return json.load(f)
+        except OSError:
+            return {}
+
+    # ---- what is in front ------------------------------------------------------------------------------------------
+    def test_front(self):
+        f = self.agents.front
+        live = lambda fg, **k: {"state": "live", "foreground": fg, **k}
+        self.assertEqual(f(live(self.SHELL)), "shell")
+        self.assertEqual(f(live({"name": "zsh", "argv": ["-zsh"]})), "shell")
+        self.assertEqual(f(live({"name": "bash", "argv": ["/bin/bash", "-ic", '"$@"; exec "$0" -i', "/bin/bash", "claude"]})), "agent")
+        self.assertEqual(f(live({"name": "fish", "argv": ["fish", "-ic", "claude; exec fish -i"]})), "agent")
+        self.assertEqual(f(live(self.CLAUDE, labels={"herdr.agent": "claude"})), "agent")
+        self.assertEqual(f(live({"name": "node", "argv": ["node", "codex"]}, labels={"herdr.agent": "codex"})), "agent")
+        self.assertEqual(f(live({"name": "2.1.330"}, labels={"herdr.agent": "claude"})), "agent")
+        self.assertEqual(f(live({"name": "vim", "argv": ["vim"]}, labels={"herdr.agent": "claude"})), "other")
+        self.assertEqual(f({"state": "finished"}), "gone")
+        self.assertEqual(f(None), "gone")
+        self.assertEqual(f({"state": "live", "agent": "bash"}), "shell")
+        self.assertEqual(f({"state": "live"}), "agent", "not told: as before")
+
+    # ---- a task's agent ----------------------------------------------------------------------------------------------
+    def test_a_task_agents_message_is_kept_never_typed_then_goes_with_its_restart(self):
+        self.term("t5", self.SHELL, {"herdr.task": self.WORKER_KEY, "herdr.agent": "claude"})
+        self.assertTrue(self.news.plain_send("t5", "rm -rf build; your merge failed"))
+        self.assertTrue(self.news.news_send("t5", "<herdr-news>checks failed</herdr-news>"))
+        self.assertEqual(self.typed(), [], "nothing typed into the shell")
+        self.assertEqual([(x["task"], x["text"]) for x in self.held()["t5"]],
+                         [(self.WORKER_KEY, "rm -rf build; your merge failed"), (self.WORKER_KEY, "<herdr-news>checks failed</herdr-news>")])
+        # the scheduler's pass keeps it (never types it), even once the old terminal is gone
+        self.news.held_pass({})
+        del self.terms["t5"]
+        self.news.held_pass({})
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(len(self.held()["t5"]), 2)
+        # the task restarts: its new agent's first message carries them, and they're gone from the held file
+        text = self.news.take_kept(self.WORKER_KEY)
+        self.assertTrue(text.startswith(self.news.KEPT_INTRO))
+        self.assertIn("your merge failed", text)
+        self.assertIn("checks failed", text)
+        self.assertEqual(self.held(), {})
+        self.assertIsNone(self.news.take_kept(self.WORKER_KEY))
+
+    def test_a_live_agent_still_gets_its_message(self):
+        self.term("t5", self.CLAUDE, {"herdr.task": self.WORKER_KEY, "herdr.agent": "claude"})
+        self.assertTrue(self.news.plain_send("t5", "carry on"))
+        self.assertEqual(self.typed(), [["hc", "send", "t5", "carry on"]])
+        self.assertEqual(self.news.send_or_hold("t5", "and this", "news"), "sent")
+        self.assertEqual(self.typed()[-1], ["hc", "send", "t5", "and this"])
+        self.assertEqual(self.held(), {})
+
+    def test_send_or_hold_says_no_agent_and_types_nothing(self):
+        self.term("t5", self.SHELL, {"herdr.task": self.WORKER_KEY})
+        self.assertEqual(self.news.send_or_hold("t5", "hello"), self.news.NO_AGENT)
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(self.held(), {}, "the caller decides")
+
+    def test_the_persons_reply_types_nothing_into_a_shell(self):
+        self.term("t5", self.SHELL, {"herdr.task": self.WORKER_KEY, "herdr.agent": "claude"})
+        self.assertEqual(self.news.person_send("t5", "hello"), self.news.NO_AGENT)
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(self.held(), {}, "the caller restarts its agent with it")
+
+    def test_another_program_in_front_holds_it_until_the_agent_is_back(self):
+        self.term("t5", {"name": "vim", "argv": ["vim"]}, {"herdr.agent": "claude"})
+        self.assertEqual(self.news.send_or_hold("t5", "hello"), "held")
+        self.news.held_pass({})
+        self.assertEqual(self.typed(), [])
+        self.terms["t5"]["foreground"] = self.CLAUDE
+        self.terms["t5"]["status"] = {"state": "idle"}
+        self.news.held_pass({})
+        self.assertEqual(self.typed(), [["hc", "send", "t5", "hello"]])
+
+    def test_a_reply_to_a_task_whose_agent_just_exited_restarts_it_with_the_reply(self):
+        from unittest import mock
+        started = []
+        t = {"id": 7, "state": "running"}
+        with mock.patch.object(self.commands, "workers", lambda s, t: [{"address": "t5"}]), \
+                mock.patch.object(self.news, "send_or_hold", lambda a, m, how="send": self.news.NO_AGENT), \
+                mock.patch.object(self.commands, "start_again", lambda s, t, space, *a, message=None, **k: (started.append(message), ({"address": "t9"}, True))[1]):
+            got = self.commands.tell(types.SimpleNamespace(dirty=False), t, "the reply", types.SimpleNamespace(space="sp1"))
+        self.assertEqual(got, ("t9", True))
+        self.assertEqual(started, ["the reply"])
+        self.assertEqual(self.typed(), [])
+
+    def test_a_restart_carries_what_was_kept(self):
+        from unittest import mock
+        self.news.hold("t5", "news for it", "news", task=self.WORKER_KEY)
+        seen = []
+        s = types.SimpleNamespace(dirty=False, key=lambda t: self.WORKER_KEY)
+        with mock.patch.object(self.commands, "live_agents", lambda key: []), \
+                mock.patch.object(self.commands, "_start_again", lambda s, t, space, key, argv, message, parent, nudge: (seen.append(message), ({"address": "t9"}, True))[1]):
+            self.commands.start_again(s, {"id": 7, "state": "running"}, "sp1", nudge="Carry on.")
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(seen[0].startswith("Carry on.\n\n" + self.news.KEPT_INTRO))
+        self.assertIn("news for it", seen[0])
+        self.assertEqual(self.held(), {})
+        # a start that fails keeps them for the next one
+        self.news.hold("t5", "again", "send", task=self.WORKER_KEY)
+        with mock.patch.object(self.commands, "live_agents", lambda key: []), \
+                mock.patch.object(self.commands, "_start_again", mock.Mock(side_effect=self.commands.Fail("no"))):
+            with self.assertRaises(self.commands.Fail):
+                self.commands.start_again(s, {"id": 7, "state": "running"}, "sp1")
+        self.assertIn("again", self.news.take_kept(self.WORKER_KEY))
+
+    # ---- an Assistant ------------------------------------------------------------------------------------------------
+    def assistant(self, address="t3", record=True):
+        labels = {"herdr.role": "coordinator", "herdr.space": "sp1", "herdr.coordinator.space": "sp1", "herdr.agent": "claude"}
+        if record:
+            labels["herdr.resume"] = self.RECORD
+        return self.term(address, self.SHELL, labels)
+
+    def test_an_assistant_starts_again_on_its_conversation_with_the_message(self):
+        self.assistant()
+        self.assertTrue(self.news.news_send("t3", "<herdr-news>SHOP-7 is ready</herdr-news>"))
+        self.assertEqual(self.typed(), [])
+        runs = [c for c in self.calls if c[:2] == ["hc", "run"]]
+        self.assertEqual(len(runs), 1)
+        r = runs[0]
+        self.assertEqual(r[r.index("--cwd") + 1], "/w/shop")
+        self.assertIn("--keep", r, "no tab: kept in the background, as restart.sh")
+        for label in ("herdr.role=coordinator", "herdr.space=sp1", "herdr.coordinator.space=sp1", "herdr.agent=claude"):
+            self.assertIn(label, r)
+        self.assertEqual(r[-6:], ["claude", "--model", "opus", "--resume", "s-1", "<herdr-news>SHOP-7 is ready</herdr-news>"])
+        self.assertIn(["hc", "kill", "t3"], self.calls)
+        self.assertIn(["hc", "rm", "t3"], self.calls)
+
+    def test_an_assistant_without_a_record_starts_fresh_with_the_message_as_its_task(self):
+        self.assistant(record=False)
+        self.assertEqual(self.revive.restart_assistant(self.terms["t3"], "hello"), "t9")
+        r = [c for c in self.calls if c[:2] == ["hc", "run"]][0]
+        self.assertEqual(r[-2:], ["assistant", "hello"])
+
+    def test_a_failed_restart_is_kept_and_not_tried_in_a_loop(self):
+        self.assistant()
+        self.next_address = None
+        self.assertTrue(self.news.news_send("t3", "news"))
+        self.assertEqual([x["text"] for x in self.held()["t3"]], ["news"])
+        self.assertNotIn(["hc", "kill", "t3"], self.calls)
+        self.news.held_pass({})
+        self.assertEqual(len([c for c in self.calls if c[:2] == ["hc", "run"]]), 1, "tried again only after a while")
+        self.assertEqual(self.typed(), [])
+
+    def test_a_restart_is_never_started_twice(self):
+        self.assistant()
+        self.assertEqual(self.revive.restart_assistant(self.terms["t3"], "a"), "t9")
+        self.assertIsNone(self.revive.restart_assistant(self.terms["t3"], "b"))
+        self.assertEqual(len([c for c in self.calls if c[:2] == ["hc", "run"]]), 1)
+
+    def test_a_held_message_for_an_assistant_that_exited_starts_it_again(self):
+        self.term("t3", self.CLAUDE, {"herdr.role": "coordinator", "herdr.resume": self.RECORD})
+        self.news.hold("t3", "first")
+        self.news.hold("t3", "second")
+        self.terms["t3"]["foreground"] = self.SHELL
+        report = {}
+        self.news.held_pass(report)
+        self.assertEqual(self.typed(), [])
+        self.assertEqual(report["restarted"], [{"from": "t3", "to": "t9", "messages": 2}])
+        r = [c for c in self.calls if c[:2] == ["hc", "run"]][0]
+        self.assertEqual(r[-1], "first\n\nsecond")
+        self.assertEqual(self.held(), {})
+
+    # ---- tell-assistant -----------------------------------------------------------------------------------------------
+    def tell(self, row):
+        from unittest import mock
+        graph = {"core": {"name": "vm", "id": "c1"}, "assistants": []}
+        with mock.patch.object(self.machines, "directory", lambda refresh=False: ({"graph": graph}, [row])), \
+                mock.patch.object(self.machines, "nodes", lambda g: []), \
+                mock.patch.object(self.machines, "hc_json", lambda *a: self.news.hc_json(*a)):
+            return self.machines.tell("sp1", "Can you check SHOP-7?", sender="t1")
+
+    def test_tell_assistant_to_one_that_exited_restarts_it_and_says_so(self):
+        self.assistant()
+        r = self.tell({"target": "t3", "route": "", "address": "t3", "space": "sp1", "space_name": "shop"})
+        self.assertEqual(r["restarted"], "t9")
+        self.assertEqual(self.typed(), [])
+        self.assertIn("Can you check SHOP-7?", [c for c in self.calls if c[:2] == ["hc", "run"]][0][-1])
+
+    def test_tell_assistant_says_plainly_when_it_couldnt(self):
+        self.assistant()
+        self.next_address = None
+        with self.assertRaises(self.machines.Fail) as e:
+            self.tell({"target": "t3", "route": "", "address": "t3", "space": "sp1", "space_name": "shop"})
+        self.assertIn("plain shell", str(e.exception))
+        self.assertIn("nothing was typed", str(e.exception))
+        self.assertEqual(self.typed(), [])
+
+    def test_tell_assistant_on_another_machine_types_nothing_into_its_shell(self):
+        from unittest import mock
+        self.assistant()
+
+        def there(argv):
+            inner = argv[argv.index("--") + 1:]
+            # fork: SHEP-61's hops run the command there through layout.there_argv (sh -c 'PATH=...; exec "$@"' sh ...)
+            return inner[4:] if inner[:2] == ["sh", "-c"] else inner
+        with mock.patch.object(self.machines.subprocess, "run", lambda argv, **kw: self.news.run(there(argv))), \
+                mock.patch.object(self.machines, "guard", lambda a: None), \
+                mock.patch.object(self.machines, "typing", lambda *a, **k: None):
+            with self.assertRaises(self.machines.Fail) as e:
+                self.machines._deliver(["vm-b"], ["herdr-core"], "t3", "hello")
+        self.assertIn("plain shell", str(e.exception))
+        self.assertEqual(self.typed(), [])
+
+
+class RepoSettings(unittest.TestCase):
+    """SHEP-335: the settings that shape a task are the repo's it works in, whichever space started it: Everywhere,
+    then the repo (settings.json "repos"), then the task's own --set. A throwaway settings file; no hc."""
+
+    def setUp(self):
+        from unittest import mock
+        sys.path.insert(0, BIN)
+        import herdr_task.settings as settings
+        self.settings = settings
+        self.dir = tempfile.mkdtemp()
+        self.file = os.path.join(self.dir, "settings.json")
+        p = mock.patch.object(settings, "SETTINGS", self.file)
+        p.start()
+        self.addCleanup(p.stop)
+        self.repo = os.path.join(self.dir, "shop")
+        self.store = types.SimpleNamespace(loc={"folder": self.repo, "kind": "repo"})
+
+    def write(self, d):
+        with open(self.file, "w") as f:
+            json.dump(d, f)
+
+    def merge(self, task):
+        return next(x for x in self.settings.task_settings(self.store, task) if x["label"] == "Merge")
+
+    def test_everywhere_then_the_repo_then_the_task(self):
+        self.write({"everywhere": {"tasks": {"merge": "checks", "proof": False}},
+                    "repos": {self.repo: {"tasks": {"merge": "auto"}}}, "spaces": {"sproot": {"folder": "/", "name": "root"}}})
+        # started by root (its folder is /), it works in the shop repo: the shop repo's Merge
+        t = {"id": "SHOP-1", "mode": "worktree", "space": "sproot"}
+        m = self.merge(t)
+        self.assertEqual((m["value"], m["by"], m["from"]), ("auto", "repo", "repo"))
+        self.assertIn("(this repo's setting)", self.settings.settings_block(self.store, t, argv=["claude"]))
+        self.assertEqual(self.settings.merge_policy(self.store, t), "auto")
+        # Everywhere's where the repo sets nothing
+        proof = next(x for x in self.settings.task_settings(self.store, t) if x["label"] == "Proof")
+        self.assertEqual((proof["value"], proof["by"]), (False, "all"))
+        # the task's own --set wins
+        self.settings.set_task(t, "merge", "ask me first")
+        self.assertEqual((self.merge(t)["value"], self.merge(t)["by"]), ("ask", "task"))
+        # another repo of the same space gets Everywhere's
+        other = types.SimpleNamespace(loc={"folder": os.path.join(self.dir, "blog"), "kind": "repo"})
+        self.assertEqual(self.settings.merge_policy(other, {"space": "sproot"}), "checks")
+
+    def test_a_space_on_the_repo_no_longer_sets_its_tasks_once_moved(self):
+        self.write({"repos": {self.repo: {"tasks": {"merge": "checks"}}},
+                    "spaces": {"sp1": {"folder": self.repo, "tasks": {"merge": "auto"}, "worker": {"agent": "codex"}}}})
+        self.assertEqual(self.settings.merge_policy(self.store, {"space": "sp1"}), "checks")
+        self.assertEqual(self.settings.worker_pick(self.store, {"space": "sp1"})["agent"], "claude")
+
+    def test_a_file_not_moved_yet_reads_the_space_on_the_repo(self):
+        """Before the update moves them: a space whose folder is the repo still gives its tasks its values, as before."""
+        self.write({"spaces": {"sp1": {"folder": self.repo, "tasks": {"merge": "auto"}}, "sproot": {"folder": "/", "tasks": {"merge": "checks"}}}})
+        m = self.merge({"space": "sproot", "mode": "worktree"})
+        self.assertEqual((m["value"], m["by"]), ("auto", "repo"))
+
+    def test_a_spaces_own_settings_stay_the_spaces(self):
+        """What is about the space (Suggested next message) comes from the space that started the task, not the repo."""
+        self.write({"spaces": {"sproot": {"folder": "/", "agents": {"suggestions": False}}},
+                    "repos": {self.repo: {"tasks": {"merge": "auto"}}}})
+        sug = next(x for x in self.settings.task_settings(self.store, {"space": "sproot"}) if x["label"] == "Suggested next message")
+        self.assertEqual((sug["value"], sug["by"], sug["from"]), (False, "space", "space"))
+
+    def test_sources(self):
+        self.write({"everywhere": {"tasks": {"proof": False}}, "machines": {"local": {"tasks": {"must_fix": "minor"}}},
+                    "repos": {self.repo: {"tasks": {"merge": "auto"}, "worker": {"agent": "codex"}}}})
+        src = self.settings.setting_sources(self.store)
+        self.assertEqual(src["tasks.merge"], "repo")
+        self.assertEqual(src["tasks.proof"], "Everywhere")
+        self.assertEqual(src["tasks.must_fix"], "machine")
+        self.assertEqual(src["tasks.review_rounds"], "default")
+        self.assertEqual(src["worker"], "repo")
+        # show: every line says where it comes from, the defaults too
+        block = self.settings.settings_block(self.store, {"mode": "worktree"}, argv=["claude"], sources=True)
+        self.assertIn("- Review: off (Herdr's default)", block)
+        self.assertIn("(this repo's setting)", block)
+        self.assertIn("(your setting everywhere)", block)
+
+    def test_config_show_and_add_say_where_from(self):
+        """The real CLI on a scratch repo, a fake hc (refusing) first on PATH: config lists each value's source, add says
+        what the new task got from its repo; show's lines mark every value's source."""
+        tmp = self.dir
+        os.makedirs(os.path.join(tmp, "bin"))
+        with open(os.path.join(tmp, "bin", "hc"), "w") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(os.path.join(tmp, "bin", "hc"), 0o755)
+        # fork: on NixOS (nextgate's envfs /usr/bin) the narrow PATH below finds no git for herdr-task: link it in
+        if shutil.which("git"):
+            os.symlink(shutil.which("git"), os.path.join(tmp, "bin", "git"))
+        repo = os.path.realpath(os.path.join(tmp, "repo-shep335-cli"))
+        os.makedirs(repo)
+        subprocess.run(["git", "-C", repo, "init", "-q"], check=True)
+        subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "i"], check=True)
+        self.write({"everywhere": {"tasks": {"merge": "checks"}}, "repos": {repo: {"tasks": {"merge": "auto"}}},
+                    "spaces": {"sproot": {"folder": "/", "name": "root"}}})
+        env = {"HOME": os.environ["HOME"], "PATH": f"{tmp}/bin:/usr/bin:/bin", "HC_SESSION": "t335", "SHEPHERDR_SESSION": "t335",
+               "HERDR_TASK_STORE": os.path.join(tmp, "store"), "HERDR_TASK_SETTINGS": self.file, "SHEPHERDR_NO_MIGRATE": "1"}
+        cli = [sys.executable, os.path.join(BIN, "herdr-task")]
+
+        def run(*args):
+            p = subprocess.run(cli + list(args), capture_output=True, text=True, env=env)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            return p.stdout
+        conf = json.loads(run("config", "--folder", repo, "--json"))
+        self.assertEqual(conf["settings"]["tasks"]["merge"], "auto")
+        self.assertEqual(conf["from"]["tasks.merge"], "repo")
+        self.assertIn('tasks.merge: "auto" (repo)', run("config", "--folder", repo))
+        added = run("add", "Try it", "--folder", repo, "--space", "sproot")
+        self.assertIn("Its settings: Merge on its own (this repo's setting).", added)
+        # show asks hc (refused on a test's HOME): its lines are settings_block(sources=True), its JSON task_settings
+        lists = [f for f in os.listdir(os.path.join(tmp, "store")) if f.endswith(".json") and not f.startswith(".")]
+        with open(os.path.join(tmp, "store", lists[0])) as f:
+            t = json.load(f)["tasks"][0]
+        store = types.SimpleNamespace(loc={"folder": repo, "kind": "repo"})
+        self.assertIn("- Merge: on its own: once you say ready, Herdr merges it, waiting only on checks its base branch requires (this repo's setting)",
+                      self.settings.settings_block(store, t, argv=["claude"], sources=True))
+        rows = {x["label"]: x for x in self.settings.task_settings(store, t, argv=["claude"])}
+        self.assertEqual((rows["Merge"]["from"], rows["Review"]["from"]), ("repo", "default"))

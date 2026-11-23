@@ -43,7 +43,7 @@ class Repo(unittest.TestCase):
     def test_the_one_herdr_mod(self):
         """herdr/open-shepherdr is all Shepherdr puts in the Herdr app: a popup opened by a key (place none, an
         overlay), one button that opens the web app's link, nothing imported from outside its folder, and it parses."""
-        self.assertEqual(os.listdir(J("herdr")), ["open-shepherdr"])
+        self.assertEqual(sorted(os.listdir(J("herdr"))), ["open-shepherdr", "window-notice"])
         self.assertEqual(sorted(os.listdir(J("herdr", "open-shepherdr"))), ["main.js", "mod.json"])
         mod = json.load(open(J("herdr", "open-shepherdr", "mod.json")))
         self.assertEqual(mod["place"], "none")
@@ -67,6 +67,47 @@ class Repo(unittest.TestCase):
             with open(J("herdr", "open-shepherdr", "main.js"), "rb") as f:
                 p = subprocess.run(["node", "--input-type=module", "--check"], stdin=f, capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_the_window_notice(self):
+        """herdr/window-notice (SHEP-355) goes in the place of each of 3.1's window views: self-contained, place none, one
+        button that opens the web app's link (at the space an Assistant tab names), never a tooltip, and it parses."""
+        top = J("herdr", "window-notice")
+        self.assertEqual(sorted(os.listdir(top)), ["blank.js", "full.js", "mod.json", "notice.js"])
+        self.assertEqual(json.load(open(os.path.join(top, "mod.json"))), {"place": "none", "title": "Shepherdr"})
+        for f in ("blank.js", "full.js", "notice.js"):
+            src = open(os.path.join(top, f), encoding="utf-8").read()
+            for spec in re.findall(r"""from\s+["']([^"']+)["']""", src):
+                self.assertIn(spec, ("herdr", "gpui-kit", "gpui-base", "./notice.js"), f"{f} imports {spec}")
+            self.assertNotIn(".tooltip(", src)
+            if shutil.which("node"):
+                p = subprocess.run(["node", "--input-type=module", "--check"], input=src, capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, f + p.stderr)
+        src = open(os.path.join(top, "notice.js"), encoding="utf-8").read()
+        self.assertIn("Shepherdr 3.1's window views, retired", src[:200], "bin/shepherdr's is_notice() knows a notice by it")
+        self.assertIn("Shepherdr 3.1's window views, retired", open(J("bin", "shepherdr")).read())
+        self.assertEqual(src.count(".on_click("), 1, "one button")
+        self.assertIn("web.json", src)
+        if not shutil.which("node"):
+            return
+        # its link logic, with Herdr's modules stood in for
+        body = re.sub(r"^import .*$", "", src, flags=re.M)
+        stub = ("const div = () => 0, v_flex = () => 0, h_flex = () => 0, exec = async () => ({}), theme = () => ({}), "
+                "props = () => ({}), shared = () => null; class View {}\n")
+        test = """
+const out = {
+  link: linkOf('{"link":"https://box.example.ts.net/shepherdr/"}'), none: linkOf("not json"), plain: linkOf('{"link":"file:///x"}'),
+  at: linkAt("https://box.example.ts.net/shepherdr/", { space: "spa1b2" }),
+  remote: linkAt("https://box.example.ts.net/shepherdr/?x=1", { space: "vm/sp1" }),
+  bad: linkAt("https://box.example.ts.net/shepherdr/", { space: "a b<script>" }),
+  nolink: linkAt(null, { space: "sp1" }), words: WORDS.title };
+console.log(JSON.stringify(out));"""
+        p = subprocess.run(["node", "--input-type=module", "-e", stub + body + test], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout), {
+            "link": "https://box.example.ts.net/shepherdr/", "none": None, "plain": None,
+            "at": "https://box.example.ts.net/shepherdr/?place=spa1b2",
+            "remote": "https://box.example.ts.net/shepherdr/?x=1&place=vm%2Fsp1",
+            "bad": "https://box.example.ts.net/shepherdr/", "nolink": None, "words": "Shepherdr now lives in the web app"})
 
     def test_every_plugin_has_its_page(self):
         """web/plugins.json lists the web app's plugins; each is a folder with its client.tsx."""
@@ -182,6 +223,17 @@ class Repo(unittest.TestCase):
         self.assertIn(".cbox:focus-within{", css)
         self.assertIn(".inp:focus{", css)
 
+    def test_task_ring_colours(self):
+        """A working task's ring is the app's own yellow, not blue (SHEP-351); Needs you moved to red so the two never
+        share a colour, and a status word coloured c-red has a rule behind it."""
+        with open(J("web/src/ds.css"), encoding="utf-8") as fh:
+            css = fh.read()
+        self.assertRegex(css, r"\.tring\{[^}]*color:var\(--amber\)")
+        self.assertIn(".tring.t-ask{color:var(--red)}", css)
+        self.assertIn(".c-working{color:var(--amber)}", css)
+        self.assertIn(".c-red{color:var(--red)}", css)
+        self.assertNotRegex(css, r"\.tring[^{]*\{[^}]*var\(--blue\)")
+
     def test_no_tap_flash(self):
         """No browser box on a press (SHEP-303: Android Chrome flashed blue over every button). The page root turns
         the tap highlight off for everything under it, keyboard focus rings stay, and nothing turns it back on."""
@@ -222,24 +274,40 @@ class Repo(unittest.TestCase):
         self.assertIn('html:not([data-theme="light"]){color-scheme:dark;background:%s}' % D, style)
         self.assertIn('html[data-theme="dark"]{color-scheme:dark;background:%s}' % D, style)
         self.assertIn('<meta name="color-scheme" content="light dark" />', head)
-        self.assertIn('<meta name="theme-color" content="%s" />' % L, head)
+        # SHEP-341: the browser's bar is right with no script, by media, and the script sets every one of them
+        self.assertIn('<meta name="theme-color" media="(prefers-color-scheme: light)" content="%s" />' % L, head)
+        self.assertIn('<meta name="theme-color" media="(prefers-color-scheme: dark)" content="%s" />' % D, head)
+        self.assertEqual(head.count('name="theme-color"'), 2)
+        self.assertIn("querySelectorAll('meta[name=theme-color]')", head)
         self.assertIn("dark ? '%s' : '%s'" % (D, L), head)
         self.assertIn("interactive-widget=resizes-content", head)
         self.assertIn("viewport-fit=cover", head)
         prefs = open(J("web/src/prefs.ts")).read()
         self.assertIn("const BAR = { light: '%s', dark: '%s' }" % (L, D), prefs)
-        self.assertIn("const MANIFEST = { light: 'manifest.webmanifest', dark: 'manifest-dark.webmanifest' }", prefs)
-        self.assertIn("'manifest-dark.webmanifest'", head)
-        ml = json.load(open(J("web/public/manifest.webmanifest")))
-        md = json.load(open(J("web/public/manifest-dark.webmanifest")))
+        self.assertIn("querySelectorAll<HTMLMetaElement>('meta[name=theme-color]')", prefs)
+        # SHEP-341: the manifest linked with no script is dark, the app's own: an installed Android app keeps the one
+        # it was installed with and paints the window under the gesture bar in its background_color (the white strip
+        # of 3.2.2, whose default manifest was white). Light swaps in manifest-light. The same URL stays dark, so an
+        # app installed from it sees the new colours at its next manifest check and Chrome updates it.
+        self.assertIn('<link rel="manifest" href="manifest.webmanifest"', head)
+        self.assertIn("const MANIFEST = { light: 'manifest-light.webmanifest', dark: 'manifest.webmanifest' }", prefs)
+        self.assertIn("if (!dark) document.querySelector('link[rel=manifest]').setAttribute('href', 'manifest-light.webmanifest')", head)
+        md = json.load(open(J("web/public/manifest.webmanifest")))
+        ml = json.load(open(J("web/public/manifest-light.webmanifest")))
+        # 3.2.2's dark one, still linked by a page loaded before this: the same as the default
+        self.assertEqual(json.load(open(J("web/public/manifest-dark.webmanifest"))), md)
         self.assertEqual((ml["background_color"], ml["theme_color"]), (L, L))
         self.assertEqual((md["background_color"], md["theme_color"]), (D, D))
-        # the same app in either: only the colours differ
+        # the same app in either (the same id: a new id would install a second app): only the colours differ
+        self.assertEqual(md["id"], "./")
         for k in ("background_color", "theme_color"):
             ml.pop(k), md.pop(k)
         self.assertEqual(ml, md)
-        # the phone's bottom bar runs under the gesture bar
+        # the bottom under the gesture bar: the phone's bottom bar runs under it, and without that bar (a tablet, an
+        # unfolded phone) the layout keeps the inset clear, painted by the page's canvas
         self.assertIn(".bar{padding-bottom:calc(12px + env(safe-area-inset-bottom))}", css)
+        styles = open(J("web/src/styles.css")).read()
+        self.assertIn(".app:not(.phone) .device{padding-bottom:env(safe-area-inset-bottom)}", styles)
 
     def test_no_component_made_inside_a_dialog(self):
         """A dialog with fields is opened with openForm (SHEP-308): a component made inside openDialog's render is a
@@ -296,9 +364,39 @@ class Repo(unittest.TestCase):
                             bad.append(f"{rel}: {call.group(1)}( without env")
         self.assertEqual(bad, [])
 
+    def test_every_chrome_skips_the_keychain(self):
+        """Every Chrome Shepherdr (or its tests, or a note telling an agent how) starts itself gets --use-mock-keychain
+        and --password-store=basic: without them a Mac asks for 'Chromium Safe Storage' in the keychain, again on every
+        Deny. A launch line is one naming --user-data-dir, --headless=new or --remote-debugging-port; the flags (or
+        herdr-browser's $NO_KEYCHAIN) must be in it or the lines around it (one argument list)."""
+        launch = re.compile(r"--user-data-dir|--headless=new|--remote-debugging-port")
+        files = list(text_files()) + [J("AGENTS.md")]
+        for top in ("test", "docs", "web/demo"):
+            for d, dirs, fs in os.walk(J(top)):
+                dirs[:] = [x for x in dirs if x not in ("__pycache__", "node_modules")]
+                files += [os.path.join(d, f) for f in fs if f.endswith((".py", ".ts", ".md", ".sh"))]
+        found = 0
+        for f in files:
+            if os.path.abspath(f) == os.path.abspath(__file__):
+                continue
+            try:
+                lines = open(f, encoding="utf-8").read().split("\n")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for i, line in enumerate(lines):
+                if not launch.search(line):
+                    continue
+                found += 1
+                near = "\n".join(lines[max(0, i - 3):i + 4])
+                ok = "$NO_KEYCHAIN" in near or ("--use-mock-keychain" in near and "--password-store=basic" in near)
+                self.assertTrue(ok, f"{os.path.relpath(f, ROOT)}:{i + 1} starts Chrome without the keychain flags")
+        self.assertGreaterEqual(found, 5, "the launch lines were found")
+        browser = open(J("bin", "herdr-browser"), encoding="utf-8").read()
+        self.assertIn('NO_KEYCHAIN="--use-mock-keychain --password-store=basic"', browser)
+
     def test_version_everywhere(self):
         v = re.search(r'^VERSION = "([^"]+)"', open(J("bin", "shepherdr")).read(), re.M).group(1)
-        self.assertEqual(v, "3.2.2")
+        self.assertEqual(v, "3.2.5")
         self.assertEqual(json.load(open(J("package.json")))["version"], v)
         self.assertRegex(open(J("CHANGELOG.md")).read(), rf"(?m)^## {re.escape(v)}\b", "CHANGELOG's newest entry")
         self.assertEqual(re.search(r"(?m)^## (\d+\.\d+\.\d+)", open(J("CHANGELOG.md")).read()).group(1), v, "CHANGELOG's top heading")
@@ -320,6 +418,36 @@ def shell_scripts():
             continue
         if re.match(r"#!\s*(/usr/bin/env\s+)?(/bin/)?(ba)?sh\b", first):
             yield f
+
+
+class NoTaskNumbers(unittest.TestCase):
+    """SHEP-322: the person never sees or types a task number. The agents' instructions name a task by its title;
+    its key (SHOP-2) is for commands only, and the prefix is nobody's to pick any more."""
+
+    def read(self, name):
+        with open(os.path.join(ROOT, "templates", name)) as f:
+            return f.read()
+
+    def test_the_assistant_names_tasks_by_title(self):
+        a = self.read("assistant.md")
+        for gone in ("PREFIX-n", "by its ID", "config --prefix", "The prefix is yours to pick", "by ID (", "PREFIX-An"):
+            self.assertNotIn(gone, a)
+        self.assertIn("name a task by its title, never by a key or a number", a)
+        self.assertIn("Every `herdr-task` command takes a task by its title", a)
+        self.assertIn("never write it in anything the person reads", a)
+        self.assertIn("which wait, by title.", a)
+        # the news it gets: the title in its words, the key only in the tag
+        for line in re.findall(r"<herdr-news task=\"[A-Z]+-\d+\" event=\"[a-z-]+\">([^<]*)</herdr-news>", a):
+            self.assertNotRegex(line, r"\b[A-Z]{2,}-\d+\b", line)
+        # what it says to the person, in its examples, never holds a key
+        for said in re.findall(r'\("([^"]+)"\)', a):
+            self.assertNotRegex(said, r"\b[A-Z]{2,}-\d+\b", said)
+
+    def test_the_worker_names_tasks_by_title(self):
+        w = self.read("worker.md")
+        self.assertIn("Name tasks by their titles in everything you write", w)
+        self.assertIn("is for commands only: never write it anywhere the person reads", w)
+        self.assertIn("[@Fix login](task:", w)
 
 
 class ShellScripts(unittest.TestCase):
@@ -460,3 +588,31 @@ class TestsOnAThrowawayHome(unittest.TestCase):
         # this repo's own files are fine, wherever its worktree lives
         open(J("README.md")).close()
         subprocess.run(["true"], check=True)
+
+
+class TerminalAndScreenInMenus(unittest.TestCase):
+    """Terminal and Screen are rows of the space's name menu and the task's ⋯ menu, never header buttons."""
+
+    def src(self, name):
+        with open(os.path.join(ROOT, 'web', 'plugins', name, 'client.tsx')) as f:
+            return f.read()
+
+    def test_no_header_buttons(self):
+        for name in ('terminal', 'screens'):
+            s = self.src(name)
+            self.assertNotIn('reg.header.push', s, name)
+            self.assertNotIn('reg.taskHeader.push', s, name)
+
+    def test_rows_in_both_menus(self):
+        t, sc = self.src('terminal'), self.src('screens')
+        self.assertIn('spaceTermRow', t)
+        self.assertIn('taskTermRow', t)
+        self.assertEqual(sc.count('screenRow(getState().ui'), 2)
+
+    def test_header_keeps_tasks_and_artifacts(self):
+        for name in ('tasks', 'artifacts'):
+            self.assertIn('reg.header.push', self.src(name), name)
+
+    def test_no_voice_button_in_the_header(self):
+        # the voice call's button is the message box's round button (SHEP-363)
+        self.assertNotIn('reg.header.push', self.src('voice'))

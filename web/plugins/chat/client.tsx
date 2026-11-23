@@ -1,25 +1,34 @@
 // The chat: an agent's messages (formatted text, code, tables, pictures), one quiet line while it works saying what
 // it is doing, one small folded row per turn ("Ran 4 commands · edited 2 files"), cards where it needs you, and the
 // message box. The same parts draw a space's chat and a task's thread.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { copyText } from '@client/copy.ts'
-import { act, definePlugin, getState, notice, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
-import { partsOf, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
+import { TEXT_IN_CALL } from '@client/dictate.tsx'
+import { act, definePlugin, getState, has, notice, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
+import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
 import { AgentLine, openPicker, pickFor, pickWords, type Pick } from '@client/picker.tsx'
 import { attach, detach, dropOut, retry, reupload, send } from '@client/send.ts'
 import { Btn, cx, Empty, I, IB, useGrow } from '@client/ui.tsx'
+import type { IconName } from '@client/icons.ts'
 import { isImage, isVideo } from '@shared/files.ts'
-import type { Chat, Message, Snapshot, Task, TurnActivity } from '@shared/types.ts'
+import type { Chat, Message, Relay, Snapshot, Task, TaskBrief, TurnActivity } from '@shared/types.ts'
 import { isEverything, placeOf, taskOf } from '@shared/view.ts'
 import { StatusIcon } from '@plugins/tasks/icon.tsx'
 import { DoneRow, QuestionCard, SecretCard } from './cards.tsx'
+import { briefFrom, deliveryWord, looksLong, startWords } from './brief.ts'
+import { relayLabel, relayState, relayWhy } from './relay.ts'
+import { Finger, HOLD_MS, quickFit, REPLY_AT, type QuickFit } from './press.ts'
 import { dayLabel } from './days.ts'
-import { Markdown } from './markdown.tsx'
+import { Markdown, withLinks } from './markdown.tsx'
 import { dropped, pasted } from './paste.ts'
+import { touch } from './clip.ts'
+import { landLaunchShare, putAway, useLanded, watchLastChat } from './share.ts'
+import { openSendTo } from './sendto.tsx'
 import { suggestionOf, suggestionsOn } from './suggest.ts'
 import { BoxThumb, openPreview, SentThumb, sourcesOf } from './thumbs.tsx'
 import { signOf } from './typing.ts'
+import { newsRow, type NewsRow } from './news.ts'
 
 export { fileUrl } from './thumbs.tsx'
 
@@ -66,6 +75,59 @@ function Did({ a }: { a: TurnActivity }) {
   )
 }
 
+/** one quiet row, as a turn's "Ran 4 commands", never a bubble: an icon, its words, then muted ones (its time, a
+ *  state); with a body, a tap opens it under the row (a long one scrolls in place) and a tap again folds it. Task news
+ *  (SHEP-365) and messages between agents (SHEP-368) are drawn with it, one style for both. */
+function QuietRow({ icon, label, meta = [], body, startOpen = false, kind }: { icon: IconName; label: string; meta?: { word: string; tone?: 'red' | 'amber' }[]; body?: ReactNode; startOpen?: boolean; kind: string }) {
+  const [open, setOpen] = useState(startOpen)
+  const words = (
+    <>
+      <I n={icon} c="s16" />
+      <span className="ql">
+        {label}
+        {meta.filter((x) => x.word).map((x, i) => <span key={i} className={cx('qm', x.tone === 'red' && 'c-red', x.tone === 'amber' && 'c-ask')}>{x.word}</span>)}
+      </span>
+    </>
+  )
+  // its own icon stands in the chat's one icon column (SHEP-383), so its words line up with every other row's; the
+  // fold's chevron trails the words
+  if (!body) return <div className={cx('fold quiet', kind)}>{words}</div>
+  return (
+    <>
+      <button type="button" className={cx('fold quiet', kind)} aria-expanded={open} onClick={() => setOpen(!open)}>
+        {words}
+        <I n={open ? 'down' : 'right'} c="s16 qv" />
+      </button>
+      {open && <div className={cx('quietb', `${kind}b`)}>{body}</div>}
+    </>
+  )
+}
+
+/** a task's news as one quiet row (news.ts newsRow); longer words wait behind its fold */
+function NewsLine({ row, at }: { row: NewsRow; at?: number }) {
+  return <QuietRow kind="news" icon="note" label={row.label} meta={at ? [{ word: clock(at) }] : []} body={row.body ? <div className="qt">{row.body}</div> : undefined} />
+}
+
+/** a message between agents (SHEP-368), in the sender's chat and the receiver's: whom it went to or who sent it, when,
+ *  and whether it got there; it opens to its words (and the files it came with), and why it waits or didn't go */
+export function RelayRow({ r, text, at, startOpen = false }: { r: Relay; text: string; at?: number; startOpen?: boolean }) {
+  const why = relayWhy(r)
+  return (
+    <QuietRow kind="relay" icon={r.dir === 'to' ? 'send' : 'chat'} label={relayLabel(r)} startOpen={startOpen} meta={[{ word: at ? clock(at) : '' }, relayState(r)]}
+      body={
+        <>
+          {why && <p className={cx('qw', r.state === 'failed' ? 'c-red' : 'c-ask')}>{why}</p>}
+          <div className="qt">{text}</div>
+          {r.files?.length ? (
+            <ul role="list" className="qf">
+              {r.files.map((f, i) => <li key={i}><I n="doc" c="s16" />{f}</li>)}
+            </ul>
+          ) : null}
+        </>
+      } />
+  )
+}
+
 /** the line naming the task above messages that came from it */
 function TaskRef({ id, title, t }: { id: string; title: string; t?: Task }) {
   return (
@@ -76,12 +138,19 @@ function TaskRef({ id, title, t }: { id: string; title: string; t?: Task }) {
   )
 }
 
+/** reply to a message: a quote of it goes in the box, and the box takes the keyboard */
+export function replyTo(msg: Message, key: string) {
+  const text = msg.text ?? msg.file?.name ?? ''
+  setUI((ui) => ({ reply: { ...ui.reply, [key]: { id: msg.id, who: msg.who, text: text.slice(0, 200) } } }))
+  document.querySelector<HTMLTextAreaElement>(`textarea[data-box="${CSS.escape(key)}"]`)?.focus()
+}
+
 function msgMenu(anchor: Element, msg: Message, chat: Chat, thread: Thread, select: () => void) {
   const key = thread.chat
   const text = msg.text ?? msg.file?.name ?? ''
   const rows: MenuRow[] = [
     // Reply puts a quote of the message in the box
-    { icon: 'reply', label: 'Reply', run: () => { setUI((ui) => ({ reply: { ...ui.reply, [key]: { id: msg.id, who: msg.who, text: text.slice(0, 200) } } })); document.querySelector<HTMLTextAreaElement>(`textarea[data-box="${CSS.escape(key)}"]`)?.focus() } },
+    { icon: 'reply', label: 'Reply', run: () => replyTo(msg, key) },
     { icon: 'copy', label: 'Copy', run: () => void copyText(text).then((ok) => ok && notice('Copied')) },
     // Select text makes that message's text selectable
     { icon: 'select', label: 'Select text', run: select },
@@ -93,29 +162,231 @@ function msgMenu(anchor: Element, msg: Message, chat: Chat, thread: Thread, sele
   openMenu(anchor, rows, { label: 'Message', top: tops.length ? (close) => tops.map((m, i) => (m.Top ? <m.Top key={i} msg={msg} chat={chat} close={close} /> : null)) : undefined })
 }
 
+/* ---------- acting on a message (SHEP-332) ---------- */
+
+/** the one message whose quick bar a tap opened: `y`, where on it the tap was (px from its top) */
+let quickNow: { id: string; y: number | null } | null = null
+const quickSubs = new Set<() => void>()
+function setQuick(q: typeof quickNow) {
+  quickNow = q
+  quickSubs.forEach((f) => f())
+}
+const quickSub = (f: () => void) => {
+  quickSubs.add(f)
+  return () => void quickSubs.delete(f)
+}
+const useQuick = (id: string) => useSyncExternalStore(quickSub, () => (quickNow?.id === id ? quickNow : null))
+
+/** The click a finger's lift makes after a hold would land on the menu's backdrop the hold just opened, and close it:
+ *  the next click (within a moment of the lift) is swallowed. */
+function swallowClick() {
+  const eat = (e: Event) => {
+    e.preventDefault()
+    e.stopPropagation()
+    off()
+  }
+  const lifted = () => setTimeout(off, 400)
+  const off = () => {
+    removeEventListener('click', eat, true)
+    removeEventListener('pointerup', lifted, true)
+  }
+  addEventListener('click', eat, true)
+  addEventListener('pointerup', lifted, true)
+}
+
+/** a light tick, where the device has one (Android; iPhones have no web haptics) */
+const tick = (ms = 8) => {
+  try {
+    navigator.vibrate?.(ms)
+  } catch {
+    /* not allowed here */
+  }
+}
+
+/** The quick bar beside a message, on its open side: add a reaction, reply, more (the whole menu); on a narrow screen
+ *  only the first. `y`: where to centre it, for a message taller than the screen. */
+function QuickBar({ msg, chat, thread, mine, wrap, y, done, more }: { msg: Message; chat: Chat; thread: Thread; mine: boolean; wrap: HTMLElement; y: number | null; done: () => void; more: (el: Element) => void }) {
+  const phone = useUI((u) => u.phone)
+  const [fit, setFit] = useState<QuickFit | null>(null)
+  useLayoutEffect(() => {
+    const w = wrap.getBoundingClientRect()
+    const m = (wrap.parentElement ?? wrap).getBoundingClientRect()
+    setFit(quickFit(mine ? w.left - m.left : m.right - w.right, !phone))
+  }, [wrap, mine, phone])
+  const quick = registry.messageQuick
+  const reply = (
+    <button key="reply" type="button" className="qbtn" aria-label="Reply" onClick={() => { done(); replyTo(msg, thread.chat) }}>
+      <I n="reply" />
+    </button>
+  )
+  const buttons = [
+    ...quick.map((q, i) => <q.View key={`q${i}`} msg={msg} chat={chat} />),
+    reply,
+    <button key="more" type="button" className="qbtn" aria-label="More" aria-haspopup="menu" onClick={(e) => more(e.currentTarget)}>
+      <I n="dots" />
+    </button>,
+  ]
+  // centred on the bubble (not its reactions); on one taller than a phone's thumb reach, where it was touched
+  const b = wrap.querySelector<HTMLElement>('.b')
+  const h = b?.offsetHeight ?? wrap.offsetHeight
+  const top = y === null || h <= 120 ? `${(b?.offsetTop ?? 0) + h / 2}px` : `${Math.min(Math.max(y, 24), h - 24)}px`
+  return (
+    <div
+      className={cx('qb', mine ? 'l' : 'r', fit?.over && 'over')}
+      role="toolbar"
+      aria-label="Message actions"
+      style={{ top, visibility: fit ? undefined : 'hidden' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="qbx">{fit?.actions === 'react' ? buttons[0] : buttons}</div>
+      {fit?.time && msg.at ? <span className="qt">{clock(msg.at)}</span> : null}
+    </div>
+  )
+}
+
 function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Message; chat: Chat; thread: Thread; gap: boolean; pending?: boolean; failed?: string; mark?: Shown['mark'] }) {
   const [sel, setSel] = useState(false)
   const jump = useUI((u) => u.jump === msg.id)
   const mine = msg.who === 'you'
-  const open = (el: Element) => {
-    if (sel || getSelection()?.toString()) return
+  const qid = `${chat.key}\n${msg.id}`
+  const quick = useQuick(qid)
+  const [hover, setHover] = useState<number | null | false>(false)
+  const wrap = useRef<HTMLDivElement>(null)
+  const finger = useRef<Finger | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  /** the click that follows a hold or a slide is not a tap */
+  const skip = useRef(false)
+  const [slide, setSlide] = useState(0)
+  const [armed, setArmed] = useState(false)
+  const [settling, setSettling] = useState(false)
+  const full = (el: Element) => {
+    if (sel) return
+    setQuick(null)
     msgMenu(el, msg, chat, thread, () => setSel(true))
   }
+  // a tap anywhere else (or Escape) puts the quick bar away
+  useEffect(() => {
+    if (!quick) return
+    const away = (e: Event) => {
+      const t = e.target as Element | null
+      if (t && (wrap.current?.contains(t) || t.closest('.pop'))) return
+      setQuick(null)
+    }
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setQuick(null)
+    addEventListener('pointerdown', away, true)
+    addEventListener('keydown', esc)
+    return () => {
+      removeEventListener('pointerdown', away, true)
+      removeEventListener('keydown', esc)
+    }
+  }, [quick])
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const letGo = (replying: boolean) => {
+    skip.current = true
+    setSettling(true)
+    setSlide(0)
+    setArmed(false)
+    if (replying) {
+      setQuick(null)
+      replyTo(msg, thread.chat)
+    }
+  }
+  const yIn = (clientY: number) => clientY - (wrap.current?.getBoundingClientRect().top ?? 0)
+  const bar = quick ?? (hover !== false && !quickNow ? { y: hover } : null)
   return (
     <>
       <div
-        className={cx('b', mine && 'mine', gap && 'gap', sel && 'sel', pending && 'pending', jump && 'jump')}
-        role="button"
-        tabIndex={0}
-        aria-haspopup="menu"
-        data-msg={msg.id}
-        data-chat={chat.key}
-        data-menu
-        onClick={(e) => open(e.currentTarget)}
-        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), open(e.currentTarget))}
+        ref={wrap}
+        className={cx('bw', mine && 'mine', gap && 'gap', !!bar && 'qon')}
+        onPointerEnter={(e) => e.pointerType === 'mouse' && setHover(yIn(e.clientY))}
+        onPointerLeave={(e) => e.pointerType === 'mouse' && setHover(false)}
       >
-        {msg.reply && <span className="quote">{msg.reply.text}</span>}
-        {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
+        {slide > 0 && (
+          <div className={cx('rpl', armed && 'on')} aria-hidden="true" style={{ width: Math.max(0, slide - 8), opacity: Math.min(1, slide / REPLY_AT) }}>
+            <I n="reply" />
+            <span>Reply</span>
+          </div>
+        )}
+        <div
+          className={cx('bmv', settling && 'settle')}
+          style={slide ? { transform: `translateX(${slide}px)` } : undefined}
+          onTransitionEnd={() => setSettling(false)}
+        >
+          <div
+            className={cx('b', mine && 'mine', sel && 'sel', pending && 'pending', jump && 'jump')}
+            role="button"
+            tabIndex={0}
+            aria-haspopup="menu"
+            data-msg={msg.id}
+            data-chat={chat.key}
+            data-menu
+            onPointerDown={(e) => {
+              if (e.button !== 0 || sel || e.pointerType === 'mouse') return
+              const f = new Finger(e.clientX, e.clientY, performance.now())
+              finger.current = f
+              const el = e.currentTarget
+              clearTimeout(timer.current)
+              timer.current = setTimeout(() => {
+                if (finger.current !== f || !f.hold(performance.now())) return
+                tick(10)
+                skip.current = true
+                swallowClick()
+                full(el)
+              }, HOLD_MS)
+            }}
+            onPointerMove={(e) => {
+              const f = finger.current
+              if (!f || f.held) return
+              const r = f.move(e.clientX, e.clientY)
+              if (f.way === 'scroll') {
+                finger.current = null
+                clearTimeout(timer.current)
+                return
+              }
+              if (f.way !== 'slide') return
+              clearTimeout(timer.current)
+              if (!e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId)
+              setSettling(false)
+              setSlide(r.slide)
+              setArmed(f.armed)
+              if (r.crossed) tick()
+            }}
+            onPointerUp={() => {
+              const f = finger.current
+              finger.current = null
+              clearTimeout(timer.current)
+              const o = f?.up()
+              if (o === 'reply' || o === 'back') letGo(o === 'reply')
+            }}
+            onPointerCancel={() => {
+              const f = finger.current
+              finger.current = null
+              clearTimeout(timer.current)
+              if (f?.way === 'slide') letGo(false)
+            }}
+            onContextMenu={(e) => {
+              // a finger's hold is ours (above); a right click opens the whole menu
+              e.preventDefault()
+              if (finger.current || skip.current) return
+              full(e.currentTarget)
+            }}
+            onClick={(e) => {
+              if (skip.current) return void (skip.current = false)
+              // a tap on a link follows the link, not the message's quick actions
+              if ((e.target as Element).closest('a[href]')) return
+              if (sel || getSelection()?.toString()) return
+              setQuick(quick ? null : { id: qid, y: yIn(e.clientY) })
+            }}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), full(e.currentTarget))}
+          >
+            {msg.reply && <span className="quote">{msg.reply.text}</span>}
+            {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '')}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
+          </div>
+          {registry.messageEdge.map((x, i) => <x.View key={i} msg={msg} chat={chat} />)}
+        </div>
+        {bar && wrap.current && !slide && (
+          <QuickBar msg={msg} chat={chat} thread={thread} mine={mine} wrap={wrap.current} y={bar.y} done={() => { setQuick(null); setHover(false) }} more={full} />
+        )}
       </div>
       {mark && <div className="seen" role="status">{mark === 'read' ? 'Read' : 'Sent'}</div>}
       {failed !== undefined && msg.cid && (
@@ -125,7 +396,51 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
           <span className="lk" role="button" tabIndex={0} onClick={() => dropOut(msg.cid!)}>Remove</span>
         </div>
       )}
-      {registry.messageEdge.map((e, i) => <e.View key={i} msg={msg} chat={chat} />)}
+    </>
+  )
+}
+
+/** A task's brief, the first message of its chat (SHEP-330): from its space's Assistant, the task's title and the prompt
+ *  as written, a few lines with Show all when long, its Settings folded away, and under it whether its agent has it. */
+export function BriefMessage({ msg, b, space }: { msg: Message; b: TaskBrief; space?: string }) {
+  const [all, setAll] = useState(false)
+  const [settings, setSettings] = useState(false)
+  const [long, setLong] = useState(() => looksLong(b.text))
+  const body = useRef<HTMLDivElement>(null)
+  // long: its words run past the clipped height (measured, so a short brief shows no Show all)
+  useLayoutEffect(() => {
+    const el = body.current
+    if (el && !all) setLong(el.scrollHeight > el.clientHeight + 1)
+  }, [b.text, all])
+  return (
+    <>
+      <div className="bfrom">{briefFrom(space)}</div>
+      <div className="b mine brief" data-msg={msg.id}>
+        <p className="bt">{b.title}</p>
+        <div ref={body} className={cx('bbody', !all && 'clip', !all && long && 'fade')}>
+          <Markdown text={b.text} />
+        </div>
+        {(long || all) && (
+          <button type="button" className="fold" aria-expanded={all} onClick={() => setAll(!all)}>
+            {all ? 'Show less' : 'Show all'}
+          </button>
+        )}
+        {!!b.settings?.length && (
+          <>
+            <button type="button" className="fold" aria-expanded={settings} onClick={() => setSettings(!settings)}>
+              <I n={settings ? 'down' : 'right'} c="s16" />
+              Settings
+            </button>
+            {settings && (
+              <ul role="list" className="bset">
+                {b.settings.map((l) => <li key={l}>{l}</li>)}
+              </ul>
+            )}
+          </>
+        )}
+      </div>
+      {/* SHEP-329's Sent / Read under a sent message */}
+      <div className="seen" role="status">{deliveryWord(b.state)}</div>
     </>
   )
 }
@@ -133,7 +448,7 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
 function FileRow({ msg, chat, gap }: { msg: Message; chat: Chat; gap: boolean }) {
   const f = msg.file! as NonNullable<Message['file']> & { id?: string }
   const mine = msg.who === 'you'
-  const { small, full } = sourcesOf(chat.key, f)
+  const { small, full, box } = sourcesOf(chat.key, f)
   // a picture or video shows itself (this screen's own copy while it still goes up); a tap opens the preview
   if (full && (isImage(f.name) || isVideo(f.name)))
     return (
@@ -150,7 +465,7 @@ function FileRow({ msg, chat, gap }: { msg: Message; chat: Chat; gap: boolean })
           openPreview(chat.key, f)
         }}
       >
-        {isVideo(f.name) ? <video src={full} controls playsInline preload="metadata" /> : <img src={small} alt={f.alt || f.name} loading="lazy" />}
+        {isVideo(f.name) ? <video src={full} controls playsInline preload="metadata" /> : <img src={small} alt={f.alt || f.name} loading="lazy" style={box} />}
       </a>
     )
   return (
@@ -178,8 +493,7 @@ function shownOf(chat: Chat | undefined, key: string, outbox: Outgoing[]): Shown
   const mine = outbox.filter((o) => o.chat === key)
   if (mine.length) {
     const at = placesOf(rows.map((r) => ({ id: r.msg.id, cid: r.msg.cid })), mine)
-    const add = mine.flatMap((o) => partsOf(o, chat).map((msg) => ({ at: at.get(o.cid) ?? rows.length, row: { msg, ...showsAs(o) } })))
-    for (const a of add.sort((x, y) => y.at - x.at)) rows.splice(a.at, 0, a.row)
+    rows.splice(0, rows.length, ...placeOutgoing(rows, mine.map((o) => ({ at: at.get(o.cid) ?? rows.length, rows: partsOf(o, chat).map((msg) => ({ msg, ...showsAs(o) })) }))))
   }
   // your latest message, taken in and not answered yet: read
   const last = rows[rows.length - 1]
@@ -262,7 +576,7 @@ function Messages({ thread }: { thread: Thread }) {
   const cardsUntil = (at: number) => {
     while (cards.length && (cards[0]!.at ?? Infinity) <= at) {
       const c = cards.shift()!
-      out.push(<div key={`c:${c.key}`} style={{ display: 'contents' }}>{c.node}</div>)
+      out.push(<Fragment key={`c:${c.key}`}>{c.node}</Fragment>)
       prev = 'a'
     }
   }
@@ -278,7 +592,8 @@ function Messages({ thread }: { thread: Thread }) {
       out.push(<div key={k} className="time" role="separator">New session</div>)
       continue
     }
-    if (m.activity) out.push(<Did key={k} a={m.activity} />)
+    if (m.taskBrief) out.push(<BriefMessage key={k} msg={m} b={m.taskBrief} space={placeOf(snap, thread.place)?.name} />)
+    else if (m.activity) out.push(<Did key={k} a={m.activity} />)
     else if (m.question) {
       // a question from a task, shown in this chat: under a line naming the task (once), and it says where that task runs
       const from = m.question.by && !thread.task ? taskIdOf(snap, m.question.by.chat) : null
@@ -288,17 +603,24 @@ function Messages({ thread }: { thread: Thread }) {
       if (m.question.title && !m.question.command && !m.question.plan && !m.question.parts?.length && m.question.sent === undefined && !m.question.closed) out.push(<div key={`q:${k}`} className={cx('b', gap && 'gap')}>{m.question.title}</div>)
       out.push(<QuestionCard key={k} q={m.question} chat={m.question.by?.chat ?? thread.chat} place={place} />)
     } else if (m.secret) out.push(<SecretCard key={k} ask={m.secret} chat={thread.chat} />)
-    else if (m.news && (m.news.mark === 'started' || m.news.mark === 'ready' || m.news.mark === 'done')) {
-      // what the app shows by itself from the task's status (its review card, its Done line): not said twice
-      continue
-    } else if (m.news || m.card) {
-      const taskId = m.news?.task ?? m.card?.task
-      const t = taskOf(snap, taskId)
+    else if (m.news) {
+      // Herdr's news of a task, never a message (SHEP-365): one quiet row under the task's line, or nothing for what
+      // the app shows by itself from the task's status (its review card, its Done line)
+      const t = taskOf(snap, m.news.task)
+      const row = newsRow(m.news, t?.name ?? '')
+      if (!row) continue
       if (t && !thread.task && t.id !== lastRef) out.push(<TaskRef key={`r:${k}`} id={t.id} title={t.name} t={t} />)
       if (t) lastRef = t.id
-      const text = m.news?.text ?? m.card?.text ?? m.text ?? ''
+      out.push(<NewsLine key={k} row={row} at={m.at} />)
+    } else if (m.card) {
+      const t = taskOf(snap, m.card.task)
+      if (t && !thread.task && t.id !== lastRef) out.push(<TaskRef key={`r:${k}`} id={t.id} title={t.name} t={t} />)
+      if (t) lastRef = t.id
+      const text = m.card.text ?? m.text ?? ''
       if (text) out.push(<Bubble key={k} msg={{ ...m, text }} chat={stub} thread={thread} gap={false} />)
     }
+    // a message between agents, in the sender's chat and the receiver's: its own quiet row (SHEP-368)
+    else if (m.relay) out.push(<RelayRow key={k} r={m.relay} text={m.text ?? ''} at={m.at} />)
     // when its agent was started again, earlier messages stay, above a thin "New session" line
     else if (m.brief && thread.task && !/new session/i.test(m.brief.label)) continue
     else if (m.brief) out.push(/new session/i.test(m.brief.label) ? <div key={k} className="time" role="separator">New session</div> : <div key={k} className="ref"><I n="note" c="s16" /><span>{m.brief.label}</span></div>)
@@ -322,9 +644,10 @@ function Messages({ thread }: { thread: Thread }) {
         <Empty title={every ? 'Welcome to Shepherdr' : `Nothing in #${placeOf(snap, thread.place)?.name ?? ''} yet`}>Tell me what you want done{every ? ', here or in a space.' : ' here.'}</Empty>
       )}
       {out}
-      {cards.map((c) => <div key={`c:${c.key}`} style={{ display: 'contents' }}>{c.node}</div>)}
+      {thread.task && <StartLine chat={chat} thread={thread} />}
+      {cards.map((c) => <Fragment key={`c:${c.key}`}>{c.node}</Fragment>)}
       {registry.chatTail.map((t, i) => <t.View key={i} chat={chat} thread={thread} />)}
-      <div ref={end} />
+      <div ref={end} className="mend" />
     </>
   )
 }
@@ -333,19 +656,51 @@ const loading = new Set<string>()
 /** a task's id from its chat's key ("vm:SHOP-12/worker") */
 const taskIdOf = (snap: Snapshot, chatKey: string) => snap.tasks.find((t) => t.agent?.chat === chatKey)?.id ?? chatKey.replace(/\/[^/]+$/, '')
 
-/** The working sign at the chat's end (SHEP-313), as Claude Duet shows its agent at work: three dots that rise in turn,
- *  where its words will land, and gone the moment they do. Shepherdr's own form: no bubble around them (nothing the
- *  agent wrote), and the step it is on beside them when Shepherdr knows it. */
-function WorkingSign({ chat }: { chat: Chat | undefined }) {
-  const sign = signOf(chat)
-  if (!sign) return null
+/** Before a task's agent is at work, what it waits for, in words under its brief (SHEP-330): never an empty page */
+function StartLine({ chat, thread }: { chat: Chat | undefined; thread: Thread }) {
+  const snap = useSnap()
+  const t = snap && thread.task ? snap.tasks.find((x) => x.id === thread.task!.id) ?? thread.task : thread.task
+  const words = t ? startWords(t, chat) : ''
+  if (!words) return null
   return (
-    <div className="wsign" role="status" aria-label={sign.step || 'Working'}>
-      <span className="wdots" aria-hidden="true"><i /><i /><i /></span>
-      {sign.step && <span className="wstep">{sign.step}</span>}
+    <div className="ref" role="status">
+      <I n="clock" c="s16" />
+      <span>{words}</span>
     </div>
   )
 }
+
+/** The working sign at the chat's end (SHEP-313, SHEP-343), as Claude Duet shows its agent at work: three dots that
+ *  bounce in turn inside a small agent-side speech bubble, where its words will land. The step it is on, when Shepherdr
+ *  knows it, stays quiet text beside the bubble, never in it (nothing the agent wrote), in plain words: a task's own
+ *  status line, else the tool at work (typing.ts stepWords), never a command line. When words arrive the bubble
+ *  goes and they take its place; keyed on the message count, a new one comes back under them a beat later if it still
+ *  works, so the bubble seems to turn into the message. */
+export function WorkingSign({ chat, thread }: { chat: Chat | undefined; thread?: Thread }) {
+  // a task's own status line, what its agent last said it does (not while it waits on you)
+  const report = thread?.task?.report
+  const sign = signOf(chat, report && !report.paused ? report.msg : undefined)
+  if (!sign) return null
+  const n = chat?.messages.length ?? 0
+  const el = (
+    <div key={n} className="wsign" role="status" aria-label={sign.step || 'Working'}>
+      <span className="b wbub" aria-hidden="true"><span className="wdots"><i /><i /><i /></span></span>
+      {sign.step && <span className="wstep">{sign.step}</span>}
+    </div>
+  )
+  // SHEP-363: Stop sits on the working row (the box's round button is the voice call while it is empty), at its right
+  // end over that round button, outside the sign's grow-in so it is its full size from the start
+  if (!chat || !has('voice')) return el
+  return (
+    <div key={n} className="wrow">
+      {el}
+      <IB icon="stop" label="Stop" className="wstop" onClick={() => void tryAct({ type: 'stop', chat: chat.key })} />
+    </div>
+  )
+}
+
+/** a tap on it takes no focus: the box's focus (and a phone's keyboard) stays as it was */
+export const keepFocus = (e: { preventDefault: () => void }) => e.preventDefault()
 
 /** A chat's own agent that crashed or was cut off is treated like a task's: a card in that chat with the reason and
  *  Restart. Shepherdr never starts it again on its own. */
@@ -396,7 +751,9 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const reply = useUI((u) => u.reply[key])
   const phone = useUI((u) => u.phone)
   const ref = useRef<HTMLTextAreaElement>(null)
-  const pickFile = useRef<HTMLInputElement>(null)
+  // a finger (a phone, a tablet): + opens a menu with Photos and Files
+  const finger = useMemo(touch, [])
+  const shared = useLanded() === key
   useGrow(ref, text)
   const sg = suggestionOf(chat, suggestionsOn(snap.settings))
   const sug = sg && !spent.has(sg.id) ? sg : null
@@ -404,18 +761,27 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const machine = snap.places.find((p) => p.id === thread.place)?.machine ?? snap.host
   const pick = pickOf(snap, chat, thread)
   // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn
+  // a suggested reply is never sent as it is: Tab (or its chip) writes it into the box first (SHEP-363). In a voice
+  // call the box takes no text (TEXT_IN_CALL).
   const go = (wait = false) => {
-    const t = text.trim() || (!files?.length ? (sug?.text ?? '') : '')
+    if (getState().ui.call && !TEXT_IN_CALL) return
+    const t = text.trim()
     if (!t && !files?.length) return
     if (sug) spent.add(sug.id)
     send(key, key, t, wait && busy)
     setText('')
+    if (shared) putAway()
   }
-  const useSug = () => {
+
+  /** the suggested reply written into the box. From the Tab key the box keeps the focus; from the chip (a tap) the
+   *  focus stays where it was, so a phone's keyboard doesn't come up just to send it (the chip takes no focus) */
+  const useSug = (key = false) => {
     if (!sug) return
     setText(sug.text)
-    ref.current?.focus()
+    if (key) ref.current?.focus()
   }
+  const filled = !!text.trim() || !!files?.length
+  const BoxEnd = has('voice') ? registry.views.boxEnd : undefined
   const stop = busy && !text.trim() && !files?.length
   return (
     <div
@@ -428,6 +794,11 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
         attach(key, key, f)
       }}
     >
+      {shared && (
+        <div className="fchips">
+          <SharedChip chat={key} thread={thread} />
+        </div>
+      )}
       {reply && (
         <div className="fchips">
           <span className="fchip">
@@ -469,7 +840,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
             // Tab writes the suggested reply into the box, so you can keep typing
             if (e.key === 'Tab' && !e.shiftKey && sug && !text) {
               e.preventDefault()
-              return useSug()
+              return useSug(true)
             }
             // Enter sends and Shift+Enter makes a new line, the same on phone and desktop
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
@@ -479,33 +850,25 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           }}
         />
         {sug && !text && (
-          <button type="button" className="kbd" aria-label="Use the suggested reply" onClick={useSug}>
-            {phone ? <I n="tab" /> : 'Tab'}
+          <button type="button" className="ib kbd" aria-label="Use suggestion" aria-keyshortcuts="Tab" onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={() => useSug()}>
+            <I n="tab" c="s16" />
           </button>
         )}
       </div>
       <div className="cbar">
-        <IB icon="plus" label="Add files" onClick={() => pickFile.current?.click()} />
-        <input
-          ref={pickFile}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            attach(key, key, [...(e.target.files ?? [])])
-            e.target.value = ''
-          }}
-        />
+        <AddButtons finger={finger} onFiles={(f) => attach(key, key, f)} />
         <AgentLine
           pick={pick}
           machine={machine}
           onClick={() => openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, onChange: () => undefined, onClose: (now) => applyPick(key, pick, now, { agent: pickWords(now).agent }) })}
         />
         <span className="sp" />
-        {registry.boxButtons.map((b, i) => <b.View key={i} thread={thread} write={(t) => setText(text ? `${text.replace(/\s+$/, '')} ${t}` : t)} />)}
-        {stop ? (
+        {registry.boxButtons.map((b, i) => <b.View key={i} thread={thread} setText={setText} />)}
+        {BoxEnd ? (
+          <BoxEnd thread={thread} setText={setText} filled={filled} send={() => go()} />
+        ) : stop ? (
           <button type="button" className="send" aria-label="Stop" onClick={() => void tryAct({ type: 'stop', chat: key })}>
-            <I n="stop" c="s16" />
+            <I n="square" c="s16" />
           </button>
         ) : (
           <button type="button" className="send" aria-label="Send" onClick={() => go()}>
@@ -517,9 +880,57 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   )
 }
 
+/** +: on a desktop it opens files; on a phone or tablet a menu first: Photos, Files. Photos opens Android's
+ *  photo picker straight away, newest first, and one tap on a picture attaches it (one at a time: picking several needs an
+ *  Add tap more, measured on Android 15); Files takes several pictures at once */
+export function AddButtons({ finger, onFiles }: { finger: boolean; onFiles: (f: File[]) => void }) {
+  const pickFile = useRef<HTMLInputElement>(null)
+  const pickPhoto = useRef<HTMLInputElement>(null)
+  const take = (e: { target: HTMLInputElement }) => {
+    onFiles([...(e.target.files ?? [])])
+    e.target.value = ''
+  }
+  const plus = (e: { currentTarget: Element }) =>
+    finger
+      ? openMenu(
+          e.currentTarget,
+          [
+            { icon: 'image', label: 'Photos', run: () => pickPhoto.current?.click() },
+            { icon: 'doc', label: 'Files', run: () => pickFile.current?.click() },
+          ],
+          { label: 'Add' },
+        )
+      : pickFile.current?.click()
+  return (
+    <>
+      <IB icon="plus" label={finger ? 'Add' : 'Add files'} onClick={plus} />
+      <input ref={pickFile} type="file" multiple hidden onChange={take} />
+      {finger && <input ref={pickPhoto} type="file" accept="image/*" hidden data-photo="" onChange={take} />}
+    </>
+  )
+}
+
+/** what Android's Share sheet put in this box: where it goes, and Change to send it to another space or task */
+function SharedChip({ chat, thread }: { chat: string; thread: Thread }) {
+  const snap = useSnap()!
+  const t = thread.task
+  const where = t ? t.name : isEverything(snap, thread.place) ? 'Everything' : `#${placeOf(snap, thread.place)?.name ?? ''}`
+  return (
+    <span className="fchip shared">
+      <I n="share" c="s16" />
+      <span className="where">Shared to {where}</span>
+      <button type="button" className="chg" onClick={() => openSendTo(chat)}>Change</button>
+      <button type="button" aria-label="Keep it here" onClick={putAway}><I n="x" c="s16" /></button>
+    </span>
+  )
+}
+
 export default definePlugin({
   name: 'chat',
   setup(reg) {
+    // Share into Shepherdr (SHEP-345): a share lands in the chat open last
+    watchLastChat()
+    void landLaunchShare()
     reg.views.messages = Messages
     reg.views.box = Box
     reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign })

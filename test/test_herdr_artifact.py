@@ -144,7 +144,9 @@ class Publish(Base):
     def test_a_tasks_agent_names_its_task(self):
         self.who["task"] = "SHOP-4"
         a = self.publish(title="Coverage")
-        self.assertEqual((a["title"], a["task"], a["proof"]), ("SHOP-4: Coverage", "SHOP-4", False))
+        # SHEP-322: the task rides in its own field, never in the title; an older "SHOP-4: " in front is dropped
+        self.assertEqual((a["title"], a["task"], a["proof"]), ("Coverage", "SHOP-4", False))
+        self.assertEqual(self.publish(title="SHOP-4: Plan")["title"], "Plan")
 
     def test_pictures_are_kept_with_the_version_when_a_browser_took_them(self):
         def fake(folder):
@@ -162,6 +164,30 @@ class Publish(Base):
         b = self.publish(id=a["id"], folder=None)  # no browser this time: published all the same, without a picture
         self.assertFalse(b["thumb"])
         self.assertEqual([bool(x.get("thumb")) for x in b["versions"]], [True, False])
+
+    def test_a_new_version_gets_its_own_picture_in_a_folder_that_is_not_a_repo(self):
+        # SHEP-344: version 2 of a page (an index.html with PNGs beside it), kept for a plain folder
+        self.assertFalse(os.path.exists(os.path.join(self.folder, ".git")))
+        taken = []
+
+        def fake(folder):
+            with open(os.path.join(folder, "index.html")) as f:
+                taken.append(f.read())
+            tmp = tempfile.mkdtemp(dir=self.dir)
+            out = {"dir": tmp}
+            for n in (A.THUMB, A.THUMB_DARK):
+                out[n] = os.path.join(tmp, n)
+                A.png_write(out[n], 2, 2, 3, [bytearray([len(taken)] * 6)] * 2)
+            return out
+        with mock.patch.object(A, "shoot", fake):
+            a = self.publish(self.page("one", body="<h1>One</h1>"), title="Research")
+            b = self.publish(self.page("two", body="<h1>Two</h1><img src='a.png'>", **{"a.png": "PNG"}), id=a["id"], folder=None)
+        self.assertEqual(b["version"], 2)
+        self.assertTrue(b["thumb"] and all(x["thumb"] for x in b["versions"]))
+        self.assertIn("Two", taken[1])
+        with open(os.path.join(self.files(a["id"], 1), A.THUMB), "rb") as f1, open(os.path.join(self.files(a["id"], 2), A.THUMB), "rb") as f2:
+            self.assertNotEqual(f1.read(), f2.read())  # its own picture, not version 1's
+        self.assertIn("a.png", os.listdir(self.files(a["id"], 2)))
 
     @unittest.skipUnless(REAL_CHROME, "no Chrome for Testing on this machine")
     def test_a_real_browser_takes_the_page_light_and_dark(self):
@@ -183,7 +209,7 @@ class ProofAndFlags(Base):
         with self.assertRaisesRegex(A.Fail, "--proof needs the task"):
             self.publish(title="Fix login · Proof", proof=True)
         a = self.publish(title="Fix login · Proof", task="SHOP-4", proof=True)
-        self.assertEqual((a["proof"], a["task"], a["title"]), (True, "SHOP-4", "SHOP-4: Fix login · Proof"))
+        self.assertEqual((a["proof"], a["task"], a["title"]), (True, "SHOP-4", "Fix login · Proof"))
         self.assertTrue(self.listed()[0]["proof"])
         self.assertTrue(self.publish(id=a["id"], folder=None)["proof"])  # an update is still its proof
         kept = self.run_cmd(A.cmd_keep, id=a["id"])
@@ -194,6 +220,38 @@ class ProofAndFlags(Base):
         self.assertTrue(self.publish(title="Fix login · Proof", task="SHOP-4")["proof"])
         self.assertFalse(self.publish(title="Fix login · Proof")["proof"])       # no task: nothing to stay on
         self.assertFalse(self.publish(title="Proof of concept", task="SHOP-4")["proof"])
+
+    def task_list(self, slug, prefix, folder, ids):
+        tdir = os.path.join(self.dir, "tasks")
+        os.makedirs(tdir, exist_ok=True)
+        with open(os.path.join(tdir, slug + ".json"), "w") as f:
+            json.dump({"prefix": prefix, "folder": folder, "tasks": [{"id": i} for i in ids]}, f)
+        return tdir
+
+    def test_a_task_page_is_filed_under_its_tasks_folder_wherever_it_is_published_from(self):
+        """Published from a scratch folder, a task's proof goes to its task's folder, where ready looks."""
+        tdir = self.task_list("proj", "SHOP", os.path.realpath(self.folder), [4])
+        scratch = os.path.join(self.dir, "scratch")
+        os.makedirs(scratch)
+        here = os.getcwd()
+        os.chdir(scratch)
+        try:
+            with mock.patch.object(A, "SHEP", lambda rel: tdir if rel == ".herdr/tasks" else rel):
+                a = self.publish(title="Fix login · Proof", task="SHOP-4", proof=True, folder=None)
+                self.assertEqual(a["folder"], os.path.realpath(self.folder))
+                b = self.publish(title="Notes", task="SHOP-9", folder=None)       # a task no list has: here
+                self.assertEqual(b["folder"], os.path.realpath(scratch))
+                c = self.publish(title="Elsewhere", task="SHOP-4", folder=scratch)  # --folder still wins
+                self.assertEqual(c["folder"], os.path.realpath(scratch))
+                # two lists with that prefix both have #4: this agent's own list decides, else here
+                other = os.path.join(self.dir, "other")
+                os.makedirs(other)
+                self.task_list("other", "SHOP", other, [4])
+                self.assertEqual(self.publish(title="Two", task="SHOP-4", folder=None)["folder"], os.path.realpath(scratch))
+                with mock.patch.dict(os.environ, {"HERDR_BROWSER_TASK": "other#4"}):
+                    self.assertEqual(A.task_folder("SHOP-4"), other)
+        finally:
+            os.chdir(here)
 
     def test_pin_unpin_and_rename(self):
         a = self.publish(title="Plan")

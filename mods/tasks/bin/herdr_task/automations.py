@@ -252,17 +252,30 @@ def auto_ref(s, a):
     return f"{s.prefix}-A{a['id']}"
 
 
+def quoted(title):
+    from .store import quoted as q
+    return q(title)
+
+
 def find_auto(s, ref):
+    """A schedule by its key (HAT-A1, A1, 1), else by its title: the exact one, else a unique part of one (SHEP-322).
+    Two or more that fit are refused with each listed."""
+    from .store import by_title
     r = str(ref).strip()
     m = re.fullmatch(r"(?:([A-Za-z]+[0-9]*)-)?[Aa]?([0-9]+)", r)
-    if not m:
-        raise Fail(f"{ref!r} isn't an automation id; use one like {s.prefix}-A1.")
-    if m.group(1) and m.group(1).upper() != s.prefix:
-        raise Fail(f"{r} isn't an automation in {s.loc['folder']} (its are {s.prefix}-A<n>).")
-    for a in s.data.get("automations") or []:
-        if a["id"] == int(m.group(2)):
-            return a
-    raise Fail(f"No automation {s.prefix}-A{m.group(2)} in {s.loc['folder']}.")
+    autos = s.data.get("automations") or []
+    if m and (not m.group(1) or m.group(1).upper() == s.prefix):
+        for a in autos:
+            if a["id"] == int(m.group(2)):
+                return a
+    hits = by_title(autos, r)
+    if len(hits) == 1:
+        return hits[0]
+    if hits:
+        raise Fail(f"{len(hits)} schedules here fit {quoted(r)}, so nothing was done. Name one by its key (for commands "
+                   f"only; never say it to the person) or its full title:\n" +
+                   "\n".join(f"  {auto_ref(s, a)}  {' '.join(str(a.get('title') or '').split())}" for a in hits[:12]))
+    raise Fail(f"No schedule {quoted(r)} in {s.loc['folder']}.")
 
 
 def run_ended(s, r):
@@ -294,7 +307,7 @@ def auto_view(s, a):
              active=bool(enabled and not a.get("paused") and not a.get("space_paused")), runs=runs, last=runs[-1] if runs else None)
     # machine: None here; herdr-task --on <machine> names it (cli.remote), so a list across machines says whose it is
     v.update(ref=auto_ref(s, a), **{"from": from_text(a["from"]) if a.get("from") else None}, folder=s.loc["folder"], machine=None, prefix=s.prefix, every=(a.get("every") or {}).get("text"),
-             trigger=trigger_words(a), enabled=enabled)
+             trigger=trigger_words(a), enabled=enabled, may_update=bool(a.get("may_update")), last_update=a.get("last_update"))
     return v
 
 
@@ -303,7 +316,7 @@ def auto_line(v):
                                           (f"next {datetime.datetime.fromtimestamp(v['next_run'] / 1000):%a %H:%M}" if v.get("next_run") else "on events"))
     err = (f"  ! {v['last_error']['message']}" if v.get("last_error") else
            f"  ~ {v['from_error']['message']} ({v['from_error']['misses']} round(s) so far)" if v.get("from_error") else "")
-    return f"{v['ref']:<9} {v['title']}  ({v['trigger']}; {state}){err}"
+    return f"{v['title']}  ({v['trigger']}; {state}{'; may update Shepherdr' if v.get('may_update') else ''}){err}  [key {v['ref']}]"
 
 
 def set_auto_fields(s, a, args, adding=False):
@@ -346,6 +359,9 @@ def set_auto_fields(s, a, args, adding=False):
         a["space"] = bare(args.space)
     if args.parent:
         a["parent"] = args.parent
+    if getattr(args, "may_update", None) is not None:
+        from .self_update import set_allowed
+        set_allowed(a, args.may_update)
     if getattr(args, "set", None):
         # Each task it adds gets these (#744: review=off for a run that only reads); checked now.
         sets = dict(a.get("set") or {})
@@ -423,29 +439,29 @@ def cmd_auto(args):
                 a["parent"] = os.environ["HC_TERMINAL_ID"]
             s.data["auto_next"] = a["id"] + 1
             autos.append(a)
-            msg = f"{auto_ref(s, a)} added: {trigger_words(a)}."
+            msg = f"{quoted(a['title'])} added: {trigger_words(a)}."
             if a.get("warning"):
                 msg += f"\nWarning: {a['warning']}"
         else:
             a = find_auto(s, args.id)
             if sub == "edit":
                 set_auto_fields(s, a, args)
-                msg = f"{auto_ref(s, a)} saved: {trigger_words(a)}."
+                msg = f"{quoted(a['title'])} saved: {trigger_words(a)}."
                 if a.get("warning"):
                     msg += f"\nWarning: {a['warning']}"
             elif sub == "pause":
                 a["paused"] = True
-                msg = f"{auto_ref(s, a)} paused."
+                msg = f"{quoted(a['title'])} paused."
             elif sub == "resume":
                 a["paused"] = False
                 a["next_run"] = next_run(a.get("every"), now())
-                msg = f"{auto_ref(s, a)} resumed: {trigger_words(a)}."
+                msg = f"{quoted(a['title'])} resumed: {trigger_words(a)}."
             elif sub == "rm":
                 autos.remove(a)
-                msg = f"{auto_ref(s, a)} removed."
+                msg = f"{quoted(a['title'])} removed."
             elif sub == "run-now":
                 t = fire(s, a, "run now")
-                msg = f"{auto_ref(s, a)} added {s.ref(t)}" + (f", but: {a['last_error']['message']}" if a.get("last_error") else ".")
+                msg = f"{quoted(a['title'])} added {s.name(t)}" + (f", but: {a['last_error']['message']}" if a.get("last_error") else ".")
             elif sub == "show":
                 msg = auto_line(auto_view(s, a))
 
@@ -482,7 +498,8 @@ def event_brief(ev, f, src=None):
         (f"folder {src['folder']} on this machine" if src else "this folder")
     words = {"added": "was added", "ready": "is ready", "failed": "failed", "needs-you": "needs the person",
              "merged": "was merged", "stalled": "stalled", "done": "is done", "checks-fail": "has failing checks"}[ev]
-    return f"Set off by: task {f['ref']} ({' '.join(str(f['title']).split())}) {words}, in {where}."
+    # SHEP-322: the task by its title; its key only for a command that looks at it.
+    return f"Set off by: the task \"{' '.join(str(f['title']).split())}\" {words}, in {where} (its key, for commands only: {f['ref']})."
 
 
 def run_rules(s, t):
@@ -508,6 +525,9 @@ def fire(s, a, why, brief=None):
     # 3.2 (step 42): every run is an ordinary task named after its schedule, which it carries (started by its schedule)
     t["automation"], t["automation_title"], t["automation_ref"] = a["id"], a["title"], auto_ref(s, a)
     t["prompt"] = (t["prompt"].rstrip() + "\n\n" if t["prompt"].strip() else "") + run_rules(s, t)
+    if a.get("may_update"):
+        from .self_update import brief_words
+        t["prompt"] += "\n\n" + brief_words(s, a, t, own_path())
     if a.get("space"):
         t["space"] = bare(a["space"])
     if a.get("agent"):

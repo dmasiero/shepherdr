@@ -254,10 +254,10 @@ test("open: what it shows, as the page's voiceNav takes it", async () => {
   expect(await nav({ what: "screen", id: "garden" })).toEqual([{ kind: "space", place: "mini/sp2" }, { kind: "panel", panel: "screen" }]);
   expect(await nav({ what: "screen" })).toEqual({ kind: "panel", panel: "screen" });
   expect(await nav({ what: "screen", view: "desktop" }, top)).toEqual({ kind: "panel", panel: "desktop" });
-  // Switch to terminal: a chat's agent's; a task's is in its menu
+  // View as terminal: a chat's agent's; a task's is in its menu
   expect(await nav({ what: "terminal" }, top)).toEqual({ kind: "panel", panel: "terminal" });
   expect(await nav({ what: "terminal", id: "garden" })).toEqual([{ kind: "space", place: "mini/sp2" }, { kind: "panel", panel: "terminal" }]);
-  expect((await voiceTool("open", { what: "terminal" }, web, io())).result).toContain('press its menu\'s "Switch to terminal"');
+  expect((await voiceTool("open", { what: "terminal" }, web, io())).result).toContain('press its menu\'s "View as terminal"');
   // Tasks (Now), Needs you, Artifacts; a space's: there first
   expect(await nav({ what: "tasks" })).toEqual({ kind: "tasks" });
   expect(await nav({ what: "needs" })).toEqual({ kind: "needs" });
@@ -378,10 +378,10 @@ test("act answer: a question's choice, a command allowed once or declined, as th
 test("act setting: Merge, Review, Proof and the plugins, through the settings window's own action", async () => {
   const x = io();
   const set = async (p: any) => { const r = await voiceTool("act", { action: "setting", confirmed: false, ...p }, web, x); return [r.result, x.calls.pop() ?? null]; };
-  expect(await set({ key: "merge", value: "when checks pass" })).toEqual(['Merge is "When checks pass" for every space.', { type: "config", place: "all", key: "merge", value: "checks" }]);
+  expect(await set({ key: "merge", value: "when checks pass" })).toEqual(['Merge is "When all checks pass" for every space.', { type: "config", place: "all", key: "merge", value: "checks" }]);
   expect((await set({ key: "merge", value: "right away", id: "shop" }))[1]).toEqual({ type: "config", place: "sp1", key: "merge", value: "now" });
   expect((await set({ key: "merge", value: "reset", id: "shop" }))[1]).toEqual({ type: "config", place: "sp1", key: "merge", value: null });
-  expect((await set({ key: "merge", value: "maybe" }))[0]).toBe("Merge can be: When I mark it as done, When checks pass, Right away.");
+  expect((await set({ key: "merge", value: "maybe" }))[0]).toBe("Merge can be: When I mark it as done, When all checks pass, Right away.");
   expect((await set({ key: "review", value: "on" }))[1]).toEqual({ type: "config", place: "all", key: "review", value: true });
   expect((await set({ key: "proof", value: "off", id: "here" }))[1]).toEqual({ type: "config", place: "sp1", key: "proof", value: false });
   expect(await set({ key: "Schedules", value: "on" })).toEqual(["Schedules is on.", { type: "config", place: "all", key: "plugin.schedules", value: true }]);

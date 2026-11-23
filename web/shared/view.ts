@@ -40,8 +40,17 @@ export function folderOf(snap: Snapshot, p: Pick<Place, 'machine' | 'where' | 'f
   return { short, full: p.folder || short, machine: p.machine && p.machine !== snap.host ? machineLabel(snap, p.machine) : null }
 }
 
-/** a folder as it shows, in words where it would be a lone symbol (SHEP-316): ~ is Home folder, / is Root folder */
-export const folderName = (path: string) => (path === '~' ? 'Home folder' : path === '/' || path === '' ? 'Root folder' : path)
+/** a folder as it shows: its path as it is, ~ for the home folder and / for the root, never a made-up name */
+export const folderName = (path: string) => path || '/'
+/** what a chat's header says of where it is (SHEP-360): the folder as it is (~ and / too, never a made-up name; a
+ *  path's start gives way: `cut`), and its machine when that adds something: another machine, or Everything's home */
+export function headerWhere(snap: Snapshot, p: Pick<Place, 'id' | 'machine' | 'where' | 'folder'>): { path: string; cut: boolean; full: string; machine: string | null } | null {
+  const f = folderOf(snap, p)
+  const every = isEverything(snap, p.id)
+  if (!f.short && !every) return null
+  const short = every && !f.short ? '~' : f.short
+  return { path: short, cut: short !== '~' && short !== '/', full: f.full || '~', machine: f.machine ?? (every ? machineLabel(snap, p.machine) : null) }
+}
 export const machineLabel = (snap: Snapshot, key: string) => machineOf(snap, key)?.name ?? key
 
 /** a machine the serving one can't reach now */
@@ -77,10 +86,16 @@ export interface ListGroup {
   name: string
   spaces: Place[]
 }
+/** which spaces a machine's heading shows */
+export type ListFilter = 'Active' | 'Archived' | 'All'
+
 export interface ListMachine {
   machine: Machine
   /** a few words when it needs attention (a warning mark that opens Settings › Machines) */
   warn: string
+  /** what its filter shows, and how many of its spaces are archived (the filter's menu says) */
+  filter: ListFilter
+  archived: number
   /** groups first as the person ordered them, then the spaces in no group */
   groups: ListGroup[]
   spaces: Place[]
@@ -93,21 +108,21 @@ export function machineWarn(m: Machine): string {
   return hot ? `${/disk/i.test(hot.name) ? 'Disk' : 'Memory'} nearly full` : ''
 }
 
-/** the list under Everything: machines as headings, their groups and spaces, as the filter says */
-export function listOf(snap: Snapshot, filter: 'Active' | 'Archived' | 'All'): ListMachine[] {
-  const shown = (p: Place) => !p.home && (filter === 'All' || (filter === 'Archived') === !!p.archived)
+/** the list under Everything: machines as headings, their groups and spaces, as each machine's filter says (one for
+ *  all, or by machine key); every machine stays, with how many archived spaces it has */
+export function listOf(snap: Snapshot, filter: ListFilter | ((machine: string) => ListFilter)): ListMachine[] {
   const sections: Section[] = (snap.sections ?? []).filter((s) => s.id !== 'pinned')
-  return snap.machines
-    .map((machine) => {
-      const mine = snap.places.filter((p) => p.machine === machine.machine && shown(p))
-      const groups = sections
-        .filter((s) => (s.machine ?? snap.host) === machine.machine)
-        .map((s) => ({ id: s.id, name: s.name, spaces: s.spaces.map((id) => mine.find((p) => p.id === id)).filter((p): p is Place => !!p) }))
-      const grouped = new Set(groups.flatMap((g) => g.spaces.map((p) => p.id)))
-      // the archived view lists spaces only
-      return { machine, warn: machineWarn(machine), groups: filter === 'Archived' ? [] : groups, spaces: mine.filter((p) => filter === 'Archived' || !grouped.has(p.id)) }
-    })
-    .filter((m) => filter !== 'Archived' || m.spaces.length)
+  return snap.machines.map((machine) => {
+    const f = typeof filter === 'function' ? filter(machine.machine) : filter
+    const all = snap.places.filter((p) => p.machine === machine.machine && !p.home)
+    const mine = all.filter((p) => f === 'All' || (f === 'Archived') === !!p.archived)
+    const groups = sections
+      .filter((s) => (s.machine ?? snap.host) === machine.machine)
+      .map((s) => ({ id: s.id, name: s.name, spaces: s.spaces.map((id) => mine.find((p) => p.id === id)).filter((p): p is Place => !!p) }))
+    const grouped = new Set(groups.flatMap((g) => g.spaces.map((p) => p.id)))
+    // the archived view lists spaces only
+    return { machine, warn: machineWarn(machine), filter: f, archived: all.filter((p) => p.archived).length, groups: f === 'Archived' ? [] : groups, spaces: mine.filter((p) => f === 'Archived' || !grouped.has(p.id)) }
+  })
 }
 
 /** the group a space is in */
@@ -166,7 +181,14 @@ export function taskLine(t: Task): string {
   if (t.stopped) return t.stopped.by === 'you' ? 'Stopped by you' : `Stopped${t.stopped.why ? ` · ${t.stopped.why}` : ''}`
   if (s === 'ask') return t.report?.msg || (t.blocked === 'prompt' ? 'Waiting at a prompt' : t.blocked === 'permission' ? 'Wants to run a command' : 'Waits for your reply')
   if (s === 'working') return t.waitsDesktop ? 'Waiting for the desktop' : t.report?.msg || (t.schedule ? 'Started by its schedule' : '')
-  return t.afterTitle ? `Starts after ${t.afterTitle}` : t.startsAt ? `Starts ${dayTime(t.startsAt)}` : ''
+  return t.afterTitle ? afterWords(t) : t.startsAt ? `Starts ${dayTime(t.startsAt)}` : ''
+}
+
+/** what an Up next task waits for, short: "Starts after Fix typo", or "Starts after 6 tasks" when it waits for several
+ *  (a long title then a cut-off line said less than the count) */
+export function afterWords(t: Pick<Task, 'afterTitle' | 'afterMore'>): string {
+  if (!t.afterTitle) return ''
+  return t.afterMore ? `Starts after ${t.afterMore + 1} tasks` : `Starts after ${t.afterTitle}`
 }
 
 /** "2h", "5m", "1w": how long ago, short */
@@ -213,12 +235,13 @@ export function leftShort(min: number | null | undefined): string {
 /** How a task's status icon draws (SHEP-321, as before 3.2.0: a ring filled by the % done its agent reports, the time
  *  left under it). `check`: finished (Ready for review, merging, Done). Otherwise the ring: `pct` its share done
  *  (0-100; null: none reported yet, an alive indeterminate ring while it works), `tone` its colour, `mark` the small
- *  sign that tells states apart without colour (needs you: a dot; stopped: a square; queued: a dashed ring). */
+ *  sign that tells states apart without colour (needs you: the ring's inside softly tinted; stopped: a square; not started, waiting for the person's Start: a dotted ring, as
+ *  Linear's Backlog; Up next and Scheduled are a plain empty ring, as its Todo). */
 export interface Ring {
   kind: 'check' | 'ring'
   tone: 'working' | 'ask' | 'red' | 'ready' | 'mute'
   pct: number | null
-  mark?: 'dot' | 'stop' | 'queued'
+  mark?: 'tint' | 'stop' | 'unstarted'
   /** the words a screen reader says for it */
   label: string
 }
@@ -231,10 +254,11 @@ export function ringOf(t: Task): Ring {
   const pct = typeof p === 'number' && Number.isFinite(p) ? Math.max(0, Math.min(100, Math.round(p))) : null
   const done = pct === null ? '' : `, ${pct}% done`
   if (t.stopped) return t.stopped.by === 'you' ? { kind: 'ring', tone: 'ask', pct, mark: 'stop', label: `Stopped by you${done}` } : { kind: 'ring', tone: 'red', pct, mark: 'stop', label: `Stopped${done}` }
-  if (s === 'ask') return { kind: 'ring', tone: 'ask', pct, mark: 'dot', label: `Needs you${done}` }
+  if (s === 'ask') return { kind: 'ring', tone: 'ask', pct, mark: 'tint', label: `Needs you${done}` }
   if (s === 'working') return { kind: 'ring', tone: 'working', pct, label: `Working${done}` }
-  // queued, scheduled or not started yet: an empty ring
-  return { kind: 'ring', tone: 'mute', pct: pct ?? 0, mark: 'queued', label: 'Up next' }
+  // added and waiting for the person's Start (SHEP-369): a dotted ring; queued or scheduled (starts by itself): a solid empty one
+  if (t.status === 'todo' && !t.agent && !t.started) return { kind: 'ring', tone: 'mute', pct: pct ?? 0, mark: 'unstarted', label: 'Not started' }
+  return { kind: 'ring', tone: 'mute', pct: pct ?? 0, label: 'Up next' }
 }
 
 /** the time at the right of a task's row: how long a Needs you row has waited for the person, how long ago a Done row
@@ -256,8 +280,57 @@ export const taskRef = (t: Task) => t.id.replace(/^.*:/, '')
 
 /** the tasks a view lists: every one from Everything, a space's own inside it */
 export function tasksIn(snap: Snapshot, placeId: string): Task[] {
-  return isEverything(snap, placeId) ? snap.tasks : snap.tasks.filter((t) => t.place === placeId)
+  return isEverything(snap, placeId) ? snap.tasks : snap.tasks.filter((t) => taskInSpace(t, placeId))
 }
+
+/** SHEP-325: a space's Tasks and its count hold what it started and what works in its folder (the window's rule) */
+export const taskInSpace = (t: Task, placeId: string) => t.place === placeId || !!t.also?.includes(placeId)
+
+/* ---------- where a task works (SHEP-325) ---------- */
+
+/** a task's folder as one key: its machine and folder */
+export const workKey = (t: Task) => (t.work ? `${t.on}:${t.work.folder}` : '')
+
+/** "shepherdr", "~", "~/notes": a repo by its name, any other folder by its path */
+export const workName = (t: Task) => (t.work ? (t.work.repo ? t.work.name : folderName(t.work.short || t.work.name)) : '')
+
+/** what a task's tag says: where it works, and its machine only when there is more than one ("shepherdr · mac-mini") */
+export function workWords(snap: Snapshot, t: Task): string {
+  const name = workName(t)
+  if (!name) return ''
+  return snap.machines.length > 1 ? `${name} · ${machineLabel(snap, t.on)}` : name
+}
+
+export interface Repo {
+  key: string
+  name: string
+  folder: string
+  /** its folder as it shows (~/dev/shop) */
+  short: string
+  machine: string
+  repo: boolean
+  /** its tasks, archived ones left out */
+  tasks: Task[]
+}
+
+/** the repos and folders tasks work in, most tasks first (then by name); a repo's tag and Everything's filter use it */
+export function reposOf(snap: Snapshot): Repo[] {
+  const by = new Map<string, Repo>()
+  for (const t of snap.tasks) {
+    if (!t.work) continue
+    const k = workKey(t)
+    const r = by.get(k) ?? by.set(k, { key: k, name: workName(t), folder: t.work.folder, short: t.work.short || t.work.folder, machine: t.on, repo: t.work.repo, tasks: [] }).get(k)!
+    if (!t.archived) r.tasks.push(t)
+  }
+  return [...by.values()].sort((a, b) => b.tasks.length - a.tasks.length || a.name.localeCompare(b.name))
+}
+
+/** the space working in a repo's folder on its machine, if one does */
+export const spaceOnFolder = (snap: Snapshot, r: Pick<Repo, 'folder' | 'machine'>) =>
+  snap.places.find((p) => (!p.home || isEverything(snap, p.id)) && !p.archived && p.machine === r.machine && p.folder === r.folder)
+
+/** "Asked in #root": the space that asked for a task, in words */
+export const askedWords = (snap: Snapshot, t: Task) => (t.asked && snap.places.some((p) => p.id === t.asked) ? `Asked in ${spaceLabel(snap, t.asked)}` : '')
 
 /** Tasks › Now, grouped by what each task needs. Done newest first. */
 export function nowGroups(tasks: Task[]): { name: 'Needs you' | 'Working' | 'Up next' | 'Done' | 'Archived'; tasks: Task[] }[] {
@@ -276,7 +349,7 @@ export function nowGroups(tasks: Task[]): { name: 'Needs you' | 'Working' | 'Up 
  *  chat's agent when it asks. No space: everywhere. The same count decides the Tasks button's number. */
 export function needsCount(snap: Snapshot, placeId?: string): number {
   const all = !placeId || isEverything(snap, placeId)
-  const tasks = snap.tasks.filter((t) => (all || t.place === placeId) && ['ask', 'ready'].includes(tstate(t))).length
+  const tasks = snap.tasks.filter((t) => (all || taskInSpace(t, placeId)) && ['ask', 'ready'].includes(tstate(t))).length
   const chats = snap.places.filter((p) => p.needs && (all ? !p.home || isEverything(snap, p.id) : p.id === placeId)).length
   return tasks + chats
 }

@@ -216,8 +216,8 @@ export const branchShape = (b) => !/^-|[\s~^:?*[\\]|\.\.|@\{/.test(b);
 // it in (settings.py BRANCH_PATTERN, branch_pattern_problem). A task's own --branch wins.
 export const BRANCH = {
   title: "Branch names",
-  about: "New tasks' branches. {n} is its number, {key} its id (SHEP-4), {slug} its title.",
-  pattern: "task/{n}-{slug}",
+  about: "New tasks' branches. {slug} is the task's title; a name already taken gets -2.",
+  pattern: "task/{slug}",
 };
 // Extra flags (tasks.claude_flags, tasks.codex_flags, #1222): a CLI's own launch flags for a space's task agents, such
 // as --advisor opus. herdr-task checks them (`herdr-task flags`, flags.py: real flags only, none Shepherdr sets) and
@@ -236,7 +236,7 @@ export function flagWords(list) {
 export function branchPattern(pattern) {
   const p = String(pattern ?? "").trim();
   if (!p) return "";
-  if (!p.includes("{n}") && !p.includes("{key}")) return "Put {n} or {key} in it, so each task's branch is its own.";
+  if (!p.includes("{slug}") && !p.includes("{n}") && !p.includes("{key}")) return "Put {slug} in it (the task's title), so each task's branch is its own.";
   if (/\{(?!(?:n|key|slug)\})[^}]*\}/.test(p)) return "Only {n}, {key} and {slug} can be filled in.";
   const sample = p.replaceAll("{n}", "4").replaceAll("{key}", "ABC-4").replaceAll("{slug}", "fix-login");
   if (/^[-/]|[/.]$|\.lock$|[\s~^:?*[\\]|\.\.|@\{|\/\/|\/\./.test(sample)) return "That isn't a name git allows for a branch.";
@@ -319,7 +319,7 @@ export const webState = (loaded, w) => (!loaded ? "Reading…"
   : w.via === "proxy" ? "On, through this machine's reverse proxy: it decides who gets in." : "On, private to your tailnet.");
 
 // ---- the rows' choices -----------------------------------------------------------------------------------------
-export const MERGE = [["ask", "On Accept"], ["checks", "After checks pass"], ["auto", "Right away"]];
+export const MERGE = [["ask", "On Accept"], ["checks", "After all checks pass"], ["auto", "Right away"]];
 export const MUST_FIX = [["blocker", "Blockers"], ["major", "Major and up"], ["minor", "Everything"]];
 export const ROUNDS = [[0, "Off"], [1, "1 round"], [2, "2 rounds"], [3, "3 rounds"]];
 export const ARCHIVE = [[0, "Off"], [1, "1 day"], [3, "3 days"], [7, "1 week"], [30, "1 month"]];

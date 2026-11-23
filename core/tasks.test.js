@@ -55,6 +55,7 @@ describe("a task's status (as herdr-task's task_status)", () => {
     expect(at({ id: 1, state: "ready", auto_merge: "checks", pr: { number: 3, needs_approval: true } })).toMatchObject({ section: "working", why: "Merges once it's approved" });
     expect(at({ id: 1, state: "ready", merge_requested: true }, [{ address: "t1", status: "working" }])).toMatchObject({ section: "working", why: "Merging" });
     expect(at({ id: 1, state: "ready", auto_merge: true, pr: { number: 3 } })).toMatchObject({ section: "working", why: "Merges once its checks pass" });
+    expect(at({ id: 1, state: "ready", auto_merge: "auto", pr: { number: 3 } })).toMatchObject({ section: "working", why: "Merging" });
   });
   test("a pull request whose checks still run is Working, then Ready (SHEP-175)", () => {
     const idle = [{ address: "t1", status: "idle", since: NOW - 600_000 }];
@@ -73,8 +74,11 @@ describe("a task's status (as herdr-task's task_status)", () => {
 });
 
 test("why a queued task waits", () => {
-  const l = list([{ id: 1, state: "running" }, { id: 2, state: "queued", after: [1] }, { id: 3, state: "queued" }]);
-  expect(queueReason(l, l.tasks[1])).toBe("after X-1");
+  const l = list([{ id: 1, state: "running", title: "Add the route" }, { id: 2, state: "queued", after: [1] }, { id: 3, state: "queued" }]);
+  // SHEP-322: by title, never by key
+  expect(queueReason(l, l.tasks[1])).toBe('after "Add the route"');
+  expect(queueReason(l, { id: 5, state: "queued", after_ext: [{ ref: "vm:WEB-2", machine: "vm", state: "running" }, { ref: "WEB-3", title: "Docs", state: "todo" }] }))
+    .toBe('after a task on vm, "Docs"');
   // 3.2: nothing waits for room, however many run in its folder (a stored tasks.max_running is ignored)
   expect(queueReason({ ...l, config: { max_running: 1 } }, l.tasks[2])).toBe("Starts soon");
   expect(queueReason(l, { id: 4, state: "queued", held: "vm-a's memory is 92% full" })).toBe("Waits: vm-a's memory is 92% full");

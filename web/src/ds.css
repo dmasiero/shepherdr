@@ -1,30 +1,39 @@
 /* Shepherdr's design system (3.2): tokens, sizes and classes. Desktop by default, phone under .app.phone. */
-:root{color-scheme:light;--canvas:#fff;--well:#fafafa;--raised:#f5f5f5;--overlay:#fff;--control:rgb(0 0 0/.05);--control2:rgb(0 0 0/.1);--fg:#0a0a0a;--sub:#404040;--muted:#737373;--line:rgb(0 0 0/.08);--line2:rgb(0 0 0/.12);--mine:#e5e5e5;--scrim:rgb(0 0 0/.3);--green:#15803d;--blue:#0369a1;--amber:#b45309;--red:#dc2626;--term:#0a0a0a;--shadow:0 8px 28px rgb(0 0 0/.14)}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}}
-:root[data-theme="dark"]{color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}
+:root{color-scheme:light;--canvas:#fff;--well:#fafafa;--raised:#f5f5f5;--overlay:#fff;--control:rgb(0 0 0/.05);--control2:rgb(0 0 0/.1);--fg:#0a0a0a;--sub:#404040;--muted:#737373;--line:rgb(0 0 0/.08);--line2:rgb(0 0 0/.12);--mine:#e5e5e5;--rx:#fff;--scrim:rgb(0 0 0/.3);--green:#15803d;--blue:#0369a1;--amber:#b45309;--red:#dc2626;--term:#0a0a0a;--shadow:0 8px 28px rgb(0 0 0/.14)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#3a3a3a;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}}
+:root[data-theme="dark"]{color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#3a3a3a;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}
 *{box-sizing:border-box}[hidden]{display:none!important}html{background:var(--canvas);-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--canvas);color:var(--fg);font:16px/24px InterVariable,ui-sans-serif,system-ui,sans-serif;font-feature-settings:"cv02","cv03","cv04","cv11";-webkit-font-smoothing:antialiased}
 button,input{font:inherit;color:inherit;letter-spacing:inherit}
 button{position:relative;margin:0;padding:0;border:0;background:none;cursor:pointer;text-align:inherit}
-@media(pointer:coarse){button::before{content:"";position:absolute;left:50%;top:50%;width:max(100%,44px);height:max(100%,44px);transform:translate(-50%,-50%)}}
+@media(pointer:coarse){button::before{content:"";position:absolute;left:50%;top:50%;width:max(100%,var(--hit,44px));height:max(100%,var(--hit,44px));transform:translate(-50%,-50%)}}
 :focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 input:focus-visible,textarea:focus-visible{outline:0}
 /* a press on a touch screen: no browser box and no text picked up by a long press; the app's own states show it */
 button,[role="tab"],summary,.lk{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 @media(pointer:coarse){
-  .tab:active,.seg button:active,.pt:active,.vbtn:active,.send:active,.grp:active,.fold:active,.keys button:active,.fchip button:active,.tg:active,.banner>button.n:active,.thumb:active,button.ref:active,.lk:active,a.pic:active,a.fchip:active,.atb:active,.arm:active{opacity:.6}
+  .tab:active,.seg button:active,.pt:active,.send:active,.grp:active,.fold:active,.keys button:active,.fchip button:active,.hpath:active,.tg:active,.banner>button.n:active,.thumb:active,button.ref:active,.lk:active,a.pic:active,a.fchip:active,.atb:active,.arm:active{opacity:.6}
 }
 p,h2,h3{margin:0}small{font-size:inherit}
 
-/* sizes: desktop by default, phone when .phone */
+/* sizes (SHEP-317): one scale, three steps. Desktop with a mouse is dense; .tap (a finger is the pointer: a tablet, or
+   any phone layout) is sized for a fingertip; .phone only adds taller list rows and a lower header. Every tappable
+   thing on .tap is at least --hit across, either itself or through its ::before pad, with no neighbour's pad over it
+   (web/demo/tap-check.ts measures it). Text: 16 px body and 14 px second lines on touch, never smaller to tap. */
 .app{--ui:14px;--uil:20px;--sec:13px;--secl:18px;--hd:48px;--row:32px;--row2:52px;--btn:32px;--btns:28px;--ib:28px;--tab:28px;--ic:16px;--gut:16px;--h1:16px;--chip:32px;
+  --hit:44px;--field:32px;--side:240px;--side-min:180px;--tgw:36px;--tgh:20px;--key:24px;--send:32px;--rz:12px;--ath:72px;
   width:100%;font-size:var(--ui);line-height:var(--uil)}
-.app.phone{--ui:16px;--uil:24px;--sec:14px;--secl:20px;--hd:52px;--row:48px;--row2:56px;--btn:40px;--btns:32px;--ib:36px;--tab:32px;--ic:20px;--h1:18px;--chip:36px}
+/* the list's width: a dragged one, never under --side-min, so a short machine name beside its two buttons is not cut on
+   a touch layout (a finger's buttons are wider) */
+.app{--sidec:max(var(--side-min),var(--side-w,var(--side)))}
+.app.tap{--ui:16px;--uil:24px;--sec:14px;--secl:20px;--hd:56px;--row:44px;--row2:56px;--btn:40px;--btns:36px;--ib:44px;--tab:44px;--ic:20px;--h1:18px;--chip:40px;
+  --field:44px;--side:288px;--side-min:232px;--tgw:44px;--tgh:24px;--key:36px;--send:40px;--rz:16px;--ath:80px}
+.app.phone{--hd:52px;--row:48px}
 
 /* atoms */
 .i{width:var(--ic);height:var(--ic);flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .i *{vector-effect:non-scaling-stroke}.i.f{fill:currentColor;stroke:none}.i.s16{width:16px;height:16px}.i.s20{width:20px;height:20px}.i.s22{width:22px;height:22px}
-.c-ask{color:var(--amber)}.c-ready{color:var(--green)}.c-working{color:var(--blue)}.c-mute{color:var(--muted)}
+.c-ask{color:var(--amber)}.c-ready{color:var(--green)}.c-working{color:var(--amber)}.c-red{color:var(--red)}.c-mute{color:var(--muted)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:var(--btn);padding:0 12px;border-radius:8px;background:var(--control);font-size:var(--sec);line-height:var(--secl);font-weight:500;white-space:nowrap;flex:none}
 .btn:hover{background:var(--control2)}.btn.s{height:var(--btns);padding:0 10px}
 .btn.pri{background:var(--fg);color:var(--canvas)}.btn.str{background:var(--control2)}.btn.danger{color:var(--red)}
@@ -32,6 +41,9 @@ p,h2,h3{margin:0}small{font-size:inherit}
 .ib:hover,.ib[aria-pressed="true"],.ib[aria-expanded="true"]{background:var(--control);color:var(--fg)}
 .cnt{display:inline-block;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--control2);color:var(--fg);font-size:12px;line-height:18px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums;flex:none}
 .ib .cnt,.pt .cnt{position:absolute;top:-5px;right:-7px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;font-size:11px;line-height:16px;background:var(--fg);color:var(--canvas);box-shadow:0 0 0 2px var(--canvas)}
+/* a header button's count sits on its icon's corner, not the button's: on touch the button is nearly the header's height,
+   so a badge on its edge crossed the header's top line (SHEP-387) */
+.ib .cnt{top:calc(50% - var(--ic)/2 - 8px);right:calc(50% - var(--ic)/2 - 10px)}
 .row{display:flex;align-items:center;gap:8px;width:100%;min-height:var(--row);padding:0 8px;border-radius:8px;color:var(--sub);min-width:0}
 button.row:hover,.row[aria-current="true"],.rowx:has(>.row[aria-current="true"]){background:var(--control);color:var(--fg)}
 .rowx:has(>.row[aria-current="true"])>.row{background:none}
@@ -47,6 +59,12 @@ button.row:hover,.row[aria-current="true"],.rowx:has(>.row[aria-current="true"])
 .row .i:not([class*="c-"]){color:var(--muted)}.row.danger .i{color:inherit}
 .rowx{display:flex;align-items:center;border-radius:8px;min-width:0}.rowx>.row{flex:1}
 .lab{padding:12px 8px 4px;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
+/* a machine's heading (SHEP-342): its name (a button when it carries a warning mark), then its own filter and New space,
+   in the column of the rows' ⋯ below */
+.lab.mh{display:flex;align-items:center;gap:0;padding:8px 0 0 8px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.mh>.mn{display:flex;align-items:center;gap:8px;flex:1;min-width:0;height:var(--ib);color:inherit;font:inherit;text-align:left}
+.mh>.mn>.n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mh .mf{flex:none;color:var(--fg)}
+.mh>.mn>.i{flex:none}.mempty{padding:4px 8px}
 .hint{color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
 .tabs{display:flex;gap:4px;padding:0 var(--gut) 8px}
 .tab{height:var(--tab);padding:0 10px;border-radius:6px;color:var(--muted);font-size:var(--sec);font-weight:500}
@@ -54,11 +72,10 @@ button.row:hover,.row[aria-current="true"],.rowx:has(>.row[aria-current="true"])
 .seg{display:inline-flex;padding:2px;border-radius:8px;background:var(--control);max-width:100%}
 .seg button{height:var(--tab);padding:0 10px;border-radius:6px;color:var(--muted);font-size:var(--sec);font-weight:500;white-space:nowrap}
 .seg button[aria-pressed="true"]{background:var(--control2);color:var(--fg)}
-.tg{width:36px;height:20px;padding:2px;border-radius:10px;background:var(--control2);flex:none}
-.tg i{display:block;width:16px;height:16px;border-radius:50%;background:var(--sub);transition:transform .2s}
-.tg[aria-checked="true"],.tg.on{background:var(--fg)}.tg[aria-checked="true"] i,.tg.on i{background:var(--canvas);transform:translateX(16px)}
-.app.phone .tg{width:44px;height:24px;border-radius:12px}.app.phone .tg i{width:20px;height:20px}.app.phone .tg[aria-checked="true"] i,.tg.on i{transform:translateX(20px)}
-.inp{display:block;width:100%;height:var(--btn);padding:0 12px;border:0;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2);font-size:var(--ui)}
+.tg{width:var(--tgw);height:var(--tgh);padding:2px;border-radius:calc(var(--tgh)/2);background:var(--control2);flex:none}
+.tg i{display:block;width:calc(var(--tgh) - 4px);height:calc(var(--tgh) - 4px);border-radius:50%;background:var(--sub);transition:transform .2s}
+.tg[aria-checked="true"],.tg.on{background:var(--fg)}.tg[aria-checked="true"] i,.tg.on i{background:var(--canvas);transform:translateX(calc(var(--tgw) - var(--tgh)))}
+.inp{display:block;width:100%;height:var(--field);padding:0 12px;border:0;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2);font-size:var(--ui)}
 .inp:focus{box-shadow:inset 0 0 0 1px var(--muted)}.inp::placeholder,.cin::placeholder{color:var(--muted)}
 .logo{display:grid;place-items:center;width:20px;height:20px;border-radius:6px;box-shadow:inset 0 0 0 1px var(--line2);color:var(--sub);font-size:10px;line-height:1;font-weight:600;flex:none}
 .meter{height:4px;border-radius:2px;background:var(--control2)}.meter i{display:block;width:var(--w);height:100%;border-radius:2px;background:var(--fg)}.meter.hot i{background:var(--amber)}
@@ -67,30 +84,37 @@ button.row:hover,.row[aria-current="true"],.rowx:has(>.row[aria-current="true"])
 /* frame */
 .device{position:relative;display:grid;border-radius:16px}
 .app.phone .device{border-radius:24px;box-shadow:inset 0 0 0 1px var(--line2);overflow:clip}
-.shell{position:relative;display:grid;grid-template-columns:var(--side-w,240px) minmax(0,1fr);align-items:start;min-width:0}
-.shell.has-pane{grid-template-columns:var(--side-w,240px) minmax(0,1fr) var(--pane-w,380px)}
+.shell{position:relative;display:grid;grid-template-columns:var(--sidec) minmax(0,1fr);align-items:start;min-width:0}
+.shell.has-pane{grid-template-columns:var(--sidec) minmax(0,1fr) var(--pane-w,380px)}
 .shell.noside{grid-template-columns:minmax(0,1fr)}.shell.noside.has-pane{grid-template-columns:minmax(0,1fr) var(--pane-w,380px)}
 .app.phone .shell,.app.phone .shell.has-pane{grid-template-columns:minmax(0,1fr)}
 .shell.noside .side,.app.phone .shell .side,.app.phone .shell.has-pane .chat{display:none}
 .col{display:flex;flex-direction:column;min-width:0}.scroll{flex:1;min-height:0}.foot{flex:none}
-.side{display:flex;flex-direction:column;gap:1px;padding:8px;border-right:1px solid var(--line);min-width:0}
+.side{display:flex;flex-direction:column;gap:1px;padding:8px;border-right:1px solid var(--line);min-width:0;overflow-x:hidden}
 .pane{border-left:1px solid var(--line)}.app.phone .pane{border-left:0}
+/* SHEP-336: the chat swapped to the right of the pane; the list stays at the far left */
+.shell.swap.has-pane{grid-template-columns:var(--sidec) var(--pane-w,380px) minmax(0,1fr)}.shell.swap.noside.has-pane{grid-template-columns:var(--pane-w,380px) minmax(0,1fr)}
+.shell.swap .pane{border-left:0;border-right:1px solid var(--line)}
 .hd{display:flex;align-items:center;gap:4px;height:var(--hd);padding:0 12px;flex:none;min-width:0}
 .hd{border-bottom:1px solid transparent}.hd.sc{border-bottom-color:var(--line)}
 .ttl{flex:1;min-width:0;padding:0 4px}
-/* the open space's folder, a quiet chip beside its name (SHEP-316): it gives way before the name, and from its start */
-.ttl:has(>.fchip){display:flex;align-items:center;gap:6px}.ttl>.tbtn{flex:none;max-width:60%}
-.fchip{position:relative;display:inline-flex;align-items:center;gap:4px;flex:0 3 auto;min-width:26px;height:24px;padding:0 8px 0 4px;border-radius:6px;color:var(--sub);font-size:var(--sec);line-height:var(--secl);box-shadow:inset 0 0 0 1px var(--line)}
-.fchip .i{flex:none;color:var(--muted)}.fchip:hover,.fchip[aria-expanded="true"]{background:var(--control);color:var(--fg)}
-.fct,.fcm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fct{flex:0 3 auto}.fct.cut{direction:rtl}.fct bdi{direction:ltr}.fcm{flex:none;max-width:45%;color:var(--muted)}.fcm::before{content:"·";padding-right:4px}
-.app.phone .fchip{height:28px;padding:0 10px 0 6px}
-@media (pointer:coarse){.fchip::after{content:"";position:absolute;inset:-10px 0}}.t1{font-weight:600}.t1,.t2{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* where the chat is, beside its name (SHEP-360): dim secondary text, no pill; it gives way before the name, from its
+   start, and a finger gets a taller hit area than it shows */
+.ttl:has(>.hpath){display:flex;align-items:center;gap:0}.ttl>.tbtn{flex:none;max-width:100%}.ttl>.tbtn:has(+.hpath){max-width:calc(100% - 44px)}
+/* a header too narrow for both: the path goes, the name stays whole */
+.ttl:has(>.hpath){container-type:inline-size}@container (max-width:160px){.ttl>.hpath{display:none}.ttl>.tbtn:has(+.hpath){max-width:100%}}
+.hpath{position:relative;display:flex;align-items:baseline;flex:0 1 auto;min-width:44px;padding:10px 6px 10px 2px;margin:-10px 0;color:var(--muted);font-size:var(--sec);line-height:var(--secl);font-weight:400;white-space:nowrap}
+.hpath:hover,.hpath[aria-expanded="true"]{color:var(--sub)}
+.hp,.hm{min-width:0;overflow:hidden;text-overflow:ellipsis}.hp{flex:0 1 auto}.hp.cut{direction:rtl}.hp bdi{direction:ltr}.hm{flex:none;max-width:60%}.hp:not(.cut){flex:none}.hp:not(.cut)+.hm{flex:0 1 auto;max-width:none}.hm::before{content:"·";padding:0 4px}
+.t1{font-weight:600}.t1,.t2{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .t2{color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
-.tbtn{display:inline-flex;align-items:center;gap:4px;max-width:100%;height:32px;padding:0 8px;margin-left:-4px;border-radius:8px;font-weight:600;min-width:0}
+.tbtn{display:inline-flex;align-items:center;gap:4px;max-width:100%;height:var(--btn);padding:0 8px;margin-left:-4px;border-radius:8px;font-weight:600;min-width:0}
 .tbtn:hover,.tbtn[aria-expanded="true"]{background:var(--control)}.tbtn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* SHEP-326: the call's mark, no words: a live wave of whoever talks, still dots that breathe while it connects */
-.vmark{display:inline-flex;align-items:center;flex:none;width:56px;height:20px;margin:0 6px;color:var(--fg)}
-.vmark.ph{width:120px;margin:0}
+/* the call's wave fills the box's row up to the mic, as dictation's does (one wave, wave.tsx) */
+.vmark{display:flex;align-items:center;flex:1 1 0;min-width:0;height:24px;color:var(--fg)}.app.tap .vmark{height:28px}
+/* a wave's canvas fills its box and never sizes it (wave.tsx) */
+.wv{position:relative;display:block;min-width:0;overflow:hidden}.wv>canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
 .vmark.wait{animation:calm 1.6s ease-in-out infinite}
 .vwave{width:100%;height:100%}
 .vwave.off{color:var(--muted)}
@@ -107,12 +131,53 @@ button.row:hover,.row[aria-current="true"],.rowx:has(>.row[aria-current="true"])
 .chat .scroll,.chat>.foot{padding-inline:max(var(--gut),calc((100% - var(--chat-w,720px))/2))}
 .msgs{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;justify-items:start;align-content:start;padding-block:8px 16px;font-size:16px;line-height:24px}
 .b{max-width:min(82%,560px);padding:6px 14px;border-radius:18px;background:var(--raised);overflow-wrap:anywhere;text-wrap:pretty}
-.b.mine{justify-self:end;background:var(--mine)}.gap{margin-top:12px}
+.b.mine{justify-self:end;background:var(--mine)}.gap{margin-top:8px}
 button.b{cursor:pointer}
 .time{justify-self:center;margin:12px 0 4px;color:var(--muted);font-size:12px;line-height:16px}
 .ref{display:inline-flex;align-items:center;gap:6px;margin-top:12px;color:var(--muted);font-size:14px;line-height:20px}
 .lk{text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px;cursor:pointer}
-.rx{justify-self:end;margin-top:-2px;padding:0 6px;border-radius:9px;background:var(--control);font-size:12px;line-height:18px}.rx.l{justify-self:start}
+/* a message: its bubble slides right to reply (the Reply panel grows behind it), the quick bar sits on its open side */
+/* its one column never grows past the wrapper's cap (minmax(0,1fr), not auto), and the bubble and its chips stay inside
+   it: a quote's one line (white-space:nowrap) would otherwise widen both to its full length, past the chat column */
+.bw{position:relative;display:grid;grid-template-columns:minmax(0,1fr);justify-self:start;max-width:min(82%,560px)}.bw.mine{justify-self:end}
+.pane .bw{max-width:92%}.bw>.bmv>.b{max-width:100%}
+.bmv{display:grid;grid-template-columns:minmax(0,1fr);justify-items:start}.bw.mine>.bmv{justify-items:end}
+.bmv.settle{transition:transform 320ms cubic-bezier(.25,1.12,.4,1)}
+.rpl{position:absolute;inset-block:0;left:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;overflow:hidden;border-radius:18px;background:var(--control2);color:var(--fg);font-size:var(--sec);line-height:var(--secl);font-weight:600;white-space:nowrap;pointer-events:none}
+.rpl.on{background:var(--fg);color:var(--canvas)}
+.qb{position:absolute;z-index:3;display:flex;align-items:center;gap:8px;transform:translateY(-50%)}
+.qb.r{left:100%;padding-left:8px}.qb.l{right:100%;padding-right:8px;flex-direction:row-reverse}
+.qb.over{transform:none;top:auto!important;bottom:-20px}.qb.over.r{left:auto;right:8px;padding:0}.qb.over.l{right:auto;left:8px;padding:0}
+.qbx{display:flex;gap:2px;padding:4px;border-radius:12px;background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow)}
+.qb.l .qbx{flex-direction:row-reverse}
+.qbtn{display:grid;place-items:center;width:max(var(--btn),var(--ib));height:max(var(--btn),var(--ib));border-radius:8px;color:var(--sub)}
+.qbtn:hover,.qbtn[aria-expanded="true"]{background:var(--control);color:var(--fg)}
+.qt{color:var(--muted);font-size:12px;line-height:16px;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* reactions, as WhatsApp and iMessage: a pill that hugs its emoji (never a stretched track: width:max-content and
+   flex:none), tucked over the bubble's bottom edge by a third of its height, inset 8px from the bubble's own corner
+   (right for yours, left for the agent's, from .bmv's justify-items), a raised fill one step above the bubble with a
+   ring of the chat's background so the overlap reads clean; being in the flow, it reserves its own space below.
+   Its states are rx- classes only: 3.2.4's just-added chip carried "pop", the menu's own class, and drew as a 200px
+   floating bar until a reload. .rxs>.rxc pins the size against any other class or container, in every state. */
+.rxs{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:4px;width:max-content;max-width:calc(100% - 16px);margin:-10px 8px 2px;justify-self:start;align-self:start}.bw.mine .rxs{justify-content:flex-end;justify-self:end}
+.rxc{position:relative;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:3px;width:auto;min-width:28px;height:28px;padding:0 6px;border-radius:999px;background:var(--rx);box-shadow:0 0 0 2px var(--canvas);color:var(--sub);font-size:12px;line-height:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.rxs>.rxc{position:relative;inset:auto;flex:none;align-self:center;justify-self:start;width:fit-content;min-width:28px;max-width:none;height:28px;min-height:0;max-height:none;margin:0;padding:0 6px;transform:none}
+/* the finger pad reaches further up, over the bubble it already overlaps: below it, a bar such as "waiting at a
+   prompt" may sit close and take the lower pad, and the chip must still give a finger 44px */
+.rxc::after{content:"";position:absolute;inset:-13px -2px -8px}
+.rxc .e{font-size:16px;line-height:1}
+.rxc:hover{background:color-mix(in srgb,var(--fg) 6%,var(--rx))}
+.rxc[aria-pressed="true"]{background:color-mix(in srgb,var(--blue) 18%,var(--rx));color:var(--fg)}
+.rxc[aria-pressed="true"]:hover{background:color-mix(in srgb,var(--blue) 26%,var(--rx))}
+.rxc.rx-pending{opacity:.6}
+.rxs>.rxc.rx-new{animation:rxpop 280ms cubic-bezier(.25,1.12,.4,1)}
+@keyframes rxpop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.12);opacity:1}100%{transform:scale(1)}}
+.app.tap .rxc .e{font-size:18px}
+@media(prefers-reduced-motion:reduce){.rxs>.rxc.rx-new{animation:none}.bmv.settle{transition:none}}
+/* a finger's long press opens the menu, not the system's word selection (Select text turns it back on) */
+@media(pointer:coarse){.b[data-menu]:not(.sel){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}}
+.b[data-menu]{touch-action:pan-y pinch-zoom}
+.chat .scroll{overflow-x:hidden}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 .chip{height:var(--chip);padding:0 12px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--line2);font-size:14px;line-height:20px;font-weight:500}
 .chip:hover{background:var(--control)}
@@ -123,24 +188,31 @@ button.b{cursor:pointer}
 .bars{display:grid;gap:8px;padding:12px;border-radius:8px;background:var(--raised);color:var(--sub);font-size:var(--sec);line-height:var(--secl)}
 .bars i{display:block;width:var(--w);height:6px;border-radius:3px;background:var(--control2)}.bars i.g{background:var(--green)}
 .fold{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:var(--sec);line-height:var(--secl);justify-self:start}
+.fold.quiet{align-items:flex-start;max-width:92%;text-align:start;overflow-wrap:anywhere}.fold.quiet .i{flex:none;margin-top:calc((var(--secl) - 16px) / 2)}.fold.quiet .qv{margin-inline-start:-4px}
+.fold.quiet .ql{min-width:0}.fold.quiet .qm{font-variant-numeric:tabular-nums;white-space:nowrap}.fold.quiet .qm::before{content:"·";margin-inline:4px;color:var(--muted)}
+.quietb{display:grid;gap:6px;max-width:min(92%,640px);max-height:min(50vh,360px);overflow:auto;overscroll-behavior:contain;margin-inline-start:20px;padding:8px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);color:var(--sub);font-size:var(--sec);line-height:var(--secl)}
+.quietb .qw{margin:0}.quietb .qt{white-space:pre-wrap;overflow-wrap:anywhere}
+.quietb .qf{display:grid;gap:2px;margin:0;padding:0;color:var(--muted)}.quietb .qf li{display:flex;align-items:center;gap:4px;overflow-wrap:anywhere}.quietb .qf .i{flex:none}
 .files{display:grid;gap:2px;color:var(--sub);font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace}
 .files span{display:flex;justify-content:space-between;gap:12px}.files em{font-style:normal;color:var(--muted);white-space:nowrap}
 .code{display:flex;align-items:center;gap:4px;max-width:100%;min-height:36px;padding:4px 4px 4px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace}
 .code code{flex:1;min-width:0;overflow-wrap:anywhere}.card .code{width:100%}
 .donerow{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:14px;line-height:20px;padding:2px 0}
-.banner{display:flex;align-items:center;gap:8px;width:100%;min-width:0;height:40px;margin-bottom:8px;padding:0 4px 0 12px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line2);font-size:14px;line-height:20px}
+.banner{display:flex;align-items:center;gap:8px;width:100%;min-width:0;min-height:max(40px,var(--row));margin-bottom:8px;padding:0 4px 0 12px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line2);font-size:14px;line-height:20px}
 .banner .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.banner>button.n{text-align:left;height:100%}
-.app.phone .banner{padding-right:0}.app.phone .banner>.ib{width:44px;height:100%;border-radius:0 12px 12px 0}
+.banner>button.n{text-align:left;align-self:stretch;margin-block:-4px}
+.app.tap .banner{padding-right:0}.app.tap .banner>.ib{width:var(--hit);height:100%;border-radius:0 12px 12px 0}
 .cbox{display:grid;border-radius:16px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2)}
 .cbox:focus-within{box-shadow:inset 0 0 0 1px var(--muted)}
-.cin{width:100%;height:44px;padding:0 16px;border:0;background:none;font-size:16px;line-height:24px}
+.cin{width:100%;height:max(44px,var(--row));padding:0 16px;border:0;background:none;font-size:16px;line-height:24px}
 .cbar{display:flex;align-items:center;gap:4px;min-width:0;padding:0 6px 6px}.sp{flex:1}
 .agent{display:inline-flex;align-items:center;gap:6px;min-width:0;height:var(--btns);padding:0 6px;border-radius:8px;font-size:14px;line-height:20px}
 .agent:hover{background:var(--control)}.agent .m{font-weight:500;white-space:nowrap}
 .agent .e{min-width:0;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* short of room, the line drops its logo, then its chevron, then its permission mode before the effort is cut (picker.tsx) */
+.agent[data-drop~="logo"]>.logo,.agent[data-drop~="chev"]>.i:last-child,.agent[data-drop~="perm"]>.pm{display:none}
 .agent .i{color:var(--muted)}.agent .bolt{color:var(--fg);margin-left:-4px}.agent .bolt+.bolt{margin-left:-10px}
-.send{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--fg);color:var(--canvas);flex:none}
+.send{display:grid;place-items:center;width:var(--send);height:var(--send);border-radius:50%;background:var(--fg);color:var(--canvas);flex:none}
 .chat>.foot,.pane>.foot{padding-bottom:12px}.pane>.foot{padding-inline:var(--gut)}
 .empty{display:grid;justify-items:center;gap:4px;padding:64px 24px;text-align:center;justify-self:stretch}
 .empty b{font-size:18px;line-height:24px;font-weight:600}.empty span{color:var(--muted);font-size:14px;line-height:20px}
@@ -148,17 +220,17 @@ button.b{cursor:pointer}
 /* terminal */
 .term{margin:0;padding:12px 16px;background:var(--term);color:#d4d4d4;font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;min-height:var(--term-h,140px)}
 .tdr{border-top:1px solid var(--line2);background:var(--term);color:#a3a3a3}
-.tbar{display:flex;align-items:center;height:32px;padding:0 4px 0 16px;font-size:13px;line-height:18px}.tbar span{flex:1}
+.tbar{display:flex;align-items:center;height:calc(var(--ib) + 4px);padding:0 4px 0 16px;font-size:13px;line-height:18px}.tbar span{flex:1}
 .tbar .ib{color:#a3a3a3}.tbar .ib:hover{background:rgb(255 255 255/.1);color:#fafafa}
 .tin{display:flex;align-items:center;gap:8px;padding:0 16px 12px;background:var(--term);color:#737373;font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace}
-.tin input{flex:1;min-width:0;height:28px;border:0;background:none;color:#fafafa;font:inherit}
-.app.phone .tin input{font-size:16px}
+.tin input{flex:1;min-width:0;height:var(--btns);border:0;background:none;color:#fafafa;font:inherit}
+.app.tap .tin input{font-size:16px}
 .abar{display:flex;align-items:center;justify-content:space-between;gap:8px;justify-self:stretch;margin-bottom:8px;color:var(--muted);font-size:var(--sec)}
 .msgs>.term{justify-self:stretch;border-radius:8px}
 
 /* panes */
 .pane .scroll{padding:0 8px 16px}.pane .tabs{padding-inline:8px}
-.grp{display:flex;align-items:center;gap:4px;width:100%;height:32px;padding:0 8px;border-radius:8px;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
+.grp{display:flex;align-items:center;gap:4px;width:100%;height:var(--row);padding:0 8px;border-radius:8px;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
 .grp .i{transition:transform .15s}.grp[aria-expanded="false"] .i{transform:rotate(-90deg)}
 .status{display:flex;gap:6px;padding:0 8px 8px;font-size:14px;line-height:20px;white-space:nowrap;overflow:hidden}
 .status span{color:var(--muted)}.status .lk{color:var(--muted)}
@@ -175,15 +247,15 @@ button.b{cursor:pointer}
 .sheet{left:0;right:0;max-width:none;padding:8px 8px 16px;border-radius:16px 16px 0 0}
 .sheet::before{content:"";display:block;width:36px;height:4px;margin:0 auto 8px;border-radius:2px;background:var(--control2)}
 .sheet.form{display:grid;gap:12px;padding:8px 16px 16px}
-.sheet .hd{padding:0 4px;height:48px}.sheet .hd .t1{font-size:16px}
+.sheet .hd{padding:0 4px;height:var(--hd)}.sheet .hd .t1{font-size:16px}
 .dlg{position:absolute;left:50%;transform:translateX(-50%);display:grid;gap:12px;width:min(400px,calc(100% - 32px));padding:20px;border-radius:16px;background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow)}
 .dlg.wide{width:min(560px,calc(100% - 32px))}
 .dlg h2,.sheet h2{font-size:16px;line-height:24px;font-weight:600}.dlg p{color:var(--muted);font-size:14px;line-height:20px}
 .fld{display:grid;gap:4px;justify-items:start}.fld>span{color:var(--muted);font-size:var(--sec);line-height:var(--secl)}.fld>.inp{justify-self:stretch}
-.fake{display:flex;align-items:center;min-height:var(--btn);padding:6px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2);justify-self:stretch}
-.pk{display:grid;gap:4px}.pk .hd{height:32px;padding:0;margin-bottom:4px}.pk .inp{margin-bottom:4px}
+.fake{display:flex;align-items:center;min-height:var(--field);padding:6px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2);justify-self:stretch}
+.pk{display:grid;gap:4px}.pk .hd{height:var(--btn);padding:0;margin-bottom:4px}.pk .inp{margin-bottom:4px}
 .pk .list{display:grid;gap:1px;align-content:start;min-height:240px}
-.pfs{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:var(--row2);padding:0 8px}
+.pk-gap{width:20px;flex:none}.pk-v{color:var(--fg);font-weight:500}
 .drawer{position:absolute;left:0;top:0;bottom:0;width:84%;max-width:340px;display:flex;flex-direction:column;gap:1px;padding:8px;background:var(--well);border-radius:24px 0 0 24px}
 .drawer .foot{margin-top:16px;padding-top:8px;border-top:1px solid var(--line)}.drawer .sub{padding-left:24px}
 .win{position:absolute;left:16px;right:16px;max-width:880px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);border-radius:16px;background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);overflow:clip}
@@ -197,7 +269,7 @@ button.b{cursor:pointer}
 h3+.srow,.hint+.srow,.banner+.srow{border-top:0}
 .srow .n{flex:1;min-width:0}.srow .n small{display:block;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
 .srow .val{color:var(--muted);font-size:var(--sec);line-height:var(--secl);text-align:right;min-width:0}
-.srow.wrap{flex-wrap:wrap}
+.srow.wrap{flex-wrap:wrap}.srow.wrap .n{min-width:min(10rem,100%)}
 .note{padding:8px 12px;border-radius:8px;background:var(--raised);color:var(--sub)}
 .mcard{display:grid;gap:12px;margin-top:8px;padding:16px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line2)}
 .mcard .nm{font-weight:600;white-space:nowrap}
@@ -211,17 +283,18 @@ h3+.srow,.hint+.srow,.banner+.srow{border-top:0}
 .pt{display:grid;justify-items:center;align-content:center;gap:2px;border-radius:27px;color:var(--muted);font-size:11px;line-height:14px;font-weight:500}
 .pt[aria-pressed="true"]{background:var(--control);color:var(--fg)}
 .pt .w{position:relative;display:grid}.pt .cnt{box-shadow:0 0 0 2px var(--raised)}
-.vbtn{display:grid;place-items:center;width:60px;height:60px;border-radius:50%;background:var(--raised);flex:none}
-.vbtn[aria-pressed="true"]{background:var(--fg);color:var(--canvas)}
-.vbtn.end,.ib.end,.ib.end:hover{background:#dc2626;color:#fff}
-.vcap{display:flex;justify-content:center;align-items:center;height:20px;padding:0 16px}
 
 /* resizable edges */
-.rz{display:none;position:absolute;top:0;bottom:0;width:12px;cursor:col-resize;touch-action:none;z-index:15}
-.rz::after{content:"";position:absolute;top:0;bottom:0;left:5px;width:2px}
-.rz:hover::after,.rz.on::after{background:var(--muted)}
-.app:not(.phone) .shell:not(.noside) .rzs{display:block;left:calc(var(--side-w,240px) - 6px)}
-.app:not(.phone) .shell.has-pane .rzp{display:block;right:calc(var(--pane-w,380px) - 6px)}
+.rz{display:none;position:absolute;top:0;bottom:0;width:var(--rz);cursor:col-resize;touch-action:none;z-index:15}
+.rz::after{content:"";position:absolute;top:0;bottom:0;left:calc(50% - 1px);width:2px}
+/* the edge stays the pane's hairline; a mouse's hover or a drag shows where it grabs. Not :hover on a touch screen:
+   Android keeps it after a tap, which left a thick light line on the swapped divider (SHEP-352) */
+.rz.on::after{background:var(--muted)}
+@media (hover:hover) and (pointer:fine){.rz:hover::after{background:var(--muted)}}
+.app:not(.phone) .shell:not(.noside) .rzs{display:block;left:calc(var(--sidec) - var(--rz)/2)}
+.app:not(.phone) .shell.has-pane .rzp{display:block;right:calc(var(--pane-w,380px) - var(--rz)/2)}
+.app:not(.phone) .shell.swap.has-pane .rzp{right:auto;left:calc(var(--sidec) + var(--pane-w,380px) - var(--rz)/2)}
+.app:not(.phone) .shell.swap.noside.has-pane .rzp{left:calc(var(--pane-w,380px) - var(--rz)/2)}
 .rzh{height:8px;margin-top:-4px;cursor:row-resize;touch-action:none;position:relative;z-index:15}
 .rzh:hover,.rzh.on{background:var(--control2)}
 
@@ -234,9 +307,10 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 .crow{display:flex;align-items:center;min-width:0}
 .crow .cin{flex:1;min-width:0;text-overflow:ellipsis}
 .cin::placeholder{text-overflow:ellipsis}
-.kbd{flex:none;display:grid;place-items:center;height:24px;margin-right:12px;padding:0 6px;border-radius:6px;color:var(--muted);font-size:12px;line-height:16px;font-weight:500;box-shadow:inset 0 0 0 1px var(--line2)}
-.kbd:hover{background:var(--control);color:var(--fg)}
-.app.phone .kbd{width:32px;height:32px;padding:0;margin-right:8px;border-radius:8px}
+/* the suggested reply's chip (SHEP-363): an icon button like the box's others (.ib: size, radius, no outline). It sits
+   on the text line's centre (textarea.cin's 10px top padding plus half its 24px line) and centred over the box's round
+   button (the box bar's 6px right padding plus half the size difference), so the two share a centre line */
+.crow>.kbd{align-self:flex-start;margin-top:calc(22px - var(--ib)/2);margin-right:calc(6px + (var(--send) - var(--ib))/2)}
 
 /* screens */
 .scr{position:relative;border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2)}
@@ -273,20 +347,26 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 .fchips.mine{justify-content:flex-end;padding:0;margin-top:12px}
 .fchip{display:inline-flex;align-items:center;gap:6px;height:var(--btns);padding:0 8px;border-radius:8px;background:var(--control);font-size:var(--sec);line-height:var(--secl)}
 .fchip button{display:grid;place-items:center;color:var(--muted)}
-textarea.cin{display:block;height:44px;min-height:44px;padding:10px 16px;resize:none;overflow:hidden;font-family:inherit;color:inherit}
+/* SHEP-345: what a share put in the box (Shared to #space, Change) */
+.fchip.shared .where{max-width:min(240px,46vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fchip button.chg{display:block;color:var(--fg);font-weight:600}
+/* a chip in the message box holds its own buttons: they sit over the bigger touch area a finger gets (.fchip::after) */
+.cbox .fchip>button{position:relative;z-index:1;align-self:stretch}
+textarea.cin{display:block;height:max(44px,var(--row));min-height:max(44px,var(--row));padding:10px 16px;resize:none;overflow:hidden;font-family:inherit;color:inherit}
 .tw{position:relative}
 .tcap{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;background:none;font-size:16px;cursor:text;touch-action:none}
 .keys{display:flex;flex:none;gap:6px;padding:8px 12px 12px;background:var(--term);overflow-x:auto;scrollbar-width:none}.keys button{flex:1 0 auto;max-width:64px}
-.keys button{min-width:34px;height:36px;padding:0 6px;border-radius:8px;background:rgb(255 255 255/.1);color:#fafafa;font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center}
+.keys button{min-width:max(34px,var(--ib));height:max(36px,var(--ib));padding:0 6px;border-radius:8px;background:rgb(255 255 255/.1);color:#fafafa;font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center}
 
-.emo{display:flex;gap:4px;padding:4px}
-.emo button{flex:1;height:40px;border-radius:8px;font-size:20px;line-height:1;text-align:center}
+.emo{display:flex;gap:2px;padding:4px}
+.emo button{flex:1;min-width:40px;height:44px;border-radius:10px;font-size:24px;line-height:1;text-align:center}
 .emo button:hover{background:var(--control)}
+.emo button[aria-pressed="true"]{background:color-mix(in srgb,var(--blue) 16%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--blue) 55%,transparent)}
+.pop:has(>.emo:only-child){min-width:0;border-radius:999px;padding:2px}.pop>.emo:only-child button{border-radius:999px}
 .card .thumb{max-width:280px}
 textarea.cin::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tw .term{padding-bottom:12px}
 
-.fchip .pic{width:16px;height:16px;border-radius:4px;background:var(--control2);box-shadow:inset 0 0 0 1px var(--line2)}
 .fchips.mine{margin-top:4px}
 .emo button .i{margin:auto}
 
@@ -315,12 +395,12 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 @keyframes up{from{transform:translateY(24px);opacity:0}}
 @keyframes in{from{transform:translateX(-24px);opacity:0}}
 @keyframes fade{from{opacity:0}}
-/* a task's status icon (SHEP-321, tasks/client.tsx StatusIcon): the ring filled by the share done, the time left short
+/* a task's status icon (SHEP-321; Working in the app's yellow, Needs you red with its dot, SHEP-351, tasks/client.tsx StatusIcon): the ring filled by the share done, the time left short
    under it, centred on the icon without widening its column (a wider time overflows evenly); one-line rows: beside it */
-.tring{display:inline-flex;flex-direction:column;align-items:center;flex:none;width:var(--ic);color:var(--blue)}
-.tring.t-ask{color:var(--amber)}.tring.t-red{color:var(--red)}.tring.t-ready{color:var(--green)}.tring.t-mute{color:var(--muted)}
+.tring{display:inline-flex;flex-direction:column;align-items:center;flex:none;width:var(--ic);color:var(--amber)}
+.tring.t-ask{color:var(--red)}.tring.t-red{color:var(--red)}.tring.t-ready{color:var(--green)}.tring.t-mute{color:var(--muted)}
 .tring .mk{fill:currentColor;stroke:var(--canvas);stroke-width:1.5;paint-order:stroke}
-.tring .tk{stroke:var(--canvas);stroke-width:1.75}
+.tring .tn{opacity:.2}.tring .tk{stroke:var(--canvas);stroke-width:1.75}
 .tring .tl{margin-top:calc((var(--uil) - var(--ic))/2);font-size:calc(var(--sec) - 2px);line-height:var(--secl);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tring.tside{flex-direction:row;width:auto;gap:4px}.tring.tside .tl{margin-top:0}
 .card .t.tw{display:flex;align-items:center;gap:8px}
@@ -328,22 +408,32 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 .i.turn{animation:turn 1s linear infinite}
 @keyframes turn{to{transform:rotate(1turn)}}
 @keyframes calm{50%{opacity:.45}}
-/* the working sign at a chat's end (SHEP-313): three dots rise in turn, no bubble, the step beside them on one line;
-   reduced motion: they only brighten in turn, slowly */
-.wsign{display:flex;align-items:center;gap:10px;max-width:min(82%,560px);min-width:0;margin-top:12px;color:var(--muted);font-size:14px;line-height:20px}
-.wdots{display:inline-flex;align-items:center;gap:5px;height:20px;flex:none}
-.wdots i{width:7px;height:7px;border-radius:50%;background:currentColor;animation:rise 1.2s ease-in-out infinite}
+/* the working sign at a chat's end (SHEP-313, SHEP-343, SHEP-357): an agent bubble sized to three dots like a one-line
+   message (the bubble's own 6px 14px padding round one 24px line), the dots centred both ways and their rise kept
+   inside that padding; the step beside it as quiet text on one line; it comes in a beat after words land, so the bubble
+   seems to become them; reduced motion: the dots only brighten in turn, slowly, and it fades in without moving.
+   `.wsign .wbub` outranks styles.css's `.b{display:block}`, which had left the dots at the bubble's top edge */
+.wsign{display:flex;align-items:center;gap:8px;max-width:min(82%,560px);min-width:0;margin-top:12px;color:var(--muted);font-size:14px;line-height:20px;transform-origin:left center;animation:wsin .24s ease-out .35s both}
+.pane .wsign{max-width:92%}
+/* SHEP-363: Stop on the working row (the box's round button is the voice call while it is empty), outside the sign's
+   grow-in. It sits at the row's right end, centred over the box's round button: the chat column and the box share their
+   edges (main chat and panel alike) and that button is the box bar's 6px padding in from the right */
+.wrow{display:flex;align-items:center;gap:8px;justify-self:stretch;min-width:0;margin-top:12px}.wrow>.wsign{margin-top:0}
+.wrow>.wstop{margin-left:auto;border-radius:50%;margin-right:calc(6px + (var(--send) - var(--ib))/2);animation:fade .24s ease-out .35s both}
+.wsign .wbub{display:flex;align-items:center;justify-content:center;flex:none;max-width:none;padding:6px 14px;line-height:24px}
+.wdots{display:flex;align-items:center;gap:5px;height:24px;color:var(--sub)}
+.wdots i{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor;animation:rise 1.2s ease-in-out infinite}
 .wdots i:nth-child(2){animation-delay:.15s}.wdots i:nth-child(3){animation-delay:.3s}
 .wstep{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@keyframes rise{0%,60%,100%{transform:none;opacity:.5}30%{transform:translateY(-4px);opacity:1}}
-@media(prefers-reduced-motion:reduce){.i.turn{animation:calm 2.4s ease-in-out infinite}.wdots i{animation:calm 2.4s ease-in-out infinite}.wdots i:nth-child(2){animation-delay:.4s}.wdots i:nth-child(3){animation-delay:.8s}.sheet.in,.drawer.in,.pop.in,.dlg.in,.win.in,.lbox.in{animation:none}.tg i{transition:none}}
+@keyframes wsin{from{opacity:0;transform:scale(.85)}}
+@keyframes rise{0%,60%,100%{transform:none;opacity:.45}30%{transform:translateY(-3px);opacity:1}}
+@media(prefers-reduced-motion:reduce){.i.turn{animation:calm 2.4s ease-in-out infinite}.wsign{animation-name:fade}.wdots i{animation:calm 2.4s ease-in-out infinite}.wdots i:nth-child(2){animation-delay:.4s}.wdots i:nth-child(3){animation-delay:.8s}.sheet.in,.drawer.in,.pop.in,.dlg.in,.win.in,.lbox.in{animation:none}.tg i{transition:none}}
 
 textarea.cin{overflow-y:auto}
 .pane .scroll>.tdr .tw{flex:1;display:flex;flex-direction:column}
 .srch .list{max-height:56dvh;overflow-y:auto}
 
 /* attachments: square thumbnails in one row that scrolls sideways (the message box, what you sent), and the preview */
-.app{--ath:72px}
 .athr{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none}
 .athr::-webkit-scrollbar{display:none}
 .athr.box{padding:8px 8px 4px}
@@ -359,13 +449,13 @@ textarea.cin{overflow-y:auto}
 .ftl span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;line-height:14px}
 .ast{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:2px;border-radius:inherit;background:rgb(0 0 0/.45);color:#fff;font-size:12px;line-height:16px;font-weight:500}
 .ast.bad{background:color-mix(in srgb,var(--canvas) 85%,transparent);color:var(--red)}
-.arm{position:absolute;top:0;right:0;display:grid;place-items:start end;width:28px;height:28px;padding:4px;border-radius:0 10px 0 8px}
-.arm>span{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgb(0 0 0/.6);color:#fff;box-shadow:0 0 0 1px rgb(255 255 255/.35)}
+.arm{position:absolute;top:0;right:0;display:grid;place-items:start end;width:max(28px,calc(var(--ath)/2));height:max(28px,calc(var(--ath)/2));padding:4px;border-radius:0 10px 0 8px}
+.arm>span{display:grid;place-items:center;width:calc(var(--ic) + 4px);height:calc(var(--ic) + 4px);border-radius:50%;background:rgb(0 0 0/.6);color:#fff;box-shadow:0 0 0 1px rgb(255 255 255/.35)}
 .arm .i{width:12px;height:12px;stroke-width:2}
 .arm:focus-visible{outline-offset:-2px}
 .lbox{position:fixed;inset:0;display:flex;flex-direction:column;background:rgb(0 0 0/.88);color:#fafafa;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
 .lbox:focus{outline:0}
-.lbar{display:flex;align-items:center;gap:4px;min-height:52px;padding:0 8px 0 16px;pointer-events:auto}
+.lbar{display:flex;align-items:center;gap:4px;min-height:max(52px,var(--hd));padding:0 8px 0 16px;pointer-events:auto}
 .lbar .ib{color:#d4d4d4}.lbar .ib:hover{background:rgb(255 255 255/.1);color:#fafafa}
 .lbar .ib:focus-visible{outline-color:#fafafa}
 .lname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:20px;font-weight:500}
@@ -379,3 +469,88 @@ textarea.cin{overflow-y:auto}
 .lsub{color:var(--muted);font-size:14px;line-height:20px}
 .lfile .btn{margin-top:8px}
 .lfile a.btn{color:inherit;text-decoration:none}
+
+/* SHEP-325: where a task works: its tag (a tap shows that repo's tasks), a repo's head in Everything's Tasks */
+.wtag{position:relative;display:inline-flex;align-items:center;gap:4px;max-width:100%;color:var(--muted);font-size:inherit;line-height:inherit;cursor:pointer;vertical-align:top}
+.wtag .i{flex:none;width:14px;height:14px}
+.wtag:hover{color:var(--fg)}
+@media (pointer:coarse){.wtag::after{content:"";position:absolute;inset:-8px -4px}}
+.status .wtag{color:var(--muted)}
+.card .s .wtag{color:inherit}
+/* SHEP-348: a row's repo line (a branch icon for its own branch, its pull request and one mark for its checks; a tap
+   opens the task at its strip), and the strip under a task's title */
+.rline{position:relative;display:flex;align-items:center;gap:4px;min-width:0;cursor:pointer}
+.rline .i{flex:none;width:calc(var(--secl) - 4px);height:calc(var(--secl) - 4px)}
+.rline .rn{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rline .pn{flex:none;font-variant-numeric:tabular-nums}
+.rline:hover{color:var(--fg)}
+@media (pointer:coarse){.rline::after{content:"";position:absolute;inset:-4px -4px -8px}}
+.gstrip{justify-self:stretch;display:grid;gap:6px;margin:0 0 8px;padding:10px 12px;border-radius:12px;background:var(--raised);color:var(--sub);font-size:var(--sec);line-height:var(--secl)}
+.gstrip.jump{box-shadow:0 0 0 2px var(--fg)}
+.gstrip .gl{display:flex;align-items:center;gap:6px;min-width:0}
+.gstrip .i{flex:none;width:16px;height:16px}
+.gstrip .gl>.i:first-child{color:var(--muted)}
+.gstrip .tr{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gstrip .gb{user-select:text}
+.gstrip .mu{flex:none;color:var(--muted)}.gstrip .tr.mu{flex:initial}
+.gstrip .pn{flex:none;font-variant-numeric:tabular-nums}
+.gstrip .gh{position:relative;display:inline-flex;text-decoration:none;align-items:center;gap:4px;flex:none;margin-left:auto;color:var(--muted)}
+.gstrip .gh:hover{color:var(--fg)}
+@media (pointer:coarse){.gstrip .gh::after{content:"";position:absolute;inset:-12px -8px}}
+.rhead{display:flex;align-items:center;gap:8px;padding:0 0 8px 8px}
+.rhead>.i{flex:none;color:var(--muted)}
+.rhead .n{flex:1;min-width:0}.rhead .l1{font-weight:600}
+.rhead .btn{flex:none}
+.asked{display:block;margin:-4px 8px 8px;color:var(--muted);font-size:var(--sec);line-height:var(--secl);text-align:left}
+/* the Tasks filter (SHEP-331): a multi-select menu that scrolls inside the screen, its ticks, the dot on its button,
+   the chips of what is on */
+/* a menu's group (MenuGroup): its quiet name 8 px under the hairline before it, 4 px over its rows; the filter menus'
+   one rhythm (the Tasks panel's and each machine's in the list) */
+.mg{display:grid;grid-template-columns:minmax(0,1fr)}.mg+.mg::before{content:"";height:1px;margin:4px 8px;background:var(--line)}
+.pop .mg .cap{padding:8px 8px 4px}.pop .mg:first-child>.cap{padding-top:4px}
+/* the Tasks filter: as wide as its rows (kept inside its panel by the popover), its body scrolling with no system bar,
+   fading at an edge with more; Clear on a hairline at its foot */
+.pop:not(.sheet):has(>.tfm){display:flex;flex-direction:column;width:max-content;max-width:280px;max-height:640px;min-width:min(240px,100%);overflow:hidden}
+.sheet:has(>.tfm){display:flex;flex-direction:column;overflow:hidden}
+.tfm{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.tfb{min-height:0;flex:1 1 auto;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;--fu:0px;--fd:0px;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 var(--fu),#000 calc(100% - var(--fd)),transparent);mask-image:linear-gradient(to bottom,transparent,#000 var(--fu),#000 calc(100% - var(--fd)),transparent)}
+.tfb::-webkit-scrollbar{display:none}.tfb[data-up]{--fu:24px}.tfb[data-down]{--fd:40px}
+.tff{flex:none;display:grid}.tff::before{content:"";height:1px;margin:4px 8px;background:var(--line)}
+.tfm .row .n:has(>.tft){display:flex;align-items:baseline;gap:8px}
+.tft{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.tfw{flex:none;max-width:45%;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
+.tfq{width:auto;margin:0 4px 4px;height:var(--btns)}
+.tfnone{padding:6px 8px;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
+.cbx{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:4px;box-shadow:inset 0 0 0 1px var(--line2);flex:none}
+.cbx.on{background:var(--fg);color:var(--canvas);box-shadow:none}.cbx .i{width:12px;height:12px;stroke-width:2;color:inherit!important}
+.app.tap .cbx{width:20px;height:20px;border-radius:5px}.app.tap .cbx .i{width:14px;height:14px}
+.ib .fdot{position:absolute;top:4px;right:4px;width:6px;height:6px;border-radius:3px;background:var(--fg);box-shadow:0 0 0 2px var(--canvas)}
+.fchips.tfc{padding:0 8px 8px}.fchips.tfc .fchip{max-width:100%}.tfl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* touch (SHEP-317): what needs more than a token to give a finger its 44 px */
+@media(pointer:coarse){a.btn{position:relative}a.btn::before{content:"";position:absolute;left:50%;top:50%;width:max(100%,var(--hit));height:max(100%,var(--hit));transform:translate(-50%,-50%)}}
+.app.tap .emo{gap:0}.app.tap .emo button{min-width:var(--hit)}
+.app.tap :not(.msgs)>:is(.fold,.ref){min-height:var(--row)}.app.tap .ref{margin-top:0}
+/* Text gets the room there is (SHEP-356): a name or title wraps to a second line before it is cut, and is cut only where
+   that second line ends too. Where it is still cut, a tap opens the thing that shows it whole. A space's name in the list
+   stays one line, cut with an ellipsis like a machine's (its ⋯ menu shows it whole). */
+.row.tk .l1,.row.tk .l2:not(.rline),.tile>.l1,.banner .n:not(button),.hd .ttl>.t1:only-child{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere}
+.banner{padding-block:4px}.hd .ttl>.t1:only-child{line-height:20px}
+/* The chat's one rhythm and one left edge (SHEP-383). Rows (a turn's "Ran a command", a task's line, a settled card's
+   "Done and merged", news, messages between agents) share one icon column (16 px at the chat's edge) and one text
+   column 8 px after it, and 4 px of air above and below inside the row. Between any two things that differ (a bubble
+   and a row, a card and a bubble, one side and the other) there is 12 px; rows in a run sit 12 px apart text to text;
+   the last thing ends 12 px above the message box. On touch a row keeps its 44 px target as an invisible hit area, so
+   it no longer pushes its neighbours away. */
+.msgs{padding-bottom:12px}
+.msgs{position:relative}.msgs>.mend{position:absolute;bottom:0}
+.msgs>:is(.fold,.ref,.donerow){gap:8px;min-height:0;margin:0;padding-block:4px}
+.msgs>:is(.card,.wsign,.wrow){margin-top:0}
+.msgs>:not(.fold,.ref,.donerow,.time,.mend)+:is(.card,.wsign,.wrow),.msgs>.card+:not(.fold,.ref,.donerow,.time,.mend){margin-top:8px}
+.msgs>:not(.fold,.ref,.donerow,.time)+:is(.fold,.ref,.donerow),.msgs>:is(.fold,.ref,.donerow)+:not(.fold,.ref,.donerow,.time,.quietb,.files,.mend){margin-top:4px}
+.msgs>:is(.fold,.ref,.donerow):nth-last-child(2){margin-bottom:-4px}
+.msgs>.ref>.tring{width:16px}.msgs>.ref>.tring>.i{width:16px;height:16px}
+.msgs>.quietb,.msgs>.files{margin-inline-start:24px}
+/* on touch a row is itself 44 px tall (12 px of air above and below its words), not a 28 px row with an invisible pad:
+   packed 12 px apart, neighbouring pads split the space between them and each row kept only ~32 px for a finger. Touch
+   spacing is looser for it; desktop keeps the tight rhythm above */
+.app.tap .msgs>:is(.fold,.ref,.donerow){padding-block:12px}.app.tap .msgs>:is(.fold,.ref,.donerow):nth-last-child(2){margin-bottom:-12px}

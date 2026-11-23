@@ -26,7 +26,9 @@ import threading
 import time
 
 from .base import QUEUED, ASK_HOME, OLD_SESSION, SESSION, SHARE, sync_held, bundle, ENTRY, Fail, guard, HOME, hc_json, layout, now, PACKAGE, portable_script, run, STORE, WHERE
-from .news import news_send, send_or_hold, typing
+from .news import NO_AGENT, news_send, send_or_hold, typing
+from .agents import front
+from .revive import restart_assistant
 from .settings import TEMPLATES
 
 
@@ -142,10 +144,14 @@ def manifest():
         # marks nothing.
         if secrets_main_here():
             touch.append({"path": ".herdr/secret-remote", "unless": ".herdr/vault.json", "unless_main": True})
+    ensure = []
     for helper in ("herdr-browser", "herdr-desktop"):
         p = _real(f".local/bin/{helper}")
         if p:
             add(f".local/bin/{helper}", _read(p), 0o755, [p])
+    # SHEP-346: agent-desktop where herdr-desktop goes (herdr-desktop --install there: its pinned release, checked)
+    if _real(".local/bin/herdr-desktop"):
+        ensure.append(".local/bin/herdr-desktop")
     # The chat's question-card hook (SHEP-139): a task worker's own hook (herdr-task _allow) runs it,
     # so a machine that only runs tasks asks on the card too. From Shepherdr's own install (<SHARE>/hooks),
     # else the copy a sync left here (this machine passes it on).
@@ -163,7 +169,7 @@ def manifest():
         h.update(f"{f['path']} {f['sha']} {f['mode']}\n".encode())
     for link in links:
         h.update(f"{link['path']} -> {link['target']}\n".encode())
-    return {"version": h.hexdigest()[:12], "files": files, "links": links, "touch": touch}
+    return {"version": h.hexdigest()[:12], "files": files, "links": links, "touch": touch, "ensure": ensure}
 
 
 # Runs on the other machine (python3, 3.8+), its input on stdin: checks or installs, then prints
@@ -275,6 +281,29 @@ for l in x["links"]:
         except Exception as e:
             st = "failed: " + str(e)
     out["links"][l["path"]] = st
+# What a helper there installs itself (SHEP-346: herdr-desktop's agent-desktop): "ready", "missing" (a check),
+# "installed" or "failed: <why>" (an install round). Never on the machine with the source: its own install does it.
+out["ensure"] = {}
+for e in ([] if source else x.get("ensure") or []):
+    p = P(e)
+    if not os.path.isfile(p):
+        continue
+    def helper(arg, t):
+        try:
+            r = subprocess.run(["sh", p, arg], stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=t)
+            return r.returncode, (r.stdout + b"\n" + r.stderr).decode(errors="replace")
+        except Exception as ex:
+            return 1, str(ex)
+    rc, said = helper("--bin", 30)
+    if rc == 0:
+        st = "ready"
+    elif x["op"] == "install":
+        rc, said = helper("--install", 480)   # within the sync's one hc exec (EXEC_MAX), files and all
+        lines = [l for l in said.splitlines() if l.strip()]
+        st = "installed" if rc == 0 else "failed: " + (lines[-1] if lines else "it didn't say why").replace(os.path.basename(p) + ": ", "", 1)
+    else:
+        st = "missing"
+    out["ensure"][e] = st
 def main_here():
     # the record naming the machine that keeps the secrets ("shepherdr.secrets"), and this one's id
     # in Shepherdr's own session there (3.2), else the default one, where herdr-secret kept it before
@@ -320,8 +349,29 @@ def connected_machines():
     return [m for m in (hc_json("machine", "ls") or {}).get("machines") or [] if not m.get("temporary")]
 
 
+EXEC_MAX = 600   # herdr-core's longest `hc exec --timeout` (it refuses more: "at most 600 s")
+REACH_KINDS = ("unavailable", "machine_unknown")   # hc's errors that are about the link, not the call
+
+
+class Refused(Fail):
+    """hc refused or failed the call for a reason that isn't reach (bad parameters, an error there)."""
+
+
+def _hc_error(r):
+    """hc's own error {kind, message} from a failed call's output, or None."""
+    for text in (r.stderr, r.stdout):
+        try:
+            err = json.loads((text or "").strip().splitlines()[-1]).get("error")
+        except (ValueError, AttributeError, IndexError):
+            continue
+        if isinstance(err, dict) and err.get("kind"):
+            return err
+    return None
+
+
 def _remote_python(machine, script, payload, timeout=120):
     guard(["hc"])
+    timeout = max(1, min(int(timeout), EXEC_MAX))
     try:
         r = subprocess.run(["hc", "exec", "--on", machine, "--stdin", "--timeout", str(timeout), "--", "python3", "-c", script],
                            input=json.dumps(payload), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
@@ -329,6 +379,9 @@ def _remote_python(machine, script, payload, timeout=120):
     except subprocess.TimeoutExpired:
         raise Fail("timed out")
     if r.returncode != 0:
+        err = _hc_error(r)
+        if err and err["kind"] not in REACH_KINDS:
+            raise Refused(f"hc refused the call ({err['kind']}): {err.get('message') or 'no reason given'}")
         raise Fail((r.stderr or r.stdout).strip()[-300:] or f"hc exec failed ({r.returncode})")
     try:
         return json.loads(r.stdout.strip().splitlines()[-1])
@@ -354,25 +407,35 @@ def sync_machine(machine, m, op="install", force=False):
     """Checks or installs the tools on one machine: {machine, state, details, ...}; state is
     current, drift (some file isn't: details say which and why), failed or unreachable."""
     me = {"from": core_name(), "version": m["version"], "stamp": STAMP, "force": force, "links": m["links"], "touch": m["touch"],
-          "session": SESSION}
+          "session": SESSION, "ensure": m.get("ensure") or []}
     bare = lambda f: {k: v for k, v in f.items() if k != "data"}
     try:
         res = _remote_python(machine, INSTALL, {**me, "op": "check", "files": [bare(f) for f in m["files"]]}, timeout=60)
         state, details = _verdict(res)
-        if op == "install" and state not in ("current", "source"):
+        missing = [p for p, s in (res.get("ensure") or {}).items() if s == "missing"]
+        if op == "install" and (state not in ("current", "source") or (missing and state == "current")):
             need = {p for p, s in res["files"].items() if s in ("missing", "behind")}
             send = [{**bare(f), "data": base64.b64encode(f["data"]).decode()} if f["path"] in need else bare(f) for f in m["files"]]
-            res = _remote_python(machine, INSTALL, {**me, "op": "install", "files": send}, timeout=180)
+            res = _remote_python(machine, INSTALL, {**me, "op": "install", "files": send}, timeout=EXEC_MAX if missing else 180)
             state, details = _verdict(res)
             for f in m["files"]:
                 mark = {".local/bin/herdr-task": STORE, f"{ARTIFACT_HOME}/bin/herdr-artifact": WHERE.path("artifacts")}.get(f["path"])
                 if mark and res["files"].get(f["path"]) in ("current", "installed"):
                     _mark(os.path.join(mark, ".remote", machine), hashlib.sha1(f["data"]).hexdigest())
+    except Refused as e:   # reached, but the call itself failed: said as it is, never "can't reach"
+        return {"machine": machine, "state": "failed", "details": [str(e)], "version": m["version"]}
     except Fail as e:
         return {"machine": machine, "state": "unreachable", "details": [str(e)], "version": m["version"]}
+    # what a helper installs itself: said, never the machine's state (an offline machine stays current, and says why)
+    ens = res.get("ensure") or {}
+    details = details + [f"{_ENSURED.get(p, os.path.basename(p))}: {s}" for p, s in sorted(ens.items()) if s not in ("ready", "installed")]
     return {"machine": machine, "state": state, "details": details, "version": m["version"], "installed": (res.get("stamp") or {}).get("version"),
             "os": res.get("os"), "python": res.get("python"),
-            "changed": sorted(p for p, s in {**res["files"], **res["links"]}.items() if s == "installed")}
+            "changed": sorted([p for p, s in {**res["files"], **res["links"]}.items() if s == "installed"] +
+                              [_ENSURED.get(p, p) for p, s in ens.items() if s == "installed"])}
+
+
+_ENSURED = {".local/bin/herdr-desktop": "agent-desktop"}
 
 
 def _mark(path, digest):
@@ -1182,6 +1245,20 @@ def _deliver(names, hows, address, text):
         if i == 5:
             raise Fail("not sent: the person is writing to that Assistant right now; try again in a few minutes")
         time.sleep(5)
+    # SHEP-324: never into a terminal whose agent isn't in front (a plain shell would run it), checked last thing
+    try:
+        k = json.loads(there(["hc", "get", address, "--json"]).stdout or "null")
+    except ValueError:
+        k = None
+    f = front(k)
+    if f == "shell":
+        raise Fail("its agent isn't running there (its terminal is a plain shell now), so nothing was typed into it. "
+                   "Restart that Assistant from its chat, then send again")
+    if f == "other":
+        raise Fail("another program than its agent is in front of its terminal, so nothing was typed into it; try again "
+                   "in a few minutes")
+    if f != "agent":
+        return False
     if there(["hc", "send", address, text]).returncode != 0:
         return False
     for i in range(6):
@@ -1220,16 +1297,23 @@ def tell(target, text, sender=None):
              "machine": here.get("name"), "space": (mine or {}).get("space_name") or (mine or {}).get("space") or "", "can-reply": "yes" if back is not None and me else "no"}
     esc = lambda s: str(s).replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
     msg = "<herdr-assistant " + " ".join(f'{k}="{esc(v)}"' for k, v in attrs.items()) + ">" + text.replace("</herdr-assistant", "&lt;/herdr-assistant") + "</herdr-assistant>"
-    held = False
+    held, restarted = False, None
     if not to["route"]:
         # While the person writes to it, it waits for them (news.py's held_pass).
         got = send_or_hold(to["address"], msg, "news")
+        if got == NO_AGENT:
+            # SHEP-324: its agent exited (a plain shell is in front): never typed there; it starts again with this
+            restarted = restart_assistant(hc_json("get", to["address"]), msg)
+            if not restarted:
+                raise Fail("its agent isn't running (its terminal is a plain shell now), so nothing was typed into it, "
+                           "and it couldn't be started again. Restart that Assistant from its chat, then send again")
         ok, held = bool(got), got == "held"
     else:
         ok = _deliver(to["route"].split(">"), to["how"], to["address"], msg)
     if not ok:
         raise Fail(f"couldn't deliver to {to['target']}")
-    return {"to": to["target"], "space": to.get("space_name"), "can_reply": attrs["can-reply"] == "yes", "from": attrs["from"], "held": held}
+    return {"to": to["target"], "space": to.get("space_name"), "can_reply": attrs["can-reply"] == "yes", "from": attrs["from"], "held": held,
+            **({"restarted": restarted} if restarted else {})}
 
 
 # #1079 #1141: tell-assistant never returned, and nobody knew whether it went. It now ends within TELL_WAIT seconds and
@@ -1283,5 +1367,6 @@ def cmd_tell(args):
     except Fail as e:
         raise Fail(f"Not delivered to {args.target}: {e}") from None
     say(args, r, ("Not delivered yet, held for" if r.get("held") else "Delivered to") + f" {r['to']}" + (f" ({r['space']})" if r.get("space") else "") +
+        (f": its agent had stopped, so it started again ({r['restarted']}) with this as its first message" if r.get("restarted") else "") +
         (": the person is writing to it; it goes once they've sent or cleared that" if r.get("held") else "") +
         ("." if r["can_reply"] else ". It can't reach this machine back, so it can't reply."))
