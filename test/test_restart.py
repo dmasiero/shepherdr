@@ -221,5 +221,111 @@ class Bash32(unittest.TestCase):
         self.assertIn("herdr.agent=claude", args)
 
 
+# fork: SHEP-92: a fake hc whose `run` keeps the command the new terminal would run (the handoff template's too, read
+# before restart.sh removes it), and whose `get` of the new one says it ended when FAKE_DEAD is set.
+RUN_HC = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$FAKE_DIR/calls"
+case $1 in
+  get)
+    if [ "$2" = t9 ]; then
+      if [ -n "${FAKE_DEAD:-}" ]; then echo '{"address":"t9","exit_code":127,"finished_ms":1}'; else echo '{"address":"t9","state":"live"}'; fi
+    else echo '{"address":"t2","cwd":"/tmp","template":"assistant","labels":{"herdr.space":"sp1","herdr.tab":"tab1","herdr.role":"coordinator"}}'; fi ;;
+  run)
+    printf '%s\n' "$@" >"$FAKE_DIR/run-args"
+    for a in "$@"; do last=$a; done
+    case $last in herdr-handoff-*) cp "$XDG_CONFIG_HOME/herdr-core/templates/$last.md" "$FAKE_DIR/template" ;; esac
+    echo '{"address":"t9","first_message":{"sent":true}}' ;;
+  read) [ "$2" = t9 ] && printf 'sh: line 1: exec: claude: not found\n\n' ;;
+  ls) echo '{"terminals":[]}' ;;
+esac
+"""
+
+# What a bare-PATH core gives every terminal it starts (launchd's on a Mac)
+BARE = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+class BarePathTerminal(unittest.TestCase):
+    """SHEP-92: restart.sh widens its own PATH (THERE_PATH) but the terminal it starts with hc run gets its core's,
+    which on m3oracle is /usr/bin:/bin:/usr/sbin:/sbin: a bare `exec claude` ended at once ("exec: claude: not found")
+    and the chat was mapped to the dead terminal. The new terminal now names the agent by its full path as found here
+    and gets this PATH after the core's own; one that ends at once is no restart."""
+
+    def restart(self, env=None, argv=("claude", "--resume", "s1"), tpl=None):
+        d = tempfile.mkdtemp()
+        for sub in ("bin", "agents", "cfg/herdr-core/templates"):
+            os.makedirs(os.path.join(d, sub))
+        if tpl:
+            with open(os.path.join(d, "cfg/herdr-core/templates/assistant.md"), "w") as f:
+                f.write(tpl)
+        with open(os.path.join(d, "bin", "hc"), "w") as f:
+            f.write(RUN_HC)
+        os.chmod(os.path.join(d, "bin", "hc"), 0o755)
+        link_tools(d)  # fork: NixOS (TOOLS)
+        for tool in ("cp", "env"):
+            found = shutil.which(tool)
+            if found and not os.path.lexists(os.path.join(d, "bin", tool)):
+                os.symlink(found, os.path.join(d, "bin", tool))
+        # the agent's CLI where only the caller's PATH has it (as /etc/profiles/per-user/<user>/bin on NixOS)
+        claude = os.path.join(d, "agents", "claude")
+        with open(claude, "w") as f:
+            f.write('#!/bin/sh\nprintf "%s\\n" "ran $*" "PATH=$PATH" >"$FAKE_DIR/ran"\n')
+        os.chmod(claude, 0o755)
+        e = {"PATH": f"{d}/bin:{d}/agents:/usr/bin:/bin", "HOME": d, "HERDR_APP_HOME": d, "FAKE_DIR": d,
+             "XDG_CONFIG_HOME": f"{d}/cfg", **(env or {})}
+        r = subprocess.run(["bash", SCRIPT, "t2", *([] if argv is None else [json.dumps(list(argv))])], env=e,
+                           capture_output=True, text=True, timeout=30)
+        return r, d
+
+    def start_it(self, d, argv):
+        """Runs the new terminal's command as its core would: its own bare PATH, nothing of the caller's."""
+        sh = shutil.which("sh")
+        subprocess.run(argv if argv[0] != "sh" else [sh, *argv[1:]], env={"PATH": BARE, "HOME": d, "FAKE_DIR": d},
+                       capture_output=True, text=True, timeout=30)
+        p = os.path.join(d, "ran")
+        return read(p).splitlines() if os.path.exists(p) else None
+
+    def test_resume_finds_the_cli(self):
+        r, d = self.restart({"HERDR_RESTART_RESUME": "1"})
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "t9"), r.stderr)
+        args = read(os.path.join(d, "run-args")).split("\n")[:-1]
+        self.assertIn("herdr.agent=claude", args)
+        tail = args[args.index("--") + 1:]
+        self.assertEqual(tail[tail.index("herdr-clean") + 1:], [os.path.join(d, "agents", "claude"), "--resume", "s1"])
+        ran = self.start_it(d, tail)
+        self.assertIsNotNone(ran, "the CLI never ran under the core's bare PATH")
+        self.assertEqual(ran[0], "ran --resume s1")
+        self.assertTrue(ran[1].startswith(f"PATH={BARE}:{d}/.local/bin:/opt/homebrew/bin:/usr/local/bin:{d}/bin:{d}/agents:"), ran[1])
+
+    def test_handoff_template_finds_the_cli(self):
+        r, d = self.restart()
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "t9"), r.stderr)
+        tpl = read(os.path.join(d, "template"))
+        cmd = re.search(r"^command: (.*)$", tpl, re.M).group(1)
+        self.assertIn(f"exec {d}/agents/claude --resume s1", cmd)
+        ran = self.start_it(d, ["sh", "-c", cmd])
+        self.assertIsNotNone(ran, "the CLI never ran under the core's bare PATH")
+        self.assertEqual(ran[0], "ran --resume s1")
+        self.assertTrue(ran[1].startswith(f"PATH={BARE}:{d}/.local/bin:/opt/homebrew/bin:/usr/local/bin:{d}/bin:{d}/agents:"), ran[1])
+        self.assertIn("kill t2", read(os.path.join(d, "calls")))
+
+    def test_assistant_template_command_finds_the_cli(self):
+        """A coordinator restarted without an argv runs the assistant template's own command: found the same way."""
+        r, d = self.restart(argv=None, tpl="---\nname: assistant\ncommand: claude --permission-mode auto\n---\nYou are it.\n")
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "t9"), r.stderr)
+        cmd = re.search(r"^command: (.*)$", read(os.path.join(d, "template")), re.M).group(1)
+        ran = self.start_it(d, ["sh", "-c", cmd])
+        self.assertIsNotNone(ran, "the CLI never ran under the core's bare PATH")
+        self.assertEqual(ran[0], "ran --permission-mode auto")
+
+    def test_a_new_one_that_ends_at_once_is_no_restart(self):
+        r, d = self.restart({"HERDR_RESTART_RESUME": "1", "FAKE_DEAD": "1"})
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(r.stderr.strip(), "The new agent ended as it started: sh: line 1: exec: claude: not found")
+        calls = read(os.path.join(d, "calls"))
+        self.assertNotIn("kill t2", calls, "the old one stays")
+        self.assertIn("rm t9", calls)
+
+
 if __name__ == "__main__":
     unittest.main()
