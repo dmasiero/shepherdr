@@ -36,8 +36,8 @@ const snap: Snapshot = {
   host: 'mini',
   user: '',
   everything: 'home',
-  // mini: several spaces, one archived; vm: one, and a warning mark; pi: none
-  places: [place('home', 'mini', { home: true }), place('shop', 'mini'), place('blog', 'mini'), place('old', 'mini', { archived: true }), place('garden', 'vm')],
+  // mini: several spaces, one archived; vm: its home space and one, and a warning mark; pi: its home space only
+  places: [place('home', 'mini', { home: true }), place('shop', 'mini'), place('blog', 'mini'), place('old', 'mini', { archived: true }), place('vmh', 'vm', { home: true, name: 'home', unnamed: true }), place('garden', 'vm'), place('pih', 'pi', { home: true, name: 'home', unnamed: true })],
   machines: [
     { id: 'm:mini', machine: 'mini', name: 'mini', status: 'idle' },
     { id: 'm:vm', machine: 'vm', name: 'vm', status: 'off', unreachableSince: '14:02' },
@@ -82,8 +82,60 @@ test("a machine's filter shows only that machine's spaces as it says, and marks 
   expect(part(html, 'vm')).toContain('data-project="garden"')
   expect(part(html, 'vm')).toContain('aria-label="Show which spaces on vm"')
   expect(part(html, 'vm')).not.toContain('fdot')
-  // a machine with none to show says so, and keeps its heading (and so its filter)
+  // a machine with none to show says so, and keeps its heading (and so its filter); its home space is no archived one
   expect(part(html, 'pi')).toContain('No archived spaces.')
+  expect(part(html, 'pi')).not.toContain('data-project="pih"')
+})
+
+test("every other machine's home space is its first row, as ~; this computer's is Everything, never a row (SHEP-429)", () => {
+  setUI({ shown: {} })
+  const html = draw()
+  for (const [m, id] of [['vm', 'vmh'], ['pi', 'pih']] as const) {
+    const it = part(html, m)
+    expect(it).toContain(`data-project="${id}"`)
+    expect(it).toContain(`aria-label="~ on ${m}"`)
+    expect(it).toContain(`aria-label="More for ~ on ${m}"`)
+    expect(it).not.toContain('>home<')
+  }
+  // vm's home row before its other space
+  expect(part(html, 'vm').indexOf('data-project="vmh"')).toBeLessThan(part(html, 'vm').indexOf('data-project="garden"'))
+  expect(part(html, 'mini')).not.toContain('data-project="home"')
+})
+
+test("a machine's home space carries the # icon like any space, its name still ~; Everything keeps layers", async () => {
+  const { IC } = await import('./icons.ts')
+  const html = draw()
+  const row = (id: string) => html.slice(html.indexOf(`data-project="${id}"`)).split('data-project=')[1]!
+  for (const id of ['vmh', 'pih']) {
+    expect(row(id)).toContain(IC.hash)
+    expect(row(id)).not.toContain(IC.folder)
+  }
+  expect(html.slice(0, html.indexOf('data-machine='))).toContain(IC.layers)
+})
+
+test("a machine's home space is a space like any other: named, it shows its name with #; archived, it leaves the list", () => {
+  const named = { ...snap, places: snap.places.map((p) => (p.id === 'vmh' ? { ...p, name: 'vm-box', unnamed: undefined } : p.id === 'pih' ? { ...p, archived: true } : p)) }
+  const html = renderToStaticMarkup(<List snap={named} />)
+  expect(part(html, 'vm')).toContain('>vm-box<')
+  expect(part(html, 'vm')).toContain('aria-label="More for vm-box"')
+  expect(part(html, 'vm')).not.toContain('aria-label="~ on vm"')
+  expect(part(html, 'pi')).not.toContain('data-project="pih"')
+  setUI({ shown: { pi: 'Archived' } })
+  expect(part(renderToStaticMarkup(<List snap={named} />), 'pi')).toContain('data-project="pih"')
+})
+
+test("the main machine has its own ~ row too, first, with the full menu; Everything stays the top row (3.2.8)", () => {
+  setUI({ shown: {} })
+  // the service lists it right after Everything
+  const withTilde = { ...snap, places: [snap.places[0]!, place('tilde', 'mini', { home: true, name: 'home', unnamed: true }), ...snap.places.slice(1)] }
+  const html = renderToStaticMarkup(<List snap={withTilde} />)
+  const mini = part(html, 'mini')
+  expect(mini).toContain('data-project="tilde"')
+  expect(mini).toContain('aria-label="~ on mini"')
+  expect(mini).toContain('aria-label="More for ~ on mini"')
+  expect(mini.indexOf('data-project="tilde"')).toBeLessThan(mini.indexOf('data-project="shop"'))
+  expect(mini).not.toContain('data-project="home"')
+  expect(html.slice(0, html.indexOf('data-machine='))).toContain('Everything')
 })
 
 test("a machine's plus opens New space with that machine picked", () => {

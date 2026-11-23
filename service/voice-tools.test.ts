@@ -17,7 +17,7 @@ const snap: any = {
     { id: "sp1", name: "shop", machine: "box", chat: "p:sp1", level: 2, status: "idle" },
     { id: "mini/sp2", name: "garden", machine: "mini", chat: "p:mini:sp2", level: 2, status: "idle", needs: true },
     { id: "sp3", name: "attic", machine: "box", chat: "p:sp3", level: 2, status: "idle", archived: true },
-    { id: "mini/h", name: "home", home: true, machine: "mini", chat: "p:mini:h", level: 1, status: "idle" },
+    { id: "mini/h", name: "home", unnamed: true, home: true, machine: "mini", chat: "p:mini:h", level: 1, status: "idle" },
   ],
   tasks: [
     { ...base, id: "SHOP-45", name: "Voice reads the new app", status: "work", place: "sp1", started: now - 600_000, report: { msg: "Writing tests", progress: 50, eta: 10 }, repo: "branch", agent: { chat: "SHOP-45/worker", role: "worker", cli: "claude", status: "work", age: "" }, at: now - 60_000 },
@@ -186,11 +186,11 @@ test("look spaces, machines, news, schedules", async () => {
   const spaces = await look({ what: "spaces" });
   expect(spaces).toContain("Everything, the root chat: 5 need you in all.");
   expect(spaces).toContain("On box: #shop: 3 need you, 1 working.");
-  expect(spaces).toContain("On Mac mini (can't reach it): #garden: 2 need you.");
+  expect(spaces).toContain("On Mac mini (can't reach it): #garden: 2 need you; its home space (~).");
   expect(spaces).toContain("Archived: #attic.");
   const machines = await look({ what: "machines" });
   expect(machines).toContain("box (serves Shepherdr): online, 1 space, 1 task working.");
-  expect(machines).toContain("Mac mini: can't reach it, last seen 14:02, 1 space, 0 tasks working.");
+  expect(machines).toContain("Mac mini: can't reach it, last seen 14:02, 2 spaces, 0 tasks working.");
   expect(machines).toContain("Warnings: You've used 81% of this week's Claude plan.");
   const news = await look({ what: "news", count: 3 });
   expect(news).toMatch(/^Warnings: You've used 81%/);
@@ -412,14 +412,14 @@ test("an agent's Screen: take over, hand back and skip go through the app's scre
   expect(x.calls).toEqual([]);
 });
 
-test("finding spaces: by name, with or without #, Everything, here; another machine's home folder is no space", () => {
+test("finding spaces: by name, with or without #, Everything, here; another machine's home space is one", () => {
   expect(findSpace(snap, "Shop", web)?.id).toBe("sp1");
   expect(findSpace(snap, "#shop", web)?.id).toBe("sp1");
   expect(findSpace(snap, "garden on the mac mini", web)?.id).toBe("mini/sp2");
   expect(findSpace(snap, "everything", web)?.id).toBe("home");
   expect(findSpace(snap, "the Everything chat", web)?.id).toBe("home");
   expect(findSpace(snap, "here", { client: "web", call: "p:mini:sp2" })?.id).toBe("mini/sp2");
-  expect(spacesSaid(snap, "home on the mac mini", web).map((p) => p.id)).not.toContain("mini/h");
+  expect(spacesSaid(snap, "home on the mac mini", web).map((p) => p.id)).toContain("mini/h");
   // an archived one is found when nothing else has its name
   expect(findSpace(snap, "attic", web)?.id).toBe("sp3");
 });

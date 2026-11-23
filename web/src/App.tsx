@@ -4,7 +4,7 @@
 // places; the layout itself is the design system's (ds.css).
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { Snapshot } from '@shared/types.ts'
-import { downWords, isEverything, needsCount, placeDown, placeOf, taskOf, type Space } from '@shared/view.ts'
+import { downWords, isEverything, needsCount, placeDown, placeOf, spaceLabel, spaceName, taskOf, type Space } from '@shared/view.ts'
 import { getState, openSettings, registry, setUI, sideHidden, togglePane, useNotice, useSnap, useUI, type Thread } from './kernel.ts'
 import { List, spaceMenu } from './list.tsx'
 import { HeaderPath } from './where.tsx'
@@ -13,19 +13,20 @@ import { edge } from './resize.ts'
 import { columnsOf, swapSides, useSides } from './sides.ts'
 import { SettingsWindow } from './settings.tsx'
 import { cx, Empty, I, IB, useScrolled } from './ui.tsx'
+import { SpaceIcon } from './space-icon.tsx'
 
 /** the thread the middle column shows: the open task when it has the middle, else the space's chat */
-export function middleThread(snap: Snapshot, ui: { at: string; task: string | null; wide: boolean }): Thread | null {
+export function middleThread(snap: Snapshot, ui: { at: string; max: string | null }): Thread | null {
   const p = placeOf(snap, ui.at)
   if (!p) return null
-  const t = ui.wide ? taskOf(snap, ui.task) : undefined
+  const t = ui.max ? taskOf(snap, ui.max) : undefined
   return t ? { chat: t.agent?.chat ?? `${t.id}/worker`, place: t.place, task: t, where: 'chat' } : { chat: p.chat, place: p.id, where: 'chat' }
 }
 
 /** the message box's placeholder: "Message Shepherdr", "Message #shop", "Add a reply" in a task */
 export function placeholderOf(snap: Snapshot, thread: Thread): string {
   if (thread.task) return 'Add a reply'
-  return isEverything(snap, thread.place) ? 'Message Shepherdr' : `Message #${placeOf(snap, thread.place)?.name ?? ''}`
+  return isEverything(snap, thread.place) ? 'Message Shepherdr' : `Message ${spaceLabel(snap, thread.place)}`
 }
 
 function ChatHeader({ snap, thread, place, scrolled }: { snap: Snapshot; thread: Thread; place: Space; scrolled: boolean }) {
@@ -39,8 +40,8 @@ function ChatHeader({ snap, thread, place, scrolled }: { snap: Snapshot; thread:
       {phone ? <IB icon="burger" label="Spaces" onClick={() => setUI({ drawer: true })} /> : hidden ? <IB icon="panel" label="Show the list" onClick={showList} /> : null}
       <div className="ttl">
         <button type="button" className="tbtn" aria-haspopup="menu" onClick={(e) => spaceMenu(e.currentTarget, place.id, true)}>
-          {!every && <I n="hash" c="s16" />}
-          <span>{every ? 'Everything' : place.name}</span>
+          {(!every || place.emoji) && <SpaceIcon snap={snap} id={place.id} c="s16" />}
+          <span>{every ? 'Everything' : spaceName(snap, place)}</span>
           <I n="down" c="s16 c-mute" />
         </button>
         <HeaderPath snap={snap} place={place} />
@@ -52,9 +53,9 @@ function ChatHeader({ snap, thread, place, scrolled }: { snap: Snapshot; thread:
 
 /** The header's "Show the list" button: on a narrow window with a pane open it brings the list back and closes the
  *  pane; else it shows the list hidden by its own button. */
-function showList() {
+export function showList() {
   const { ui } = getState()
-  if (ui.narrow && ui.pane && !ui.sideOff) setUI({ pane: null, task: null, art: null, wide: false, artWide: false })
+  if (ui.narrow && ui.pane && !ui.sideOff) setUI({ pane: null, task: null, art: null, artWide: false })
   else setUI({ sideOff: false })
 }
 
@@ -149,7 +150,7 @@ function Bar({ snap }: { snap: Snapshot }) {
           {registry.bar.map((b) => {
             const n = b.count?.(snap, at) ?? 0
             return (
-              <button type="button" key={b.pane} className="pt" aria-pressed={on === b.pane} onClick={() => setUI({ pane: b.pane, task: null, art: null, wide: false, artWide: false })}>
+              <button type="button" key={b.pane} className="pt" aria-pressed={on === b.pane} onClick={() => setUI({ pane: b.pane, task: null, art: null, artWide: false })}>
                 <span className="w">
                   <I n={b.icon} c="s22" />
                   {n > 0 && <span className="cnt">{n}</span>}
