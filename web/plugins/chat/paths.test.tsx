@@ -36,7 +36,7 @@ test("the box hands its keys to the list first, and shows it over itself", () =>
   const box = readFileSync(new URL('./client.tsx', import.meta.url), 'utf8')
   expect(box).toContain('const paths = usePaths(key, text, setText, ref)')
   expect(box).toContain("if (paths.onKey(e, e.key === 'Enter' && !e.shiftKey && e.keyCode !== 229)) return")
-  expect(box).toContain('{paths.list /* fork: SHEP-50 */}')
+  expect(box).toContain('{paths.list /* fork: SHEP-50 (before the replies, which hide once the box has words) */}')
 })
 
 test("no effect of the list returns a value: a newer Chrome's scrollIntoView gives a promise, which blanked the page", () => {

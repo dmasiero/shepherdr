@@ -848,8 +848,8 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const stop = busy && !text.trim() && !files?.length
   return (
     <>
+    {paths.list /* fork: SHEP-50 (before the replies, which hide once the box has words) */}
     {sug && <Replies texts={sug.texts} onSend={sendSug} onEdit={editSug} />}
-    {paths.list /* fork: SHEP-50 */}
     <div
       className="cbox"
       onDragOver={(e) => e.preventDefault()}
