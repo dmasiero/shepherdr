@@ -221,3 +221,5 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 - Newer Chrome's scrollIntoView returns a promise: an arrow-expression useEffect that calls it (`useEffect(() => el.scrollIntoView())`) crashes React 19 ("destroy is not a function") and blanks the page; use braces. On a host without lsof, find a server's pid with `ss -ltnp`. (from SHEP-86)
 
 - A Mac whose herdr-core was started over ssh can't read the login Keychain (Claude says Not logged in, security error 36). Lasting fix: start that core from the Mac's own login session (Terminal.app: `HC_SESSION=shepherdr hc server stop; HC_SESSION=shepherdr hc server start` on one line). Until then, unlock it inside that session: `hc run --on <mac> --bg -- security unlock-keychain ~/Library/Keychains/login.keychain-db`, then `hc attach` and type the password; it locks again after sleep or a reboot. (from Make m3oracle tasks-only)
+
+- On NixOS, a repro PATH that leaves out /etc/profiles/per-user/<user>/bin also loses the guard hc's real hc (it loops on itself): link the store's hc into the stand-in folder and name HC_SESSION=<throwaway> on every call. (from Agent restart finds claude)
