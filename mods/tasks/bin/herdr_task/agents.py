@@ -72,6 +72,11 @@ def agent_running(k):
 RUNTIMES = {"node", "bun", "deno"}  # a CLI run as a script shows its runtime's name
 
 
+def prog_name(name):
+    """fork: a program's name as its CLI is called: Nix's wrapper execs ".claude-wrapped" (SHEP-90)."""
+    return re.sub(r"(-wrapped)+$", "", re.sub(r"^\.", "", name))
+
+
 def front(k):
     """What is in front in terminal k (its hc get): "agent", "shell" (its agent exited: a plain shell), "other" (another
     program than its agent, an editor say) or "gone" (no such terminal, or finished)."""
@@ -85,7 +90,8 @@ def front(k):
     if name in SHELLS:
         return "agent" if runs_command(fg.get("argv")) else "shell"
     kind = (k.get("labels") or {}).get("herdr.agent")
-    if kind in ("claude", "codex") and not name.startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
+    # fork: Nix runs Claude Code as ".claude-wrapped": its CLI's name (core/chat-reader.js progName), not another program (SHEP-90)
+    if kind in ("claude", "codex") and not prog_name(name).startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
         return "other"
     return "agent"
 

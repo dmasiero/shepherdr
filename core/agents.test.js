@@ -105,6 +105,8 @@ test("#1050: forking a task's chat while its agent runs asks first; a plain chat
   expect(liveTaskAgent(agent("t4", {}), all)).toBe(null);
   // the agent quit, its shell stays
   expect(liveTaskAgent(worker, [{ ...worker, status: { app: null }, foreground: { name: "bash" } }])).toBe(null);
+  // fork: SHEP-90, before it reports itself, Nix's ".claude-wrapped" is the agent
+  expect(liveTaskAgent(worker, [{ ...worker, status: {}, foreground: { name: ".claude-wrapped" } }])?.address).toBe("t1");
   // only the reviewer left
   expect(liveTaskAgent(worker, [all[1]])).toBe(null);
   expect(FORK_LIVE.verb).toBe("Fork anyway");
