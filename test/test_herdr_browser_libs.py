@@ -283,11 +283,14 @@ class Arm64Chromium(unittest.TestCase):
     def run_hb(self, *args, arch="aarch64", extra=None):
         # PATH: this machine's tools minus any real Chrome or Chromium, so only the test's fakes can be found
         tools = os.path.join(self.tmp, "tools")
-        if not os.path.isdir(tools):
-            os.makedirs(tools)
+        # fork: setUp's tools folder is already there (MissingLibraries'), so link once per test, into it; and after
+        # /usr/bin and /bin, the caller's PATH, as on NixOS (nextgate's envfs) those two list nothing, not even sh
+        if not getattr(self, "linked", False):
+            self.linked = True
+            os.makedirs(tools, exist_ok=True)
             # the first folder with a name wins, as in a shell; lexists, as a dangling link "exists" for symlink()
             # (GitHub's runner has broken links like grub-ntldr-img in both /usr/bin and /bin)
-            for d in self.tool_dirs:
+            for d in (*self.tool_dirs, *[d for d in os.environ.get("PATH", "").split(os.pathsep) if d]):
                 for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
                     if "chrom" in n or n.startswith("google-chrome") or os.path.lexists(os.path.join(tools, n)):
                         continue
