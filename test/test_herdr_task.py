@@ -3757,7 +3757,7 @@ class Store:
         return f"f#{t['id']}"
 
 
-# fork: (SHEP-79) times typed without the colon; core/snooze.test.js has the same table for Snooze's copy
+# fork: (SHEP-79) times typed without the colon
 COLONLESS_NOW = (2026, 11, 5, 10, 0)  # a Thursday, 10:00, this machine's time
 COLONLESS = [  # typed -> when, from that Thursday 10:00 (the same as with the colon)
     ("1830", "Thu 2026-11-05 18:30"), ("2345", "Thu 2026-11-05 23:45"), ("230", "Fri 2026-11-06 02:30"),
