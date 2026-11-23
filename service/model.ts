@@ -148,37 +148,46 @@ export class Model {
     const state = process.env.XDG_STATE_HOME || join(HOME, ".local", "state");
     if (!existsSync(join(state, "herdr-core", session, "core.json"))) return {};
     const client = await CoreClient.endpoint({ binary: process.env.SHEPHERDR_HC || "hc", ...(session !== "default" ? { session } : {}) });
-    try {
-      if (machine) {
-        const { machines } = await client.call<{ machines: any[] }>("machine.list", {}, 8000);
-        const prior = machines.find((m) => m.name === machine);
-        if (prior && prior.state !== "connected") throw new Error("The old session's machine is offline");
-      }
-      const { terminals } = await client.call<{ terminals: any[] }>("terminal.list", {}, 8000);
-      const found: Record<string, { path: string; kind: string }> = {};
-      for (const t of terminals) {
-        const labels = t.labels ?? {}, address = String(t.address ?? "");
-        const on = address.includes("/") ? address.split("/")[0] : null;
-        if (on !== machine || labels["herdr.role"] !== "coordinator" || !labels["herdr.coordinator.space"]) continue;
-        let resume: any = {};
-        try { resume = JSON.parse(labels["herdr.resume"] || "{}"); } catch {}
-        let path = resume.log, kind = resume.kind;
-        if (!path && t.state === "live") {
-          const detail: any = await client.call("terminal.get", { terminal: address }, 8000);
-          const fg = detail.foreground ?? detail.terminal?.foreground;
-          const name = String(fg?.name ?? "").replace("-code", "");
-          if ((name === "claude" || name === "codex") && fg?.pid) {
-            kind = name;
-            path = (await sh(this.hub, FIND, ["chat", kind, String(fg.pid)], machine)).stdout.trim().split("\n").pop();
-          }
+    try { return await this.historyFrom(client, machine); }
+    finally { client.close(); }
+  }
+
+  /** Each old space's chat log, from the old session's coordinators. The update that brings 3.2 in stops the old
+   *  ones just before the service starts, so finished terminals count too ({all: true}); their herdr.resume label
+   *  still names the log. */
+  async historyFrom(client: Pick<CoreClient, "call">, machine: string | null) {
+    if (machine) {
+      const { machines } = await client.call<{ machines: any[] }>("machine.list", {}, 8000);
+      const prior = machines.find((m) => m.name === machine);
+      if (prior && prior.state !== "connected") throw new Error("The old session's machine is offline");
+    }
+    const { terminals } = await client.call<{ terminals: any[] }>("terminal.list", { all: true }, 8000);
+    const found: Record<string, { path: string; kind: string }> = {}, ranks: Record<string, number> = {};
+    for (const t of terminals) {
+      const labels = t.labels ?? {}, address = String(t.address ?? "");
+      const on = address.includes("/") ? address.split("/")[0] : null;
+      if (on !== machine || labels["herdr.role"] !== "coordinator" || !labels["herdr.coordinator.space"]) continue;
+      let resume: any = {};
+      try { resume = JSON.parse(labels["herdr.resume"] || "{}"); } catch {}
+      let path = resume.log, kind = resume.kind;
+      if (!path && t.state === "live") {
+        const detail: any = await client.call("terminal.get", { terminal: address }, 8000);
+        const fg = detail.foreground ?? detail.terminal?.foreground;
+        const name = String(fg?.name ?? "").replace("-code", "");
+        if ((name === "claude" || name === "codex") && fg?.pid) {
+          kind = name;
+          path = (await sh(this.hub, FIND, ["chat", kind, String(fg.pid)], machine)).stdout.trim().split("\n").pop();
         }
-        if (typeof path === "string" && path.startsWith("/") && (kind === "claude" || kind === "codex")) {
-          const space = String(labels["herdr.coordinator.space"]);
-          found[machine ? `${machine}/${space}` : space] = { path, kind };
-        }
       }
-      return found;
-    } finally { client.close(); }
+      if (typeof path === "string" && path.startsWith("/") && (kind === "claude" || kind === "codex")) {
+        const space = String(labels["herdr.coordinator.space"]);
+        const key = machine ? `${machine}/${space}` : space;
+        // a space with several: a live one wins, else the one that finished last
+        const rank = t.state === "live" ? Infinity : Number(t.finished_ms) || 0;
+        if (!(key in ranks) || rank >= ranks[key]) { found[key] = { path, kind }; ranks[key] = rank; }
+      }
+    }
+    return found;
   }
 
   private carrying = false;

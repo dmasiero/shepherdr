@@ -246,3 +246,30 @@ test("a machine absent from the old session has no old spaces", async () => {
   await m.refresh();
   expect(doc[IMPORTED]).toContain('vm');
 });
+
+test("history counts the old session's finished coordinators: the update stops them just before the service starts", async () => {
+  const { Model } = await import("./model.ts");
+  const m = new Model({ terminals: new Map(), on: () => () => {} } as any, { put: () => {} } as any);
+  const coord = (address: string, space: string, log: string, more: Record<string, unknown>): any => ({
+    address, labels: { "herdr.role": "coordinator", "herdr.coordinator.space": space, "herdr.resume": JSON.stringify({ kind: "claude", log }) }, ...more });
+  const terminals = [
+    coord("t1", "sp1", "/old/one.jsonl", { state: "finished", finished_ms: 100 }),
+    coord("t2", "sp2", "/old/older.jsonl", { state: "finished", finished_ms: 50 }),
+    coord("t3", "sp2", "/old/newer.jsonl", { state: "finished", finished_ms: 90 }),
+    coord("t4", "sp3", "/old/live.jsonl", { state: "live" }),
+    coord("t5", "sp3", "/old/gone.jsonl", { state: "finished", finished_ms: 200 }),
+    coord("vm/t1", "sp9", "/old/vm.jsonl", { state: "finished", finished_ms: 1 }),
+  ];
+  const params: any[] = [];
+  // a core lists finished terminals only when asked for all of them, as herdr-core does
+  const client = { call: async (method: string, p: any) => {
+    params.push([method, p]);
+    return { terminals: p?.all ? terminals : terminals.filter((t) => t.state === "live") };
+  } } as any;
+  expect(await m.historyFrom(client, null)).toEqual({
+    sp1: { path: "/old/one.jsonl", kind: "claude" },
+    sp2: { path: "/old/newer.jsonl", kind: "claude" },
+    sp3: { path: "/old/live.jsonl", kind: "claude" },
+  });
+  expect(params).toEqual([["terminal.list", { all: true }]]);
+});
