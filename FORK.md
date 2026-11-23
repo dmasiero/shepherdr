@@ -47,11 +47,12 @@ window copies blocking every install) went with the window install: 3.2's update
 app itself, and with it the fork's `install-check.json` and the web top bar's "install isn't whole" line. SHEP-14's
 section drag is upstream's now (3.2's list drags groups among a machine's, the `order` action's `sections:m:<machine>`,
 keeping each machine's own order). SHEP-27's tab terminal went: 3.2 has no space tabs. SHEP-84's Done heading is
-upstream's ("Done · 155", folded). Not carried over, to redo on 3.2's web app if still wanted (the old code is on the
-fork's `main` before this sync, `f92c4507`): SHEP-78/80's Snooze (its `tasks.snoozed` and `tasks.lastSnooze` shared
-keys are left as they are, nothing reads them), SHEP-50's `@~/` path completion in the message box (with
-`core/path-pick.js` and `/api/paths`), and SHEP-79's colonless times in the web's typed time field (herdr-task's
-stay). SHEP-20 to SHEP-83's phone terminal bar is not redone: 3.2's own key row is kept (above).
+upstream's ("Done · 155", folded). SHEP-78/80's Snooze is dropped for good: the person decided not to have it, so it
+is not redone on 3.2 (its `tasks.snoozed` and `tasks.lastSnooze` shared keys are left as they are, nothing reads
+them). Not carried over, to redo on 3.2's web app if still wanted (the old code is on the fork's `main` before this
+sync, `f92c4507`): SHEP-50's `@~/` path completion in the message box (with `core/path-pick.js` and `/api/paths`),
+and SHEP-79's colonless times for a time typed in the web app (herdr-task's stay). SHEP-20 to SHEP-83's phone
+terminal bar is not redone: 3.2's own key row is kept (above).
 
 Upstream's files change only where the layer hooks in, each marked with a `fork:` comment. Upstream numbers its own changes SHEP-n too (its SHEP-54 is subagents, the fork's the brand row): the `fork:` in front tells the fork's apart. The fork's SHEP-44 came onto `main` as SHEP-58; SHEP-49 and SHEP-52 are not the fork's; SHEP-51 was rolled back by SHEP-55 and has no row.
 
