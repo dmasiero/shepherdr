@@ -1,36 +1,46 @@
 // The demo: `bun web/demo/serve.ts [port]` serves the built app (web/dist) with a fictional day instead of the service,
 // on 127.0.0.1 only. For looking at every screen and comparing it with the design; nothing is wired to a real agent.
 // `?case=empty` and `?case=down` in the page's address show "Nothing yet" and "Can't reach vm"; `?case=more` adds a
-// third warning (the warnings line coming back after it was closed).
+// third warning (the warnings line coming back after it was closed); `?case=long` gives spaces, tasks and pages long names.
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Chat, Message, Snapshot, Task } from '../shared/types.ts'
+import { withLinks } from '../../service/artifact-links.ts'
 import { artifacts, catalog, chats as seed, config, EV, snapshot } from './data.ts'
 
 const dist = join(fileURLToPath(new URL('../', import.meta.url)), 'dist')
 const port = Number(process.argv[2] || 7799)
-type Sock = { send(s: string): void; data: { mode: 'normal' | 'empty' | 'down' | 'more'; watch: string[] } }
+type Sock = { send(s: string): void; data: { mode: 'normal' | 'empty' | 'down' | 'more' | 'long'; watch: string[]; app?: string } }
 const socks = new Set<Sock>()
-const state = { normal: structuredClone(snapshot('normal')), empty: structuredClone(snapshot('empty')), down: structuredClone(snapshot('down')) }
+const state = { normal: structuredClone(snapshot('normal')), empty: structuredClone(snapshot('empty')), down: structuredClone(snapshot('down')), more: structuredClone(snapshot('more')), long: structuredClone(snapshot('long')) }
 const chats: Record<string, Chat> = structuredClone(seed)
 let n = 1000
 function resetDemo() {
-  for (const mode of ['normal', 'empty', 'down', 'more'] as const) state[mode] = structuredClone(snapshot(mode))
+  for (const mode of ['normal', 'empty', 'down', 'more', 'long'] as const) state[mode] = structuredClone(snapshot(mode))
   for (const key of Object.keys(chats)) delete chats[key]
   Object.assign(chats, structuredClone(seed))
   n = 1000
 }
 
 const push = () => socks.forEach((s) => s.send(JSON.stringify({ type: 'snapshot', snapshot: state[s.data.mode] })))
+/** your reaction toggles, as the real service's: the agent's own stays (the same emoji from both: 'both') */
+function toggled(list: NonNullable<Message['reactions']>, emoji: string): NonNullable<Message['reactions']> {
+  const out = list.flatMap((r) => (r.emoji !== emoji ? [r] : r.by === 'both' ? [{ ...r, by: 'them' as const }] : r.by === 'me' ? [] : [r]))
+  if (list.some((r) => r.emoji === emoji && (r.by === 'me' || r.by === 'both'))) return out
+  return out.some((r) => r.emoji === emoji) ? out.map((r) => (r.emoji === emoji ? { ...r, by: 'both' as const } : r)) : [...out, { emoji, by: 'me' }]
+}
 const pushChat = (key: string) => socks.forEach((s) => s.data.watch.includes(key) && s.send(JSON.stringify({ type: 'chat', chat: chatFor(s, key) })))
 const chatFor = (s: Sock, key: string): Chat => {
   if (s.data.mode === 'empty') return { key, messages: chats[key]?.messages.filter((m) => m.id.startsWith('n')) ?? [], cli: 'claude', top: true, agent: chats[key]?.agent ?? chats[EV]!.agent }
-  const chat = chats[key] ?? { key, messages: [], cli: 'claude' as const, top: true, agent: chats[EV]!.agent }
+  let chat = chats[key] ?? { key, messages: [], cli: 'claude' as const, top: true, agent: chats[EV]!.agent }
+  // a link to the app itself (APP/?artifact=…) gets this page's own address, as `herdr-artifact link` prints it (SHEP-339)
+  if (s.data.app) chat = { ...chat, messages: chat.messages.map((m) => (m.text?.includes('APP/') ? { ...m, text: m.text.replaceAll('APP/', s.data.app!) } : m)) }
   return s.data.mode === 'down' ? { ...chat, messages: chat.messages.map(({ suggest, ...m }) => m) } : chat
 }
 const each = (f: (snap: Snapshot) => void) => { for (const s of Object.values(state)) f(s); push() }
 const taskOf = (id: string) => state.normal.tasks.find((t) => t.id === id || `${t.id}/worker` === id)
 const patchTask = (id: string, p: Partial<Task>) => each((snap) => { snap.tasks = snap.tasks.map((t) => (t.id === id ? { ...t, ...p } : t)) })
+const uploaded = new Map<string, File>()
 const say = (key: string, m: Partial<Message>) => { (chats[key] ??= { key, messages: [], cli: 'claude', top: true }).messages.push({ id: `n${++n}`, who: 'agent', at: Date.now(), ...m } as Message); pushChat(key) }
 
 function action(a: Record<string, any>): unknown {
@@ -40,7 +50,17 @@ function action(a: Record<string, any>): unknown {
   }
   if (a.type === 'catalog') return { ok: true, catalog: catalog(a.machine) }
   if (a.type === 'send') {
-    say(a.chat, { who: 'you', text: a.text, cid: a.cid })
+    // as the service gives your message back from the log: its words, then each file under them, a moment later
+    const paths: string[] = Array.isArray(a.attachments) ? a.attachments.filter(Boolean) : []
+    if (!paths.length) say(a.chat, { who: 'you', text: a.text, cid: a.cid })
+    else setTimeout(() => {
+      const id = `n${++n}`
+      const at = Date.now()
+      const c = (chats[a.chat] ??= { key: a.chat, messages: [], cli: 'claude', top: true })
+      if (a.text) c.messages.push({ id, who: 'you', at, text: a.text, cid: a.cid } as Message)
+      for (const [i, path] of paths.entries()) c.messages.push({ id: `${id}:f${i}`, who: 'you', at, cid: a.cid, file: { name: path.split('/').pop() ?? 'image', path } } as Message)
+      pushChat(a.chat)
+    }, 700)
     const text = String(a.text ?? '').trim()
     const from = state.normal.places.find((p) => p.chat === a.chat)?.id ?? EV
     const place = from === EV ? state.normal.places.find((p) => p.name === 'shop')?.id ?? EV : from
@@ -95,7 +115,7 @@ function action(a: Record<string, any>): unknown {
   if (a.type === 'task-move' && t) return patchTask(t.id, { place: a.place }), { ok: true }
   if (a.type === 'task-start' && t) { patchTask(t.id, { status: 'work', started: Date.now() - 15 * 60_000, report: { msg: 'Just started', progress: 50 }, agent: { chat: `${t.id}/worker`, role: 'worker', cli: 'claude', status: 'work', running: true, age: '', note: '' } }); say(`${t.id}/worker`, { text: "Started. I'll tell you when it's ready for review." }); return { ok: true } }
   if (a.type === 'stop' && t) return patchTask(t.id, { status: 'need', stopped: { by: 'you' } }), { ok: true }
-  if (a.type === 'rename') return each((snap) => { snap.places = snap.places.map((p) => (p.id === a.id ? { ...p, name: a.name } : p)); snap.sections = snap.sections?.map((s) => (s.id === a.id ? { ...s, name: a.name } : s)) }), { ok: true }
+  if (a.type === 'rename') return each((snap) => { snap.places = snap.places.map((p) => (p.id === a.id ? { ...p, name: a.name } : p)); snap.sections = snap.sections?.map((s) => (s.id === a.id ? { ...s, name: a.name } : s)); snap.machines = snap.machines.map((m) => (m.id === a.id ? { ...m, name: a.name || (m.ownName ?? m.machine) } : m)) }), { ok: true }
   if (a.type === 'space-archive') return each((snap) => { snap.places = snap.places.map((p) => (p.id === a.place ? { ...p, archived: a.on } : p)) }), { ok: true }
   if (a.type === 'space-remove') return each((snap) => { snap.places = snap.places.filter((p) => p.id !== a.place) }), { ok: true }
   if (a.type === 'move') return each((snap) => { snap.sections = snap.sections?.map((s) => ({ ...s, spaces: [...s.spaces.filter((x) => x !== a.id), ...(s.id === a.to ? [a.id] : [])] })) }), { ok: true }
@@ -127,15 +147,17 @@ function action(a: Record<string, any>): unknown {
   if (a.type === 'artifact-delete') return each((snap) => { snap.artifacts = snap.artifacts.filter((x) => x.id !== a.artifact) }), { ok: true }
   if (a.type === 'artifact-pin') return each((snap) => { snap.artifacts = snap.artifacts.map((x) => (x.id === a.artifact ? { ...x, pinned: a.on } : x)) }), { ok: true }
   if (a.type === 'artifact-rename') return each((snap) => { snap.artifacts = snap.artifacts.map((x) => (x.id === a.artifact ? { ...x, title: a.name } : x)) }), { ok: true }
-  if (a.type === 'react') { for (const c of Object.values(chats)) for (const m of c.messages) if (m.id === a.message && c.key === a.chat) { m.reactions = [{ emoji: a.emoji, by: 'me' }]; pushChat(c.key) } return { ok: true } }
+  if (a.type === 'react') { for (const c of Object.values(chats)) for (const m of c.messages) if (m.id === a.message && c.key === a.chat) { m.reactions = toggled(m.reactions ?? [], a.emoji); pushChat(c.key) } return { ok: true } }
   return { ok: true }
 }
 
 const PAGES: Record<string, string> = {
   'a-mock': `<h2>Your basket</h2><div class="r"><span>Garden gloves</span><span class="qty"><button id="m" aria-label="Fewer">−</button><b id="q">1</b><button id="p" aria-label="More">+</button></span></div><div class="r"><span>Total</span><b id="t">€12</b></div><button class="pay" id="pay">Pay now</button><p>A real page the agent made. You can use it here.</p><script>let q=1,paid=false;const u=()=>{document.getElementById('q').textContent=q;document.getElementById('t').textContent='€'+12*q;document.getElementById('pay').textContent=paid?'Paid':'Pay now'};m.onclick=()=>{q=Math.max(1,q-1);paid=false;u()};p.onclick=()=>{q++;paid=false;u()};pay.onclick=()=>{paid=!paid;u()}</script>`,
+  // a long page with pictures beside its index.html: the panel shows all of it and scrolls to its end (SHEP-340)
+  'a-picks': `<h2>Garden chair picks</h2><p>Five chairs under €200 that fit a small balcony, best first.</p><h2>The best matches</h2>${['Oak folding chair', 'Rattan lounger', 'Steel bistro chair', 'Teak deck chair', 'Rope swing seat'].map((t, i) => `<section class="pick"><h3>${i + 1}. ${t}</h3><img src="pic${(i % 4) + 1}.jpg" alt="${t}" width="640" height="400"><p>Folds flat, weatherproof, about €${120 + i * 15}. Delivery in a week.</p></section>`).join('')}<p>More: <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">a video review</a> · <a href="#end">to the end</a> · <a href="../../../../?artifact=a-mock">the basket</a></p><p id="end">That's the whole list.</p>`,
   'a-shop12': `<h2>Faster product search · Proof</h2><div class="bar" style="width:100%"></div><p>Before · 400 ms</p><div class="bar g" style="width:20%"></div><p>After · 80 ms</p><p>214 tests pass. 3 files changed.</p>`,
 }
-const page = (id: string) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light dark}body{margin:0;padding:16px;font:14px/20px system-ui,sans-serif}h2{font-size:18px;margin:0 0 12px}.r{display:flex;justify-content:space-between;align-items:center;min-height:40px;border-top:1px solid #8883}.qty{display:flex;align-items:center;gap:8px}.qty button{display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:6px;background:transparent;color:CanvasText;font:inherit}.pay{width:100%;margin-top:12px;height:32px;padding:0 12px;border:0;border-radius:8px;background:CanvasText;color:Canvas;font:inherit;font-weight:500}.l{height:8px;border-radius:4px;background:#8884;margin:12px 0}.bar{height:6px;border-radius:3px;background:#8886}.bar.g{background:#15803d}p{color:#737373;font-size:13px;line-height:18px}@media(max-width:443px){body{font-size:16px;line-height:24px}.pay{height:40px}p{font-size:14px;line-height:20px}}</style>${PAGES[id] ?? `<h2>${artifacts.find((x) => x.id === id)?.title ?? id}</h2>${[92, 78, 85, 40, 88, 64].map((w) => `<div class="l" style="width:${w}%"></div>`).join('')}`}`
+const page = (id: string) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light dark}body{margin:0;padding:16px;font:14px/20px system-ui,sans-serif}h2{font-size:18px;margin:0 0 12px}.r{display:flex;justify-content:space-between;align-items:center;min-height:40px;border-top:1px solid #8883}.qty{display:flex;align-items:center;gap:8px}.qty button{display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:6px;background:transparent;color:CanvasText;font:inherit}.pay{width:100%;margin-top:12px;height:32px;padding:0 12px;border:0;border-radius:8px;background:CanvasText;color:Canvas;font:inherit;font-weight:500}.l{height:8px;border-radius:4px;background:#8884;margin:12px 0}.bar{height:6px;border-radius:3px;background:#8886}.bar.g{background:#15803d}p{color:#737373;font-size:13px;line-height:18px}.pick img{display:block;width:100%;height:auto;border-radius:8px}h3{font-size:16px;margin:24px 0 8px}@media(max-width:443px){body{font-size:16px;line-height:24px}.pay{height:40px}p{font-size:14px;line-height:20px}}</style>${PAGES[id] ?? `<h2>${artifacts.find((x) => x.id === id)?.title ?? id}</h2>${[92, 78, 85, 40, 88, 64].map((w) => `<div class="l" style="width:${w}%"></div>`).join('')}`}`
 
 /** a stand-in for the live picture of an agent's browser: one still frame */
 const shotFile = (key: string) => join(fileURLToPath(new URL('./shots/', import.meta.url)), key.includes('SHOP-17') ? 'login.jpg' : 'checkout.jpg')
@@ -148,7 +170,7 @@ function thumb(id: string, dark: boolean) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200"><rect width="320" height="200" fill="${bg}"/>${body}</svg>`
 }
 
-Bun.serve<{ mode: 'normal' | 'empty' | 'down' | 'more'; watch: string[] }, never>({
+Bun.serve<Sock['data'], never>({
   hostname: '127.0.0.1',
   port,
   async fetch(req, server) {
@@ -159,15 +181,28 @@ Bun.serve<{ mode: 'normal' | 'empty' | 'down' | 'more'; watch: string[] }, never
     if (path === '/api/ws') {
       // which day to show: the page was opened with ?case=empty or ?case=down (kept in a cookie: the app rewrites its address)
       const c = /(?:^|;\s*)demo-case=(\w+)/.exec(req.headers.get('cookie') ?? '')?.[1]
-      return server.upgrade(req, { data: { mode: c === 'empty' || c === 'down' || c === 'more' ? c : 'normal', watch: [] } }) ? undefined : new Response('no', { status: 400 })
+      const app = `${req.headers.get('origin') ?? url.origin}${url.pathname.slice(0, -'api/ws'.length)}`
+      return server.upgrade(req, { data: { mode: c === 'empty' || c === 'down' || c === 'more' || c === 'long' ? c : 'normal', watch: [], app } }) ? undefined : new Response('no', { status: 400 })
     }
     if (path === '/api/screen/shot') return new Response(Bun.file(shotFile(url.searchParams.get('key') ?? '')), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-store' } })
     if (path === '/api/me') return Response.json({ login: 'sam', off: [] })
     if (path === '/api/action') return Response.json(action((await req.json()) as Record<string, any>) ?? { ok: true })
-    if (path === '/api/upload') return Response.json({ path: `/tmp/demo/${Date.now()}`, name: 'file' })
+    if (path === '/api/upload') {
+      const f = (await req.formData()).get('file') as File | null
+      const name = (f?.name || 'file').replace(/[^\w.-]/g, '_')
+      if (f) uploaded.set(`/tmp/demo/${++n}-${name}`, f)
+      return Response.json({ path: `/tmp/demo/${n}-${name}`, name })
+    }
+    // a file you sent, at its own address (only what was sent to this demo)
+    if (path === '/api/file' && uploaded.has(url.searchParams.get('path') ?? '')) return new Response(uploaded.get(url.searchParams.get('path')!)!)
     const m = /^\/api\/artifacts\/([^/]+)\/(page|thumb)/.exec(path)
-    if (m?.[2] === 'thumb') return new Response(thumb(decodeURIComponent(m[1]!), url.searchParams.has('dark')), { headers: { 'content-type': 'image/svg+xml' } })
-    if (m) return new Response(page(decodeURIComponent(m[1]!)), { headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "sandbox allow-scripts allow-forms" } })
+    // a picture beside a page's index.html
+    const pic = /^\/api\/artifacts\/[^/]+\/page\/pic(\d)\.jpg$/.exec(path)
+    if (pic) return new Response(Bun.file(shotFile(Number(pic[1]) % 2 ? 'SHOP-17' : '')), { headers: { 'content-type': 'image/jpeg' } })
+    // ?case=nopics: no page has its picture (a machine with no browser): each tile shows its first lines instead
+    if (m?.[2] === 'thumb' && /(?:^|;\s*)demo-case=nopics/.test(req.headers.get('cookie') ?? '')) return new Response('no picture', { status: 404, headers: { 'cache-control': 'no-store' } })
+    if (m?.[2] === 'thumb') return new Response(thumb(decodeURIComponent(m[1]!), url.searchParams.has('dark')), { headers: { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' } })
+    if (m) return new Response(withLinks(page(decodeURIComponent(m[1]!))), { headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "sandbox allow-scripts allow-forms" } })
     if (path.startsWith('/api/')) return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } })
     // The fictional day starts over when the demo is reloaded.
     if (req.headers.get('sec-fetch-dest') === 'document' || (req.headers.get('accept') ?? '').includes('text/html')) { resetDemo(); push() }

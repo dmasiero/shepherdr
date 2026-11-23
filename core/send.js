@@ -9,6 +9,44 @@
 
 import { excerpt } from "./chat-log.js";
 
+// SHEP-324: what is in front of an agent's terminal, checked right before anything is typed into it. herdr-core keeps a
+// terminal whose program it lost (a core restart, a crash) as a plain shell, and one whose agent exited stays live too:
+// a message pasted there runs as a shell command. Only "agent" may be typed into. The same rule is herdr-task's
+// agents.front().
+export const SHELL = /^(ba|z|fi|da|k|tc|c)?sh$|^nu$|^pwsh$|^powershell$|^xonsh$|^elvish$/;
+const RUNTIMES = new Set(["node", "bun", "deno"]); // a CLI run as a script shows its runtime's name
+
+/** A shell's argv that runs a command (-c, -ic, -lic, --command), not a plain shell (herdr-task's runs_command()). */
+export function runsCommand(argv) {
+  if (!Array.isArray(argv)) return true; // unknown: as before, its status decides
+  for (const a of argv.slice(1).map(String)) {
+    if (a === "--command" || a.startsWith("--command=")) return true;
+    if (!a.startsWith("-") || a.startsWith("--")) break;
+    if (a.slice(1).includes("c")) return true;
+  }
+  return false;
+}
+
+// k: its hc record (hc get, or the live list with its foreground). -> "agent", "shell" (its agent exited: a plain shell),
+// "other" (another program than its agent), "gone" (none, or finished), or null (its foreground isn't known here).
+export function inFront(k) {
+  if (!k || k.state !== "live") return "gone";
+  const fg = k.foreground;
+  const name = String(fg?.name ?? "").split("/").pop();
+  if (!name) return null;
+  if (SHELL.test(name)) return runsCommand(fg?.argv) ? "agent" : "shell";
+  const kind = k.labels?.["herdr.agent"];
+  if ((kind === "claude" || kind === "codex") && !name.startsWith(kind) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
+  return "agent";
+}
+
+// Why nothing was typed, by what is in front (hc's refusal kind "no_agent").
+export const NOT_TYPED = {
+  shell: "Its agent isn't running: its terminal is a plain shell now, so nothing was typed into it. Restart it, then send this again.",
+  other: "Another program than its agent is open in its terminal, so nothing was typed into it. Try again once it's back.",
+  gone: "That agent isn't running.",
+};
+
 // hc's refusal, in words: { kind ("blocked": its own dialog is open), message }.
 export function refusal(r) {
   const text = String(r?.stderr || r?.stdout || "").trim();
@@ -23,14 +61,21 @@ export function taskTag(x, ref) {
   return `<hc task="${attr(ref.replace(/^#/, ""))}" title="${attr(x.title)}" state="${attr(x.status_text ?? x.state)}"${x.why ? ` why="${attr(x.why)}"` : ""} folder="${attr(x.folder)}">${String(x.prompt ?? "").slice(0, 500)}</hc>\n`;
 }
 
-// The tasks a message mentions: HAT-1 as written (or #HAT-1, @HAT-1 and a picked [@HAT-1](task:…), core/mentions.js); a
-// task without a prefix only as #4, never a bare number.
-// tasks: [{ ref, id, ... }] (the chat's folder's).
+// The tasks a message mentions (SHEP-322): by its title as written (a title of two words or more, or of ten letters or
+// more, so "Fix" never names one; case and spaces aside), or by its key: HAT-1 as written (or #HAT-1, @HAT-1 and a
+// picked [@…](task:HAT-1), core/mentions.js); a task without a prefix only as #4, never a bare number.
+// tasks: [{ ref, id, title, ... }] (the chat's folder's).
+const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const words = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 export function mentionedIn(text, tasks) {
-  const t = String(text ?? ""), low = t.toLowerCase();
+  const t = String(text ?? ""), low = t.toLowerCase(), flat = words(t).toLowerCase();
   return (tasks ?? []).filter((x) => {
+    const title = words(x.title).toLowerCase();
+    if (title && (title.includes(" ") || title.length >= 10) && flat.includes(title) &&
+        new RegExp(`(^|[^\\p{L}\\p{N}])${esc(title).replace(/ /g, "\\s+")}(?![\\p{L}\\p{N}])`, "iu").test(t)) return true;
+    if (x.ref && new RegExp(`\\]\\(task:([^)\\s/]*/)?${esc(x.ref)}(\\?|\\))`, "i").test(t)) return true;
     if (!low.includes(String(x.ref ? x.ref : `#${x.id}`).toLowerCase())) return false;
-    const ref = x.ref ? `[#@]?${String(x.ref).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` : `#${x.id}`;
+    const ref = x.ref ? `[#@]?${esc(x.ref)}` : `#${x.id}`;
     return new RegExp(`(^|[\\s([])${ref}\\b`, "i").test(t);
   });
 }

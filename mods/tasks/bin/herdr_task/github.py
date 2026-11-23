@@ -200,7 +200,7 @@ OWN_SECTIONS = {"Summary", "Details", "Proof"}
 
 def described(s, task, body, want):
     """The description a ready makes of the one there now (body), or None to leave it as it is: Shepherdr's marked part
-    replaced; an older unmarked one of Herdr's ("Task: SHEP-n" first) only while it holds nothing but its own sections;
+    replaced; an older unmarked one of Herdr's ("Task: SHEP-n" first, before SHEP-322) only while it holds nothing but its own sections;
     anything else is a person's or an agent's."""
     body = body or ""
     a, b = body.find(MARK_START), body.find(MARK_END)
@@ -237,29 +237,29 @@ def pr_describe(s, task, summary=None):
 
 
 def pr_title(s, task):
-    """The repo's commit titles read "SHEP-198: the task's title" (a squash merge adds "(#945)"): the
-    task's ref first, so the pull request stays findable by it. Its agent's own (--pr-title, #1087) when given."""
+    """The task's title (SHEP-322: no task number; a squash merge's commit then reads "Fix login (#945)"). An older
+    title that starts with its key keeps only the rest. Its agent's own (--pr-title, #1087) when given."""
     if task.get("pr_title"):
         return task["pr_title"]
     ref = s.ref(task)
     title = " ".join(str(task.get("title") or "").split())
-    rest = re.sub(rf"^{re.escape(ref)}\b[:\s-]*", "", title, flags=re.I)
-    return f"{ref}: {rest or ref}"
+    return re.sub(rf"^{re.escape(ref)}\b[:\s-]*", "", title, flags=re.I) or title or "Task"
 
 
 def pr_body(s, task, summary=None):
-    """Short: the task's ref, what ready said (summary), the details and its proof's title. Never the
+    """Short: what ready said (summary), the details and its proof's title (SHEP-322: no task key; its marks find it). Never the
     brief: that stays with the task in Shepherdr. Between its marks (#1208), so a later ready keeps what was added around
     it. Its agent's own (--pr-body, #1087) instead, as written, when given."""
     if task.get("pr_body"):
         return task["pr_body"]
-    lines = [MARK_START, f"Task: {s.ref(task)}"]
+    lines = [MARK_START]
     if summary and summary.strip():
-        lines += ["", "## Summary", "", summary.strip()]
+        lines += ["## Summary", "", summary.strip()]
     if (task.get("details") or "").strip():
         lines += ["", "## Details", "", task["details"].strip()]
     proof = (task.get("proof") or {}).get("title")
     if proof:
+        proof = re.sub(rf"^{re.escape(s.ref(task))}\b[:\s-]*", "", proof, flags=re.I) or proof
         lines += ["", "## Proof", "", f"Shepherdr's proof artifact: {proof}"]
     return "\n".join(lines + [MARK_END])
 
@@ -541,17 +541,18 @@ def _unsettled(c):
         ((c.get("status") or c.get("state") or "").upper() in PENDING and not (c.get("conclusion") or ""))
 
 
-def merge_checks(task, v):
+def merge_checks(task, v, now_=False):
     """GitHub #1221: what a merge waits on is its base branch's required checks: v with only those, once one isn't
-    passed (a red or running optional check never stops a merge, nor its queueing). The base requires none, or GitHub
-    couldn't say: every check, as before. A running optional one left out while GitHub still blocks the merge (a
-    required check it doesn't show yet): runs_pending, so it waits."""
+    passed (a red or running optional check never stops a merge, nor its queueing). The base requires none: merge
+    "on its own" (now_) waits on nothing (the person wants it fast; main going red is a fix-forward task's), "after
+    checks" on every check, as its name says. GitHub couldn't say: every check. A running optional one left out while
+    GitHub still blocks the merge (a required check it doesn't show yet): runs_pending, so it waits."""
     rows = v.get("statusCheckRollup") or []
     if not any(_unsettled(c) for c in rows):
         return v
     names = required_checks(task)
     keep = [c for c in rows if (c.get("name") or c.get("context")) in (names or ())]
-    if not keep or len(keep) == len(rows):
+    if names is None or len(keep) == len(rows) or (not keep and not now_):
         return v
     out = {**v, "statusCheckRollup": keep, "optional_checks": [c.get("name") or c.get("context") for c in rows if c not in keep]}
     if v.get("mergeStateStatus") == "BLOCKED" and not needs_approval(v):
@@ -564,6 +565,20 @@ def pr_pending(v):
         return True
     return any((c.get("status") or c.get("state") or "").upper() in PENDING and not (c.get("conclusion") or "")
                for c in v.get("statusCheckRollup") or [])
+
+
+def checks_state(v, missing=False):
+    """SHEP-348: its pull request's checks in one word for its row's mark: "failed" (one failed), "running" (some still
+    run, or will come), "passed" (all green), or None (none, or they can't be read here)."""
+    rows = v.get("statusCheckRollup") or []
+    word = lambda c: (c.get("conclusion") or c.get("state") or "").upper()
+    if any(word(c) in BAD for c in rows):
+        return "failed"
+    if pr_pending(v) or missing:
+        return "running"
+    if rows and all(word(c) in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in rows):
+        return "passed"
+    return None
 
 
 def needs_approval(v):
@@ -756,8 +771,8 @@ def checks_since(s, task, v):
 def checks_missing(v, since, expect=None):
     """No checks on its pull request yet (#1044): None when it has some or none are coming; "waiting"
     while they may still start; "never" when they should have and didn't (CHECKS_START_MS)."""
-    if v.get("statusCheckRollup"):
-        return None
+    if v.get("statusCheckRollup") or v.get("optional_checks"):
+        return None  # optional ones it has don't count (merge_checks()): none are missing
     gone = now() - (since or 0)
     if v.get("checks_unknown"):
         # Checks that can't be read here (SHEP-179): a moment for GitHub, then pr_wait() decides.
@@ -879,9 +894,20 @@ def base_tip_ref(s, task, fetch=False):
     return has[0] if has else None
 
 
+def merged_by(s, subject):
+    """The task a base commit merged, by its title in quotes (SHEP-322: never its key): its subject's key in front (an
+    older merge's "SHEP-4: ..."), else its pull request's number at the end ("Fix login (#945)"); None: no task's."""
+    from .store import quoted
+    m, pr = TASK_REF.match(subject), re.search(r"\(#(\d+)\)\s*$", subject)
+    for t in s.data.get("tasks") or []:
+        if (m and s.ref(t) == m.group(1)) or (pr and str((t.get("pr") or {}).get("number")) == pr.group(1)):
+            return quoted(t.get("title"))
+    return None
+
+
 def collision(s, task, fetch=False):
     """Its branch's committed work against its base's newest: None when it merges cleanly (or can't be
-    told: no branch, an old git), else {base, ref, files, commits: [[sha, subject]], by: [task refs]}."""
+    told: no branch, an old git), else {base, ref, files, commits: [[sha, subject]], by: [the merged tasks' titles, quoted]}."""
     main, br = s.loc["folder"], task.get("branch")
     ref = base_tip_ref(s, task, fetch) if br else None
     if not ref:
@@ -898,7 +924,7 @@ def collision(s, task, fetch=False):
     mb = git(main, "merge-base", ref, tip)[1]
     log = git(main, "log", "--format=%h%x09%s", f"{mb}..{ref}", "--", *files[:50])[1] if mb else ""
     commits = [line.split("\t", 1) for line in log.splitlines() if "\t" in line][:10]
-    by = list(dict.fromkeys(m.group(1) for _, subject in commits if (m := TASK_REF.match(subject))))
+    by = list(dict.fromkeys(x for _, subject in commits if (x := merged_by(s, subject))))
     short = ref.replace("refs/remotes/", "").replace("refs/heads/", "")
     return {"base": task.get("base") or "main", "ref": short, "sha": git(main, "rev-parse", ref)[1], "files": files,
             "commits": commits, "by": by}

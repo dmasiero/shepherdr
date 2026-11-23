@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { artifactOf, artifactStore } from "./compat.ts";
-import { Artifacts, artifactAction, artifactRoute, pageKey, pageParts, plainError, PAGE_PATH, SANDBOX } from "./artifacts.ts";
+import { Artifacts, artifactAction, artifactRoute, LINKS_JS, pageKey, pageParts, plainError, PAGE_PATH, SANDBOX, withLinks } from "./artifacts.ts";
+import { runInNewContext } from "node:vm";
 
 // a throwaway artifacts folder: one artifact with two versions (the first has its pictures), and a file outside it
 const dir = mkdtempSync(join(tmpdir(), "shep-artifacts-"));
@@ -22,6 +23,11 @@ put("files/plan-1a2b/v2/.old/recipe.json", "{}");
 put("files/plan-1a2b/v2/.thumb.png", "LIGHT2");
 put("srv-shop.json", "{\"secret\": true}");
 symlinkSync(join(store, "srv-shop.json"), join(store, "files/plan-1a2b/v2/out.json"));
+
+// a long page with four real pictures beside its index.html, like a list of the best matches (SHEP-340)
+const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000" + "1f15c4890000000d49444154789c63f8cfc0f01f0005000201" + "ff8e5a3f0000000049454e44ae426082", "hex");
+put("files/picks-3c4d/v1/index.html", `<h2>The best matches</h2>${[1, 2, 3, 4].map((n) => `<section><h3>Pick ${n}</h3><img src="pic${n}.png"><p>${"More words. ".repeat(80)}</p></section>`).join("")}<p id="end">The end.</p>`);
+for (const n of [1, 2, 3, 4]) { mkdirSync(join(store, "files/picks-3c4d/v1"), { recursive: true }); writeFileSync(join(store, `files/picks-3c4d/v1/pic${n}.png`), PNG); }
 
 // herdr-artifact, faked: says what it was asked and answers as the real one does
 const log = join(dir, "asked.log");
@@ -100,19 +106,28 @@ test("the link the app frames redirects to the page's own address: its version, 
 
 test("a page and its files are served sandboxed, each with its type, from the version asked for", async () => {
   let r = (await get(page()))!;
-  expect([r.status, r.headers.get("content-type"), await r.text()]).toEqual([200, "text/html; charset=utf-8", "<h1>two</h1><script src=app.js></script>"]);
+  expect([r.status, r.headers.get("content-type"), await r.text()]).toEqual([200, "text/html; charset=utf-8", withLinks("<h1>two</h1><script src=app.js></script>")]);
   expect(SANDBOX).toBe("sandbox allow-scripts allow-forms allow-popups");
   expect(r.headers.get("content-security-policy")).toBe(SANDBOX);
   expect(r.headers.get("x-content-type-options")).toBe("nosniff");
   expect(r.headers.get("set-cookie")).toBeNull();
   // its own scripts may read its own files from inside the sandbox (an origin of its own)
   expect(r.headers.get("access-control-allow-origin")).toBe("*");
-  expect(await (await get(page("", 1)))!.text()).toBe("<h1>one</h1>");
-  for (const [rest, type, text] of [["index.html", "text/html; charset=utf-8", "<h1>two</h1><script src=app.js></script>"], ["app.js", "text/javascript; charset=utf-8", "let x = 1;"],
-    ["style.css", "text/css; charset=utf-8", "body{}"], ["img/a%20b.png", "image/png", "PNG"], ["sub/", "text/html; charset=utf-8", "<h1>sub</h1>"], ["data.bin", "application/octet-stream", "0123456789"]]) {
+  expect(await (await get(page("", 1)))!.text()).toBe(withLinks("<h1>one</h1>"));
+  for (const [rest, type, text] of [["index.html", "text/html; charset=utf-8", withLinks("<h1>two</h1><script src=app.js></script>")], ["app.js", "text/javascript; charset=utf-8", "let x = 1;"],
+    ["style.css", "text/css; charset=utf-8", "body{}"], ["img/a%20b.png", "image/png", "PNG"], ["sub/", "text/html; charset=utf-8", withLinks("<h1>sub</h1>")], ["data.bin", "application/octet-stream", "0123456789"]]) {
     r = (await get(page(rest)))!;
     expect([rest, r.status, r.headers.get("content-type"), await r.text()]).toEqual([rest, 200, type, text]);
     expect(r.headers.get("content-security-policy")).toBe(SANDBOX);
+  }
+  // a long page's pictures beside its index.html load through the same route, whole (SHEP-340)
+  const long = (rest = "") => page(rest, 1, "picks-3c4d");
+  r = (await get(long()))!;
+  const html = await r.text();
+  expect([r.status, html.includes('<p id="end">The end.</p>'), [...html.matchAll(/src="(pic\d\.png)"/g)].length]).toEqual([200, true, 4]);
+  for (const [, src] of html.matchAll(/src="(pic\d\.png)"/g)) {
+    r = (await get(new URL(src!, `https://box.example.test${long()}`).pathname))!;
+    expect([src, r.status, r.headers.get("content-type"), Buffer.from(await r.arrayBuffer()).equals(PNG)]).toEqual([src, 200, "image/png", true]);
   }
   // a part of a file (a clip seeks)
   r = (await get(page("data.bin"), { headers: { range: "bytes=2-4" } }))!;
@@ -163,13 +178,28 @@ test("another machine's page is read there, inside its version's folder", async 
   const calls: any[] = [];
   arts.hub = { call: async (_m: string, p: any) => { calls.push(p); return p.argv.at(-1) === "index.html" ? { code: 0, stdout: Buffer.from("<h1>there</h1>").toString("base64"), stderr: "" } : { code: 1, stdout: "", stderr: "" }; } } as any;
   const r = (await get(page("", 3, "far-9f9f", "vm-2")))!;
-  expect([r.status, r.headers.get("content-type"), r.headers.get("content-security-policy"), await r.text()]).toEqual([200, "text/html; charset=utf-8", SANDBOX, "<h1>there</h1>"]);
+  expect([r.status, r.headers.get("content-type"), r.headers.get("content-security-policy"), await r.text()]).toEqual([200, "text/html; charset=utf-8", SANDBOX, withLinks("<h1>there</h1>")]);
   expect(calls[0].on).toBe("vm-2");
   expect(calls[0].argv.slice(-4)).toEqual(["file", "far-9f9f", "3", "index.html"]);
   expect((await get(page("nope.css", 3, "far-9f9f", "vm-2")))!.status).toBe(404);
   expect(await refused(page("../x", 3, "far-9f9f", "vm-2"))).toBe(true);
   expect(await refused(page(".old/recipe.json", 3, "far-9f9f", "vm-2"))).toBe(true);
   expect(calls.length).toBe(2);
+  arts.hub = null;
+});
+
+test("another machine's version 2 picture is read there, its bytes whole; none taken there: 404 (SHEP-344)", async () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00, 0xc3, 0x28]);
+  const calls: any[] = [];
+  // v2 of far-9f9f has its picture there; v3 was published where no browser was
+  arts.hub = { call: async (_m: string, p: any) => { calls.push(p); const [, id, v, name] = p.argv.slice(-4);
+    return id === "far-9f9f" && v === "2" && name === ".thumb.png" ? { code: 0, stdout: png.toString("base64"), stderr: "" } : { code: 1, stdout: "", stderr: "" }; } } as any;
+  const r = (await get("/api/artifacts/far-9f9f/thumb?v=2&on=vm-2"))!;
+  expect([r.status, r.headers.get("content-type")]).toEqual([200, "image/png"]);
+  expect(Buffer.from(await r.arrayBuffer()).equals(png)).toBe(true);
+  expect(calls[0].on).toBe("vm-2");
+  expect(calls[0].argv.slice(-4)).toEqual(["file", "far-9f9f", "2", ".thumb.png"]);
+  expect((await get("/api/artifacts/far-9f9f/thumb?v=3&on=vm-2"))!.status).toBe(404);
   arts.hub = null;
 });
 
@@ -213,4 +243,61 @@ test("an action that fails says why in plain words; one on another machine goes 
   expect(lastAsked()).toEqual(["--on", "vm-2", "keep", "--json", "--", "far-9f9f"]);
   expect(await artifactAction({ type: "task-accept" })).toBeNull();
   expect(await artifactAction(null)).toBeNull();
+});
+
+// A link to another site in an artifact took over its frame and left a dead grey panel: every page runs a link catcher
+// first, which sends other sites (and the app's own links) to the app instead of moving the frame.
+test("every page of an artifact starts with its link catcher, in its head and never before its doctype", async () => {
+  const tag = `<script>${LINKS_JS}</script>`;
+  expect(withLinks("<!doctype html><html lang=en><head><title>x</title></head><body>b</body></html>")).toBe(`<!doctype html><html lang=en><head>${tag}<title>x</title></head><body>b</body></html>`);
+  expect(withLinks("<!DOCTYPE html>\n<html><body>b</body></html>")).toBe(`<!DOCTYPE html>\n<html>${tag}<body>b</body></html>`);
+  expect(withLinks("<!doctype html><p>b")).toBe(`<!doctype html>${tag}<p>b`);
+  expect(withLinks("<h1>one</h1>")).toBe(`${tag}<h1>one</h1>`);
+  // a <header> is no <head>
+  expect(withLinks("<header>h</header>")).toBe(`${tag}<header>h</header>`);
+  // a part asked of a page still gets the whole page, with its catcher; its other files are untouched
+  const r = (await get(page(), { headers: { range: "bytes=0-3" } }))!;
+  expect([r.status, r.headers.get("content-range"), await r.text()]).toEqual([200, null, withLinks("<h1>two</h1><script src=app.js></script>")]);
+  expect(await (await get(page("app.js")))!.text()).toBe("let x = 1;");
+});
+
+/** LINKS_JS run on a fake page at `at`: what it told the app, and whether each click was stopped */
+function catcher(at: string) {
+  const said: any[] = [];
+  let onClick: (e: any) => void = () => {}, onLoad = () => {};
+  const win: any = { location: new URL(at), URL, addEventListener: (n: string, f: any) => { if (n === "load") onLoad = f; }, document: { baseURI: at, addEventListener: (_: string, f: any) => { onClick = f; } } };
+  win.parent = { postMessage: (m: any) => said.push(m) };
+  win.window = win;
+  runInNewContext(LINKS_JS, win);
+  const click = (href: string, more: { target?: string; button?: number; ctrlKey?: boolean } = {}) => {
+    const a = { getAttribute: (n: string) => (n === "href" ? href : null), hasAttribute: () => false, target: more.target ?? "" };
+    const e = { defaultPrevented: false, button: more.button ?? 0, metaKey: false, ctrlKey: !!more.ctrlKey, shiftKey: false, altKey: false,
+      target: { closest: () => a }, preventDefault() { this.defaultPrevented = true; } };
+    said.length = 0;
+    onClick(e);
+    return { stopped: e.defaultPrevented, said: [...said] };
+  };
+  return { said, click, load: () => onLoad() };
+}
+
+test("in an artifact, another site's link goes to the app (a new tab), never into the frame; its own links stay", () => {
+  const at = `https://box.example.test/shepherdr${page("index.html")}`;
+  const c = catcher(at);
+  // it says it shows a page of the artifact as it starts and again on its load (the app looks for that word near a load)
+  expect(c.said).toEqual([{ shepherdr: "page" }]);
+  c.load();
+  expect(c.said).toEqual([{ shepherdr: "page" }, { shepherdr: "page" }]);
+  // another site, with or without a target of its own: the app opens it, the frame stays
+  expect(c.click("https://www.youtube.com/watch?v=abc")).toEqual({ stopped: true, said: [{ shepherdr: "link", href: "https://www.youtube.com/watch?v=abc" }] });
+  expect(c.click("//example.com/x", { target: "_blank" })).toEqual({ stopped: true, said: [{ shepherdr: "link", href: "https://example.com/x" }] });
+  // this app's own links (another artifact, a task): to the app, which opens them in place
+  expect(c.click("https://box.example.test/shepherdr/?artifact=plan-9z9z")).toEqual({ stopped: true, said: [{ shepherdr: "link", href: "https://box.example.test/shepherdr/?artifact=plan-9z9z" }] });
+  // an anchor, and the artifact's own pages and files: left to the frame
+  expect(c.click("#end")).toEqual({ stopped: false, said: [] });
+  expect(c.click("sub/")).toEqual({ stopped: false, said: [{ shepherdr: "inside" }] });
+  expect(c.click("img/a%20b.png")).toEqual({ stopped: false, said: [{ shepherdr: "inside" }] });
+  // mail, a ctrl-click or a middle click: as the browser does them
+  expect(c.click("mailto:someone@example.test")).toEqual({ stopped: false, said: [] });
+  expect(c.click("https://example.com/", { ctrlKey: true })).toEqual({ stopped: false, said: [] });
+  expect(c.click("https://example.com/", { button: 1 })).toEqual({ stopped: false, said: [] });
 });

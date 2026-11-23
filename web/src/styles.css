@@ -7,6 +7,8 @@
 /* the shell is a column: thin lines on top, the three columns, the phone's call wave and bar */
 .device,.app.phone .device{display:flex;flex-direction:column}
 .shell{flex:1}
+/* no bottom bar (a tablet, an unfolded phone): the inset under the gesture bar stays clear, the canvas painted there */
+.app:not(.phone) .device{padding-bottom:env(safe-area-inset-bottom)}
 .shell>.side,.shell>.col{grid-row:1}
 
 /* a thin line at the very top: the link to Shepherdr is gone */
@@ -17,6 +19,10 @@
 :root[data-motion="reduced"] .sheet.in,:root[data-motion="reduced"] .drawer.in,:root[data-motion="reduced"] .pop.in,:root[data-motion="reduced"] .dlg.in,:root[data-motion="reduced"] .win.in{animation:none}
 :root[data-motion="reduced"] .tg i{transition:none}
 :root[data-motion="reduced"] .i.turn{animation:calm 2.4s ease-in-out infinite}
+/* the app's own Reduce motion switch: the working sign fades in, its dots brighten in turn without moving */
+:root[data-motion="reduced"] .wsign{animation-name:fade}
+:root[data-motion="reduced"] .wdots i{animation:calm 2.4s ease-in-out infinite}
+:root[data-motion="reduced"] .wdots i:nth-child(2){animation-delay:.4s}:root[data-motion="reduced"] .wdots i:nth-child(3){animation-delay:.8s}
 
 /* an agent's own logo */
 .logo.img{box-shadow:none}.logo.img img{display:block;width:16px;height:16px;object-fit:contain}
@@ -77,19 +83,56 @@ div.b[data-menu]{cursor:pointer}
 .scr{touch-action:none}
 .scr.idle{aspect-ratio:16/10}
 .app.phone .scr.idle{aspect-ratio:4/3}
+/* the Screen view in full screen: the whole device (the visible part, above an on-screen keyboard), always dark like a
+   video, the picture zoomed by hand (its transform), a slim bar on top that hides, the key row under it */
+.scrfull{position:fixed;left:0;right:0;top:0;height:var(--app-h,100dvh);z-index:30;display:flex;flex-direction:column;background:#000;color:var(--fg);--fg:#fafafa;--canvas:#0a0a0a;--sub:#d4d4d4;--muted:#a3a3a3;--control:rgb(255 255 255/.12);--control2:rgb(255 255 255/.2);--well:rgb(255 255 255/.08);--line2:rgb(255 255 255/.16);--term:#0a0a0a}
+.fbox{position:relative;flex:1;min-height:0;overflow:hidden}
+.scr.full{position:absolute;inset:0;border-radius:0;background:none;box-shadow:none;transform-origin:0 0;overflow:visible}
+.scr.full canvas{width:auto;height:auto}
+.scr.full.drive{box-shadow:none}
+.fsurf{position:absolute;inset:0;z-index:1;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.fbar{position:absolute;z-index:2;left:0;right:0;top:0;display:flex;align-items:center;gap:4px;padding:calc(4px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 4px calc(8px + env(safe-area-inset-left));background:rgb(10 10 10/.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.fbar .ft{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--sec);line-height:var(--secl);color:var(--sub)}
+.fbar .addr{flex:1;min-width:0;margin:0}
+.fbar .addr .inp{height:var(--btns)}
+.fpill{position:absolute;z-index:2;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));display:flex;gap:2px;padding:2px;border-radius:999px;background:rgb(10 10 10/.7);animation:fpill .6s ease 2.5s forwards}
+.fpill .ib{border-radius:999px}
+.fpill:focus-within{animation:none}
+@keyframes fpill{to{opacity:.4}}
+@media(prefers-reduced-motion:reduce){.fpill{animation-duration:0s}}
+.fkeys{padding-bottom:calc(8px + env(safe-area-inset-bottom))}
+.fkeys button[aria-pressed="true"]{background:rgb(255 255 255/.3)}
+.ftype{position:absolute;left:0;bottom:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px;caret-color:transparent}
+/* why a desktop can't be shown: its own line, the steps that fix it, a button (SHEP-347) */
+.desk-why{position:absolute;inset:0;padding:24px;align-content:center}
+.desk-why.flow{position:relative;inset:auto;min-height:240px}
+.desk-why ol{margin:4px 0 0;padding-left:20px;text-align:left;color:var(--muted);font-size:14px;line-height:20px;display:grid;gap:6px;max-width:520px}
+.desk-why .acts{justify-content:center;margin-top:8px}
 
 /* an artifact is a real page, in a frame that cannot reach the app */
-.page{display:block;width:100%;height:100%;min-height:320px;border:0;background:#fff}
-.pane .scroll:has(>.page){padding:0;display:flex}
-.chat .scroll:has(>.page){padding:0;display:flex}
+/* The frame fills the whole panel (or the middle, expanded) and the page scrolls inside it to its end: the box around
+   it (it holds the mark-up layer) takes the panel's height, and the frame takes the box's (SHEP-340) */
+.pagebox{position:relative;flex:1;display:flex;min-width:0;min-height:0}
+.page{display:block;flex:1;width:100%;min-height:320px;border:0;background:#fff}
+.scroll:has(>.pagebox){padding:0;display:flex}
+/* a frame that ended on a page it can't show: a calm word over it, and the way back */
+.page-lost{position:absolute;inset:0;align-content:center;background:var(--canvas)}
+.page-lost .acts{justify-content:center;margin-top:12px}
 .prev{position:relative;display:block;aspect-ratio:16/10;border-radius:8px;background:var(--raised);overflow:hidden}
 .prev::after{content:"";position:absolute;inset:0;border-radius:8px;box-shadow:inset 0 0 0 1px var(--line)}
 .prev img{display:block;width:100%;height:100%;object-fit:cover;object-position:top}
+.prev img{opacity:0;transition:opacity .2s}.prev img.in{opacity:1}
+.prev.wait{animation:prevwait 1.6s ease-in-out infinite alternate}
+@keyframes prevwait{to{background:var(--control)}}
+@media (prefers-reduced-motion:reduce){.prev.wait{animation:none}.prev img{transition:none}}
+.plines{position:absolute;inset:0;display:flex;flex-direction:column;gap:4px;padding:10px 12px;overflow:hidden;font-size:10px;line-height:1.35;color:var(--sub);text-align:left;-webkit-mask-image:linear-gradient(#000 70%,transparent);mask-image:linear-gradient(#000 70%,transparent)}
+.plines span{flex:none;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.plines .h{font-size:12px;font-weight:600;color:var(--fg);-webkit-line-clamp:2}
 .pinmark{position:absolute;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;background:var(--fg);box-shadow:0 0 0 2px var(--canvas);pointer-events:none}
 
 /* the emoji list behind + in a message's menu */
 .emolist{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:2px;max-height:46dvh;overflow-y:auto}
-.emolist button{height:40px;border-radius:8px;font-size:20px;line-height:1;text-align:center}
+.emolist button{height:max(40px,var(--ib));border-radius:8px;font-size:20px;line-height:1;text-align:center}
 .emolist button:hover{background:var(--control)}
 
 /* text fields that hold more than a line (a schedule's What to do) */
@@ -112,3 +155,18 @@ button:disabled{opacity:.5;cursor:default}
 /* over a live picture nobody may click yet: the whole of it (Take over first) */
 .veil{position:absolute;inset:0;width:100%;height:100%;cursor:default}
 .seen{justify-self:end;margin-top:2px;color:var(--muted);font-size:12px;line-height:16px}
+
+/* a task's brief, the first message of its chat (SHEP-330): who wrote it over it, a few lines until Show all, its
+   Settings folded, whether its agent has it under it */
+.bfrom{justify-self:end;margin-top:8px;color:var(--muted);font-size:12px;line-height:16px}
+.b.brief{display:grid;justify-items:start;gap:4px;padding-block:10px}
+.b.brief .bt{margin:0;font-weight:600}
+.b.brief .md{white-space:normal}
+.bbody{justify-self:stretch}
+.bbody.clip{max-height:144px;overflow:hidden}
+.bbody.fade{mask-image:linear-gradient(to bottom,#000 50%,transparent)}
+.b.brief .fold{min-height:32px}
+.bset{margin:0;padding:0;list-style:none;color:var(--sub);font-size:var(--sec);line-height:var(--secl)}
+/* a newer web app (SHEP-337): a small pill under the header, one tap reloads onto it */
+.upchip{position:fixed;z-index:19;top:calc(var(--hd) + 8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px 0 10px;border-radius:999px;background:var(--fg);color:var(--canvas);box-shadow:var(--shadow);font-size:13px;line-height:18px;white-space:nowrap}
+.upchip b{font-weight:600}

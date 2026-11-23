@@ -44,13 +44,16 @@ copies.
 
 ## Checks
 
-Quick, fine on any machine:
+A task runs only the ones for what it touched (the test files for its area, plus a type check or build if its change
+could break one). The whole list below is the full suite: GitHub's run on main, and a release, which starts only from
+a green main and runs all of it before it ships.
 
 ```bash
 python3 bin/sync-shared --check
 for f in core/*.js herdr/open-shepherdr/main.js; do node --input-type=module --check < "$f"; done
 bun install --frozen-lockfile && bun web/build-plugins.ts
 bunx tsc --noEmit -p . && bun test service core web && bun run build
+bun web/demo/tap-check.ts          # tap sizes on a touch screen, against the build (needs a Chrome; $CHROME)
 for f in install.sh bin/herdr-browser bin/herdr-desktop hooks/*.sh service/restart.sh; do bash -n "$f"; done
 python3 -m unittest discover -s test
 ```

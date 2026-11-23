@@ -24,8 +24,10 @@ describe("rows", () => {
     const find = (a) => terms[a] ?? null;
     expect(senderName("t1", "", { find })).toBe("Reviewer");
     expect(senderName("t2", "", { find })).toBe("Assistant");
-    expect(senderName("vm/t3", "", { find })).toBe("HERD-12 on vm");
-    expect(senderName("t9 shep-7-web", "", { find, taskOf: () => null })).toBe("SHEP-7");
+    // SHEP-322: a task's agent by its task's title (taskOf), never its key; one not in the lists is "Task"
+    expect(senderName("vm/t3", "", { find })).toBe("Task on vm");
+    expect(senderName("t9 shep-7-web", "", { find, taskOf: () => null })).toBe("Task");
+    expect(senderName("t9 shep-7-web", "", { find, taskOf: () => "Web client" })).toBe("Web client");
     expect(senderName("box/ppid:12", "From Coverage: hi")).toBe("Coverage");
     expect(senderName("person")).toBe("You");
     expect(unsigned("From HERD-76 (t12u): the words")).toBe("the words");
@@ -35,8 +37,8 @@ describe("rows", () => {
     const terms = { t75: { template: "herdr-assistant-mw3acvzz", labels: { "herdr.role": "coordinator" } }, t80: { name: "shep-4-fix" }, t81: {} };
     const find = (a) => terms[a] ?? null;
     expect(senderName("m3/t75", "", { find, machine: "vm", here: "m3" })).toBe("Assistant on m3");
-    expect(senderName("m3/t80", "", { find, machine: "vm", here: "m3" })).toBe("SHEP-4 on m3");
-    expect(senderName("m3/t81", "", { find, machine: "vm", here: "m3", taskOf: (a) => (a === "t81" ? "SHEP-9" : null) })).toBe("SHEP-9 on m3");
+    expect(senderName("m3/t80", "", { find, machine: "vm", here: "m3" })).toBe("Task on m3");
+    expect(senderName("m3/t81", "", { find, machine: "vm", here: "m3", taskOf: (a) => (a === "t81" ? "Fix login" : null) })).toBe("Fix login on m3");
     // its own chat: no "on"
     expect(senderName("m3/t75", "", { find, machine: null, here: "m3" })).toBe("Assistant");
     // an Assistant known only by its template
@@ -63,6 +65,12 @@ describe("rows", () => {
   test("a task's news line: what happened and the rest, without its id and title", () => {
     expect(newsWords({ ref: "HERD-4", event: "needs-you", text: "HERD-4 needs you: Needs a go (Fix login)" }, { title: "Fix login" })).toEqual({ mark: "needs", what: "needs you", text: "Needs a go" });
     expect(newsWords({ ref: "HERD-4", event: "ready", text: "HERD-4 is ready: Fix login · It works" }, { title: "Fix login" })).toEqual({ mark: "ready", what: "ready", text: "It works" });
+    // SHEP-322: the title in quotes first, no key; an older herdr-task's lines above read as before
+    expect(newsWords({ ref: "HERD-4", event: "needs-you", text: '"Fix login" needs you: Needs a go (to screenshot it)' }, { title: "Fix login" })).toEqual({ mark: "needs", what: "needs you", text: "Needs a go (to screenshot it)" });
+    expect(newsWords({ ref: "HERD-4", event: "ready", text: '"Fix login" is ready · It works: really · For AGENTS.md: x' }, { title: "Fix login" })).toEqual({ mark: "ready", what: "ready", text: "It works: really" });
+    expect(newsWords({ ref: "HERD-4", event: "ready", text: '"Fix login" is ready' }, { title: "Fix login" })).toEqual({ mark: "ready", what: "ready", text: "Fix login" });
+    expect(newsWords({ ref: "HERD-4", event: "failed", text: '"Old name" failed: Agent stopped' }, { title: "New name" })).toEqual({ mark: "needs", what: "failed", text: "Agent stopped" });
+    expect(newsWords({ ref: "HERD-4", event: "done", text: '"Fix login" is done: merged' }, { title: "Fix login" })).toEqual({ mark: "done", what: "done", text: "Fix login" });
     expect(newsWords({ ref: "HERD-4", event: "working-again", text: "HERD-4 is working again: resumed (Fix login)" }, { title: "Fix login" })).toEqual({ mark: "started", what: "working again", text: "resumed" });
     expect(newsWords({ ref: "HERD-4", event: "done", text: "HERD-4 is done (Fix login)" }, { title: "Fix login" })).toEqual({ mark: "done", what: "done", text: "Fix login" });
     expect(newsWords({ ref: "HERD-4", event: "started", made: true }, { title: "Fix login" })).toEqual({ mark: "started", what: "started", text: "Fix login" });
@@ -151,18 +159,25 @@ describe("ownWords", () => {
 });
 
 describe("agent to agent as a group chat (SHEP-27)", () => {
-  test("another Assistant is named by its machine and space; this machine's unsaid", () => {
+  test("another Assistant is named by its space and machine; this machine's unsaid", () => {
     const x = { from: "mac/t13", assistant: { machine: "mac", space: "Home" }, text: "hi" };
-    expect(fromName(x, () => "nope", { machineName: (m) => (m === "mac" ? "Mac mini" : null) })).toBe("Assistant on Mac mini · Home");
-    expect(fromName(x, () => "nope", { here: "mac" })).toBe("Assistant · Home");
+    expect(fromName(x, () => "nope", { machineName: (m) => (m === "mac" ? "Mac mini" : null) })).toBe("#Home on Mac mini");
+    expect(fromName(x, () => "nope", { here: "mac" })).toBe("#Home");
+    // the Assistant of every space is Everything, no #
+    expect(fromName({ ...x, assistant: { machine: "mac", space: "Everything" } }, () => "nope", { machineName: () => "Mac" })).toBe("Everything on Mac");
     expect(fromName({ from: "t3", text: "x" }, (f) => `name of ${f}`)).toBe("name of t3");
-    expect(briefLabel(x, 5, { machineName: () => "Mac mini" })).toBe("Message from Assistant on Mac mini · Home");
+    expect(briefLabel(x, 5, { machineName: () => "Mac mini" })).toBe("Message from #Home on Mac mini");
   });
   test("whom a sent message went to", () => {
     const sender = (a) => ({ t10s: "SHEP-4", "mac/t13": "Another agent on mac" }[a] ?? "Another agent");
     expect(sentTo({ to: "t10s", how: "hc" }, sender)).toBe("SHEP-4");
     expect(sentTo({ to: "mac/t13", how: "assistant" }, sender)).toBe("Assistant on mac");
-    expect(sentTo({ to: "Home", how: "assistant" }, sender)).toBe("Assistant · Home");
+    expect(sentTo({ to: "Home", how: "assistant" }, sender)).toBe("#Home");
+    expect(sentTo({ to: "vm-demo/root", how: "assistant" }, sender)).toBe("#root on vm-demo");
+    // a reply or a fix goes to a task: by its title
+    const task = (id) => ({ 4: "Fix login" }[id] ?? null);
+    expect(sentTo({ to: "4", how: "reply" }, sender, task)).toBe("Fix login");
+    expect(sentTo({ to: "SHOP-9", how: "fix" }, sender, task)).toBe("SHOP-9");
   });
   test("who the chat's own agent is, and initials", () => {
     expect(selfName({ assistant: true })).toBe("Assistant");

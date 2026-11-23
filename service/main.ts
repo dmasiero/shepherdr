@@ -28,10 +28,11 @@ import { Store } from "./store.ts";
 import { Host } from "./host.ts";
 import { Sync } from "./sync.ts";
 import { Live } from "./live.ts";
+import { webBuild } from "./webbuild.ts";
 import { Model } from "./model.ts";
 import { checkFlags } from "./flags.ts";
 import type { Snapshot } from "../web/shared/types.ts";
-import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, scheduleOf, setConfig } from "./next.ts";
+import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
 import { ensureShell, type ShellAt } from "./shells.ts";
 import { Chats } from "./chats.ts";
 import { act, findMachines, hc as hcRun } from "./actions.ts";
@@ -43,7 +44,7 @@ import { Jobs } from "./jobs.ts";
 import { terminalBridge } from "./terminal.ts";
 import { worktree } from "./worktree.ts";
 import * as SPm from "../core/spaces.js";
-import { createScreens } from "./screens.ts";
+import { createScreens, SCREEN_PASSWORD } from "./screens.ts";
 import { voiceCall, callToResume, callsOn, handOff, type ChatView } from "./voice.ts";
 import type { HearIO } from "./voice-hear.ts";
 import type { VoiceIO } from "./voice-tools.ts";
@@ -51,7 +52,7 @@ import { Artifacts, artifactAction, artifactRoute } from "./artifacts.ts";
 import { phoneSwitch } from "./phone.ts"; // fork: SHEP-58, the phone calls (below, after Bun.serve)
 import { TaskLogs } from "./task-logs.ts";
 import { Settings, onWritten, PUSH, pushBody, readSettings } from "./settings.ts";
-import { Secrets, SecretsHome } from "./secrets.ts";
+import { Secrets, SecretsHome, secretValue } from "./secrets.ts";
 import { Agents } from "./agents.ts";
 import { Machines } from "./machines.ts";
 import { Push, alertsOf, agentAlerts } from "./push.ts";
@@ -143,6 +144,7 @@ const ownLink = () => (proxy ? proxyLink(proxy) : me ? webLink(me.dns, hp) : nul
 const here = () => me?.host ?? (proxy ? hostname().split(".")[0] : "this machine");
 const hereName = () => (me?.host ?? (proxy ? here() : null));
 const live = new Live(hub, store, () => me ?? (proxy ? ({ host: here() } as Me) : null), VERSION, ownLink);
+live.web = webBuild(WEB);
 const compat = new Compat();
 const model = new Model(hub, live);
 live.chats = new Chats(hub);
@@ -159,6 +161,9 @@ live.onVisible = (v) => { push.visible = v; };
 // that device gets no web push, never two notifications of one alert
 const glance = new GlanceFeed();
 push.quiet = (node) => glance.quiet(node);
+// the app on screen on a device (SHEP-338): no system notification there, web push nor its phone app's own
+push.looking = (node) => live.looking(node);
+glance.looking = (device) => live.looking(device);
 live.onPushDevice = (endpoint, device) => push.nodeOf(endpoint, device);
 // an agent's herdr-artifact open (service/show.ts): the serving machine's screen the person is on opens the artifact
 const shows = new Shows();
@@ -303,6 +308,7 @@ artifacts.on(() => model.rebuild());
 const taskLogs = new TaskLogs();
 taskLogs.onChange = () => model.rebuild();
 compat.taskLogs = taskLogs;
+compat.promptOf = (k) => model.prompts.get(k) ?? null;
 artifacts.start();
 const asks = new Asks();
 compat.asks = asks;
@@ -344,7 +350,7 @@ const withNext = (snap: Snapshot, b: Parameters<NonNullable<typeof model.onBuild
   const others = Object.keys(settings.choices?.menus ?? {}).filter((k) => k !== d.agent);
   const review = others.length ? { agent: others[0], model: settings.choices.menus[others[0]]?.models?.[0]?.id ?? null, effort: null, fast: false as const, perm: null } : d;
   const config = configOf({ defaults: { Chats: d, Tasks: d, Reviews: review }, spaces: b.spaces.map((x: any) => x.id), secrets: secretNames, plans: plansOf(snap),
-    addMachine: "hc machine add <its name on your tailnet>", desktops: desktopsOf() });
+    addMachine: "hc machine add <its name on your tailnet>", desktops: desktopsOf(), repos: reposOf(b.spaces, snap.tasks ?? [], me?.host ?? null) });
   const asked = (chat: string) => {
     const a = compat.addrOf(chat);
     if (a) for (const x of compat.asks?.open.values() ?? []) if ((x as any).terminal === a) return (x as any).words?.kind === "permission" ? "permission" as const : "question" as const;
@@ -395,12 +401,15 @@ const screens = createScreens({
   machine: here(),
   send: (m) => void hub.send(m.address, m.text).catch(() => null),
   changed: () => model.rebuild(),
+  // a Mac's Screen Sharing password: the secret SCREEN_SHARING_PASSWORD (Settings › Secrets), as herdr-desktop's doctor names it
+  password: () => secretValue(SCREEN_PASSWORD, hub),
+  machines: async () => ((await hub.call<{ machines: any[] }>("machine.list", {}, 8000)).machines ?? []).map((m) => ({ name: String(m.name), target: String(m.target ?? ""), via: !!m.via, state: String(m.state ?? "") })),
 });
 if (pluginOn("screens")) screens.start();
 let desktopsOf: () => string[] = () => (pluginOn("screens") ? screens.desktops() : []);
 const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live.setSnapshot(alertNewAnd(withNext(compat.snapshot({
   host: here(), user: me?.name ?? "You", spaces: b.spaces, sections: b.sections, rows: b.rows, artifacts: artifacts.list, automations: b.automations,
-  settings: [...settings.sections(webNow ?? ownLink(), b.spaces.map((s: any) => ({ id: s.id, name: s.name, machine: s.machine ?? null })), b.machines, here()), // fork: here() (proxy mode)
+  settings: [...settings.sections(webNow ?? ownLink(), b.spaces.map((s: any) => ({ id: s.id, name: s.name, machine: s.machine ?? null, repo: spaceRepo(s) })), b.machines, here()), // fork: here() (proxy mode)
     // Secrets (Everywhere's and each space's own): every kept secret and where, and the agents waiting on one
     ...[{ id: "all" }, ...b.spaces].map((s: any) => ({ name: "Secrets", level: s.id, rows: [], ...secretsPage(b.spaces),
       secrets: secretNames.filter((x) => (s.id === "all" ? !x.space : x.space === s.id)) }))], offPlugins: offPlugins(),
@@ -647,8 +656,9 @@ async function doAction(body: any): Promise<Response> {
   if (body?.type === "config" && typeof body.key === "string") {
     try {
       const place = typeof body.place === "string" ? body.place : "all";
-      const sp = place === "all" ? null : (model.spaces as any[]).find((x) => x.id === place);
-      setConfig(place, body.key, body.value ?? null, sp ? { id: sp.id, name: sp.name, machine: sp.machine ?? null, folder: sp.folder ?? null } : null);
+      // a repo's (SHEP-335): a space sitting on it goes along, for what a file not moved yet still keeps there
+      const sp = place === "all" ? null : (model.spaces as any[]).find((x) => (place.startsWith("repo:") ? spaceRepo(x) === place.slice(5) : x.id === place));
+      setConfig(place, body.key, body.value ?? null, sp ? { id: sp.id, name: sp.name, machine: sp.machine ?? null, folder: sp.folder ?? null, repo: spaceRepo(sp) } : null);
       model.rebuild();
       return json({ ok: true });
     } catch (err) { return json({ ok: false, error: (err as Error).message }); }
@@ -783,7 +793,7 @@ async function doAction(body: any): Promise<Response> {
           exec(hub, ["git", "-C", folder || sp.folder || "~", "show-ref", "--verify", "--quiet", ref], sp.machine ?? null).catch(() => null)))).some((r) => r?.code === 0);
         if (!there) return json({ ok: false, error: SC.BASE.missing(want) });
       }
-      settings.set(body.key, value, level, sp ? { id: sp.id, name: sp.name, machine: sp.machine ?? null, folder } : null);
+      settings.set(body.key, value, level, sp ? { id: sp.id, name: sp.name, machine: sp.machine ?? null, folder, repo: spaceRepo(sp) } : null);
       return json({ ok: true });
     } catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }
@@ -852,6 +862,9 @@ const server = Bun.serve<{ who: string }>({
       const there = host.hostLink();
       return there ? Response.redirect(there, 302) : new Response("Shepherdr's web app is served from another machine now.", { status: 404 });
     }
+    // Share into Shepherdr (SHEP-345): the app's service worker takes a share; one that reaches here came before the
+    // worker was up, and the app says to share it again (nothing is read, so no gate is needed)
+    if (path === "/share" && req.method === "POST") return new Response(null, { status: 303, headers: { location: "./?share=lost" } });
     const socket = path === "/api/ws" || path === "/api/terminal" || path === "/api/screen" || path === "/api/desktop" || path === "/api/voice";
     const peer = srv.requestIP(req)?.port;
     // the glance feed (SHEP-246) is read by the phone's own app: checked as a write (its origin, x-shepherdr: 1)
@@ -960,7 +973,7 @@ const server = Bun.serve<{ who: string }>({
       return json({ path: join(dir, name), name: f.name });
     }
     if (path === "/api/dictate" && req.method === "POST") {
-      try { return json({ text: await dictate(hub, await req.blob()) }); } catch (err) { return json({ error: (err as Error).message }, 400); }
+      try { return json({ text: await dictate(hub, await req.blob(), fetch, undefined, url.searchParams.getAll("word")) }); } catch (err) { return json({ error: (err as Error).message }, 400); }
     }
     // live dictation: a single-use token as the page starts recording (the words are written while it records)
     if (path === "/api/dictate/live" && req.method === "POST") {
@@ -1049,7 +1062,10 @@ const server = Bun.serve<{ who: string }>({
     if (path === "/api/action" && req.method === "POST") return doAction(await req.json().catch(() => null));
     if (path === "/api/glance" && req.method === "GET") {
       // the phone's and watch's small live feed (SHEP-246, docs/glance.md): the doc, or its stream (one frame per change)
-      if (url.searchParams.get("stream") !== "1") return glance.doc ? json(glance.doc) : json({ error: "not ready yet" }, 503);
+      if (url.searchParams.get("stream") !== "1") {
+        const doc = native ? glance.docFor(await deviceFrom(req, pass.via)) : glance.doc;
+        return doc ? json(doc) : json({ error: "not ready yet" }, 503);
+      }
       // a stream stays open all day: no idle cut (Bun's 180 s here; the ping comes every 240 s)
       srv.timeout(req, 0);
       return glance.stream(native ? await deviceFrom(req, pass.via) : null, native, req.signal);

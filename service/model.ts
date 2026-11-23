@@ -15,21 +15,12 @@ import * as T from "../core/tasks.js";
 import { FIND } from "../core/chat-log.js";
 import { isHelper, subagentsOf } from "../core/chat-view.js";
 // The core is plain JavaScript; its defaults read as narrow types to TypeScript.
-const { place, refOf, taskKey, autoPrefix, reportOf, ownReport, secondLine, leftOf, queueReason, machineOf } = T as any;
+const { place, refOf, taskKey, autoPrefix, reportOf, ownReport, secondLine, leftOf, queueReason, machineOf, inSpace } = T as any;
 import * as S from "../core/spaces.js";
 const { sidebarOf, lastAssistantOf, isUnread, inOrder, byMachineOrder, machineOrderOf } = S as any;
 
-const SHELL = /^(ba|z|fi|da|k|tc|c)?sh$|^nu$|^pwsh$/;
-/** A shell's argv that runs a command (-c, -ic, -lic, --command), not a plain shell (herdr-task's runs_command()). */
-export function runsCommand(argv: unknown): boolean {
-  if (!Array.isArray(argv)) return true; // unknown: as before, its status decides
-  for (const a of argv.slice(1).map(String)) {
-    if (a === "--command" || a.startsWith("--command=")) return true;
-    if (!a.startsWith("-") || a.startsWith("--")) break;
-    if (a.slice(1).includes("c")) return true;
-  }
-  return false;
-}
+import { SHELL, runsCommand, inFront } from "../core/send.js";
+export { runsCommand };
 
 /** Runs a command on a machine through herdr-core (null: here). Output comes back base64. */
 export async function exec(hub: Hub, argv: string[], on: string | null = null, timeout = 60) {
@@ -84,6 +75,8 @@ export class Model {
   spaces: any[] = [];
   /** every task as last built (its folder, worktree and machine among them) */
   rows: any[] = [];
+  /** each task's whole prompt, by its key (rows keep only its start): its page's first message (SHEP-330) */
+  prompts = new Map<string, string>();
   /** Each space folder's git: { name (the repo), linked (a worktree), repo }, null:
    *  not a repo. Read once, then again each minute. */
   private git = new Map<string, { info: { name: string; linked: boolean; repo: string; branch?: string | null } | null; at: number }>();
@@ -286,7 +279,9 @@ export class Model {
     const lists = [null, ...this.machines].flatMap((m) => this.lists.get(m) ?? []);
 
     let settles = Infinity;
+    const prompts = new Map<string, string>();
     const rows = lists.flatMap((list) => list.tasks.map((task: any) => {
+      if (task.prompt) prompts.set(taskKey(list, task), String(task.prompt));
       const live = this.agentsOf(list, task);
       const p = place(list, task, { live, helpers: this.helpersOf(list, task, live) });
       if (p.settles) settles = Math.min(settles, p.settles);
@@ -302,7 +297,7 @@ export class Model {
         // what its agent last said (core reportOf): working, and frozen while it
         // needs the person
         said: w?.text ? { text: w.text, done: w.done ?? null, left: w.left ?? null, paused: !!w.paused } : null,
-        machine: list.machine, folder: list.folder, slug: list.slug, id: task.id, list: list.name,
+        machine: list.machine, folder: list.folder, slug: list.slug, id: task.id, list: list.name, kind: list.kind ?? null,
         // the space whose Assistant started it (herdr-task keeps it): it is counted and listed there
         space: task.space ? (list.machine ? `${list.machine}/${task.space}` : task.space) : null,
         worker, archived: !!task.archived, pinned: pins.has(taskKey(list, task)),
@@ -323,6 +318,7 @@ export class Model {
       };
     }));
     this.rows = rows;
+    this.prompts = prompts;
     this.live.put("tasks", rows);
     // a task in its grace before Needs you (core GRACE_MS): built again the moment it ends, not up to 10 s later
     if (this.settleTimer) clearTimeout(this.settleTimer);
@@ -335,14 +331,14 @@ export class Model {
     const spaces = byMachineOrder(inOrder(own, this.value("spaces-chat")?.order), machineOrderOf(this.value("spaces-chat"))).map((s: any, at: number) => {
       // the one its chat reads: live, else the latest that ended (a message to it starts it again: actions.ts)
       const k = lastAssistantOf(s, terminals as any[]);
-      // a task belongs to the space that started it, else to the space in its folder
-      const here = rows.filter((r) => !r.archived && (r.space ? r.space === s.id : (r.machine ?? null) === (s.machine ?? null) && r.folder === s.folder));
+      // a space's tasks (SHEP-325, the window's rule: core inSpace): the ones it started and the ones working in its folder
+      const here = rows.filter((r) => !r.archived && inSpace(s, r));
       return {
         ...s, at, icon: bar.icons[s.id] ?? null,
         // when its Assistant last changed state (its terminal's status time)
         changedAt: Number((k as any)?.status_ms) || 0,
         section: bar.sections.find((x: any) => (x.spaces ?? []).includes(s.id))?.id ?? null,
-        assistant: k?.address ?? null, turn: (k as any)?.turn ?? 0, assistantStatus: k && (k.state !== "live" || (k as any)?.status?.state === "error") ? "stopped" : (k as any)?.status?.state ?? null,
+        assistant: k?.address ?? null, turn: (k as any)?.turn ?? 0, assistantStatus: k && (k.state !== "live" || (k as any)?.status?.state === "error" || inFront(k) === "shell") ? "stopped" : (k as any)?.status?.state ?? null,
         git: this.gitOf(s),
         unread: isUnread(k),
         red: here.filter((r) => r.section === "needs").length + ((k as any)?.status?.state === "blocked" ? 1 : 0),

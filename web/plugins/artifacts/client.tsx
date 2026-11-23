@@ -5,19 +5,68 @@
 import { useEffect, useRef, useState } from 'react'
 import { PaneFrame } from '@client/App.tsx'
 import { renameDialog } from '@client/list.tsx'
-import { definePlugin, getState, notice, openArtifact, setUI, togglePane, tryAct, useSnap, useUI } from '@client/kernel.ts'
+import { definePlugin, getState, notice, openArtifact, openLink, setUI, togglePane, tryAct, useSnap, useUI } from '@client/kernel.ts'
 import { confirm, openDialog, openMenu } from '@client/overlay.tsx'
 import { Btn, cx, Empty, Hd, I, IB, Row } from '@client/ui.tsx'
 import { copyText } from '@client/copy.ts'
+import { appLink } from '@client/applink.ts'
 import { useDark } from '@client/prefs.ts'
 import type { Artifact, Chat, Message } from '@shared/types.ts'
 import { agoShort, artifactsIn, isEverything, spaceLabel } from '@shared/view.ts'
+import { failed, firstLines, loaded, startShot, type Shot } from './preview.ts'
 
 const on = (a: Artifact) => (a.machine ? `&on=${encodeURIComponent(a.machine)}` : '')
 /** the page itself, at a version */
 export const pageUrl = (a: Artifact, v: number) => `api/artifacts/${encodeURIComponent(a.id)}/page/?v=${v}${on(a)}`
 /** the picture of the page taken when it was published */
-const thumbUrl = (a: Artifact, dark: boolean) => `api/artifacts/${encodeURIComponent(a.id)}/thumb?v=${a.v}${dark ? '&dark=1' : ''}${on(a)}`
+const thumbUrl = (a: Artifact, dark: boolean, tries = 0) =>
+  `api/artifacts/${encodeURIComponent(a.id)}/thumb?v=${a.v}${dark ? '&dark=1' : ''}${on(a)}${tries ? `&try=${tries}` : ''}`
+
+// a page's first lines, read once per version (a tile shows them when its version has no picture)
+const lines = new Map<string, Promise<{ text: string; head: boolean }[]>>()
+function linesOf(a: Artifact) {
+  const k = `${a.machine ?? ''}|${a.id}|${a.v}`
+  let p = lines.get(k)
+  if (!p) {
+    p = fetch(pageUrl(a, a.v)).then((r) => (r.ok ? r.text() : '')).then((h) => firstLines(h)).catch(() => [])
+    lines.set(k, p)
+  }
+  return p
+}
+
+/** A tile's picture, never a broken one (SHEP-344): a calm empty frame until it has loaded, a few tries again, else
+ *  the page's first lines (preview.ts). */
+export function Preview({ a, dark }: { a: Artifact; dark: boolean }) {
+  const key = `${a.machine ?? ''}|${a.id}|${a.v}|${a.thumb ? 1 : 0}`
+  const [shot, setShot] = useState<{ key: string; s: Shot }>({ key, s: startShot(!!a.thumb) })
+  const s = shot.key === key ? shot.s : startShot(!!a.thumb)
+  const [words, setWords] = useState<{ key: string; l: { text: string; head: boolean }[] } | null>(null)
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (retry.current) clearTimeout(retry.current) }, [key])
+  useEffect(() => {
+    if (s.shown !== 'lines') return
+    let live = true
+    void linesOf(a).then((l) => live && setWords({ key, l }))
+    return () => { live = false }
+  }, [key, s.shown])
+  const onError = () => {
+    const { shot: next, retryIn } = failed(s)
+    if (retryIn === null) return setShot({ key, s: next })
+    retry.current = setTimeout(() => setShot({ key, s: next }), retryIn)
+  }
+  const l = words?.key === key ? words.l : null
+  return (
+    <span className={cx('prev', s.shown === 'wait' && 'wait')}>
+      {s.shown !== 'lines' && (
+        <img key={s.tries} src={thumbUrl(a, dark, s.tries)} alt="" loading="lazy" className={s.shown === 'pic' ? 'in' : undefined}
+          onLoad={() => setShot({ key, s: loaded(s) })} onError={onError} />
+      )}
+      {s.shown === 'lines' && !!l?.length && (
+        <span className="plines" aria-hidden="true">{l.map((x, i) => <span key={i} className={x.head ? 'h' : undefined}>{x.text}</span>)}</span>
+      )}
+    </span>
+  )
+}
 
 /** a page as a picture tile: a small picture of the page, its title, when it was updated; tap to open */
 function Tile({ id }: { id: string }) {
@@ -27,7 +76,7 @@ function Tile({ id }: { id: string }) {
   if (!snap || !a) return null
   return (
     <button type="button" className="tile" onClick={() => openArtifact(a.id)}>
-      <span className="prev"><img src={thumbUrl(a, dark)} alt="" loading="lazy" /></span>
+      <Preview a={a} dark={dark} />
       <span className="l1" style={{ fontWeight: 500 }}>{a.title}</span>
       <span className="l2">{spaceLabel(snap, a.place)} · {agoShort(a.at)}</span>
     </button>
@@ -97,22 +146,72 @@ function menu(anchor: Element, a: Artifact, v: number) {
   )
 }
 
-/** The page, in a frame that cannot reach the app. Marking up: tap the page to drop a pin, then write. */
+/** What the page's frame says (the link catcher the service puts first in every artifact page): a link to open, and
+ *  whether it shows a page of the artifact. "link": another site in a new tab, this app's own (an artifact, a task, a
+ *  space) in place; "inside": the next load is the artifact's own file (a picture or a PDF says nothing). */
+export function onFrameSaid(d: unknown, here: string, open: (href: string) => void, newTab: (href: string) => void): 'page' | 'inside' | null {
+  const m = d as { shepherdr?: unknown; href?: unknown } | null
+  if (!m || typeof m !== 'object') return null
+  if (m.shepherdr === 'link' && typeof m.href === 'string') {
+    if (appLink(m.href, here)) open(m.href)
+    else if (/^https?:\/\//i.test(m.href)) newTab(m.href)
+    return null
+  }
+  return m.shepherdr === 'page' || m.shepherdr === 'inside' ? m.shepherdr : null
+}
+
+/** The page, in a frame that cannot reach the app. Marking up: tap the page to drop a pin, then write. A frame that
+ *  ends on a page it can't show (another site that refuses frames, sent there by the page's own script) gets a calm
+ *  notice with Back to the artifact, never a dead grey panel. */
 function Page({ a, v, markup, pin, setPin }: { a: Artifact; v: number; markup: boolean; pin: { x: number; y: number } | null; setPin: (p: { x: number; y: number } | null) => void }) {
   const frame = useRef<HTMLIFrameElement>(null)
+  const [load, setLoad] = useState(0)
+  const [lost, setLost] = useState(false)
+  // when the frame last said it shows a page of the artifact (its catcher says so as the page starts and on its load),
+  // whether a tap sent it to the artifact's own file, and the timer that looks after a load
+  const said = useRef(0)
+  const inside = useRef(false)
+  const look = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    inside.current = false
+    setLost(false)
+    return () => { if (look.current) clearTimeout(look.current) }
+  }, [a.id, v, load])
   // a page can send the person's answer back to its agent: parent.postMessage({ shepherdr: 'answer', text }, '*')
   useEffect(() => {
     const on = (e: MessageEvent) => {
+      if (e.source !== frame.current?.contentWindow) return
       const d = e.data as { shepherdr?: string; text?: unknown } | null
-      if (e.source !== frame.current?.contentWindow || d?.shepherdr !== 'answer' || typeof d.text !== 'string' || !d.text.trim()) return
+      const what = onFrameSaid(d, location.href, (href) => openLink(href, true), (href) => void window.open(href, '_blank', 'noopener,noreferrer'))
+      if (what === 'page') { said.current = Date.now(); setLost(false) }
+      else if (what === 'inside') inside.current = true
+      if (d?.shepherdr !== 'answer' || typeof d.text !== 'string' || !d.text.trim()) return
       void tryAct({ type: 'artifact-say', place: a.place, artifact: a.id, v, text: d.text.slice(0, 4000) }, 'Sent to the agent that made it')
     }
     addEventListener('message', on)
     return () => removeEventListener('message', on)
   }, [a.id, a.place, v])
+  // after each load, a moment for the page's word (it comes just before or just after the load; a message sent as the
+  // frame leaves a page can't be told from another's, so there's none): no word near the load, and no tap to the
+  // artifact's own file, is a page that can't be shown here
+  const loaded = () => {
+    const at = Date.now()
+    if (look.current) clearTimeout(look.current)
+    look.current = setTimeout(() => {
+      setLost(Math.abs(said.current - at) > 1000 && !inside.current)
+      inside.current = false
+    }, 1200)
+  }
   return (
-    <div style={{ position: 'relative', flex: 1, display: 'flex', minHeight: 0 }}>
-      <iframe ref={frame} className="page" title={a.title} src={pageUrl(a, v)} sandbox="allow-scripts allow-forms allow-popups" referrerPolicy="no-referrer" />
+    <div className="pagebox">
+      <iframe key={`${a.id}|${v}|${load}`} ref={frame} className="page" title={a.title} src={pageUrl(a, v)} sandbox="allow-scripts allow-forms allow-popups" referrerPolicy="no-referrer" onLoad={loaded} />
+      {lost && (
+        <div className="page-lost empty" role="status">
+          <b>Couldn't show this page</b>
+          <span>It doesn't open inside Shepherdr.</span>
+          <div className="acts"><Btn kind="pri" onClick={() => setLoad(load + 1)}>Back to the artifact</Btn></div>
+        </div>
+      )}
       {markup && (
         <div
           role="button"

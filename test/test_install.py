@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 import fake_ab
@@ -58,6 +59,18 @@ def copy_source(dest):
     """This checkout as another source folder (a release to come, or one gone by)."""
     shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__"))
     return dest
+
+
+def assert_notices(t, root, names):
+    """Each of 3.1's window views named is its notice (herdr/window-notice): the main chat says where Shepherdr went,
+    the rest draw nothing; none of 3.1's code is left in it."""
+    for name in names:
+        top = os.path.join(root, APP, "mods", name)
+        t.assertEqual(sorted(os.listdir(top)), ["main.js", "mod.json", "notice.js"], name)
+        t.assertEqual(open(os.path.join(top, "notice.js")).read(), open(os.path.join(ROOT, "herdr/window-notice/notice.js")).read())
+        t.assertEqual(open(os.path.join(top, "main.js")).read(),
+                      open(os.path.join(ROOT, "herdr/window-notice", "full.js" if name == "chat" else "blank.js")).read(), name)
+        t.assertEqual(json.load(open(os.path.join(top, "mod.json")))["place"], "none")
 
 
 # Shepherdr's own data (layout.py): an install makes its folders and the old paths' links; uninstall leaves the data.
@@ -112,7 +125,7 @@ class Install(unittest.TestCase):
         out = run("install", "--root", self.root, "--yes").stdout
         self.assertRegex(out, r"files: \d+ new\n")
         rec = json.load(open(self.p(RECORD)))
-        self.assertEqual(rec["version"], "3.2.2")
+        self.assertEqual(rec["version"], "3.2.5")
         self.assertFalse(os.path.exists(self.p(OLD_RECORD)), "no record in the Herdr app any more")
         self.assertTrue(os.path.isfile(self.p(SHARE, "mods/tasks/bin/herdr-task")))
         self.assertEqual(os.path.realpath(self.p(".local/bin/herdr-task")), os.path.realpath(self.p(SHARE, "mods/tasks/bin/herdr-task")))
@@ -501,6 +514,72 @@ class Install(unittest.TestCase):
         sh.keep_instructions(sh.Run(self.root, False), live, self.root)
         with open(out) as f:
             self.assertEqual(f.read(), again)
+
+    def test_space_task_settings_move_to_the_repos_their_tasks_work_in(self):
+        """SHEP-335: the update moves each space's task settings to settings.json "repos": a space on a repo to that
+        repo; root (on /), whose tasks work in the shop repo, to the shop repo, said once with what and where; two
+        spaces on one repo that disagree: the one with more tasks there keeps it, the other said. A dry run writes
+        nothing; a second run changes and says nothing; the spaces keep what is about themselves."""
+        sh = installer()
+        w = sh.where_for(self.root)
+        path = w.path("settings")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(w.path("tasks"), exist_ok=True)
+        shop = os.path.join(self.root, "dev", "shop")
+        os.makedirs(shop)
+        subprocess.run(["git", "-C", shop, "init", "-q"], check=True)
+        shop = os.path.realpath(shop)
+        blog = os.path.realpath(os.path.join(self.root, "dev"))
+        old = {"everywhere": {"tasks": {"merge": "checks"}},
+               "spaces": {"sproot": {"folder": "/", "name": "root", "tasks": {"merge": "auto"}},
+                          "spshop": {"folder": os.path.join(shop, "src"), "name": "shop", "worker": {"agent": "codex", "model": "gpt-5"},
+                                     "coordinator": {"agent": "claude"}, "tasks": {"proof": False}},
+                          "spshop2": {"folder": shop, "name": "shop-two", "tasks": {"proof": True, "review_rounds": 2}},
+                          "spblog": {"folder": blog, "name": "blog", "agents": {"reactions": False}},
+                          "vmb/sp9": {"folder": "/home/x/web", "name": "web", "tasks": {"base": "dev"}}}}
+        os.makedirs(os.path.join(shop, "src"))
+        with open(path, "w") as f:
+            json.dump(old, f)
+        with open(os.path.join(w.path("tasks"), "shop.json"), "w") as f:
+            json.dump({"folder": shop, "tasks": [{"id": 1, "space": "sproot"}, {"id": 2, "space": "spshop"}, {"id": 3, "space": "spshop"},
+                                                 {"id": 4, "space": "spshop2"}]}, f)
+        dry, live = mock.Mock(dry_run=True), mock.Mock(dry_run=False)
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            sh.move_repo_settings(sh.Run(self.root, True), dry, self.root)
+        self.assertIn("would move", said.getvalue())
+        with open(path) as f:
+            self.assertEqual(json.load(f), old)
+        r = sh.Run(self.root, False)
+        sh.move_repo_settings(r, live, self.root)
+        with open(path) as f:
+            now = json.load(f)
+        self.assertEqual(now["repos"][shop], {"worker": {"agent": "codex", "model": "gpt-5"}, "tasks": {"proof": False, "review_rounds": 2, "merge": "auto"}})
+        self.assertEqual(now["repos"]["vmb:/home/x/web"], {"tasks": {"base": "dev"}})
+        self.assertEqual(now["spaces"]["sproot"], {"folder": "/", "name": "root"})
+        self.assertEqual(now["spaces"]["spshop"], {"folder": os.path.join(shop, "src"), "name": "shop", "coordinator": {"agent": "claude"}})
+        self.assertEqual(now["spaces"]["spblog"], old["spaces"]["spblog"])
+        self.assertEqual(now["everywhere"], old["everywhere"])
+        said = "\n".join(r.notes)
+        self.assertIn('root\'s Merge "Right away" now applies to ~/dev/shop, where its tasks work', said)
+        self.assertIn("shop-two's Proof on didn't move to ~/dev/shop: another space there set it differently", said)
+        self.assertNotIn("Tasks run on codex", said)  # a space on its own repo moves without a word
+        moved = os.path.join(os.path.dirname(os.path.realpath(path)), sh.SETTINGS_MOVED)
+        with open(moved) as f:
+            kept = f.read()
+        self.assertIn('- root: Merge "Right away" → ~/dev/shop', kept)
+        self.assertIn("- shop: Proof off, Tasks run on codex gpt-5 → ~/dev/shop", kept)
+        self.assertIn("- web: Base branch dev → vmb:/home/x/web", kept)
+        r = sh.Run(self.root, False)
+        sh.move_repo_settings(r, live, self.root)
+        self.assertEqual(r.notes, [])
+        with open(moved) as f:
+            self.assertEqual(f.read(), kept)
+        # herdr-task reads the moved file: root's task in the shop repo merges right away
+        sys.path.insert(0, os.path.join(ROOT, "mods", "tasks", "bin"))
+        from herdr_task import settings as hs
+        with mock.patch.object(hs, "SETTINGS", path):
+            store = types.SimpleNamespace(loc={"folder": shop, "kind": "repo"})
+            self.assertEqual(hs.merge_policy(store, {"space": "sproot"}), "auto")
 
     def test_no_instructions_no_file(self):
         sh = installer()
@@ -1094,7 +1173,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         # the task finished: the same update switches
         self.set_tasks("done")
         out = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
-        self.assertIn("Shepherdr 3.2.2 update", out)
+        self.assertIn("Shepherdr 3.2.5 update", out)
         self.assertIn("switching from Shepherdr 3.1.46 (the Herdr-window install)", out)
         self.assertIn("removed what 3.1 put in the Herdr app: 28 mods, 1 artifact mod (kept in the backup)", out)
         self.assertIn("3 files you changed are in the backup", out)
@@ -1103,8 +1182,13 @@ class SwitchFromTheWindow(unittest.TestCase):
         backup = re.search(r"backup of what it replaced: (\S+)", out).group(1)
         self.assertTrue(backup.startswith(self.p(SHARE, ".shepherdr-backup")))
 
-        # (b) what 3.1 put in the Herdr app is gone: only the person's mod, the button, their data
-        self.assertEqual(sorted(os.listdir(self.p(APP, "mods"))), ["changes", "open-shepherdr"])
+        # (b) what 3.1 put in the Herdr app is gone: only the person's mod, the button, their data, and in each old view's
+        # place its notice (SHEP-355: a window still showing it would show red errors otherwise)
+        sh = installer()
+        self.assertEqual(sorted(os.listdir(self.p(APP, "mods"))), sorted(["changes", "open-shepherdr", *sh.RETIRED]))
+        assert_notices(self, self.root, sh.RETIRED)
+        self.assertIn("a Herdr window showing them gets a notice in their place", out)
+        self.assertIn("the Herdr window: Shepherdr's old views there now say Shepherdr lives in the web app", out)
         self.assertEqual(open(self.p(APP, "mods/changes/main.js")).read(), "// Herdr's own mod\n")
         for gone in ("layouts/shepherdr.json", "lib", "core", "bin", "data/shepherdr", ".shepherdr-stage"):
             self.assertFalse(os.path.exists(self.p(APP, gone)), gone)
@@ -1114,6 +1198,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         self.assertEqual(json.load(open(os.path.join(backup, APP, "layouts/shepherdr.json")))["children"][0]["size"], {"px": 312})
         self.assertTrue(os.path.isfile(os.path.join(backup, APP, "mods/art-abc123/main.js")))
         self.assertFalse(os.path.exists(os.path.join(backup, APP, "mods/jump")), "a mod as Shepherdr shipped it isn't backed up")
+        self.assertEqual(json.load(open(self.p(RECORD)))["notices"], list(sh.RETIRED))
         # the keys 3.1 merged are out, the person's from before back (alt-1), theirs kept (ctrl-k); our one key is in
         self.assertEqual(json.load(open(self.p(APP, "keys.json"))),
                          {"global": {"ctrl-k": "mine.open", "alt-1": "space.select:1", "ctrl-shift-o": "mod.open:open-shepherdr"}})
@@ -1137,7 +1222,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         self.assertNotIn("3.1.46", open(self.p(SHARE, "bin/shepherdr")).read()[:200])
         # (e) the new record is written, the old one gone; nothing of the window is in it
         rec = json.load(open(self.p(RECORD)))
-        self.assertEqual(rec["version"], "3.2.2")
+        self.assertEqual(rec["version"], "3.2.5")
         self.assertFalse(os.path.exists(self.p(OLD_RECORD)))
         self.assertFalse([f for f in rec["files"] if f.startswith(APP) and "/mods/open-shepherdr/" not in f])
         self.assertNotIn("mods", rec)
@@ -1169,8 +1254,9 @@ class SwitchFromTheWindow(unittest.TestCase):
     def test_force_switches_while_tasks_work(self):
         out = run("install", "--root", self.root, "--yes", "--source", ROOT, "--force").stdout
         self.assertIn("switched while these tasks were working (--force): SHOP-3 Fix the cart", out)
-        self.assertEqual(json.load(open(self.p(RECORD)))["version"], "3.2.2")
-        self.assertFalse(os.path.exists(self.p(APP, "mods/tasks")))
+        self.assertEqual(json.load(open(self.p(RECORD)))["version"], "3.2.5")
+        self.assertFalse(os.path.exists(self.p(APP, "mods/tasks/live.js")), "3.1's code is gone")
+        assert_notices(self, self.root, ["tasks"])
 
     def test_no_hooks_still_takes_the_old_hooks_out(self):
         """--no-hooks adds none of ours, but 3.1's entries point at files the switch removed: they go either way."""
@@ -1249,7 +1335,7 @@ class SwitchFromTheWindow(unittest.TestCase):
             for gone in ("lib", "mods/coordinator", "mods/artifacts/recipe-view.js"):
                 self.assertFalse(os.path.exists(P(SHARE, gone)), gone)
             rec = json.load(open(P(RECORD)))
-            self.assertEqual(rec["version"], "3.2.2")
+            self.assertEqual(rec["version"], "3.2.5")
             self.assertNotIn("web", rec)
             self.assertNotIn("backups", rec)
             self.assertFalse(os.path.exists(P(APP, "mods")), "no Herdr app here: no button")
@@ -1268,6 +1354,115 @@ FAKE_RELEASE = fake_ab.script("""case "$1" in
 esac
 """)
 PLATFORMS = ("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "linux-musl-arm64", "linux-musl-x64")
+
+
+class WindowNotices(unittest.TestCase):
+    """SHEP-355: a Herdr window that ran 3.1's Shepherdr views and was updated by 3.2.0-3.2.2 (which took the views out
+    under it) showed red "could not be re-rendered" banners, and each space's Assistant tab "chat did not load", also
+    after a restart. The next update puts a notice in each view's place: no throw, no endless "Opening the
+    conversation", one calm notice with the web app's link. Offered to remove, never forced; nothing of the person's
+    is touched."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="shepherdr-notices-")
+        self.sh = installer()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def p(self, *rel):
+        return os.path.join(self.root, *rel)
+
+    def window_32(self):
+        """A machine switched by 3.2.2: Shepherdr 3.2 installed, the Herdr app with Herdr's storage of 3.1's views
+        (data/spaces-chat, data/chat) but none of their mods any more, and the person's data."""
+        os.makedirs(self.p(APP, "mods/changes"))   # the Herdr app is here: its own mods
+        with open(self.p(APP, "mods/changes/main.js"), "w") as f:
+            f.write("// Herdr's own mod\n")
+        run("install", "--root", self.root, "--yes", "--source", ROOT)
+        rec = json.load(open(self.p(RECORD)))
+        for rel, text in ((f"{APP}/data/spaces-chat/state.json", "{}"), (f"{APP}/data/chat/drafts.json", '{"sp1": "half a message"}'),
+                          (f"{APP}/shared.json", '{"layout": "shepherdr"}')):
+            os.makedirs(os.path.dirname(self.p(rel)), exist_ok=True)
+            with open(self.p(rel), "w") as f:
+                f.write(text)
+        rec.pop("notices", None)
+        with open(self.p(RECORD), "w") as f:
+            json.dump(rec, f)
+
+    def test_an_updated_window_gets_its_notices(self):
+        self.window_32()
+        self.assertIn("has no notices in their place", run("doctor", "--root", self.root).stdout)
+        out = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
+        self.assertIn("the Herdr window: Shepherdr's old views there now say Shepherdr lives in the web app", out)
+        self.assertIn("`shepherdr window --remove` takes them out", out)
+        assert_notices(self, self.root, self.sh.RETIRED)
+        self.assertEqual(json.load(open(self.p(RECORD)))["notices"], list(self.sh.RETIRED))
+        # the person's data in Herdr's storage is as it was
+        self.assertEqual(open(self.p(APP, "data/chat/drafts.json")).read(), '{"sp1": "half a message"}')
+        self.assertEqual(open(self.p(APP, "shared.json")).read(), '{"layout": "shepherdr"}')
+        doctor = run("doctor", "--root", self.root).stdout
+        self.assertIn("30 of Shepherdr 3.1's old views show a notice that Shepherdr lives in the web app", doctor)
+        self.assertIn("whole", doctor)
+        # again: said once, nothing rewritten
+        before = tree(self.p(APP))
+        again = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
+        self.assertNotIn("the Herdr window:", again)
+        self.assertEqual(tree(self.p(APP)), before)
+        # a newer notice replaces an older one in place
+        with open(self.p(APP, "mods/chat/notice.js"), "a") as f:
+            f.write("// an older release's\n")
+        run("update", "--root", self.root, "--yes", "--source", ROOT)
+        assert_notices(self, self.root, ["chat"])
+
+    def test_remove_is_offered_and_sticks(self):
+        self.window_32()
+        run("update", "--root", self.root, "--yes", "--source", ROOT)
+        self.assertIn("30 of Shepherdr 3.1's old views", run("window", "--root", self.root).stdout)
+        out = run("window", "--remove", "--root", self.root).stdout
+        self.assertIn("took out 30 notices from the Herdr window; updates won't put them back", out)
+        self.assertIn("An old Assistant tab still open in Herdr now says it can't load: close it", out)
+        self.assertEqual(sorted(os.listdir(self.p(APP, "mods"))), ["changes", "open-shepherdr"])
+        run("update", "--root", self.root, "--yes", "--source", ROOT)
+        self.assertEqual(sorted(os.listdir(self.p(APP, "mods"))), ["changes", "open-shepherdr"])
+        self.assertNotIn("the Herdr window", run("doctor", "--root", self.root).stdout)
+        self.assertIn("no Shepherdr notices", run("window", "--root", self.root).stdout)
+
+    def test_someone_elses_mod_by_that_name_stays(self):
+        self.window_32()
+        os.makedirs(self.p(APP, "mods/chat"))
+        with open(self.p(APP, "mods/chat/main.js"), "w") as f:
+            f.write("// my own chat mod\n")
+        run("update", "--root", self.root, "--yes", "--source", ROOT)
+        self.assertEqual(open(self.p(APP, "mods/chat/main.js")).read(), "// my own chat mod\n")
+        self.assertFalse(os.path.exists(self.p(APP, "mods/chat/notice.js")))
+        self.assertNotIn("chat", json.load(open(self.p(RECORD)))["notices"])
+        run("window", "--remove", "--root", self.root)
+        self.assertEqual(open(self.p(APP, "mods/chat/main.js")).read(), "// my own chat mod\n")
+
+    def test_no_window_no_notices(self):
+        """A machine whose Herdr app never ran 3.1's views (or that has no Herdr app) gets none."""
+        os.makedirs(self.p(APP, "mods/changes"))
+        run("install", "--root", self.root, "--yes", "--source", ROOT)
+        os.makedirs(self.p(APP, "data/chat-asks"))   # the question hook's storage, on every machine
+        out = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
+        self.assertNotIn("the Herdr window", out)
+        self.assertFalse(os.path.exists(self.p(APP, "mods/chat")))
+        self.assertNotIn("the Herdr window", run("doctor", "--root", self.root).stdout)
+
+    def test_uninstall_takes_them_out(self):
+        self.window_32()
+        run("update", "--root", self.root, "--yes", "--source", ROOT)
+        run("uninstall", "--root", self.root)
+        self.assertEqual(os.listdir(self.p(APP, "mods")), ["changes"])
+        self.assertEqual(open(self.p(APP, "data/chat/drafts.json")).read(), '{"sp1": "half a message"}')
+
+    def test_dry_run_writes_nothing(self):
+        self.window_32()
+        before = tree(self.root)
+        out = run("update", "--root", self.root, "--yes", "--source", ROOT, "--dry-run").stdout
+        self.assertIn("would now say Shepherdr lives in the web app", out)
+        self.assertEqual(tree(self.root), before)
 
 
 class AgentBrowser(unittest.TestCase):

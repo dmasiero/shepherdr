@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { Snapshot, Task } from './types.ts'
-import { doneWords, etaOf, folderName, folderOf, leftShort, leftWords, listOf, needsCount, ringOf, nowGroups, statusWord, taskLine, taskWhen, tstate } from './view.ts'
+import { doneWords, etaOf, folderName, folderOf, headerWhere, leftShort, leftWords, listOf, needsCount, ringOf, nowGroups, statusWord, taskLine, taskWhen, tstate } from './view.ts'
 
 const task = (x: Partial<Task>): Task => ({ id: 'T-1', name: 'A task', place: 'shop', status: 'work', state: 'work', on: 'mini', created: '', age: '', ...x })
 
@@ -66,11 +66,15 @@ test('the ring shows the share done in every unfinished state; Ready and Done sh
   const r = (x: Partial<Task>) => ringOf(task(x))
   expect(r({ status: 'work', report: { msg: '', progress: 40 } })).toMatchObject({ kind: 'ring', tone: 'working', pct: 40 })
   expect(r({ status: 'work' })).toMatchObject({ kind: 'ring', tone: 'working', pct: null })
-  expect(r({ status: 'need', report: { msg: '', progress: 70, paused: true } })).toMatchObject({ kind: 'ring', tone: 'ask', pct: 70, mark: 'dot' })
+  expect(r({ status: 'need', report: { msg: '', progress: 70, paused: true } })).toMatchObject({ kind: 'ring', tone: 'ask', pct: 70, mark: 'tint' })
   expect(r({ status: 'need', stopped: { by: 'error' }, report: { msg: '', progress: 30 } })).toMatchObject({ kind: 'ring', tone: 'red', pct: 30, mark: 'stop' })
   expect(r({ status: 'todo', stopped: { by: 'you' }, report: { msg: '', progress: 55 } })).toMatchObject({ kind: 'ring', tone: 'ask', pct: 55, mark: 'stop' })
-  expect(r({ status: 'queued' })).toMatchObject({ kind: 'ring', tone: 'mute', pct: 0, mark: 'queued' })
-  expect(r({ status: 'scheduled' })).toMatchObject({ kind: 'ring', pct: 0, mark: 'queued' })
+  // up next and scheduled: a solid empty ring (no mark); waiting for Start: dotted
+  expect(r({ status: 'queued' })).toMatchObject({ kind: 'ring', tone: 'mute', pct: 0, label: 'Up next' })
+  expect(r({ status: 'queued' }).mark).toBeUndefined()
+  expect(r({ status: 'scheduled' }).mark).toBeUndefined()
+  expect(r({ status: 'todo' })).toMatchObject({ kind: 'ring', tone: 'mute', pct: 0, mark: 'unstarted', label: 'Not started' })
+  expect(r({ status: 'todo', started: 1 }).mark).toBeUndefined()
   expect(r({ status: 'ready', report: { msg: '', progress: 100 } })).toMatchObject({ kind: 'check', tone: 'ready' })
   expect(r({ status: 'merging' })).toMatchObject({ kind: 'check', tone: 'ready' })
   expect(r({ status: 'done' })).toMatchObject({ kind: 'check', tone: 'mute' })
@@ -121,9 +125,26 @@ test("a space's folder: home as ~, the whole path, another machine named (SHEP-3
   expect(folderOf(snap, { machine: 'vm-c', where: '~/x' }).machine).toBe('vm-c')
 })
 
-test('a lone ~ or / is said in words (SHEP-316)', () => {
-  expect(folderName('~')).toBe('Home folder')
-  expect(folderName('/')).toBe('Root folder')
+test('a folder shows as its path, never a made-up name', () => {
+  expect(folderName('~')).toBe('~')
+  expect(folderName('/')).toBe('/')
+  expect(folderName('')).toBe('/')
   expect(folderName('~/dev/shop')).toBe('~/dev/shop')
   expect(folderName('/srv/app')).toBe('/srv/app')
+})
+
+test("a chat header's where: the folder, the machine only when it adds something, Everything too (SHEP-360)", () => {
+  const snap = { host: 'mini', everything: 'ev', places: [{ id: 'ev', machine: 'mini', home: true }], machines: [{ id: 'm:mini', machine: 'mini', name: 'Mac mini', status: 'idle' }, { id: 'm:vm-b', machine: 'vm-b', name: 'Build box', status: 'idle' }] } as unknown as Snapshot
+  // a named space here: its path alone, cut from its start when long
+  expect(headerWhere(snap, { id: 'shop', machine: 'mini', where: '~/dev/shop', folder: '/Users/sam/dev/shop' })).toEqual({ path: '~/dev/shop', cut: true, full: '/Users/sam/dev/shop', machine: null })
+  // on another machine: that machine
+  expect(headerWhere(snap, { id: 'x', machine: 'vm-b', where: '~/clients/acme/shop', folder: '/home/sam/clients/acme/shop' })).toMatchObject({ path: '~/clients/acme/shop', machine: 'Build box' })
+  // the root: / as it is, never cut
+  expect(headerWhere(snap, { id: 'r', machine: 'vm-b', where: '/', folder: '/' })).toEqual({ path: '/', cut: false, full: '/', machine: 'Build box' })
+  // Everything: ~ as it is, with the machine whose home it is
+  expect(headerWhere(snap, { id: 'ev', machine: 'mini', where: '~', folder: '/Users/sam' })).toEqual({ path: '~', cut: false, full: '/Users/sam', machine: 'Mac mini' })
+  // Everything from a service that sends no folder still says it
+  expect(headerWhere(snap, { id: 'ev', machine: 'mini' })).toEqual({ path: '~', cut: false, full: '~', machine: 'Mac mini' })
+  // another space with no folder: nothing
+  expect(headerWhere(snap, { id: 'y', machine: 'mini' })).toBeNull()
 })

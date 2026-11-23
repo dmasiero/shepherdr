@@ -9,7 +9,7 @@ import type { AgentPick, Need, Snapshot, Task, Place } from "../web/shared/types
 import { ACTS, ASK_FIRST, navWords, REPLY_MAX, SETTINGS } from "../core/voice.js";
 import { screenParams, screenWords } from "../core/screen.js";
 import { planRows, windowWords, whyWords, healthWords } from "../core/machines.js";
-import { artifactsIn, everything, isEverything, listOf, machineLabel, machineWarn, needsCount, nowGroups, onBranch, scheduleLine, schedulesOf, spaceLabel, spacesOf, etaOf, leftWords, statusWord, taskLine, taskWhen, tstate, unreachable, whereWords } from "../web/shared/view.ts";
+import { artifactsIn, everything, isEverything, listOf, machineLabel, machineWarn, needsCount, nowGroups, onBranch, scheduleLine, schedulesOf, spaceLabel, spacesOf, etaOf, leftWords, statusWord, taskInSpace, taskLine, taskWhen, tstate, unreachable, whereWords } from "../web/shared/view.ts";
 import { SOURCES, scrub, render, at, search, segments, type SourceArgs } from "./voice-data.ts";
 
 /** Where a call comes from and what its app shows now (sent by the page as it changes). SHEP-105: a call is with
@@ -379,7 +379,7 @@ async function lookChat(io: VoiceIO, snap: Snapshot, where: Where, id: unknown, 
 function lookSpaces(snap: Snapshot) {
   const out: string[] = [];
   const counts = (id: string) => {
-    const n = needsCount(snap, id), w = snap.tasks.filter((t) => t.place === id && tstate(t) === "working").length;
+    const n = needsCount(snap, id), w = snap.tasks.filter((t) => taskInSpace(t, id) && tstate(t) === "working").length;
     return [n ? `${n} ${n === 1 ? "needs" : "need"} you` : "", w ? `${w} working` : ""].filter(Boolean).join(", ");
   };
   const ev = everything(snap);
@@ -428,7 +428,7 @@ function lookTasks(snap: Snapshot, where: Where, id: unknown, query: string, cou
     const m = snap.machines.find((x) => machineAliases(x).some((a) => norm(a) === norm(id)));
     const p = m ? null : findSpace(snap, id, where);
     if (m) { ts = ts.filter((t) => snap.places.find((p) => p.id === t.place)?.machine === m.machine); scope = ` on ${m.name}`; }
-    else if (p && !isEverything(snap, p.id)) { ts = ts.filter((t) => t.place === p.id); scope = ` in ${label(snap, p.id)}`; }
+    else if (p && !isEverything(snap, p.id)) { ts = ts.filter((t) => taskInSpace(t, p.id)); scope = ` in ${label(snap, p.id)}`; }
     else if (!p) return fail(`I can't find a space or machine called "${cut(id, 60)}".`);
   }
   const st = stateOf(query);
@@ -532,7 +532,7 @@ function lookSchedules(snap: Snapshot, where: Where, id: unknown) {
   return done(rows.length ? list(rows, 12, "schedules") : `No schedules${all ? "" : ` in ${label(snap, p!.id)}`}.`);
 }
 
-const MERGE_WORDS: Record<string, string> = { done: "When I mark it as done", checks: "When checks pass", now: "Right away" };
+const MERGE_WORDS: Record<string, string> = { done: "When I mark it as done", checks: "When all checks pass", now: "Right away" };
 const pickSaid = (p: AgentPick | undefined) => (p ? [p.agent, p.model, p.effort, p.fast === "ultrafast" ? "ultrafast" : p.fast ? "fast" : ""].filter(Boolean).join(", ") : "its own default");
 const onOff = (v: unknown) => (v ? "on" : "off");
 
@@ -762,9 +762,9 @@ function open(snap: Snapshot, where: Where, what: string, id: string, view: stri
       return showing(`${c.name}'s ${name}`, { kind: "space", place: c.place!.id }, { kind: "panel", panel: desk ? "desktop" : "screen" });
     }
     case "terminal": {
-      // "Switch to terminal": a chat's agent's own terminal, in the chat's place
+      // "View as terminal": a chat's agent's own terminal, in the chat's place
       const t = id && !isHere(id) && !findSpace(snap, id, where) ? findTask(snap, id, where) : isHere(id) || !id ? (where.task ? snap.tasks.find((x) => x.id === where.task) ?? null : null) : null;
-      if (t) return fail(`A task's terminal opens from its menu: open the task ${titled(t)}, then with screen press its menu's "Switch to terminal".`);
+      if (t) return fail(`A task's terminal opens from its menu: open the task ${titled(t)}, then with screen press its menu's "View as terminal".`);
       return panel("terminal", "agent's terminal");
     }
     case "tasks": case "needs": {
@@ -929,7 +929,7 @@ async function act(snap: Snapshot, where: Where, io: VoiceIO, p: any, id: string
     if (hits.length !== 1) return isHere(id) && !hits.length ? fail("Which space?") : which(snap, hits, id);
     const sp = hits[0], n = label(snap, sp.id);
     if (isEverything(snap, sp.id)) return fail("Everything is the root chat: it can't be renamed, archived or removed.");
-    const working = snap.tasks.filter((t) => t.place === sp.id && tstate(t) === "working").length;
+    const working = snap.tasks.filter((t) => taskInSpace(t, sp.id) && tstate(t) === "working").length;
     const stops = `${working ? `Its ${working} working task${working === 1 ? " stops" : "s stop"}, and its` : "Its"} schedules stop.`;
     switch (action) {
       case "rename_space":
@@ -950,7 +950,10 @@ async function act(snap: Snapshot, where: Where, io: VoiceIO, p: any, id: string
     const sp = id ? findSpace(snap, id, where) : null;
     if (id && !sp) return fail(isHere(id) ? "Which space?" : `I can't find a space called "${cut(id, 60)}".`);
     const place = sp && !isEverything(snap, sp.id) ? sp.id : "all";
+    // SHEP-335: Merge, Review and Proof are a repo's: a space's go to the repo it sits on
+    const repo = place === "all" ? null : c.repos?.find((r) => r.spaces.includes(place));
     const forWhom = place === "all" ? "for every space" : `for ${label(snap, place)}`;
+    const forTasks = place === "all" ? forWhom : repo ? `for tasks in ${repo.name}` : forWhom;
     const k = norm(key), v = norm(value);
     const reset = /^(reset|default|same|aseverything|aseverywhere)$/.test(v);
     if (reset && place === "all") return fail("Only a space's own setting can be reset: say which space.");
@@ -959,11 +962,11 @@ async function act(snap: Snapshot, where: Where, io: VoiceIO, p: any, id: string
     if (/^merge/.test(k) || k === "whentomerge") {
       const m = reset ? null : /check/.test(v) ? "checks" : /now|rightaway|atonce|immediately|auto/.test(v) ? "now" : /done|mark|ask|review|manual/.test(v) ? "done" : undefined;
       if (m === undefined) return fail(`Merge can be: ${Object.values(MERGE_WORDS).join(", ")}.`);
-      body = { type: "config", place, key: "merge", value: m }; did = `Merge is ${m ? `"${MERGE_WORDS[m]}"` : "as everywhere"} ${forWhom}.`;
+      body = { type: "config", place, key: "merge", value: m }; did = `Merge is ${m ? `"${MERGE_WORDS[m]}"` : "as everywhere"} ${forTasks}.`;
     } else if (/^(review|proof)/.test(k) || /secondagent/.test(k)) {
       const which = /^proof/.test(k) ? "proof" : "review", on = reset ? null : toggle();
       if (on === null && !reset) return fail(`${which === "proof" ? "Proof" : "Review by a second agent"} is on or off: which?`);
-      body = { type: "config", place, key: which, value: on }; did = `${which === "proof" ? "Proof" : "Review by a second agent"} is ${on === null ? "as everywhere" : onOff(on)} ${forWhom}.`;
+      body = { type: "config", place, key: which, value: on }; did = `${which === "proof" ? "Proof" : "Review by a second agent"} is ${on === null ? "as everywhere" : onOff(on)} ${forTasks}.`;
     } else if (plugin) {
       if (plugin.always) return fail(`${plugin.name} is always on.`);
       const on = toggle();
