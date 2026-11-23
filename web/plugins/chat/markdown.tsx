@@ -11,6 +11,7 @@ import { go, notice, openTask, useSnap } from '@client/kernel.ts'
 import type { Message, Snapshot } from '@shared/types.ts'
 import { spacesOf, taskRef } from '@shared/view.ts'
 import { parseTask } from '@core/mentions.js'
+import { longCell } from './cells.ts' // fork: Wide chat tables on phone
 
 marked.setOptions({ gfm: true, breaks: false })
 
@@ -56,10 +57,6 @@ export function toHtml(text: string, link?: (a: HTMLAnchorElement, kind: 'space'
   const one = h.match(/^<p>([\s\S]*)<\/p>$/)
   return one && !one[1].includes('<p>') ? one[1] : h
 }
-
-// fork: Wide chat tables on phone
-/** a table cell long enough to need a minimum width: a few words or more, not a number, a name or a short word */
-export const longCell = (text: string) => text.trim().length > 24
 
 const shown = new WeakMap<Element, ReturnType<typeof setTimeout>>()
 

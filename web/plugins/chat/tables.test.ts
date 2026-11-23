@@ -3,11 +3,11 @@
 // minimum width, and the table scrolls sideways in its own box.
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import * as M from './markdown.tsx'
+import * as M from './cells.ts'
 
 const css = readFileSync(new URL('../../src/styles.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 const rule = (sel: string) => css.split('}').filter((r) => r.split('{')[0]!.split(',').map((s) => s.trim()).includes(sel)).map((r) => r.split('{').pop()!).join(';')
-// by name, so the same file runs as a before-check on an older build
+// by name, so the same file runs as a before-check on an older build (cells.ts: other tests mock markdown.tsx whole)
 const longCell = (t: string): boolean => (M as any).longCell(t)
 
 test("a table's cells break only between words, never anywhere as the bubble's text does", () => {
