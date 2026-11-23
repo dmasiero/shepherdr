@@ -3,7 +3,8 @@
 // message box. The same parts draw a space's chat and a task's thread.
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { copyText } from '@client/copy.ts'
-import { TEXT_IN_CALL } from '@client/dictate.tsx'
+import { TEXT_IN_CALL, useDictating } from '@client/dictate.tsx'
+import { attr } from '@client/attr.ts'
 import { act, definePlugin, getState, has, notice, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
@@ -13,22 +14,24 @@ import { Btn, cx, Empty, I, IB, useGrow } from '@client/ui.tsx'
 import type { IconName } from '@client/icons.ts'
 import { isImage, isVideo } from '@shared/files.ts'
 import type { Chat, Message, Relay, Snapshot, Task, TaskBrief, TurnActivity } from '@shared/types.ts'
-import { isEverything, placeOf, taskOf } from '@shared/view.ts'
+import { isEverything, placeOf, statusWord, taskOf } from '@shared/view.ts'
 import { StatusIcon } from '@plugins/tasks/icon.tsx'
 import { DoneRow, QuestionCard, SecretCard } from './cards.tsx'
 import { briefFrom, deliveryWord, looksLong, startWords } from './brief.ts'
 import { relayLabel, relayState, relayWhy } from './relay.ts'
-import { Finger, HOLD_MS, quickFit, REPLY_AT, type QuickFit } from './press.ts'
+import { quickFit, type QuickFit } from './press.ts'
+import { replyToTask, SlideHint, useSlide } from './slide.tsx'
 import { dayLabel } from './days.ts'
 import { Markdown, withLinks } from './markdown.tsx'
 import { dropped, pasted } from './paste.ts'
 import { touch } from './clip.ts'
 import { landLaunchShare, putAway, useLanded, watchLastChat } from './share.ts'
 import { openSendTo } from './sendto.tsx'
-import { suggestionOf, suggestionsOn } from './suggest.ts'
+import { ReplyPress, repliesHidden, suggestionOf, suggestionsOn } from './suggest.ts'
 import { BoxThumb, openPreview, SentThumb, sourcesOf } from './thumbs.tsx'
-import { signOf } from './typing.ts'
+import { heldStep, signOf } from './typing.ts'
 import { newsRow, type NewsRow } from './news.ts'
+import { outOfView, setAway, useAway, type Waiting } from './away.ts'
 
 export { fileUrl } from './thumbs.tsx'
 
@@ -129,11 +132,45 @@ export function RelayRow({ r, text, at, startOpen = false }: { r: Relay; text: s
 }
 
 /** the line naming the task above messages that came from it */
+/** a quiet "how it closed" line's words: what closed and how ("Fix login · Run: npm test · Allowed"); none when it
+ *  has no words (a bare "Ended" says nothing) or is the same as the line right above it */
+export function endedLine(text: string, above: string): string | null {
+  const line = text.trim()
+  return line && line !== above.trim() ? line : null
+}
+
 function TaskRef({ id, title, t }: { id: string; title: string; t?: Task }) {
+  // a slide to the right replies to the task here, as to a message
+  const { on, slide, armed, skip, moving } = useSlide(() => replyToTask({ id, name: title }))
   return (
-    <button type="button" className="ref" onClick={() => setUI({ task: id, pane: 'tasks', wide: false })}>
-      {t ? <StatusIcon t={t} time="side" /> : <I n="chat" c="s16" />}
-      {title}
+    <button type="button" className="ref tslide" {...on} onClick={() => (skip.current ? void (skip.current = false) : setUI({ task: id, pane: 'tasks', wide: false }))}>
+      <SlideHint slide={slide} armed={armed} />
+      <span className={cx('tmv', moving.className)} style={moving.style} onTransitionEnd={moving.onTransitionEnd}>
+        {t ? <StatusIcon t={t} time="side" /> : <I n="chat" c="s16" />}
+        <span className="rt">{title}</span>
+      </span>
+    </button>
+  )
+}
+
+/** the task a message replies to, above its words: its state and title; a tap opens it */
+function TaskQuote({ id, title }: { id: string; title: string }) {
+  const snap = useSnap()
+  const t = snap ? taskOf(snap, id) : undefined
+  const word = t ? statusWord(t).word : ''
+  return (
+    <button
+      type="button"
+      className="quote qtask"
+      aria-label={`Replying to the task ${t?.name ?? title}${word ? `, ${word}` : ''}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        setUI({ task: id, pane: 'tasks', wide: false })
+      }}
+    >
+      {t ? <StatusIcon t={t} time="none" /> : <I n="tasks" c="s16" />}
+      <span className="qt1">{t?.name ?? title}</span>
+      {word && <span className="qt2">{word}</span>}
     </button>
   )
 }
@@ -142,15 +179,15 @@ function TaskRef({ id, title, t }: { id: string; title: string; t?: Task }) {
 export function replyTo(msg: Message, key: string) {
   const text = msg.text ?? msg.file?.name ?? ''
   setUI((ui) => ({ reply: { ...ui.reply, [key]: { id: msg.id, who: msg.who, text: text.slice(0, 200) } } }))
-  document.querySelector<HTMLTextAreaElement>(`textarea[data-box="${CSS.escape(key)}"]`)?.focus()
+  document.querySelector<HTMLTextAreaElement>(`textarea[data-box="${attr(key)}"]`)?.focus()
 }
 
-function msgMenu(anchor: Element, msg: Message, chat: Chat, thread: Thread, select: () => void) {
+function msgMenu(anchor: Element, msg: Message, chat: Chat, thread: Thread, select: () => void, reply?: () => void) {
   const key = thread.chat
   const text = msg.text ?? msg.file?.name ?? ''
   const rows: MenuRow[] = [
     // Reply puts a quote of the message in the box
-    { icon: 'reply', label: 'Reply', run: () => replyTo(msg, key) },
+    { icon: 'reply', label: 'Reply', run: () => (reply ? reply() : replyTo(msg, key)) },
     { icon: 'copy', label: 'Copy', run: () => void copyText(text).then((ok) => ok && notice('Copied')) },
     // Select text makes that message's text selectable
     { icon: 'select', label: 'Select text', run: select },
@@ -177,35 +214,9 @@ const quickSub = (f: () => void) => {
 }
 const useQuick = (id: string) => useSyncExternalStore(quickSub, () => (quickNow?.id === id ? quickNow : null))
 
-/** The click a finger's lift makes after a hold would land on the menu's backdrop the hold just opened, and close it:
- *  the next click (within a moment of the lift) is swallowed. */
-function swallowClick() {
-  const eat = (e: Event) => {
-    e.preventDefault()
-    e.stopPropagation()
-    off()
-  }
-  const lifted = () => setTimeout(off, 400)
-  const off = () => {
-    removeEventListener('click', eat, true)
-    removeEventListener('pointerup', lifted, true)
-  }
-  addEventListener('click', eat, true)
-  addEventListener('pointerup', lifted, true)
-}
-
-/** a light tick, where the device has one (Android; iPhones have no web haptics) */
-const tick = (ms = 8) => {
-  try {
-    navigator.vibrate?.(ms)
-  } catch {
-    /* not allowed here */
-  }
-}
-
 /** The quick bar beside a message, on its open side: add a reaction, reply, more (the whole menu); on a narrow screen
  *  only the first. `y`: where to centre it, for a message taller than the screen. */
-function QuickBar({ msg, chat, thread, mine, wrap, y, done, more }: { msg: Message; chat: Chat; thread: Thread; mine: boolean; wrap: HTMLElement; y: number | null; done: () => void; more: (el: Element) => void }) {
+function QuickBar({ msg, chat, mine, wrap, y, done, more, reply: onReply }: { msg: Message; chat: Chat; thread: Thread; mine: boolean; wrap: HTMLElement; y: number | null; done: () => void; more: (el: Element) => void; reply: () => void }) {
   const phone = useUI((u) => u.phone)
   const [fit, setFit] = useState<QuickFit | null>(null)
   useLayoutEffect(() => {
@@ -215,7 +226,7 @@ function QuickBar({ msg, chat, thread, mine, wrap, y, done, more }: { msg: Messa
   }, [wrap, mine, phone])
   const quick = registry.messageQuick
   const reply = (
-    <button key="reply" type="button" className="qbtn" aria-label="Reply" onClick={() => { done(); replyTo(msg, thread.chat) }}>
+    <button key="reply" type="button" className="qbtn" aria-label="Reply" onClick={() => { done(); onReply() }}>
       <I n="reply" />
     </button>
   )
@@ -244,7 +255,7 @@ function QuickBar({ msg, chat, thread, mine, wrap, y, done, more }: { msg: Messa
   )
 }
 
-function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Message; chat: Chat; thread: Thread; gap: boolean; pending?: boolean; failed?: string; mark?: Shown['mark'] }) {
+function Bubble({ msg, chat, thread, gap, pending, failed, mark, onReply }: { msg: Message; chat: Chat; thread: Thread; gap: boolean; pending?: boolean; failed?: string; mark?: Shown['mark']; onReply?: () => void }) {
   const [sel, setSel] = useState(false)
   const jump = useUI((u) => u.jump === msg.id)
   const mine = msg.who === 'you'
@@ -252,18 +263,18 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
   const quick = useQuick(qid)
   const [hover, setHover] = useState<number | null | false>(false)
   const wrap = useRef<HTMLDivElement>(null)
-  const finger = useRef<Finger | null>(null)
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  /** the click that follows a hold or a slide is not a tap */
-  const skip = useRef(false)
-  const [slide, setSlide] = useState(0)
-  const [armed, setArmed] = useState(false)
-  const [settling, setSettling] = useState(false)
   const full = (el: Element) => {
     if (sel) return
     setQuick(null)
-    msgMenu(el, msg, chat, thread, () => setSel(true))
+    msgMenu(el, msg, chat, thread, () => setSel(true), onReply)
   }
+  const reply = () => {
+    setQuick(null)
+    if (onReply) onReply()
+    else replyTo(msg, thread.chat)
+  }
+  // a slide to the right replies, a press held still opens the whole menu (the click after either is not a tap)
+  const { on, slide, armed, skip, pressing, moving } = useSlide(reply, { hold: full, off: sel })
   // a tap anywhere else (or Escape) puts the quick bar away
   useEffect(() => {
     if (!quick) return
@@ -280,17 +291,6 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
       removeEventListener('keydown', esc)
     }
   }, [quick])
-  useEffect(() => () => clearTimeout(timer.current), [])
-  const letGo = (replying: boolean) => {
-    skip.current = true
-    setSettling(true)
-    setSlide(0)
-    setArmed(false)
-    if (replying) {
-      setQuick(null)
-      replyTo(msg, thread.chat)
-    }
-  }
   const yIn = (clientY: number) => clientY - (wrap.current?.getBoundingClientRect().top ?? 0)
   const bar = quick ?? (hover !== false && !quickNow ? { y: hover } : null)
   return (
@@ -301,17 +301,8 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
         onPointerEnter={(e) => e.pointerType === 'mouse' && setHover(yIn(e.clientY))}
         onPointerLeave={(e) => e.pointerType === 'mouse' && setHover(false)}
       >
-        {slide > 0 && (
-          <div className={cx('rpl', armed && 'on')} aria-hidden="true" style={{ width: Math.max(0, slide - 8), opacity: Math.min(1, slide / REPLY_AT) }}>
-            <I n="reply" />
-            <span>Reply</span>
-          </div>
-        )}
-        <div
-          className={cx('bmv', settling && 'settle')}
-          style={slide ? { transform: `translateX(${slide}px)` } : undefined}
-          onTransitionEnd={() => setSettling(false)}
-        >
+        <SlideHint slide={slide} armed={armed} />
+        <div className={cx('bmv', moving.className)} style={moving.style} onTransitionEnd={moving.onTransitionEnd}>
           <div
             className={cx('b', mine && 'mine', sel && 'sel', pending && 'pending', jump && 'jump')}
             role="button"
@@ -320,54 +311,11 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
             data-msg={msg.id}
             data-chat={chat.key}
             data-menu
-            onPointerDown={(e) => {
-              if (e.button !== 0 || sel || e.pointerType === 'mouse') return
-              const f = new Finger(e.clientX, e.clientY, performance.now())
-              finger.current = f
-              const el = e.currentTarget
-              clearTimeout(timer.current)
-              timer.current = setTimeout(() => {
-                if (finger.current !== f || !f.hold(performance.now())) return
-                tick(10)
-                skip.current = true
-                swallowClick()
-                full(el)
-              }, HOLD_MS)
-            }}
-            onPointerMove={(e) => {
-              const f = finger.current
-              if (!f || f.held) return
-              const r = f.move(e.clientX, e.clientY)
-              if (f.way === 'scroll') {
-                finger.current = null
-                clearTimeout(timer.current)
-                return
-              }
-              if (f.way !== 'slide') return
-              clearTimeout(timer.current)
-              if (!e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId)
-              setSettling(false)
-              setSlide(r.slide)
-              setArmed(f.armed)
-              if (r.crossed) tick()
-            }}
-            onPointerUp={() => {
-              const f = finger.current
-              finger.current = null
-              clearTimeout(timer.current)
-              const o = f?.up()
-              if (o === 'reply' || o === 'back') letGo(o === 'reply')
-            }}
-            onPointerCancel={() => {
-              const f = finger.current
-              finger.current = null
-              clearTimeout(timer.current)
-              if (f?.way === 'slide') letGo(false)
-            }}
+            {...on}
             onContextMenu={(e) => {
               // a finger's hold is ours (above); a right click opens the whole menu
               e.preventDefault()
-              if (finger.current || skip.current) return
+              if (pressing() || skip.current) return
               full(e.currentTarget)
             }}
             onClick={(e) => {
@@ -379,13 +327,13 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark }: { msg: Messag
             }}
             onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), full(e.currentTarget))}
           >
-            {msg.reply && <span className="quote">{msg.reply.text}</span>}
+            {msg.reply?.task ? <TaskQuote id={msg.reply.task} title={msg.reply.text} /> : msg.reply && <span className="quote">{msg.reply.text}</span>}
             {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '')}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
           </div>
           {registry.messageEdge.map((x, i) => <x.View key={i} msg={msg} chat={chat} />)}
         </div>
         {bar && wrap.current && !slide && (
-          <QuickBar msg={msg} chat={chat} thread={thread} mine={mine} wrap={wrap.current} y={bar.y} done={() => { setQuick(null); setHover(false) }} more={full} />
+          <QuickBar msg={msg} chat={chat} thread={thread} mine={mine} wrap={wrap.current} y={bar.y} done={() => { setQuick(null); setHover(false) }} more={full} reply={reply} />
         )}
       </div>
       {mark && <div className="seen" role="status">{mark === 'read' ? 'Read' : 'Sent'}</div>}
@@ -553,11 +501,39 @@ function Messages({ thread }: { thread: Thread }) {
       if (stuck.current) sc.scrollTop = sc.scrollHeight
     })
     ro.observe(box)
+    // the box or the suggested replies above it grew: the chat's window got shorter, its bottom stays in view
+    ro.observe(sc)
     return () => ro.disconnect()
   }, [thread.chat])
+  // the cards that wait for an answer: while one is out of view, a reminder above the box leads to it (away.ts)
+  const waiting = useRef<Waiting[]>([])
+  waiting.current = waitingIn(rows, thread)
+  useEffect(() => {
+    const sc = end.current?.closest<HTMLElement>('.scroll')
+    if (!sc) return
+    const check = () => {
+      const v = sc.getBoundingClientRect()
+      const cards = waiting.current.flatMap((w) => {
+        const el = sc.querySelector(`[data-card="${attr(w.id)}"]`)
+        if (!el) return []
+        const r = el.getBoundingClientRect()
+        return [{ ...w, top: r.top, bottom: r.bottom }]
+      })
+      setAway(thread.chat, outOfView(cards, { top: v.top, bottom: v.bottom }))
+    }
+    check()
+    sc.addEventListener('scroll', check, { passive: true })
+    const ro = new ResizeObserver(check)
+    ro.observe(sc)
+    return () => {
+      sc.removeEventListener('scroll', check)
+      ro.disconnect()
+    }
+  }, [thread.chat, rows])
+  useEffect(() => () => setAway(thread.chat, null), [thread.chat])
   useEffect(() => {
     if (!jump) return
-    const el = document.querySelector(`[data-msg="${CSS.escape(jump)}"], [data-card="${CSS.escape(jump)}"]`)
+    const el = document.querySelector(`[data-msg="${attr(jump)}"], [data-card="${attr(jump)}"]`)
     if (!el) return
     stuck.current = false
     el.scrollIntoView({ block: 'center' })
@@ -571,6 +547,8 @@ function Messages({ thread }: { thread: Thread }) {
   let lastAt = 0
   /** the task the last line named: its next message or card needs no second line */
   let lastRef = ''
+  /** the last quiet "how it closed" line, so a twin right under it doesn't show */
+  let lastEnded = ''
   // the app's own cards (a review, a stopped agent), each where it came up among the messages
   const cards = registry.chatCards.flatMap((c) => c.cards(snap, thread)).sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
   const cardsUntil = (at: number) => {
@@ -578,6 +556,7 @@ function Messages({ thread }: { thread: Thread }) {
       const c = cards.shift()!
       out.push(<Fragment key={`c:${c.key}`}>{c.node}</Fragment>)
       prev = 'a'
+      lastEnded = ''
     }
   }
   const stub: Chat = chat ?? { key: thread.chat, messages: [], cli: '' }
@@ -617,14 +596,19 @@ function Messages({ thread }: { thread: Thread }) {
       if (t && !thread.task && t.id !== lastRef) out.push(<TaskRef key={`r:${k}`} id={t.id} title={t.name} t={t} />)
       if (t) lastRef = t.id
       const text = m.card.text ?? m.text ?? ''
-      if (text) out.push(<Bubble key={k} msg={{ ...m, text }} chat={stub} thread={thread} gap={false} />)
+      if (text) out.push(<Bubble key={k} msg={{ ...m, text }} chat={stub} thread={thread} gap={false} onReply={t && !thread.task ? () => replyToTask(t) : undefined} />)
     }
     // a message between agents, in the sender's chat and the receiver's: its own quiet row (SHEP-368)
     else if (m.relay) out.push(<RelayRow key={k} r={m.relay} text={m.text ?? ''} at={m.at} />)
     // when its agent was started again, earlier messages stay, above a thin "New session" line
     else if (m.brief && thread.task && !/new session/i.test(m.brief.label)) continue
     else if (m.brief) out.push(/new session/i.test(m.brief.label) ? <div key={k} className="time" role="separator">New session</div> : <div key={k} className="ref"><I n="note" c="s16" /><span>{m.brief.label}</span></div>)
-    else if (m.ended) out.push(<DoneRow key={k}>{m.text ?? 'Ended'}</DoneRow>)
+    // what closed and how ("Fix login · Run: npm test · Allowed"); the same line twice in a row shows once
+    else if (m.ended !== undefined) {
+      const line = endedLine(m.ended, lastEnded)
+      if (!line) continue
+      out.push(<DoneRow key={k}>{line}</DoneRow>)
+    }
     else if (m.error) out.push(<div key={k} className="ref c-red"><I n="warn" c="s16" /><span>{m.text}</span></div>)
     else if (m.file) out.push(<FileRow key={k} msg={m} chat={stub} gap={gap} />)
     else if (m.text) {
@@ -635,6 +619,7 @@ function Messages({ thread }: { thread: Thread }) {
     // In the fictional shop conversation the review follows the mock-up, before the later task messages.
     if (snap.demo && !thread.task && m.artifact?.id === 'a-mock') cardsUntil(Infinity)
     if (!m.activity) prev = who
+    lastEnded = m.ended ?? ''
   }
   const empty = !rows.length && (!chat || chat.fresh || chat.notice === 'none' || chat.top !== false)
   const every = isEverything(snap, thread.place)
@@ -652,6 +637,30 @@ function Messages({ thread }: { thread: Thread }) {
   )
 }
 const loading = new Set<string>()
+
+/** the cards in these rows still waiting for an answer, oldest first, with the reminder's words */
+export function waitingIn(rows: Shown[], thread: Thread): Waiting[] {
+  return rows.flatMap(({ msg: m }): Waiting[] => {
+    if (m.question && m.question.sent === undefined && !m.question.closed) {
+      const by = !thread.task ? m.question.by?.title ?? m.question.by?.ref : undefined
+      return [{ id: m.question.id, words: by ? `${by} asks you` : 'A question waits for you' }]
+    }
+    if (m.secret && !m.secret.saved) return [{ id: m.secret.id, words: `A secret is asked for: ${m.secret.name}` }]
+    return []
+  })
+}
+
+/** one quiet line above the box while a waiting card is out of view; a tap scrolls to it */
+function AwayCard({ thread }: { thread: Thread }) {
+  const w = useAway(thread.chat)
+  if (!w) return null
+  return (
+    <div className="banner">
+      <I n="ask" c="c-ask" />
+      <button type="button" className="n" onClick={() => setUI({ jump: w.id })}>{w.words}</button>
+    </div>
+  )
+}
 
 /** a task's id from its chat's key ("vm:SHOP-12/worker") */
 const taskIdOf = (snap: Snapshot, chatKey: string) => snap.tasks.find((t) => t.agent?.chat === chatKey)?.id ?? chatKey.replace(/\/[^/]+$/, '')
@@ -680,12 +689,14 @@ export function WorkingSign({ chat, thread }: { chat: Chat | undefined; thread?:
   // a task's own status line, what its agent last said it does (not while it waits on you)
   const report = thread?.task?.report
   const sign = signOf(chat, report && !report.paused ? report.msg : undefined)
+  // SHEP-421: the line stays while the sign shows, the last step held until the next fades in over it
+  const step = chat ? heldStep(chat.key, sign) : ''
   if (!sign) return null
   const n = chat?.messages.length ?? 0
   const el = (
-    <div key={n} className="wsign" role="status" aria-label={sign.step || 'Working'}>
+    <div key={n} className="wsign" role="status" aria-label={step}>
       <span className="b wbub" aria-hidden="true"><span className="wdots"><i /><i /><i /></span></span>
-      {sign.step && <span className="wstep">{sign.step}</span>}
+      <span key={step} className="wstep">{step}</span>
     </div>
   )
   // SHEP-363: Stop sits on the working row (the box's round button is the voice call while it is empty), at its right
@@ -721,8 +732,45 @@ function StoppedChat({ chat, thread }: { chat: Chat | undefined; thread: Thread 
 
 /* ---------- the message box ---------- */
 
-/** suggested replies already used or typed over: gone once you send something */
+/** suggested replies already used: gone once you send something */
 const spent = new Set<string>()
+
+/** The agent's suggested replies as bubbles above the box (SHEP-186), in its order, the first the primary: a tap sends
+ *  one as it is, a press held (or a right-click) puts it in the box to edit instead (ReplyPress). One line each; the
+ *  row scrolls sideways when they don't fit. */
+export function Replies({ texts, onSend, onEdit }: { texts: string[]; onSend: (t: string) => void; onEdit: (t: string) => void }) {
+  return (
+    <div className="sugs" role="group" aria-label="Suggested replies">
+      {texts.map((t, i) => <Reply key={`${i}:${t}`} text={t} primary={i === 0} onSend={onSend} onEdit={onEdit} />)}
+    </div>
+  )
+}
+
+function Reply({ text, primary, onSend, onEdit }: { text: string; primary: boolean; onSend: (t: string) => void; onEdit: (t: string) => void }) {
+  const edit = useRef(onEdit)
+  edit.current = onEdit
+  const press = useMemo(() => new ReplyPress(() => edit.current(text)), [text])
+  useEffect(() => () => press.stop(), [press])
+  return (
+    <button
+      type="button"
+      className={cx('sug', primary && 'pri')}
+      onMouseDown={keepFocus}
+      onPointerDown={(e) => press.down(e.clientX, e.clientY)}
+      onPointerMove={(e) => press.move(e.clientX, e.clientY)}
+      onPointerUp={() => press.stop()}
+      onPointerCancel={() => press.stop()}
+      onPointerLeave={() => press.stop()}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        press.menu()
+      }}
+      onClick={() => press.click() && onSend(text)}
+    >
+      {text}
+    </button>
+  )
+}
 
 /** what a chat runs on now: its agent's own report; before its chat came, its space's (an Assistant's chat: what its
  *  Assistant runs, else what its first message starts it on, SHEP-298); else what is set for its kind */
@@ -756,34 +804,48 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const shared = useLanded() === key
   useGrow(ref, text)
   const sg = suggestionOf(chat, suggestionsOn(snap.settings))
-  const sug = sg && !spent.has(sg.id) ? sg : null
   const busy = !!chat?.working && !chat.finished
+  const call = useUI((u) => u.call)
+  const dictating = useDictating()
+  const sending = useStore((s) => s.outbox.some((o) => o.chat === key))
+  const sug = sg && !repliesHidden({ text, files: files?.length ?? 0, dictating, call, working: busy, sending, spent: spent.has(sg.id) }) ? sg : null
   const machine = snap.places.find((p) => p.id === thread.place)?.machine ?? snap.host
   const pick = pickOf(snap, chat, thread)
-  // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn
-  // a suggested reply is never sent as it is: Tab (or its chip) writes it into the box first (SHEP-363). In a voice
-  // call the box takes no text (TEXT_IN_CALL).
+  // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn.
+  // The round button and Enter send only what is in the box, never a suggested reply (those are their own bubbles).
+  // In a voice call the box takes no text (TEXT_IN_CALL).
   const go = (wait = false) => {
     if (getState().ui.call && !TEXT_IN_CALL) return
     const t = text.trim()
     if (!t && !files?.length) return
-    if (sug) spent.add(sug.id)
+    if (sg) spent.add(sg.id)
     send(key, key, t, wait && busy)
     setText('')
     if (shared) putAway()
   }
 
-  /** the suggested reply written into the box. From the Tab key the box keeps the focus; from the chip (a tap) the
-   *  focus stays where it was, so a phone's keyboard doesn't come up just to send it (the chip takes no focus) */
-  const useSug = (key = false) => {
-    if (!sug) return
-    setText(sug.text)
-    if (key) ref.current?.focus()
+  /** a suggested reply tapped: sent at once as your message, as if typed (no keyboard comes up: its bubble takes no
+   *  focus) */
+  const sendSug = (t: string) => {
+    if (!sug || (getState().ui.call && !TEXT_IN_CALL)) return
+    spent.add(sug.id)
+    send(key, key, t, false)
+    if (shared) putAway()
+  }
+  /** a suggested reply held: written into the box to edit, the box focused at its end */
+  const editSug = (t: string) => {
+    setText(t)
+    const box = ref.current
+    if (!box) return
+    box.focus()
+    requestAnimationFrame(() => box.setSelectionRange(t.length, t.length))
   }
   const filled = !!text.trim() || !!files?.length
   const BoxEnd = has('voice') ? registry.views.boxEnd : undefined
   const stop = busy && !text.trim() && !files?.length
   return (
+    <>
+    {sug && <Replies texts={sug.texts} onSend={sendSug} onEdit={editSug} />}
     <div
       className="cbox"
       onDragOver={(e) => e.preventDefault()}
@@ -801,8 +863,9 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
       )}
       {reply && (
         <div className="fchips">
-          <span className="fchip">
+          <span className="fchip" aria-label={reply.task ? `Replying to the task ${reply.text}` : undefined}>
             <I n="reply" c="s16" />
+            {reply.task && <I n="tasks" c="s16 c-mute" />}
             <span style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reply.text}</span>
             <button type="button" aria-label="Don't reply to it" onClick={() => setUI((ui) => { const { [key]: _, ...rest } = ui.reply; return { reply: rest } })}><I n="x" c="s16" /></button>
           </span>
@@ -825,7 +888,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           name="message"
           data-box={key}
           aria-label={placeholder}
-          placeholder={sug?.text ?? placeholder}
+          placeholder={placeholder}
           enterKeyHint="send"
           autoComplete="off"
           value={text}
@@ -837,11 +900,6 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
             attach(key, key, f)
           }}
           onKeyDown={(e) => {
-            // Tab writes the suggested reply into the box, so you can keep typing
-            if (e.key === 'Tab' && !e.shiftKey && sug && !text) {
-              e.preventDefault()
-              return useSug(true)
-            }
             // Enter sends and Shift+Enter makes a new line, the same on phone and desktop
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault()
@@ -849,11 +907,6 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
             }
           }}
         />
-        {sug && !text && (
-          <button type="button" className="ib kbd" aria-label="Use suggestion" aria-keyshortcuts="Tab" onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={() => useSug()}>
-            <I n="tab" c="s16" />
-          </button>
-        )}
       </div>
       <div className="cbar">
         <AddButtons finger={finger} onFiles={(f) => attach(key, key, f)} />
@@ -877,6 +930,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
         )}
       </div>
     </div>
+    </>
   )
 }
 
@@ -934,6 +988,7 @@ export default definePlugin({
     reg.views.messages = Messages
     reg.views.box = Box
     reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign })
+    reg.aboveBox.push({ order: 20, View: AwayCard })
   },
 })
 

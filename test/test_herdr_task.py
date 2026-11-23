@@ -927,6 +927,29 @@ class BackToWork(unittest.TestCase):
         with open(ghnews.__file__) as f:
             self.assertIn("add one small fix-forward task at once", f.read())
 
+    def test_later_rounds_review_only_the_new_change(self):
+        """#1116: a later review round reviews only what changed since the last reviewed commit, its reviewer splits
+        must-fix from follow-up, and only must-fix findings cost a round; unedited old templates get today's."""
+        from unittest import mock
+        from herdr_task import templates
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            worker = f.read()
+        with open(os.path.join(ROOT, "templates", "reviewer.md")) as f:
+            reviewer = f.read()
+        for words in (templates.WORKER_MD, worker):
+            self.assertIn(templates.DELTA_RULE, words)
+            self.assertIn(templates.MUST_RULE, words)
+            self.assertNotIn("the diff against the base branch and", words)
+        for words in (templates.REVIEWER_MD, reviewer):
+            self.assertIn(templates.REVIEWER_DELTA_RULE, words)
+            self.assertIn(templates.REVIEWER_MUST_RULE, words)
+            self.assertNotIn(templates.REVIEWER_DELTA_OLD, words)
+        self.assertIn(templates.WORKER_MD_BEFORE_DELTA, templates.OLD_WORKERS)
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(templates, "TEMPLATES", d):
+            with open(os.path.join(d, "reviewer.md"), "w") as f:
+                f.write(templates.TEMPLATE_HEADS["reviewer"] + templates.REVIEWER_MD_BEFORE_DELTA)
+            self.assertEqual(templates.instructions("reviewer"), templates.REVIEWER_MD.strip())
+
     # A merge that failed once (t75: "GraphQL: Something went wrong") never blocks the next Accept, and a pull
     # request merged meanwhile (by hand) makes the task done.
     def merging(self, views, merges):
@@ -1521,6 +1544,41 @@ class OwnBackgroundWork(unittest.TestCase):
         self.background(-4 * 3600_000)
         self.assertEqual(self.status()[:2], ("needs", "reply"))
 
+    def monitor(self, ago, job="m1", timeout=900000, persistent=False):
+        self.stamp(ago, {"type": "user", "toolUseResult": {"taskId": job, "timeoutMs": timeout, "persistent": persistent},
+                         "message": {"role": "user", "content": [{"tool_use_id": "toolu_2", "type": "tool_result",
+                                                                  "content": f"Monitor started (task {job}, expires in 15m)"}]}})
+
+    def test_an_expired_monitor_no_longer_runs(self):
+        """#1270: a Monitor's expiry notice has no <status>, and one may expire unannounced; either way
+        it no longer counts once its own timeout has passed (as Claude Code 2.1.323 logs it)."""
+        self.say(-1_200_000, "Watching CI.")
+        self.monitor(-1_300_000)
+        self.stamp(-200_000, {"type": "queue-operation", "operation": "enqueue", "content":
+                              "<task-notification>\n<task-id>m1</task-id>\n<summary>Monitor event: \"CI\"</summary>\n"
+                              "<event>[Monitor expired after 15m with no events delivered. Re-arm it if you still need the watch.]</event>\n"
+                              "</task-notification>"})
+        self.assertEqual(self.agents.background_jobs(self.log)[0], {})
+        self.assertEqual(self.status()[:2], ("needs", "reply"))
+        # no notice at all: gone once its timeout has passed, running until then
+        self.lines[:] = self.lines[:2]
+        self.monitor(-1_000_000)
+        self.assertEqual(self.agents.background_jobs(self.log)[0], {})
+        self.lines[:] = self.lines[:2]
+        self.monitor(-600_000)
+        self.assertEqual(list(self.agents.background_jobs(self.log)[0]), ["m1"])
+        # a persistent one has no timeout of its own
+        self.lines[:] = self.lines[:2]
+        self.monitor(-1_000_000, persistent=True)
+        self.assertEqual(list(self.agents.background_jobs(self.log)[0]), ["m1"])
+        # another Monitor's event (not its expiry) ends nothing
+        self.lines[:] = self.lines[:2]
+        self.monitor(-600_000)
+        self.stamp(-100_000, {"type": "queue-operation", "operation": "enqueue", "content":
+                              "<task-notification>\n<task-id>m1</task-id>\n<summary>Monitor event</summary>\n"
+                              "<event>build 3 passed</event>\n</task-notification>"})
+        self.assertEqual(list(self.agents.background_jobs(self.log)[0]), ["m1"])
+
     def test_its_status_line_says_it_waits_on_ci_or_review(self):
         self.say(-200_000, "Pushed.")
         for text, want in (("Waiting on review round 1", "working"), ("Rebased, waiting on GitHub check", "working"),
@@ -1540,6 +1598,17 @@ class OwnBackgroundWork(unittest.TestCase):
         self.background(-110_000)
         self.finished(-60_000)
         self.assertEqual(self.status()[0], "needs")
+
+    def test_its_status_line_says_so_in_another_language(self):
+        """#1259: a status line in Chinese (or another language) that waits on GitHub's checks is Working too;
+        one that waits on the person still Needs you."""
+        self.say(-200_000, "Pushed.")
+        for text, want in (("等待 GitHub 檢查完成", "working"), ("CI 檢查執行中，等待結果", "working"), ("CIの完了待ち", "working"),
+                           ("CI 검사 대기 중", "working"), ("Esperando a CI", "working"), ("Warte auf die Checks", "working"),
+                           ("Жду проверки CI", "working"), ("等待本人批准合併", "needs"), ("レビューの承認待ち", "needs"),
+                           ("Esperando tu aprobación", "needs"), ("修好了選單", "needs"), ("等待結果", "needs")):
+            self.task["progress"] = {"text": text, "set": self.clock - 120_000, "at": self.clock - 120_000}
+            self.assertEqual(self.status()[0], want, text)
 
     def test_codex_background_terminal(self):
         self.stamp(-300_000, {"type": "response_item", "payload": {"type": "function_call", "call_id": "c1", "name": "exec_command",
@@ -3090,7 +3159,7 @@ class ReviewerLine(unittest.TestCase):
     def test_signed_out_codex_never_reviews(self):
         r = self.line("signed-out")
         self.assertEqual(r["value"]["agent"], "claude")
-        self.assertIn("claude --permission-mode dontAsk --tools=Read,Grep,Glob,Bash", r["value"]["command"])
+        self.assertIn("claude --permission-mode dontAsk --tools=Read,Grep,Glob,Bash --strict-mcp-config", r["value"]["command"])
         self.assertIn("Codex isn't signed in here", r["text"])
         self.assertIn("`codex login`", r["text"])
 
@@ -3339,6 +3408,15 @@ class ChecksBeforeReady(PrLooks):
         self.github_says(mergeable="UNKNOWN", checks=[self.PASSED])
         self.assertEqual(self.look(t), ("working", "Waiting for GitHub", None))
         self.assertEqual(self.look(t, after=5 * 60_000)[:2], ("ready", None))
+
+    def test_no_clear_mergeable_answer_is_ready_after_a_few_minutes(self):
+        # #1049: a mergeable answer that is neither yes, no nor UNKNOWN (missing, a host's own word) is asked again
+        # and waits a few minutes at most, never Working for good
+        for word in ("", "FALSE"):
+            t = self.said_ready()
+            self.github_says(mergeable=word, checks=[self.PASSED])
+            self.assertEqual(self.look(t), ("working", "Waiting for GitHub", None))
+            self.assertEqual(self.look(t, after=5 * 60_000)[:2], ("ready", None))
 
     def test_a_failing_check_goes_back_to_its_agent_never_ready_first(self):
         t = self.said_ready()
@@ -4212,6 +4290,56 @@ class ReviewedNamesItsCommit(unittest.TestCase):
         self.assertNotIn("reviews", self.task)
 
 
+class GitNeverAsksForAPassword(unittest.TestCase):
+    """#1260: herdr-task's fetch or push to an HTTPS remote with no credential helper waited hours for a username
+    on the terminal, and every herdr-task call for that folder hung. It fails at once and says why instead."""
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the controlling-terminal trick is Linux's")
+    def test_fetch_from_a_remote_that_wants_a_password_fails_fast(self):
+        import http.server
+        import pty
+        import threading
+
+        class Refuse(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="x"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Refuse)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        repo = tempfile.mkdtemp()
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        subprocess.run(["git", "-C", repo, "remote", "add", "origin", f"http://127.0.0.1:{srv.server_port}/r.git"], check=True)
+        # A real terminal, as in the report: git would prompt on it and wait for an answer that never comes.
+        main_fd, tty = pty.openpty()
+        self.addCleanup(os.close, main_fd)
+        tty_name = os.ttyname(tty)
+        os.close(tty)
+
+        def own_terminal():
+            os.setsid()
+            os.close(os.open(tty_name, os.O_RDWR))  # the first terminal a session leader opens becomes its own
+
+        code = ("import sys, json; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]);"
+                "from herdr_task.base import git; print(json.dumps(git(sys.argv[2], 'fetch', 'origin')))")
+        env = {k: v for k, v in os.environ.items() if k not in ("GIT_TERMINAL_PROMPT", "GIT_ASKPASS", "SSH_ASKPASS", "GCM_INTERACTIVE")}
+        env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+        try:
+            out = subprocess.run([sys.executable, "-c", code, BIN, repo], capture_output=True, text=True, env=env,
+                                 preexec_fn=own_terminal, timeout=20)
+        except subprocess.TimeoutExpired:
+            self.fail("git waited for a password")
+        ok, _, err = json.loads(out.stdout)
+        self.assertFalse(ok)
+        self.assertIn("git can't sign in to the remote", err)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -4930,10 +5058,10 @@ class AssistantSettings(unittest.TestCase):
         # nothing differs from Herdr's default: no line says who set it
         self.assertNotIn("; set for", note)
         self.assertNotIn("; your setting", note)
-        self.assertEqual(len(note.split("\n")), 14)  # head, 12 lines (Suggested next message, Repo settings), the Reactions guide
+        self.assertEqual(len(note.split("\n")), 14)  # head, 12 lines (Suggested replies, Repo settings), the Reactions guide
         self.assertIn("- Repo settings: none (every repo has the task lines above)", note)
         self.assertIn("the task lines below are Everywhere's", note)
-        self.assertIn("- Suggested next message: on (end each reply", note)
+        self.assertIn("- Suggested replies: on (end each reply with one to three replies", note)
 
     def test_the_block_for_a_space_with_its_own(self):
         """SHEP-335: the task lines are the repo's the space sits on (repos[<folder>]), its own lines (Reactions) the
@@ -5580,7 +5708,7 @@ class CodexAsksOnTheCard(unittest.TestCase):
             own = lambda c, sb=True: launch.own_command("/x/herdr-task", c, sb)  # noqa: E731
             yes = [f"hc run --bg --name demo-1-review --label \"herdr.task=$HERDR_BROWSER_TASK\" --label herdr.role=reviewer "
                    f"--label herdr.agent=codex -- {rv} 'Review it: \"ok\" & $x'",
-                   "hc run --bg --name demo-1-review -- claude --permission-mode dontAsk --tools=Read,Grep,Glob,Bash --model opus 'review'",
+                   "hc run --bg --name demo-1-review -- claude --permission-mode dontAsk --tools=Read,Grep,Glob,Bash --strict-mcp-config --model opus 'review'",
                    f"hc run --bg --name demo-1-review -- {reviewer_command('claude', 'opus', 'high')} 'review'",
                    "hc wait demo-1-review --timeout 600", "hc read demo-1-review --lines 400", "hc kill demo-1-review",
                    "hc keys demo-1-review enter", "hc keys demo-1-review down enter"]
@@ -5871,10 +5999,10 @@ class TaskFlow(unittest.TestCase):
         """SHEP-186: a worker's brief says whether its replies end with a suggested next message: on by default,
         and off when Settings › Agents turns it off (the agent then writes no suggest line)."""
         settings = self.settings({})
-        self.assertIn("- Suggested next message: on (your reply ends with the message you'd likely send next",
+        self.assertIn("- Suggested replies: on (your reply ends with one to three replies the person would likely send next",
                       settings.settings_block(self.store, self.task))
         settings = self.settings({"everywhere": {"agents": {"suggestions": False}}})
-        self.assertIn("- Suggested next message: off (no suggested next message) (your setting everywhere)",
+        self.assertIn("- Suggested replies: off (no suggested replies) (your setting everywhere)",
                       settings.settings_block(self.store, self.task))
 
     def test_a_running_task_keeps_its_briefs_review(self):
@@ -8607,7 +8735,7 @@ class CodexBatch278(unittest.TestCase):
     def test_claude_in_the_system_folders_needs_nothing(self):
         self.patch(self.settings.shutil, "which", lambda name: f"/usr/bin/{name}")
         self.assertEqual(self.settings.reviewer_command("claude"),
-                         'env ${CLAUDE_CONFIG_DIR:+"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"} claude --permission-mode dontAsk --tools=Read,Grep,Glob,Bash')
+                         'env ${CLAUDE_CONFIG_DIR:+"CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"} claude --permission-mode dontAsk --tools=Read,Grep,Glob,Bash --strict-mcp-config')
 
     # ---- #1131 #1181 -----------------------------------------------------------------------------
     def test_a_claude_reviewer_gets_the_workers_profile_never_plan_mode(self):
@@ -9150,6 +9278,13 @@ class ReadyAndPrFlow(unittest.TestCase):
 
     def test_a_suggested_reply_in_the_input_is_not_typing(self):
         self.assertIsNone(self.typing_with("❯ added a round, go ahead\n", [self.REPLY]))
+
+    def test_any_of_three_suggested_replies_in_the_input_is_not_typing(self):
+        three = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Merge it?\n\n<hc suggest=\"Yes, merge it\"/>\n"
+                                                           "<hc suggest=\"Show me the diff\"/>\n<hc suggest=\"status?\"/>"}]}}
+        self.assertIsNone(self.typing_with("❯ Show me the diff\n", [three]))
+        self.assertIsNone(self.typing_with("❯ status?\n", [three]))
+        self.assertEqual(self.typing_with("❯ no\n", [three]), "input")
 
     def test_other_words_in_the_input_are_typing(self):
         self.assertEqual(self.typing_with("❯ wait, one more thing\n", [self.REPLY]), "input")
@@ -10404,15 +10539,28 @@ class ParallelCollisions(unittest.TestCase):
                             ("checks_since", lambda s, t, v: 0), ("expected_checks", lambda s, t, h: []),
                             ("held_by_base", lambda s, t, v: False)):
             self.patch(self.tick, name, value)
-        self.patch(self.ghnews, "resting", lambda s, t: {"address": "t9"})
+        rests = []
+        self.patch(self.ghnews, "resting", lambda s, t: rests[-1] if rests else None)
+        self.patch(self.tick, "resting", lambda s, t: rests[-1] if rests else None)
         self.patch(self.ghnews, "pr_comments", lambda repo, n: [])
         report = {"attention": [], "done": []}
+        # #1357: its agent mid-turn (just said ready): Needs you, the card naming what collided but never claiming
+        # its agent rebases, and looked at again soon
         self.tick.facts(self.store, b, report)  # no auto_merge: the person hasn't asked to merge it
-        self.assertEqual(b["attention"], "It conflicts with the base branch.")
+        self.assertEqual((b["state"], b["attention"]), ("ready", "It conflicts with the base branch."))
+        self.assertEqual(b["merge_failed"], "Conflicts with main after \"Task 1\" merged")
+        self.assertEqual(self.told, [])
+        self.assertLess(b["pr"]["checked"], self.tick.now() - self.tick.PR_EVERY + self.tick.PR_WAIT_EVERY + 1000)
+        # once it rests: handed back at once, Working, and only now "its agent is rebasing"
+        rests.append({"address": "t9"})
+        b["pr"]["checked"] = 0
+        self.tick.facts(self.store, b, report)
+        self.assertEqual(b["state"], "running")
+        self.assertNotIn("attention", b)
         self.assertEqual(b["merge_failed"], "Conflicts with main after \"Task 1\" merged: its agent is rebasing")
-        news = b["pr"]["news"]["text"]
-        self.assertIn("It conflicts with main: rebase onto main", news)
-        self.assertIn("Files that collide with origin/main: app.txt.", news)
+        self.assertIn("Files that collide with origin/main: app.txt.", self.told[-1])
+        self.assertIn("rebase task/2 onto origin/main", self.told[-1])
+        self.assertEqual(report["merge_failed"][-1]["task"], "SHEP-2")
 
     def test_a_merge_tells_working_tasks_that_now_collide_at_once(self):
         a, b, c = self.task(1, "A"), self.task(2, "B"), self.task(3, "C", name="other.txt")
@@ -10779,10 +10927,10 @@ class RepoSettings(unittest.TestCase):
         self.assertEqual((m["value"], m["by"]), ("auto", "repo"))
 
     def test_a_spaces_own_settings_stay_the_spaces(self):
-        """What is about the space (Suggested next message) comes from the space that started the task, not the repo."""
+        """What is about the space (Suggested replies) comes from the space that started the task, not the repo."""
         self.write({"spaces": {"sproot": {"folder": "/", "agents": {"suggestions": False}}},
                     "repos": {self.repo: {"tasks": {"merge": "auto"}}}})
-        sug = next(x for x in self.settings.task_settings(self.store, {"space": "sproot"}) if x["label"] == "Suggested next message")
+        sug = next(x for x in self.settings.task_settings(self.store, {"space": "sproot"}) if x["label"] == "Suggested replies")
         self.assertEqual((sug["value"], sug["by"], sug["from"]), (False, "space", "space"))
 
     def test_sources(self):

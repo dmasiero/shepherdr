@@ -657,7 +657,8 @@ def reviewer_command(who, model=None, effort=None, folder=None):
         # #1181: never plan mode (it wrote its report into a plan to approve): don't-ask mode with only the reading tools,
         # so a write or a command that isn't read-only is refused, never asked. --tools=… as one word: its list would
         # take the prompt after it as a tool.
-        a = ["claude", "--permission-mode", "dontAsk", "--tools=" + REVIEW_TOOLS]
+        # #1269: none of the person's MCP servers either: their tool lists can fill its context before it reads a file.
+        a = ["claude", "--permission-mode", "dontAsk", "--tools=" + REVIEW_TOOLS, "--strict-mcp-config"]
         a += ["--model", model] if model else []
         a += ["--effort", effort] if effort else []
         # #1131: hc run gives it hc's environment, not the worker's: the worker's own Claude profile, when it has one
@@ -778,10 +779,10 @@ def task_settings(s, t, space=None, argv=None, live=False):
         by_layer(s, space, "worker", None, bool(cfg.get("worker")), False) or \
         (by_layer(s, space, "tasks", f"{agent}_flags", extra, []) if extra else None)
     add("Agent", text, {"agent": agent, "model": model, "effort": effort, "flags": extra}, a_by)
-    # Suggested next message (SHEP-186): the reply ends with the words the person would likely send next (templates/worker.md)
+    # Suggested replies (SHEP-186): the reply ends with one to three replies the person would likely send next (templates/worker.md)
     sug = (cfg.get("agents") or {}).get("suggestions") is not False
-    add("Suggested next message", "on (your reply ends with the message you'd likely send next, shown greyed out in the box)" if sug
-        else "off (no suggested next message)", sug, by_layer(s, space, "agents", "suggestions", sug, True))
+    add("Suggested replies", "on (your reply ends with one to three replies the person would likely send next, shown as bubbles to tap)" if sug
+        else "off (no suggested replies)", sug, by_layer(s, space, "agents", "suggestions", sug, True))
     return lines
 
 

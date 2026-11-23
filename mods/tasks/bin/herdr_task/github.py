@@ -801,8 +801,10 @@ def pr_wait(v, since, expect=None, mergeable_head=None):
         return CHECKS_RUNNING
     mergeable = (v.get("mergeable") or "").upper()
     if mergeable != "MERGEABLE":
+        # #1049: anything short of a clear answer (UNKNOWN, or none: a conflict went back above) is asked again each
+        # look and waits UNKNOWN_MERGEABLE_MS at most, never parks the task as Working for good.
         seen = mergeable_head and mergeable_head == v.get("headRefOid")
-        if not (mergeable == "UNKNOWN" and (seen or now() - (since or 0) >= UNKNOWN_MERGEABLE_MS)):
+        if not (seen or now() - (since or 0) >= UNKNOWN_MERGEABLE_MS):
             return GITHUB_LOOKS
     if checks_missing(v, since, expect) == "waiting":
         return CHECKS_RUNNING
@@ -940,13 +942,13 @@ def collision_words(c):
                     "checks; your own branch may be force-pushed with lease, never the base.")
 
 
-def collision_reason(c):
-    """The card's one line (merge_failed, in red)."""
+def collision_reason(c, told=True):
+    """The card's one line (merge_failed, in red). told: its agent was asked to rebase (#1357: only then said)."""
+    tail = ": its agent is rebasing" if told else ""
     if c and c["by"]:
-        return f"Conflicts with {c['base']} after {', '.join(c['by'][:3])} merged: its agent is rebasing"
+        return f"Conflicts with {c['base']} after {', '.join(c['by'][:3])} merged" + tail
     if c:
-        return f"Conflicts with {c['base']} in {c['files'][0]}" + (f" and {len(c['files']) - 1} more" if len(c["files"]) > 1 else "") + \
-            ": its agent is rebasing"
+        return f"Conflicts with {c['base']} in {c['files'][0]}" + (f" and {len(c['files']) - 1} more" if len(c["files"]) > 1 else "") + tail
     return None
 
 
