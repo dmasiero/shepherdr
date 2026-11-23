@@ -174,6 +174,18 @@ export function artifactOf(a: any, spaces: Space[], program: (addr: string) => s
 
 /** Codex's own questions (a log's ask item with its questions) as a question card: its id cq:<item id>, answered on
  *  Codex's screen (service/actions.ts, core/asks.js codexSteps). */
+/** Cards the chat's log doesn't hold (an agent's open question, a secret it asks for, a start screen, how each closed),
+ *  each where it was asked among the messages, never held at the end: newer messages come under it. Each goes before
+ *  the first message timed after it; messages with no time stay where they are. */
+export function placeByTime(messages: Message[], cards: Message[]): Message[] {
+  const out = [...messages];
+  for (const c of [...cards].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))) {
+    const next = typeof c.at === "number" ? out.findIndex((m) => typeof m.at === "number" && m.at > c.at!) : -1;
+    out.splice(next < 0 ? out.length : next, 0, c);
+  }
+  return out;
+}
+
 export function codexQuestion(x: any, key: string): Question {
   const qs: any[] = x.questions ?? [];
   const choices = (q: any) => q.choices.map(codexChoice);
@@ -212,6 +224,13 @@ export class Compat {
     const machine = t ? t.machine ?? null : s?.machine ?? null, folder = t ? t.folder : s?.folder;
     return this.rows.filter((r) => (r.machine ?? null) === machine && r.folder === folder)
       .map((r) => ({ ref: r.ref, id: r.id, title: r.title, status_text: r.sub ?? r.section, why: r.why, folder: r.folder, prompt: r.prompt, state: r.section }));
+  }
+
+  /** One task as a mention's tag line wants it (tasksFor's shape), by its id, wherever it is: what a reply to a task
+   *  (its row's Reply in chat) quotes. */
+  replyTaskOf(id: string) {
+    const r = this.rows.find((x) => taskId(x) === id);
+    return r ? { ref: r.ref, id: r.id, title: r.title, status_text: r.sub ?? r.section, why: r.why, folder: r.folder, prompt: r.prompt, state: r.section } : null;
   }
 
   /** The person's shared choices (service/store.ts, its document) and their values now, set by main. */
@@ -278,6 +297,15 @@ export class Compat {
   secrets: { asks(): { address: string; name: string; why: string }[]; endsOf?(address: string): { name: string; at: number }[] } | null = null;
 
   /** A secret ask as 2.1's masked card: kept for this space, this machine, or Everywhere. */
+  /** when a secret ask was first seen (its labels hold no time), so its card keeps its place */
+  private asked = new Map<string, number>();
+  askedAt(id: string) {
+    if (!this.asked.has(id)) {
+      if (this.asked.size > 500) this.asked.clear();
+      this.asked.set(id, Date.now());
+    }
+    return this.asked.get(id)!;
+  }
   secretAsk(a: { address: string; name: string; why: string }) {
     const t: any = (this as any).terminalsOf?.(a.address);
     const sp = ["herdr.space", "herdr.task.space", "herdr.coordinator.space"].map((k) => t?.labels?.[k]).find(Boolean);
@@ -597,8 +625,8 @@ export class Compat {
         const chips = x.text ? mentionedIn(x.text, mentionable).filter((r: any) => !inline.has(String(r.ref ?? "").toLowerCase())) : [];
         const mentions = chips.length ? { mentions: chips.map((r: any) => ({ task: machine ? `${machine}:${r.ref}` : r.ref, ref: r.ref ?? `#${r.id}`, title: r.title })) } : {};
         // what it replies to: the message it names, which a press on its line brings into view (the window's goTo)
-        const to = x.replyTo ? items.slice(0, i).reverse().find((y: any) => (y.kind === "user" || y.kind === "agent") && y.text && names(y.text, String(x.replyTo).slice(0, 60))) : null;
-        if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(x.replyTo ? { reply: { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);
+        const to = x.replyTo && !x.replyTask ? items.slice(0, i).reverse().find((y: any) => (y.kind === "user" || y.kind === "agent") && y.text && names(y.text, String(x.replyTo).slice(0, 60))) : null;
+        if (x.text) messages.push({ id: x.id, who: "you", text: x.text, at: x.at, ...cid, ...(x.replyTo ? { reply: x.replyTask ? { text: x.replyTo, task: String(x.replyTask) } : { text: x.replyTo, ...(to ? { id: to.id, who: to.kind === "user" ? "you" : "agent" } : {}) } } : {}), ...reactions, ...mentions } as Message);
         // the images sent with it, under its words as the window shows them; only files a chat names are ever served
         // (fileOf)
         for (const [n, path] of (x.paths ?? []).entries()) {
@@ -619,8 +647,10 @@ export class Compat {
         // the pictures and videos it put in its words (core/chat-view.js mediaIn), each right under them as a file of
         // its own, as the person's are; only files a chat names are ever served (fileOf)
         const md = (CV as any).mediaIn(x.text, { cwd: t?.foreground?.cwd ?? t?.cwd ?? null, home: machine ? null : HOME }) as { text: string; media: { path: string; name: string; alt: string }[] };
-        // the suggested next message it ends with (SHEP-186): the box shows it greyed out while nothing is typed
-        if (md.text || !md.media.length) messages.push({ id: x.id, who: "agent", text: md.text || x.text, at: x.at, ...reactions, ...(x.suggest ? { suggest: x.suggest } : {}) });
+        // the suggested replies it ends with (SHEP-186): bubbles above the box until the person writes or it replies
+        // again (suggest: the first, for an older page)
+        const sg: string[] | undefined = x.suggests?.length ? x.suggests : undefined;
+        if (md.text || !md.media.length) messages.push({ id: x.id, who: "agent", text: md.text || x.text, at: x.at, ...reactions, ...(sg ? { suggest: sg[0], suggests: sg } : {}) });
         for (const [n, m] of md.media.entries()) {
           (this.files.get(key) ?? this.files.set(key, new Set()).get(key)!).add(m.path);
           messages.push({ id: `${x.id}:m${n}`, who: "agent", at: x.at, file: { name: m.name, path: m.path, ...(m.alt ? { alt: m.alt } : {}) }, ...(md.text || n ? {} : reactions) } as Message);
@@ -680,10 +710,11 @@ export class Compat {
         messages.splice(next < 0 ? messages.length : next, 0, answer);
       }
     }
-    // what the agent asks now, as cards at the end of its chat
+    // what the agent asks now, as cards where they were asked (placeByTime below)
+    const cardsFrom = messages.length;
     for (const a of addr ? this.asks?.of(addr) ?? [] : []) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: this.question(a, key) });
     if (codexCard) messages.push({ id: `ask:cq:${codexCard.id}`, who: "agent", at: codexCard.at ?? Date.now(), question: codexQuestion(codexCard, key) });
-    for (const a of (this.secrets?.asks() ?? []).filter((x) => x.address === addr)) messages.push({ id: `secret:${a.address}:${a.name}`, who: "agent", at: Date.now(), secret: this.secretAsk(a) } as Message);
+    for (const a of (this.secrets?.asks() ?? []).filter((x) => x.address === addr)) messages.push({ id: `secret:${a.address}:${a.name}`, who: "agent", at: this.askedAt(`secret:${a.address}:${a.name}`), secret: this.secretAsk(a) } as Message);
     // asks that closed, as the window's quiet lines ("✓ Run: npm test · Allowed in the chat"); a question's own line is
     // its "Asked you" box, from the log
     const watch = (this as any).watch;
@@ -705,12 +736,15 @@ export class Compat {
       const by = { ref: r.ref, title: r.title, chat: `${taskId(r)}/worker` };
       const a = (this.asks?.of(r.worker) ?? []).sort((p: any, q: any) => p.at - q.at)[0];
       if (a) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: { ...this.question(a, key), by } as any });
-      else for (const s of (this.secrets?.asks() ?? []).filter((x) => x.address === r.worker)) messages.push({ id: `secret:${s.address}:${s.name}`, who: "agent", at: Date.now(), secret: { ...this.secretAsk(s), by } } as Message);
+      else for (const s of (this.secrets?.asks() ?? []).filter((x) => x.address === r.worker)) messages.push({ id: `secret:${s.address}:${s.name}`, who: "agent", at: this.askedAt(`secret:${s.address}:${s.name}`), secret: { ...this.secretAsk(s), by } } as Message);
       // SHEP-322: by its title, never its key
       for (const e of (this.asks as any)?.endsOf?.(r.worker) ?? []) messages.push(quiet(`ae:${e.id}`, e.at, `${r.title} · ${e.title} · ${e.how}`));
       for (const e of this.secrets?.endsOf?.(r.worker) ?? []) messages.push(quiet(`sd:${r.worker}:${e.name}:${e.at}`, e.at, `${r.title} · Secret: ${e.name} · Declined`)); // fork: SHEP-76
       screens(r.worker, r.title, by);
     }
+    // a card never sticks to the end (SHEP-419): newer messages come under it
+    const placed = placeByTime(messages.slice(0, cardsFrom), messages.slice(cardsFrom));
+    messages.splice(0, messages.length, ...placed);
     const st = t?.status?.state ?? null;
     // the CLI's own subagents still at work, then its background shells and watchers, above the box (3.0: the helpers
     // list; core/bg-jobs.js)

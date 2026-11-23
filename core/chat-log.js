@@ -189,8 +189,9 @@ const CODEX_INJECTED = /^\s*(# AGENTS\.md instructions|<(environment_context|use
 //   the agent   <hc react="👀" to="first words of the person's message"/>   on a line of its own
 //               <hc no-reply/>   a reply that is only this shows nothing (<no-reply> too); on an Autopilot
 //               wake <hc no-reply why="Waiting on your Accept of TG-2"/> puts its why on the wake's line
-//   the agent   <hc suggest="yes, merge it"/>   last on its reply: the person's likely next message, shown as ghost
-//               text in the box (suggest on the agent item; only the newest reply's counts, none when it has none)
+//   the agent   <hc suggest="yes, merge it"/>   up to three such lines last on its reply, best first: the replies the
+//               person would most likely send next, shown as bubbles above the box (suggests on the agent item, at most
+//               3; only the newest reply's count, none when it has none). An older agent's one line is one bubble.
 // Task news Herdr sends an Assistant (herdr-task's news_pass) is one <herdr-news> tag per line:
 // each is a news item of its own ({ kind: "news", ref, event, text }), shown as a slim line in
 // an Assistant's chat (mods/chat newsLines()); the tags themselves never show.
@@ -250,7 +251,7 @@ function reactionLines(t) {
 function replyOf(t) {
   const lines = String(t).split("\n");
   const a = tagOf(lines[0] ?? "");
-  if (a && "reply-to" in a) return { replyTo: a["reply-to"], text: lines.slice(1).join("\n").trim() };
+  if (a && "reply-to" in a) return { replyTo: a["reply-to"], ...(a.task ? { replyTask: a.task } : {}), text: lines.slice(1).join("\n").trim() };
   const m = /^((?:>[^\n]*\n)+)\n*([\s\S]+)$/.exec(String(t));
   if (m) return { quoted: m[1].split("\n").map((l) => l.replace(/^>\s?/, "")).join(" ").trim(), text: m[2].trim() };
   return null;
@@ -270,7 +271,7 @@ const replaceOutsideCode = (t, re, by) => {
 };
 
 // Task news in a message: [{ ref, event, text }], one per <herdr-news task=… event=…> tag.
-const unattr = (v) => String(v ?? "").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+const unattr = (v) => String(v ?? "").replace(/&quot;/g, '"').replace(/&(?:apos|#39);/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 function newsOf(t) {
   const s = String(t), code = codeRanges(s);
   return [...s.matchAll(/<herdr-news\b([^>]*)>([\s\S]*?)<\/herdr-news\s*>/g)].filter((m) => !inCode(code, m.index)).map(([, a, text]) => ({
@@ -336,7 +337,7 @@ function cleanWords(t) {
   // A quote (a reply from the chat) ends where the typed text starts: the CLI may have joined them.
   t = t.replace(/^(>.*)\n(?!>|\n)/gm, "$1\n\n");
   const reply = replyOf(t);
-  if (reply?.replyTo !== undefined) return { text: reply.text, replyTo: reply.replyTo };
+  if (reply?.replyTo !== undefined) return { text: reply.text, replyTo: reply.replyTo, ...(reply.replyTask ? { replyTask: reply.replyTask } : {}) };
   if (reply?.quoted) return { text: t, quoted: reply.quoted, rest: reply.text };
   return t ? { text: t } : null;
 }
@@ -353,7 +354,7 @@ function claudeUser(c) {
   const reactions = parts.flatMap((p) => p.reactions ?? []), news = parts.flatMap((p) => p.news ?? []);
   const pilot = parts.find((p) => p.pilot)?.pilot;
   return { text: parts.map((p) => p.text).filter(Boolean).join("\n\n"), from: parts[0].from, ...(parts[0].assistant ? { assistant: parts[0].assistant } : {}), images, reactions, news, ...(pilot ? { pilot } : {}),
-    replyTo: parts[0].replyTo, quoted: parts[0].quoted, rest: parts[0].rest };
+    replyTo: parts[0].replyTo, ...(parts[0].replyTask ? { replyTask: parts[0].replyTask } : {}), quoted: parts[0].quoted, rest: parts[0].rest };
 }
 
 // Claude Code may show the person a message it wrote mid-turn (before a call) as a short update in other words
@@ -594,9 +595,9 @@ function codexStep(name, args) {
 
 // The conversation in one log, built from LOG's records ({ off, kind, data }) in file order.
 // Items (ids come from byte offsets, so they stay the same when earlier pages are added):
-//   { kind: "user", id, text, from?, at, images, paths? }   { kind: "agent", id, text, at, suggest? }
+//   { kind: "user", id, text, from?, at, images, paths? }   { kind: "agent", id, text, at, suggests? }
 //   (images: how many were sent; paths: where the ones Claude Code read from files came from;
-//   replyTo: the start of the message it answers)
+//   replyTo: the start of the message it answers; replyTask: the task it answers, when it replies to a task)
 //   { kind: "mark", id }  (a message of only reactions: ends the turn, shows nothing)
 //   { kind: "news", id, at, ref, event, text }  (one line of task news Herdr told an Assistant)
 //   { kind: "sent", id, at, to, text, how, call?, state?, why? }  (a message the agent sent another agent: sendsOf();
@@ -642,7 +643,7 @@ export class Conversation {
     this.meta = {};
     // Reactions by message id: [{ emoji, by: "you" | "agent" }].
     this.reactions = new Map();
-    // The suggested next message the agent's words so far ended with (agentText), until the reply takes it.
+    // The suggested replies (a list) the agent's words so far ended with (agentText), until the reply takes it.
     this.suggestion = null;
     // Calls that only wait, while open (`waiting`: the newest open call is one); and the jobs
     // the agent left running in the background, until their end is logged: { id (its call),
@@ -774,7 +775,7 @@ export class Conversation {
       replyTo = u.quoted;
       text = u.rest;
     }
-    this.push({ kind: "user", id, text, replyTo, from: u.from, ...(u.assistant ? { assistant: u.assistant } : {}), at: u.at, images: u.images || 0 });
+    this.push({ kind: "user", id, text, replyTo, ...(u.replyTask && replyTo === u.replyTo ? { replyTask: u.replyTask } : {}), from: u.from, ...(u.assistant ? { assistant: u.assistant } : {}), at: u.at, images: u.images || 0 });
     this.doing = null;
   }
 
@@ -876,11 +877,11 @@ export class Conversation {
     this.reactions.set(target.id, list);
   }
 
-  // The suggested next message a reply ends with: { suggest } for its item, else nothing. Taken once.
+  // The suggested replies a reply ends with: { suggests } for its item (at most 3, in order), else nothing. Taken once.
   takeSuggest() {
     const s = this.suggestion;
     this.suggestion = null;
-    return s ? { suggest: s } : {};
+    return s?.length ? { suggests: s.slice(0, 3) } : {};
   }
 
   // What the agent wrote, without its reaction and no-reply lines (those act instead).
@@ -894,7 +895,11 @@ export class Conversation {
       // block it is just words.
       if (line.trim().startsWith("```")) fenced = !fenced;
       const sug = !fenced ? tagOf(line) : null;
-      if (sug && "suggest" in sug) { this.suggestion = unattr(sug.suggest).trim() || null; continue; }
+      if (sug && "suggest" in sug) {
+        const one = unattr(sug.suggest).replace(/\s+/g, " ").trim();
+        if (one && !(this.suggestion ??= []).includes(one)) this.suggestion.push(one);
+        continue;
+      }
       // A react tag also counts at the start of a paragraph, its words after it on the same line;
       // one that still doesn't read (a broken tag) never shows as text either, only what follows it.
       const t = /^\s*<hc\s/.test(line) ? tagAt(line) : null;
@@ -1019,7 +1024,7 @@ export class Conversation {
           if (prev && this.items[this.items.length - 1] === prev) {
             prev.text += "\n\n" + said;
             // the newest words' suggestion, if they end with one
-            delete prev.suggest;
+            delete prev.suggests;
             Object.assign(prev, this.takeSuggest());
           } else {
             const item = { kind: "agent", id: `a${off}`, text: said, at: time(l.timestamp), ...this.takeSuggest() };

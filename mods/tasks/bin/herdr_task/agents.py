@@ -831,6 +831,8 @@ BG_HINTS = ("<task-notification>", "task_id", "backgroundTaskId", "timeoutMs", "
 BG_MAX_MS = 3 * 3600_000  # a background job started longer ago than this no longer counts
 BG_STARTED = re.compile(r"Command running in background with ID: (\w+)|Monitor started \(task (\w+)|Async agent launched[\s\S]*?agentId: (\w+)")
 BG_ENDED = re.compile(r"<task-id>(\w+)</task-id>(?:(?!</task-notification>)[\s\S])*?<status>(\w+)</status>")
+# #1270: a Monitor's expiry notice has no <status>, only its event "[Monitor expired after 15m ...]"
+BG_EXPIRED = re.compile(r"<task-id>(\w+)</task-id>(?:(?!</task-notification>)[\s\S])*?\[Monitor expired\b")
 CODEX_RUNNING = re.compile(r"Process running with session ID (\d+)")
 CODEX_GONE = re.compile(r"Unknown process id:? (\d+)", re.I)
 # Codex 0.163+ code mode (SHEP-207): a script starts commands and polls them with tools.exec_command /
@@ -845,7 +847,36 @@ WAITS_ON = re.compile(r"\b(wait\w*|watch\w*|polling)\b.*\b(ci|checks?|reviews?|r
                       r"release|github|pipeline|actions?|run|workflow)\b|\breviewing\b", re.I)
 WAITS_ON_PERSON = re.compile(r"\b(you|your|yours|person|human|answer|reply|approv\w*|decid\w*|decision|confirm\w*|ok|okay|"
                              r"input|accept\w*|sign(?:ed)?[- ]?in|login|a go|go-ahead)\b", re.I)
+# The same in other languages (#1259: a Chinese "等待 GitHub 檢查" read as Needs you): a word for
+# waiting and one for what it waits on, in either order (Japanese and Korean put the wait last). CJK
+# has no spaces, so the ASCII names (CI, GitHub) are bounded by letters, not \b.
+_ASCII_ON = (r"(?<![a-z])(ci|github|checks?|reviews?|build|tests?|pipeline|actions?|workflows?|deploy\w*|pr)(?![a-z])")
+WAITS_ON_ANY = re.compile(
+    # zh, ja, ko
+    r"(等待|等候|稍候|等著|等着|監看|监看|監控|监控|輪詢|轮询|待ち|待機|待って|監視|대기|기다리|기다림|"
+    # es, pt, fr, it, de, nl, ru, pl, tr
+    r"\b(?:esper\w*|aguard\w*|attend\w*|attente|aspett\w*|attesa|wart\w*|warte|wacht\w*|"
+    r"жд\w*|ожида\w*|czek\w*|oczek\w*|bekl\w*)\b)", re.I)
+WAITS_ON_WHAT = re.compile(
+    _ASCII_ON + r"|檢查|检查|審查|审查|測試|测试|建置|構建|构建|部署|發佈|发布|流水線|流水线|工作流|"
+    r"チェック|レビュー|テスト|ビルド|デプロイ|검사|체크|리뷰|테스트|빌드|배포|"
+    r"\b(?:prueba\w*|revisi\w*|compila\w*|despliegue|verifica\w*|teste\w*|v[ée]rification\w*|revue|"
+    r"d[ée]ploiement|controll\w*|prüf\w*|überprüf\w*|проверк\w*|тест\w*|сборк\w*|ревью|"
+    r"sprawdz\w*|kontrol\w*|testy)\b", re.I)
+WAITS_ON_PERSON_ANY = re.compile(
+    r"你|您|本人|批准|核准|同意|決定|决定|回覆|回复|答覆|答复|あなた|承認|返事|返信|判断|당신|승인|답변|결정|"
+    r"\b(?:t[uú]|usted\w*|vous|votre|dein\w*|ihr\w*|deine|вас|ваш\w*|тво\w*|ты|aprob\w*|aprova\w*|approv\w*|"
+    r"confirm\w*|bestätig\w*|freigabe|подтвержд\w*|одобр\w*|decis\w*|décision|entscheid\w*|решени\w*|"
+    r"respuesta|resposta|réponse|antwort\w*|ответ\w*)\b", re.I)
 _bg_cache = {}
+
+
+def says_it_waits(text):
+    """Its words say it waits on CI, a check, a review or a job of its own, not on the person, in English or
+    another language (#1259)."""
+    if WAITS_ON_PERSON.search(text) or WAITS_ON_PERSON_ANY.search(text):
+        return False
+    return bool(WAITS_ON.search(text)) or bool(WAITS_ON_ANY.search(text) and WAITS_ON_WHAT.search(text))
 
 
 def _ms(stamp):
@@ -893,7 +924,9 @@ def background_jobs(log):
         end = chunk.rfind(b"\n") + 1  # a last line still being written waits for its end
         c["offset"] += end
         _bg_scan(chunk[:end].decode("utf-8", "replace").split("\n"), c)
-    return {i: t for i, t in c["running"].items() if now() - t < BG_MAX_MS}, c["ended"]
+    # #1270: a Monitor past its own timeout has ended, its notice or not
+    until = c.get("until") or {}
+    return {i: t for i, t in c["running"].items() if now() - t < BG_MAX_MS and now() < until.get(i, now() + 1)}, c["ended"]
 
 
 def open_tool(log):
@@ -936,7 +969,7 @@ def _bg_scan(lines, seen):
             at = _ms(d.get("timestamp")) or now()
             # Claude Code: ended by its notice (in the queue, an attachment or a user line), or stopped.
             if "<task-notification>" in raw and (d.get("type") in ("queue-operation", "attachment") or from_person(d) is not None):
-                for m in BG_ENDED.finditer(raw):
+                for m in [*BG_ENDED.finditer(raw), *BG_EXPIRED.finditer(raw)]:
                     running.pop(m.group(1), None)
                     ended = max(ended, at)
             r = d.get("toolUseResult")
@@ -954,6 +987,10 @@ def _bg_scan(lines, seen):
                         ids += [next(g for g in m.groups() if g)] if m else []
                 for i in filter(None, ids):
                     running.setdefault(str(i), at)
+                # a Monitor that isn't persistent expires after its timeoutMs (#1270)
+                if isinstance(r, dict) and r.get("taskId") and isinstance(r.get("timeoutMs"), (int, float)) \
+                        and r["timeoutMs"] > 0 and not r.get("persistent"):
+                    seen.setdefault("until", {})[str(r["taskId"])] = at + r["timeoutMs"]
             # Codex: a process left running has a session id until an output says it exited.
             p = d.get("payload") or {}
             # #1093 #1143: Codex says itself when a command ended, whatever polled it (a batch, an id no
@@ -1161,7 +1198,7 @@ def waits_on_own(task, address=None, ended=0):
     if now() - said >= max(ON_IT_MS, left):
         return False
     text = str(p.get("text") or "")
-    return bool(WAITS_ON.search(text)) and not WAITS_ON_PERSON.search(text)
+    return says_it_waits(text)
 
 
 # Codex starts its tool servers (MCP servers from its config, its own runtime helpers) as its own

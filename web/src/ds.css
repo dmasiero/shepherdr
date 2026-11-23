@@ -1,7 +1,7 @@
 /* Shepherdr's design system (3.2): tokens, sizes and classes. Desktop by default, phone under .app.phone. */
 :root{color-scheme:light;--canvas:#fff;--well:#fafafa;--raised:#f5f5f5;--overlay:#fff;--control:rgb(0 0 0/.05);--control2:rgb(0 0 0/.1);--fg:#0a0a0a;--sub:#404040;--muted:#737373;--line:rgb(0 0 0/.08);--line2:rgb(0 0 0/.12);--mine:#e5e5e5;--rx:#fff;--scrim:rgb(0 0 0/.3);--green:#15803d;--blue:#0369a1;--amber:#b45309;--red:#dc2626;--term:#0a0a0a;--shadow:0 8px 28px rgb(0 0 0/.14)}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#3a3a3a;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}}
-:root[data-theme="dark"]{color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#3a3a3a;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#262626;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}}
+:root[data-theme="dark"]{color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#262626;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}
 *{box-sizing:border-box}[hidden]{display:none!important}html{background:var(--canvas);-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--canvas);color:var(--fg);font:16px/24px InterVariable,ui-sans-serif,system-ui,sans-serif;font-feature-settings:"cv02","cv03","cv04","cv11";-webkit-font-smoothing:antialiased}
 button,input{font:inherit;color:inherit;letter-spacing:inherit}
@@ -141,8 +141,15 @@ button.b{cursor:pointer}
    it: a quote's one line (white-space:nowrap) would otherwise widen both to its full length, past the chat column */
 .bw{position:relative;display:grid;grid-template-columns:minmax(0,1fr);justify-self:start;max-width:min(82%,560px)}.bw.mine{justify-self:end}
 .pane .bw{max-width:92%}.bw>.bmv>.b{max-width:100%}
-.bmv{display:grid;grid-template-columns:minmax(0,1fr);justify-items:start}.bw.mine>.bmv{justify-items:end}
-.bmv.settle{transition:transform 320ms cubic-bezier(.25,1.12,.4,1)}
+.bmv{position:relative;display:grid;grid-template-columns:minmax(0,1fr);justify-items:start}.bw.mine>.bmv{justify-items:end}
+.bmv.settle,.tslide .settle,.rowx.tsl>.settle{transition:transform 320ms cubic-bezier(.25,1.12,.4,1)}
+/* a task's row slides to reply to it like a message (SHEP-332's slide): its Reply behind it, in one line */
+.tslide,.rowx.tsl{position:relative;isolation:isolate}.tslide{touch-action:pan-y pinch-zoom}.rowx.tsl>.row.tk{touch-action:pan-y pinch-zoom}
+.tslide>.tmv{display:inline-flex;align-items:center;gap:inherit;min-width:0;max-width:100%}
+:is(.tslide,.rowx.tsl)>.rpl{flex-direction:row;gap:6px;border-radius:8px;z-index:-1}
+.quote.qtask{display:flex;align-items:center;gap:6px;max-width:100%;border:0;border-left:2px solid var(--line2);background:none;font:inherit;font-size:14px;line-height:20px;text-align:start;cursor:pointer}
+.quote.qtask>.qt1{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sub)}.quote.qtask>.qt2{flex:0 4 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.quote.qtask>.qt2::before{content:"· "}
+.quote.qtask>.tring{flex:none}.quote.qtask>.tring>.i{width:16px;height:16px}
 .rpl{position:absolute;inset-block:0;left:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;overflow:hidden;border-radius:18px;background:var(--control2);color:var(--fg);font-size:var(--sec);line-height:var(--secl);font-weight:600;white-space:nowrap;pointer-events:none}
 .rpl.on{background:var(--fg);color:var(--canvas)}
 .qb{position:absolute;z-index:3;display:flex;align-items:center;gap:8px;transform:translateY(-50%)}
@@ -153,27 +160,29 @@ button.b{cursor:pointer}
 .qbtn{display:grid;place-items:center;width:max(var(--btn),var(--ib));height:max(var(--btn),var(--ib));border-radius:8px;color:var(--sub)}
 .qbtn:hover,.qbtn[aria-expanded="true"]{background:var(--control);color:var(--fg)}
 .qt{color:var(--muted);font-size:12px;line-height:16px;white-space:nowrap;font-variant-numeric:tabular-nums}
-/* reactions, as WhatsApp and iMessage: a pill that hugs its emoji (never a stretched track: width:max-content and
-   flex:none), tucked over the bubble's bottom edge by a third of its height, inset 8px from the bubble's own corner
-   (right for yours, left for the agent's, from .bmv's justify-items), a raised fill one step above the bubble with a
-   ring of the chat's background so the overlap reads clean; being in the flow, it reserves its own space below.
+/* reactions, placed as Claude Duet places them: a small pill pinned to the bubble's top corner that faces the middle
+   of the chat (top right for the agent's, top left for yours), straddling it: half above the top edge, half past the
+   side edge. Several sit side by side there, growing toward the middle. It hugs its emoji (width:max-content and
+   flex:none, never a stretched track): a surface a step above the chat with a hairline, the emoji at 18 px. Out of the
+   flow, it reserves no space below; a bubble with one gets a little room above so the chip clears the message there.
+   Where the bubble fills the column, the chip moves in to stay inside it (--rx-dx, set by the plugin's fit()).
    Its states are rx- classes only: 3.2.4's just-added chip carried "pop", the menu's own class, and drew as a 200px
    floating bar until a reload. .rxs>.rxc pins the size against any other class or container, in every state. */
-.rxs{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:4px;width:max-content;max-width:calc(100% - 16px);margin:-10px 8px 2px;justify-self:start;align-self:start}.bw.mine .rxs{justify-content:flex-end;justify-self:end}
-.rxc{position:relative;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:3px;width:auto;min-width:28px;height:28px;padding:0 6px;border-radius:999px;background:var(--rx);box-shadow:0 0 0 2px var(--canvas);color:var(--sub);font-size:12px;line-height:16px;font-weight:600;font-variant-numeric:tabular-nums}
-.rxs>.rxc{position:relative;inset:auto;flex:none;align-self:center;justify-self:start;width:fit-content;min-width:28px;max-width:none;height:28px;min-height:0;max-height:none;margin:0;padding:0 6px;transform:none}
-/* the finger pad reaches further up, over the bubble it already overlaps: below it, a bar such as "waiting at a
-   prompt" may sit close and take the lower pad, and the chip must still give a finger 44px */
-.rxc::after{content:"";position:absolute;inset:-13px -2px -8px}
-.rxc .e{font-size:16px;line-height:1}
+.bw:has(>.bmv>.rxs){margin-top:14px}
+.rxs{position:absolute;z-index:1;top:0;left:calc(100% - 18px);right:auto;display:flex;gap:4px;width:max-content;margin:0;transform:translate(var(--rx-dx,0px),-50%)}
+.bw.mine .rxs{left:auto;right:calc(100% - 18px);flex-direction:row-reverse}
+.rxc{position:relative;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:3px;width:auto;min-width:34px;height:28px;padding:0 8px;border-radius:999px;background:var(--rx);box-shadow:inset 0 0 0 1px var(--line2);color:var(--sub);font-size:12px;line-height:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.rxs>.rxc{position:relative;inset:auto;flex:none;align-self:center;justify-self:start;width:fit-content;min-width:34px;max-width:none;height:28px;min-height:0;max-height:none;margin:0;padding:0 8px;transform:none}
+/* the finger pad: 28 + 8 + 8 = 44 px tall */
+.rxc::after{content:"";position:absolute;inset:-8px -5px}
+.rxc .e{font-size:15px;line-height:1}
 .rxc:hover{background:color-mix(in srgb,var(--fg) 6%,var(--rx))}
 .rxc[aria-pressed="true"]{background:color-mix(in srgb,var(--blue) 18%,var(--rx));color:var(--fg)}
 .rxc[aria-pressed="true"]:hover{background:color-mix(in srgb,var(--blue) 26%,var(--rx))}
 .rxc.rx-pending{opacity:.6}
 .rxs>.rxc.rx-new{animation:rxpop 280ms cubic-bezier(.25,1.12,.4,1)}
 @keyframes rxpop{0%{transform:scale(.3);opacity:0}60%{transform:scale(1.12);opacity:1}100%{transform:scale(1)}}
-.app.tap .rxc .e{font-size:18px}
-@media(prefers-reduced-motion:reduce){.rxs>.rxc.rx-new{animation:none}.bmv.settle{transition:none}}
+@media(prefers-reduced-motion:reduce){.rxs>.rxc.rx-new{animation:none}.settle{transition:none!important}}
 /* a finger's long press opens the menu, not the system's word selection (Select text turns it back on) */
 @media(pointer:coarse){.b[data-menu]:not(.sel){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}}
 .b[data-menu]{touch-action:pan-y pinch-zoom}
@@ -307,10 +316,17 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 .crow{display:flex;align-items:center;min-width:0}
 .crow .cin{flex:1;min-width:0;text-overflow:ellipsis}
 .cin::placeholder{text-overflow:ellipsis}
-/* the suggested reply's chip (SHEP-363): an icon button like the box's others (.ib: size, radius, no outline). It sits
-   on the text line's centre (textarea.cin's 10px top padding plus half its 24px line) and centred over the box's round
-   button (the box bar's 6px right padding plus half the size difference), so the two share a centre line */
-.crow>.kbd{align-self:flex-start;margin-top:calc(22px - var(--ib)/2);margin-right:calc(6px + (var(--send) - var(--ib))/2)}
+/* the agent's suggested replies above the box (SHEP-186), as smart replies are: one line of pills, the first softly
+   filled (the primary), the others outlined; a row that scrolls sideways (no bar) rather than wrapping. A long one
+   truncates in its pill. A held press is the app's (edit), never the phone's text selection or callout. */
+.sugs{display:flex;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;margin:-4px -4px 4px;padding:4px}
+.sugs::-webkit-scrollbar{display:none}
+.sug{flex:none;max-width:min(280px,78%);height:36px;padding:0 14px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--line2);background:var(--canvas);color:var(--sub);font-size:var(--sec);line-height:var(--secl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-x}
+.sug:hover{background:var(--control)}
+.sug.pri{background:var(--control2);box-shadow:none;color:var(--fg);font-weight:500}
+.sug.pri:hover{background:var(--control2)}
+.sug:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.app.tap .sug{height:44px;border-radius:22px}
 
 /* screens */
 .scr{position:relative;border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2)}
@@ -410,21 +426,22 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 @keyframes calm{50%{opacity:.45}}
 /* the working sign at a chat's end (SHEP-313, SHEP-343, SHEP-357): an agent bubble sized to three dots like a one-line
    message (the bubble's own 6px 14px padding round one 24px line), the dots centred both ways and their rise kept
-   inside that padding; the step beside it as quiet text on one line; it comes in a beat after words land, so the bubble
+   inside that padding; the step beside it as quiet text, top-aligned with the bubble, wrapping onto up to three lines
+   (SHEP-421: an ellipsis only after the third), each new step fading in over the last; it comes in a beat after words land, so the bubble
    seems to become them; reduced motion: the dots only brighten in turn, slowly, and it fades in without moving.
    `.wsign .wbub` outranks styles.css's `.b{display:block}`, which had left the dots at the bubble's top edge */
-.wsign{display:flex;align-items:center;gap:8px;max-width:min(82%,560px);min-width:0;margin-top:12px;color:var(--muted);font-size:14px;line-height:20px;transform-origin:left center;animation:wsin .24s ease-out .35s both}
+.wsign{display:flex;align-items:flex-start;gap:8px;max-width:min(82%,560px);min-width:0;margin-top:12px;color:var(--muted);font-size:14px;line-height:20px;transform-origin:left center;animation:wsin .24s ease-out .35s both}
 .pane .wsign{max-width:92%}
 /* SHEP-363: Stop on the working row (the box's round button is the voice call while it is empty), outside the sign's
-   grow-in. It sits at the row's right end, centred over the box's round button: the chat column and the box share their
+   grow-in. It sits at the row's right end, centred on the bubble's line (so a longer step never moves it), centred over the box's round button: the chat column and the box share their
    edges (main chat and panel alike) and that button is the box bar's 6px padding in from the right */
-.wrow{display:flex;align-items:center;gap:8px;justify-self:stretch;min-width:0;margin-top:12px}.wrow>.wsign{margin-top:0}
-.wrow>.wstop{margin-left:auto;border-radius:50%;margin-right:calc(6px + (var(--send) - var(--ib))/2);animation:fade .24s ease-out .35s both}
+.wrow{display:flex;align-items:flex-start;gap:8px;justify-self:stretch;min-width:0;margin-top:12px}.wrow>.wsign{margin-top:0}
+.wrow>.wstop{flex:none;margin-top:calc((36px - var(--ib))/2);margin-left:auto;border-radius:50%;margin-right:calc(6px + (var(--send) - var(--ib))/2);animation:fade .24s ease-out .35s both}
 .wsign .wbub{display:flex;align-items:center;justify-content:center;flex:none;max-width:none;padding:6px 14px;line-height:24px}
 .wdots{display:flex;align-items:center;gap:5px;height:24px;color:var(--sub)}
 .wdots i{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor;animation:rise 1.2s ease-in-out infinite}
 .wdots i:nth-child(2){animation-delay:.15s}.wdots i:nth-child(3){animation-delay:.3s}
-.wstep{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wstep{min-width:0;padding-top:8px;overflow:hidden;overflow-wrap:anywhere;text-wrap:pretty;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;animation:fade .2s ease-out both}
 @keyframes wsin{from{opacity:0;transform:scale(.85)}}
 @keyframes rise{0%,60%,100%{transform:none;opacity:.45}30%{transform:translateY(-3px);opacity:1}}
 @media(prefers-reduced-motion:reduce){.i.turn{animation:calm 2.4s ease-in-out infinite}.wsign{animation-name:fade}.wdots i{animation:calm 2.4s ease-in-out infinite}.wdots i:nth-child(2){animation-delay:.4s}.wdots i:nth-child(3){animation-delay:.8s}.sheet.in,.drawer.in,.pop.in,.dlg.in,.win.in,.lbox.in{animation:none}.tg i{transition:none}}
@@ -548,7 +565,7 @@ textarea.cin{overflow-y:auto}
 .msgs>:not(.fold,.ref,.donerow,.time,.mend)+:is(.card,.wsign,.wrow),.msgs>.card+:not(.fold,.ref,.donerow,.time,.mend){margin-top:8px}
 .msgs>:not(.fold,.ref,.donerow,.time)+:is(.fold,.ref,.donerow),.msgs>:is(.fold,.ref,.donerow)+:not(.fold,.ref,.donerow,.time,.quietb,.files,.mend){margin-top:4px}
 .msgs>:is(.fold,.ref,.donerow):nth-last-child(2){margin-bottom:-4px}
-.msgs>.ref>.tring{width:16px}.msgs>.ref>.tring>.i{width:16px;height:16px}
+.msgs>.ref{max-width:100%}.msgs>.ref>.tring:not(.tside){width:16px}.msgs>.ref>.tmv>.tring:not(.tside){width:16px}.msgs>.ref>.tring.tside>.i,.msgs>.ref>.tmv>.tring.tside>.i{flex:none}.msgs>.ref>.tmv>.rt,.msgs>.ref>.rt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.msgs>.ref>.tring>.i,.msgs>.ref>.tmv>.tring>.i{width:16px;height:16px}
 .msgs>.quietb,.msgs>.files{margin-inline-start:24px}
 /* on touch a row is itself 44 px tall (12 px of air above and below its words), not a 28 px row with an invisible pad:
    packed 12 px apart, neighbouring pads split the space between them and each row kept only ~32 px for a finger. Touch
