@@ -8,6 +8,15 @@ import type { Chat, Message, Snapshot, Task } from '../shared/types.ts'
 import { withLinks } from '../../service/artifact-links.ts'
 import { artifacts, catalog, chats as seed, config, EV, snapshot } from './data.ts'
 
+// fork: what "@~/" lists in the demo's message box (SHEP-50): each folder under a fictional home
+const DEMO_HOME: Record<string, string[]> = {
+  '': ['dev/', 'Documents/', 'Downloads/', 'notes.md', '.config/'],
+  'dev/': ['shop/', 'garden/', 'todo.md'],
+  'dev/shop/': ['src/', 'test/', 'README.md', 'package.json'],
+  'dev/shop/src/': ['cart.ts', 'checkout.ts', 'login.ts'],
+  'Documents/': ['invoices/', 'plan.pdf'],
+}
+
 const dist = join(fileURLToPath(new URL('../', import.meta.url)), 'dist')
 const port = Number(process.argv[2] || 7799)
 type Sock = { send(s: string): void; data: { mode: 'normal' | 'empty' | 'down' | 'more' | 'long'; watch: string[]; app?: string } }
@@ -188,6 +197,8 @@ Bun.serve<Sock['data'], never>({
     }
     if (path === '/api/screen/shot') return new Response(Bun.file(shotFile(url.searchParams.get('key') ?? '')), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-store' } })
     if (path === '/api/me') return Response.json({ login: 'sam', off: [] })
+    // fork: the "@~/" list's folders (SHEP-50), a fictional home
+    if (path === '/api/paths') return Response.json({ entries: DEMO_HOME[(url.searchParams.get('dir') ?? '~/').replace(/^~\//, '')] ?? [] })
     if (path === '/api/action') return Response.json(action((await req.json()) as Record<string, any>) ?? { ok: true })
     if (path === '/api/upload') {
       const f = (await req.formData()).get('file') as File | null
