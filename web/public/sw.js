@@ -59,8 +59,6 @@ self.addEventListener('push', (e) => {
           tag,
           // a task's newer alert buzzes again, though it takes the old one's place
           renotify: !!tag,
-          // fork: a quiet one (Back from snooze, SHEP-78): no sound or buzz
-          ...(a.silent ? { silent: true } : {}),
           icon: 'icon-192.png?v=2',
           badge: 'badge-96.png?v=2',
           data: { url: a.url || './', waits: !!a.waits, answer: a.answer, accept: a.accept, reply: a.reply },
@@ -133,7 +131,7 @@ self.addEventListener('notificationclick', (e) => {
   n.close()
   const then = (p) => e.waitUntil(p.then(refresh))
   if (e.action === 'later') return
-  if (e.action === 'accept' && d.accept) return then(act({ type: 'accept', task: d.accept.task }).then((r) => said(n, r, 'Accepted ✓', n.body)))
+  if (e.action === 'accept' && d.accept) return then(act({ type: 'accept', task: d.accept.task }).then((r) => said(n, r, 'Done ✓', n.body)))
   if (/^\d+$/.test(e.action) && d.answer)
     return then(act({ type: 'answer', chat: d.answer.chat, question: d.answer.question, choice: Number(e.action), fromAlert: true }).then((r) => said(n, r, 'Answered ✓', label)))
   if (e.action === 'reply' && d.reply && typeof e.reply === 'string' && e.reply.trim()) {

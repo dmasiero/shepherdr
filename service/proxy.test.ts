@@ -69,6 +69,6 @@ describe("through the proxy", () => {
 });
 
 test("Settings › Web says the proxy decides who gets in", () => {
-  expect(S.webState(false, true, { on: true, via: "proxy" })).toBe("On, through this machine's reverse proxy: it decides who gets in.");
-  expect(S.webState(false, true, { on: true })).toBe("On, private to your tailnet.");
+  expect(S.webState(true, { on: true, via: "proxy" })).toBe("On, through this machine's reverse proxy: it decides who gets in.");
+  expect(S.webState(true, { on: true })).toBe("On, private to your tailnet.");
 });

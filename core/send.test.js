@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inputLine, sendBody, steerNow, markSaid } from "./send.js";
+import { inputLine, sendBody, steerNow, QUEUED, STEER } from "./send.js";
 import { LOG, Conversation, records } from "./chat-log.js";
 
 // A Claude Code terminal as hc sees it: what its screen shows after each call.
@@ -104,6 +104,81 @@ test("Send now on a queued message presses Ctrl+Enter only while Claude Code off
   const idle = fake(false, "idle");
   expect(await steerNow(idle.io, "t1")).toBe(false);
   expect(idle.calls.length).toBe(1);
+});
+
+// SHEP-306: Claude Code 2.1.330's real screen right after a message went in mid-turn (hc read, 45 columns, as a phone)
+const QUEUED_2_1_330 = `● Counting 1 to 90 with 2-second pauses · 17s
+  ⎿  $ for i in $(seq 1 90); do echo $i;
+     sleep 2; done (18s · 10 lines)
+     (ctrl+b to run in background)
+❯ what number now?
+  ⎿  Queued · ctrl+enter to send now
+✻ Skedaddling… (19s · ↓ 162 tokens)
+  ⎿  Tip: Hit shift+tab to cycle between
+     manual mode, auto-accept edit mode, and
+     plan mode
+─────────────────────────────────────────────
+❯ Press up to edit queued messages
+─────────────────────────────────────────────
+  ⏵⏵ bypass permissions on · 3 shells · es…`;
+// the same agent working with nothing queued, a draft typed in its box
+const DRAFT = `✻ Skedaddling… (19s · ↓ 162 tokens)
+─────────────────────────────────────────────
+❯ half a thought
+─────────────────────────────────────────────
+  ⏵⏵ bypass permissions on · esc to interrupt`;
+
+function screens(list, status = () => "working") {
+  const calls = [];
+  let n = 0;
+  const io = {
+    sleep: async () => {},
+    status,
+    hc: async (args) => {
+      calls.push(args.join(" "));
+      return { code: 0, stdout: args[0] === "read" ? list[Math.min(n++, list.length - 1)] : "" };
+    },
+  };
+  return { io, calls };
+}
+
+test("a message sent to a working Claude Code 2.1.330 steers at once (its real screen)", async () => {
+  const s = screens([QUEUED_2_1_330, DRAFT.replace("half a thought", "")]);
+  expect(await steerNow(s.io, "t1")).toBe(true);
+  expect(s.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter"]);
+  // sendBody presses it after the send, once
+  const sent = screens([DRAFT.replace("half a thought", ""), QUEUED_2_1_330]);
+  sent.io.hc = ((hc) => async (args) => (args[0] === "send" ? { code: 0, stdout: '{"started":true}', stderr: "" } : hc(args)))(sent.io.hc);
+  expect((await sendBody(sent.io, "t1", "claude", "what number now?")).code).toBe(0);
+  expect(sent.calls.filter((c) => c === "keys t1 ctrl+enter").length).toBe(1);
+});
+
+test("its box's queued placeholder alone is enough (the hint's words cut or moved)", async () => {
+  const s = screens([QUEUED_2_1_330.replace("Queued · ctrl+enter to send now", "Queued")]);
+  expect(await steerNow(s.io, "t1")).toBe(true);
+  const box = screens(["● working\n────\n❯ Press up to edit queued messages\n────"]);
+  expect(await steerNow(box.io, "t1")).toBe(true);
+});
+
+test("a queued sign that shows late still steers, within its bound", async () => {
+  const late = screens([...Array(STEER.looks - 1).fill(DRAFT.replace("half a thought", "")), QUEUED_2_1_330]);
+  expect(await steerNow(late.io, "t1")).toBe(true);
+  // never: it gives up after its looks
+  const never = screens([DRAFT]);
+  expect(await steerNow(never.io, "t1")).toBe(false);
+  expect(never.calls.filter((c) => c.startsWith("read")).length).toBe(STEER.looks);
+});
+
+test("Ctrl+Enter is never pressed on a draft, a dialog or an idle agent", async () => {
+  const draft = screens([DRAFT]);
+  expect(await steerNow(draft.io, "t1")).toBe(false);
+  expect(draft.calls.some((c) => c.startsWith("keys"))).toBe(false);
+  // a dialog of its own open (blocked), even with a message in its queue: Ctrl+Enter could answer it
+  const asking = screens([QUEUED_2_1_330], () => "blocked");
+  expect(await steerNow(asking.io, "t1")).toBe(false);
+  expect(asking.calls.some((c) => c.startsWith("keys"))).toBe(false);
+  // a past message that once said "Queued" is not a queued sign: only a ⎿ line under a message is
+  expect(QUEUED.test("● I said Queued earlier")).toBe(false);
 });
 
 // SHEP-93: eleven pictures take Claude Code long to read: the box fills marker by marker, its Enter is lost
@@ -211,13 +286,58 @@ test("a file alone (no words, not a picture) still in the box is not taken as se
   expect(holds("❯ ", "/var/files/t1/report.txt")).toBe(false);
 });
 
-test("markSaid labels the agent with when the person wrote, and never fails the send (#1217)", async () => {
-  const calls = [];
-  markSaid({ hc: async (args) => { calls.push(args.join(" ")); return { code: 0 }; } }, "vm/t4", 1234);
-  await Promise.resolve(); await Promise.resolve();
-  expect(calls).toEqual(["label vm/t4 herdr.said=1234"]);
-  // hc throwing or refusing: nothing breaks
-  expect(() => markSaid({ hc: () => { throw new Error("no hc"); } }, "t1")).not.toThrow();
-  markSaid({ hc: async () => { throw new Error("down"); } }, "t1");
-  await new Promise((r) => setTimeout(r, 5));
+
+// SHEP-329: the person's message must be in within seconds, always. Claude Code 2.1.330 after Esc with a message queued
+// behind a running build (hc read): the build cut off, the message sent at once.
+const AFTER_ESC = `● Running project build with python3 build.py
+  ⎿  $ python3 build.py
+  ⎿  Interrupted · What should Claude do instead?
+❯ Quick: what is 9+9?
+✽ Cultivating… (1s · ↓ 38 tokens · thinking)
+─────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────
+  ⏵⏵ bypass permissions on · esc to interrupt`;
+
+test("a message still queued after Ctrl+Enter's grace goes in by Esc, once", async () => {
+  const stuck = screens([...Array(1 + STEER.grace).fill(QUEUED_2_1_330), AFTER_ESC]);
+  expect(await steerNow(stuck.io, "t1")).toBe(true);
+  expect(stuck.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter", "keys t1 esc"]);
+  // its grace: the screen is looked at that many times between the two keys
+  const keys = stuck.calls.map((c, i) => [c, i]).filter(([c]) => c.startsWith("keys")).map(([, i]) => i);
+  expect(keys[1] - keys[0] - 1).toBe(STEER.grace);
+  // in before the grace ends: no Esc
+  const took = screens([QUEUED_2_1_330, QUEUED_2_1_330, AFTER_ESC]);
+  await steerNow(took.io, "t1");
+  expect(took.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter"]);
+});
+
+test("Esc never lands on a dialog or an agent that stopped working meanwhile", async () => {
+  let n = 0;
+  const asking = screens([QUEUED_2_1_330], () => (n++ < 2 ? "working" : "blocked"));
+  await steerNow(asking.io, "t1");
+  expect(asking.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter"]);
+  let m = 0;
+  const done = screens([QUEUED_2_1_330], () => (m++ < 2 ? "working" : "idle"));
+  await steerNow(done.io, "t1");
+  expect(done.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter"]);
+});
+
+test("a Claude Code that puts the message back in its box on Esc gets its Enter", async () => {
+  const back = AFTER_ESC.replace(/❯ \n/, "❯ Quick: what is 9+9?\n");
+  const s = screens([...Array(1 + STEER.grace).fill(QUEUED_2_1_330), back]);
+  await steerNow(s.io, "t1", STEER, "Quick: what is 9+9?");
+  expect(s.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter", "keys t1 esc", "keys t1 enter"]);
+  // a draft of the person's own in it is never sent
+  const draft = screens([...Array(1 + STEER.grace).fill(QUEUED_2_1_330), AFTER_ESC.replace(/❯ \n/, "❯ something else\n")]);
+  await steerNow(draft.io, "t1", STEER, "Quick: what is 9+9?");
+  expect(draft.calls.filter((c) => c.startsWith("keys"))).toEqual(["keys t1 ctrl+enter", "keys t1 esc"]);
+});
+
+test("an unknown status still steers while the screen shows it at work", async () => {
+  const wide = QUEUED_2_1_330.replace("es…", "esc to interrupt");
+  const s = screens([wide, DRAFT.replace("half a thought", "")], () => null);
+  expect(await steerNow(s.io, "t1")).toBe(true);
+  const quiet = screens([QUEUED_2_1_330], () => null);
+  expect(await steerNow(quiet.io, "t1")).toBe(false);
 });

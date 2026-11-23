@@ -15,12 +15,13 @@ import subprocess
 import sys
 import time
 
-from .base import APP_HOME, ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
+from .base import ASK_HOME, ENTRY, Fail, git, hc_json, now, run, SHARE, WORKTREES
 from .settings import agent_key, ASSISTANT_TEMPLATES, cli_env, CLAUDE_PROFILE, REVIEW_TOOLS, codex_too_old, codex_update_words, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
 from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
 from .github import finish, remote_of
-from .browsers import browser_line, browser_path
+from .guard import guard_argv
+from .browsers import browser_env, browser_line, browser_path, desktop_path
 
 
 # ---- an agent's own herdr-task commands never ask -------------------------------------------
@@ -69,7 +70,7 @@ def installed_copy(me):
     installed copy updates with each install: briefs and allow rules name that one when it's there."""
     if not os.path.realpath(me).startswith(NIX_STORE):
         return me
-    there = os.path.join(APP_HOME, "mods", "tasks", "bin", "herdr-task")
+    there = os.path.join(SHARE, "mods", "tasks", "bin", "herdr-task")  # 3.2: the install is under SHARE
     return there if os.path.isfile(there) and not os.path.realpath(there).startswith(NIX_STORE) else me
 
 
@@ -87,6 +88,9 @@ def own_rules(path):
     # The task's browser (HERD-57): every herdr-browser command, as the brief writes it.
     bp = browser_path()
     for p in [bp, "herdr-browser"] if bp and re.fullmatch(r"[\w@%+=:,./-]+", bp) else []:
+        rules += [f"Bash({p}:*)"]
+    dp = desktop_path()  # its desktop, the same
+    for p in [dp, "herdr-desktop"] if dp and re.fullmatch(r"[\w@%+=:,./-]+", dp) else []:
         rules += [f"Bash({p}:*)"]
     return rules
 
@@ -175,7 +179,7 @@ def codex_hook_hash(ident):
 
 
 # Shepherdr's own chat hooks as the installer writes them in Codex's hooks.json (bin/shepherdr).
-OWN_HOOK = re.compile(r"sh '[^'\n]*/mods/chat/(session-note|ask-hook)\.sh'")
+OWN_HOOK = re.compile(r"sh '[^'\n]*/(?:hooks|mods/chat)/(session-note|ask-hook)\.sh'")
 # Codex's event names in hooks.state keys, from hooks.json's.
 CODEX_EVENTS = {"SessionStart": "session_start", "PermissionRequest": "permission_request"}
 
@@ -251,6 +255,8 @@ def own_command(path, text, sandboxed=False):
         return True
     if len(words) >= 2 and words[0] == "@herdr-browser" and browser_path():
         return True
+    if len(words) >= 2 and words[0] == "@herdr-desktop" and desktop_path():
+        return True
     if sandboxed and len(words) >= 2 and words[0] == "@herdr-artifact" and words[1] in ARTIFACT and "--custom" not in words:
         return True
     if sandboxed and len(words) >= 2 and words[0] == "git" and words[1] in GIT:
@@ -262,16 +268,16 @@ def own_command(path, text, sandboxed=False):
 
 def tool_name(word, path):
     """The tool a command's first word runs, as "@<name>" when it is one own_command knows: this herdr-task (its path, or the bare
-    name when PATH's is this one), herdr-browser, herdr-artifact, herdr-secret or hc by their path on PATH or their
+    name when PATH's is this one), herdr-browser, herdr-desktop, herdr-artifact, herdr-secret or hc by their path on PATH or their
     bare name (#1098: a Codex worker's full-path `/…/hc read` asked and hung, the bare one didn't); else the word."""
     real = lambda p: os.path.realpath(os.path.expanduser(p)) if p else None  # noqa: E731
     if word == path or (word == "herdr-task" and real(shutil.which("herdr-task")) == real(path)):
         return "@herdr-task"
-    if word in ("herdr-browser", "herdr-artifact", "herdr-secret", "hc"):
+    if word in ("herdr-browser", "herdr-desktop", "herdr-artifact", "herdr-secret", "hc"):
         return "@" + word
     if os.sep not in word:
         return word
-    for name, at in (("herdr-browser", browser_path()), ("herdr-artifact", artifact_path()),
+    for name, at in (("herdr-browser", browser_path()), ("herdr-desktop", desktop_path()), ("herdr-artifact", artifact_path()),
                      ("herdr-secret", secret_path()), ("hc", shutil.which("hc"))):
         if at and (word == at or real(word) == real(at)):
             return "@" + name
@@ -326,10 +332,10 @@ def helper_hc(words):
 
 
 def ask_hook():
-    """The chat's question-card hook (mods/chat/ask-hook.sh): Herdr's app home's, else the copy a
-    sync left on a machine that only runs tasks (ASK_HOME); None when there's neither."""
-    app = os.environ.get("HERDR_APP_HOME") or os.path.join(os.path.expanduser("~"), ".config", "herdr-app")
-    for p in (os.path.join(app, "mods", "chat", "ask-hook.sh"), os.path.join(os.path.expanduser("~"), ASK_HOME, "ask-hook.sh")):
+    """The chat's question-card hook: Shepherdr's own (<SHARE>/hooks/ask-hook.sh, beside this herdr-task's
+    install; in a checkout the repo's), else the copy a sync left on a machine that only runs tasks (ASK_HOME);
+    None when there's neither."""
+    for p in (os.path.join(SHARE, "hooks", "ask-hook.sh"), os.path.join(os.path.expanduser("~"), ASK_HOME, "ask-hook.sh")):
         if os.path.isfile(p):
             return p
     return None
@@ -573,15 +579,21 @@ def default_space():
     sp = labels.get("herdr.space") or labels.get("herdr.coordinator.space") or labels.get("herdr.task.space")
     if sp:
         return sp
-    if shutil.which("herdr-app"):
-        r = run(["herdr-app", "status"])
-        try:
-            sp = json.loads(r.stdout).get("space")
-        except ValueError:
-            sp = None
-        if sp and "/" not in sp:
-            return sp
     raise Fail("Which space? Pass --space <space id>.")
+
+
+def core_spaces():
+    """This machine's spaces as Shepherdr keeps them: [{id, folder, ...}] from herdr-core's shared document in
+    Shepherdr's own session (its docs.json, read as a file). 3.2 has no Herdr window to ask."""
+    from .base import SESSION
+    path = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"),
+                        "herdr-core", SESSION, "docs.json")
+    try:
+        with open(path) as f:
+            spaces = ((json.load(f).get("herdr-app") or {}).get("value") or {}).get("spaces") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [x for x in spaces if isinstance(x, dict) and x.get("id") and "/" not in str(x["id"]) and not x.get("machine") and x.get("folder")]
 
 
 def _inside(path, top):
@@ -592,14 +604,10 @@ def _inside(path, top):
 def space_for_folder(folder, caller=None):
     """The space a task in `folder` (its repo) belongs to when no --space says (GitHub #1209): the caller's when its
     folder is in that repo, else the one space on this machine whose folder is, so its news goes to that space's
-    Assistant, not to the Assistant that happened to start it. None: the window can't say, or no single space."""
-    if not folder or not shutil.which("herdr-app"):
+    Assistant, not to the Assistant that happened to start it. None: no single space (core_spaces)."""
+    if not folder:
         return None
-    try:
-        spaces = [x for x in json.loads(run(["herdr-app", "ls"]).stdout).get("spaces") or []
-                  if x.get("id") and "/" not in x["id"] and not x.get("machine") and x.get("folder")]
-    except (Fail, ValueError, OSError, AttributeError):
-        return None
+    spaces = core_spaces()
     if caller and any(x["id"] == bare(caller) and _inside(x["folder"], folder) for x in spaces):
         return bare(caller)
     own = [x["id"] for x in spaces if _inside(x["folder"], folder)]
@@ -611,13 +619,8 @@ def tab_title(s, task):
 
 
 def name_tab(tab, title):
-    """Names a tab once Herdr has seen it (it appears when the agent's labels are read)."""
-    if not shutil.which("herdr-app"):
-        return False
-    for _ in range(60):
-        if run(["herdr-app", "do", "tab.rename", "--id", tab, "--name", title]).returncode == 0:
-            return True
-        time.sleep(0.1)
+    """3.2: there is no Herdr window, so no tab to name here (an agent started by an older version may still
+    carry a herdr.tab label): never named."""
     return False
 
 
@@ -635,14 +638,7 @@ def task_tabs(s, task):
 def retag_tabs(s):
     """After the prefix changes: each running task's tab starts with its new id. A name someone
     gave the tab is kept, only its old id ("#4", "HAT-4") swapped; elsewhere the id goes in front."""
-    names = {}
-    if shutil.which("herdr-app"):
-        try:
-            for sp in json.loads(run(["herdr-app", "ls"]).stdout).get("spaces", []):
-                for tb in sp.get("tabs", []):
-                    names[bare(tb["id"])] = tb.get("name") or ""
-        except ValueError:
-            pass
+    names = {}  # 3.2: no window to ask for the tabs' names
     pairs = []
     for t in s.data["tasks"]:
         for tab in task_tabs(s, t):
@@ -663,7 +659,14 @@ def closing_line(s, task, parent=None, argv=None):
     text = (f"When the work is {done}, run `{ht} ready {s.ref(task)} --folder {shlex.quote(s.loc['folder'])} "
             f"--summary \"<what the person now sees or can do, plain words, at most {SUMMARY_MAX} characters>\"` (optionally "
             f"`--details \"<a few short bullets in plain words, one per line: what changed for the person first, then how it was checked>\"`; with `--agents-md \"<one line>\"` when you learned something "
-            f"about setting up or testing this repo that its AGENTS.md lacks). The person accepts it from there; never mark it done yourself.")
+            f"about setting up or testing this repo that its AGENTS.md lacks). The person marks it as done from there; never mark it done yourself.")
+    if task.get("mode") == "worktree":
+        # SHEP-320: tasks run in parallel, also on the same files: catching up with its base is part of finishing
+        base = task.get("base") or "main"
+        text += (f" Other tasks run in parallel and may merge into {base} meanwhile: before ready, fetch and rebase your "
+                 f"branch onto {base}'s newest (`git fetch`, then `git rebase {remote_of(s.loc['folder'])}/{base}`, or "
+                 f"`git rebase {base}` without a remote) and resolve what collides; ready refuses a branch that conflicts "
+                 f"with it. Your own branch may be force-pushed with lease, never {base}.")
     on, rounds = review_limits(s, task)
     if on:
         text += (f" Review is on: after each review round, record it on the commit it reviewed with `{ht} reviewed {s.ref(task)} "
@@ -689,8 +692,8 @@ def closing_line(s, task, parent=None, argv=None):
     if argv and agent_key(argv) == "codex":
         # #1136 #1142: run in the sandbox, hc can't open Herdr's core and the browser's socket folder is read-only
         text += (" Codex's sandbox can't reach Herdr nor write git's data, so give those commands, herdr-browser's (your task's "
-                 "browser), herdr-artifact's (your proof), `git add`/`git commit` and your review's `hc run`/`hc wait`/`hc read`/"
-                 "`hc get`/`hc kill` (its prompt in single quotes) "
+                 "browser), herdr-desktop's (your desktop), herdr-artifact's (your proof), `git add`/`git commit` and your review's `hc run`/`hc wait`/`hc read`/"
+                 "`hc get`/`hc kill` (its prompt in single quotes), `git fetch`/`git rebase` "
                  "sandbox_permissions \"require_escalated\" from the first try, each as one plain command (no && chains, no $(…), "
                  "no git options before the verb): then they run without asking.")
     # No "report to your coordinator": Herdr tells the Assistant itself (news_pass).
@@ -1034,9 +1037,11 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
         labels += ["--label", ASKS_LABEL]
     rel = ["--parent", parent, "--outlive-parent"] if parent else ["--no-parent"]
     name = agent_name(s, task, "review" if role else None)
-    # HERDR_BROWSER_TASK: which task's browser herdr-browser drives (HERD-57), for it and its children.
+    # HERDR_BROWSER_TASK and HERDR_BROWSER_SPACE: whose tab herdr-browser drives in which space's browser, and whose
+    # desktop herdr-desktop uses (3.2; HERD-57), for it and its children. guard_argv: nothing it runs can take down
+    # the live session it runs in (SHEP-323).
     r = run(["hc", "run", "--bg", "--json", "--keep", "--cwd", folder_for(s, task), "--name", name,
-             *labels, *rel, "--", *low_priority(clean_env(["env", f"HERDR_BROWSER_TASK={key}", *in_shell(cmd)]), name)])
+             *labels, *rel, "--", *low_priority(clean_env(["env", *browser_env(key, bare(space)), *in_shell(guard_argv(cmd))]), name)])
     try:
         out = json.loads(r.stdout)
     except ValueError:

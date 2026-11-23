@@ -51,21 +51,9 @@ export const SCHEDULE_PICKS = [
   { label: "In 1 hour", in: "1h" }, { label: "In 3 hours", in: "3h" },
   { label: "Tomorrow 9:00", at: "tomorrow 9:00" }, { label: "Monday 9:00", at: "mon 9:00" },
 ];
-// fork: Snooze (SHEP-78, core/snooze.js): a started task not done snoozes ("Snooze": Start later's picks, In 1 hour
-// dropped, then Other time…); a snoozed one unsnoozes or changes its time ("Change snooze time", `until` its words).
-// fork: Same as last (SHEP-80): last = { until (ms), words } (core/snooze.js sameAsLast: the last snooze's moment, still
-// ahead and none of the picks): first in the Snooze section, "Same as last · Sat 18:30", snoozing to that very moment.
-export const SNOOZE_PICKS = SCHEDULE_PICKS.filter((p) => p.in !== "1h");
-const SNOOZABLE = ["need", "needs", "ready", "merging", "work", "working"]; // the web's words and the window's
-export const taskMenu = ({ pinned = false, status = null, snoozed = false, until = null, last = null } = {}) => {
+export const taskMenu = ({ pinned = false, status = null } = {}) => {
   const later = ["todo", "queued", "scheduled"].includes(status);
-  const snooze = !later && (snoozed || SNOOZABLE.includes(status));
   return [
-    ...(snoozed ? [{ id: "unsnooze", label: "Unsnooze", icon: "bell" }, sep] : []),
-    ...(snooze ? [{ heading: snoozed ? `Change snooze time${until ? ` · ${until}` : ""}` : "Snooze" },
-      ...(last && typeof last.until === "number" ? [{ id: "snooze-last", label: `Same as last · ${last.words}`, icon: "clock", until: last.until }] : []),
-      ...SNOOZE_PICKS.map((p) => ({ id: "snooze", icon: "clock", ...p })),
-      { id: "snooze-other", label: "Other time…", icon: "clock", typed: true }, sep] : []),
     ...(later ? [{ heading: status === "scheduled" ? "Reschedule" : "Start later" },
       ...SCHEDULE_PICKS.map((p) => ({ id: "schedule", icon: "clock", ...p })),
       { id: "schedule-other", label: "Other time…", icon: "clock", typed: true }] : []),
@@ -78,8 +66,6 @@ export const taskMenu = ({ pinned = false, status = null, snoozed = false, until
 };
 // What Other time… asks (the web's field under the picks): its words, an example, the button's.
 export const SCHEDULE_OTHER = { placeholder: "fri 8:15, 18:00 or 6h", label: "When it starts", button: "Schedule" };
-// fork: Snooze's Other time… (SHEP-78)
-export const SNOOZE_OTHER = { placeholder: "fri 8:15, 18:00 or 6h", label: "When it comes back", button: "Snooze" };
 
 // The tab bar: a tab's menu (right-click on a tab; the web's touch screens also open it from the shown tab's ⋯). Rename…,
 // Edit instructions… on an Assistant's tab, Switch agent (a submenu of the installed agents) while an agent runs in it

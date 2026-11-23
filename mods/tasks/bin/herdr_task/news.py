@@ -10,7 +10,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 
-from .base import guard, hc_json, now, run, STORE
+from .base import guard, hc_json, now, QUEUED, run, STORE
 from .settings import bare
 from .agents import (
     agent_log, agent_running, asking, detail, from_person, live_agents, log_tail, said, starting, status_word,
@@ -20,7 +20,6 @@ from .sessions import session_of
 from .launch import coordinator_in
 from .store import locate, read_list, Store, store_files
 from .output import line, minutes, view
-from .takeover import backup_news
 
 
 # ---- news -----------------------------------------------------------------------------------
@@ -54,7 +53,7 @@ def stall_of(task, v, live):
     """(mark, words) when a Working task went quiet (QUIET_MS) or is far past its own time left
     (as Shepherdr: its report's minutes, plus as many again, at least 20, gone by); else None.
     The mark says which stall it is: the same one is told once."""
-    if v["status"] != "working" or task["state"] != "running" or starting(task) or task.get("retry"):
+    if v["status"] != "working" or task["state"] != "running" or starting(task):
         return None
     last = activity(task, live)
     if now() - last >= QUIET_MS:
@@ -78,12 +77,22 @@ def news_line(s, t, v, event, words=None):
             "failed": f"{ref} failed: {v.get('why') or 'Agent stopped'} ({title})",
             "stalled": f"{ref} {words} ({title})",
             "working-again": f"{ref} is working again: {(t.get('back') or {}).get('why') or 'its agent is at work again'} ({title})",
-            "backup": f"{ref} backup: {words} ({title})",
+            # A schedule's run that only had something to say (ready --told): its words, for the space's chat.
+            "told": f"{ref} ({title}), a schedule's run, says: {words}",
             # Its space's "When a task is accepted" command failed (after_accept.py): the task stays done.
             "accept-failed": f"{ref} is done, but its \"When a task is accepted\" command failed: {words} ({title})",
             "done": f"{ref} is done" + (": merged" if t.get("merged") else ": nothing to merge" if t.get("nothing_to_merge")
                                         else ": accepted" if t.get("accepted_at") else "") + f" ({title})"}[event]
     return f'<herdr-news task="{attr(ref)}" event="{event}">{text.replace("<", "‹").replace(">", "›")}</herdr-news>'
+
+
+def untold(t):
+    """A schedule's run that ended on ready --told, its words not passed on to its space's chat yet."""
+    return t.get("quiet") == "told" and bool(t.get("told")) and not t.get("told_sent")
+
+
+# Lines that stand apart: neither replaced by a newer word on the same task nor dropped when it moved on.
+APART = {"accept-failed", "told"}
 
 
 def accept_failed(t):
@@ -105,8 +114,9 @@ def news_state(s, t, live):
     else:
         v = {"status": t["state"] if t["state"] in STATUSES else "todo", "needs": None, "why": None}
     event = {"ready": "ready", "done": "done", "needs": "needs-you"}.get(v["status"])
-    if event == "needs-you" and (v["needs"] in ("stopped", "provider") or str(v.get("why") or "").startswith("Couldn't start")):
-        event = "failed"
+    if event == "needs-you" and (v["needs"] == "stopped" or str(v.get("why") or "").startswith("Couldn't start")):
+        # Stopped by the person themselves (herdr-task stop) is no news to their Assistant.
+        event = None if v.get("stopped_by") == "you" else "failed"
     stall = stall_of(t, v, live) if v["status"] == "working" else None
     return v, event, stall
 
@@ -125,7 +135,7 @@ def news_pass(report, folder=None):
         d = read_list(path)
         if not d or not os.path.isdir(d.get("folder") or ""):
             continue
-        active = any(t.get("state") in ("running", "ready") or accept_failed(t) for t in d.get("tasks") or [])
+        active = any(t.get("state") in ("running", "ready") or accept_failed(t) or untold(t) for t in d.get("tasks") or [])
         with Store(locate(d["folder"]), write=active) as s:
             mine = seen.setdefault(s.slug, {})
             # The first look at a list only notes how its tasks are: old news isn't news.
@@ -183,20 +193,19 @@ def news_pass(report, folder=None):
                 prev = mine.get(str(t["id"]))
                 mine[str(t["id"])] = {"status": cur["status"], "stall": cur["stall"] or (prev or {}).get("stall"),
                                       **({"needs": v["needs"]} if v.get("needs") else {})}
-                # Its backup took over (takeover()): told once; on a first look, old news.
-                b = t.get("backup") or {}
-                backup = s.write and b.get("state") == "started" and not b.get("told")
-                if backup:
-                    b["told"] = True
-                    s.dirty = True
                 # Its "When a task is accepted" command failed (after_accept.py): told once, even on a first look.
                 failed = s.write and accept_failed(t)
                 if failed:
                     t["after_accept"]["told"] = True
                     s.dirty = True
-                if (first and not failed) or t.get("archived") or not t.get("space"):
+                # A schedule's run that only had something to say (3.2): its words go to its space's chat, once.
+                told = s.write and untold(t)
+                if told:
+                    t["told_sent"] = now()
+                    s.dirty = True
+                if (first and not failed and not told) or t.get("archived") or not t.get("space"):
                     continue
-                lines = [("backup", news_line(s, t, v, "backup", backup_news(t)))] if backup else []
+                lines = [("told", news_line(s, t, v, "told", t["told"]))] if told else []
                 if failed:
                     lines.append(("accept-failed", news_line(s, t, v, "accept-failed", accept_failure(t))))
                 # Taken back to work after it said ready (back_to_work(), busy_again()): told as it happens.
@@ -204,14 +213,15 @@ def news_pass(report, folder=None):
                 if v["status"] == "working" and ((prev or {}).get("status") in ("ready", "merging")
                                                  or (prev or {}).get("needs") == "attention" and t.get("attention")):
                     event = "working-again"
-                if event and (prev or {}).get("status") != v["status"]:
+                # A schedule's run that ended quietly (ready --nothing / --told) is no "done" news: nothing, or its own words.
+                if event and (prev or {}).get("status") != v["status"] and not t.get("quiet"):
                     lines.append((event, news_line(s, t, v, event)))
                 if stall and stall[0] != (prev or {}).get("stall"):
                     lines.append(("stalled", news_line(s, t, v, "stalled", stall[1])))
                 for ev, text in lines:
                     # A newer word on the same task replaces one not sent yet.
-                    # A backup's line stands apart: it neither replaces nor is replaced.
-                    outbox[:] = [x for x in outbox if not (x["key"] == key and not {"backup", "accept-failed"} & {ev, x["event"]}
+                    # A failed command's line stands apart: it neither replaces nor is replaced.
+                    outbox[:] = [x for x in outbox if not (x["key"] == key and not APART & {ev, x["event"]}
                                                            and (x["event"] == ev or ev != "stalled"))]
                     outbox.append({"key": key, "space": bare(t["space"]), "folder": os.path.basename(s.loc["folder"]), "event": ev, "status": v["status"],
                                    "stall": stall[0] if ev == "stalled" else None, "text": text, "at": now()})
@@ -222,8 +232,8 @@ def news_pass(report, folder=None):
     # Still true? A line whose task moved on since (or was removed) goes unsaid.
     def holds(x):
         c = current.get(x["key"])
-        if (folder and c is None) or x["event"] in ("backup", "accept-failed"):
-            return True  # another folder's task: not looked at this time; a backup's or failed command's line is news either way
+        if (folder and c is None) or x["event"] in APART:
+            return True  # another folder's task: not looked at this time; a failed command's line is news either way
         return bool(c) and (c["stall"] == x["stall"] if x["event"] == "stalled" else c["status"] == x["status"])
     outbox[:] = [x for x in outbox if holds(x) and now() - x["at"] < NEWS_KEEP_MS]
     for space in dict.fromkeys(x["space"] for x in outbox):
@@ -313,11 +323,12 @@ def news_send(address, text, check=True):
     if is_codex(k):
         codex_settle(address, text)
     elif (k.get("labels") or {}).get("herdr.agent", "claude") == "claude" and status_word(k) == "working":
-        for i in range(4):
-            time.sleep(0.3 if i else 0.15)
+        for i in range(10):
+            time.sleep(0.25 if i else 0.15)
             screen = run(["hc", "read", address, "--lines", "40"]).stdout
-            if re.search(r"ctrl\+enter to send now", screen, re.I):
-                run(["hc", "keys", address, "ctrl+enter"])
+            if QUEUED.search(screen):
+                if status_word(hc_json("get", address) or {}) == "working":
+                    run(["hc", "keys", address, "ctrl+enter"])
                 break
     return True
 
@@ -337,9 +348,10 @@ def codex_busy(k):
     return bool(k) and is_codex(k) and status_word(k) == "working"
 
 
-def codex_settle(address, text, tries=3):
-    """After a send to Codex: a draft it left for the queue is queued (Tab); one still in its input box (the last
-    › line on, past the conversation) is sent. Never presses anything when the box is empty."""
+def codex_settle(address, text, tries=3, steer=False):
+    """After a send to Codex: a draft it left for the queue is queued (Tab), or with steer (the person's own message,
+    SHEP-329) sent now (Enter: Codex takes it mid-turn); one still in its input box (the last › line on, past the
+    conversation) is sent. Never presses anything when the box is empty."""
     words = re.sub(r"\s+", " ", text).strip()
     probe = words[1:25].strip()  # past the first letter, which may be the one dropped
     for i in range(tries):
@@ -348,12 +360,60 @@ def codex_settle(address, text, tries=3):
         at = max((n for n, ln in enumerate(lines) if ln.lstrip().startswith("›")), default=None)
         box = " ".join(ln.strip() for ln in lines[at:]) if at is not None else ""
         if re.search(r"tab to queue", box, re.I):
-            run(["hc", "keys", address, "tab"])
-            return "queued"
+            run(["hc", "keys", address, "enter" if steer else "tab"])
+            return "sent" if steer else "queued"
         if probe and probe in box:
             run(["hc", "keys", address, "enter"])
             return "sent"
     return None
+
+
+# ---- the person's message to a working agent (SHEP-329) ---------------------------------------
+# It must be in within seconds, always: the person's message wins over what the agent is doing. Claude Code holds a
+# message typed mid-turn in its own queue ("Queued · ctrl+enter to send now"): its Ctrl+Enter takes it in mid-turn
+# (a running shell or tool call moves to the background); still queued after STEER_GRACE, Esc stops the turn (the
+# running call is cut off) and Claude Code sends the queue at once, so the agent reads it first. Codex (0.163) takes
+# a message typed mid-turn by itself. The same as core/send.js steerNow, for herdr-task reply.
+
+STEER_GRACE = 5.0
+
+
+def steer(address, grace=STEER_GRACE):
+    """Claude Code's queued message in now (see above). Only while it works (on a dialog of its own a key would answer
+    it) and its screen shows the message queued. True: a key was pressed."""
+    screen = lambda: run(["hc", "read", address, "--lines", "40"]).stdout
+    working = lambda: status_word(hc_json("get", address) or {}) == "working"
+    for i in range(20):
+        time.sleep(0.25 if i else 0.15)
+        if not working():
+            return False
+        if QUEUED.search(screen()):
+            break
+    else:
+        return False
+    run(["hc", "keys", address, "ctrl+enter"])
+    for _ in range(int(grace / 0.25)):
+        time.sleep(0.25)
+        if not QUEUED.search(screen()) or not working():
+            return True
+    run(["hc", "keys", address, "esc"])
+    return True
+
+
+def person_send(address, text):
+    """The person's message to an agent (herdr-task reply): sent now, a working one steered (see above). Held only
+    while the person writes in that agent's own box (typing()). Returns "sent", "held" or None (hc refused it)."""
+    if typing(address):
+        hold(address, text)
+        return "held"
+    if run(["hc", "send", address, text]).returncode != 0:
+        return None
+    k = hc_json("get", address) or {}
+    if is_codex(k):
+        codex_settle(address, text, steer=True)
+    elif (k.get("labels") or {}).get("herdr.agent", "claude") == "claude":
+        steer(address)
+    return "sent"
 
 
 def plain_send(address, text):
@@ -367,7 +427,7 @@ def plain_send(address, text):
 
 # ---- the person is writing ------------------------------------------------------------------
 # Nothing automatic is typed into an agent while the person writes to it (HERD-71): news,
-# autopilot wakes, the overview, GitHub news, another Assistant's words, a task's messages. They
+# the overview, GitHub news, another Assistant's words, a task's messages. They
 # wait until the person has sent or cleared what they wrote, then go as one message. Writing is
 # its chat box holding unsent words (mods/chat labels the terminal herdr.typing=<ms>, again each
 # minute while they stay, removed once they're gone), or the CLI's own input line holding text
@@ -377,7 +437,7 @@ def plain_send(address, text):
 TYPING = "herdr.typing"
 TYPING_KEEP_MS = 5 * 60000     # unsent words untouched this long hold nothing any more
 # The person's last message to an agent: the chat (window or web) labels its terminal herdr.said=<ms>
-# as it sends (core/send.js markSaid). Autopilot waits while they chat (#1217).
+# as it sends (core/send.js markSaid).
 SAID = "herdr.said"
 CHATTING_MS = 5 * 60000        # a message this recent: the person is chatting with it
 

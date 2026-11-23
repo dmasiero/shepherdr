@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { where as paths } from "./paths.ts";
 import type { Where } from "./voice-tools.ts";
+import { spawn } from "./spawn.ts";
 
 export const T = { HANGUP: 0x00, UUID: 0x01, DTMF: 0x03, AUDIO: 0x10, ERROR: 0xff } as const;
 /** 20 ms of 8 kHz 16-bit mono */
@@ -99,7 +100,7 @@ export const plain = (ip: string) => ip.replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i
 /** This machine's Tailscale IPv4 address, or null. */
 export async function tailnetIP(): Promise<string | null> {
   try {
-    const p = Bun.spawn(["tailscale", "ip", "-4"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+    const p = spawn(["tailscale", "ip", "-4"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
     const out = await new Response(p.stdout).text();
     return (await p.exited) === 0 ? out.trim().split("\n")[0] || null : null;
   } catch { return null; }

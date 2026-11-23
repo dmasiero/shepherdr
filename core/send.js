@@ -2,7 +2,8 @@
 // the tag lines Herdr puts before them (the message it replies to, the tasks it mentions), then hc send. When
 // the agent waits on its own dialog in its terminal (a question, a permission), Esc closes it and the words go
 // as a message ("Reply instead…"). Claude Code holds a message typed mid-turn until its turn ends: its own
-// "send now" (Ctrl+Enter) makes it steer at once (DECISIONS: messages are never held unless asked).
+// "send now" (Ctrl+Enter) makes it steer at once, and Esc if that didn't take within ~5 s (steerNow; DECISIONS:
+// messages are never held unless asked).
 // io = { hc(args) -> Promise<{ code, stdout, stderr }>, sleep(ms), status() -> the agent's status now }.
 // Shared core: the source is core/send.js; bin/sync-shared copies it into the mods in lib/COPIES.
 
@@ -52,17 +53,56 @@ export async function replyInstead(io, addr, text) {
   return r;
 }
 
-// Claude Code's "send now" for a message it queued while working: Ctrl+Enter, only when its screen offers it
-// (pressed on an empty prompt it would do something else). Also a queued message's own Send now (#662), for one left
-// in its queue when the screen didn't offer it in time. -> whether it was pressed.
-export async function steerNow(io, addr) {
-  for (let i = 0; i < 4; i++) {
-    await io.sleep(i ? 300 : 150);
-    const r = await io.hc(["read", addr, "--lines", "40"]).catch(() => null);
-    if (/ctrl\+enter to send now/i.test(r?.stdout ?? "")) { await io.hc(["keys", addr, "ctrl+enter"]); return true; }
-    if (io.status() !== "working") return false;
+// Claude Code's sign that a message waits in its own queue: "⎿  Queued · ctrl+enter to send now" under it (2.1.330 and
+// older, at any width) and "Press up to edit queued messages" in its box while any wait. Either one means its Ctrl+Enter
+// sends what is queued (never a half-typed draft: the box shows that placeholder only while it is empty).
+export const QUEUED = /ctrl\+enter to send now|press up to edit queued messages|^\s*⎿\s+Queued\b/im;
+// How long a send waits for that sign (the screen can take a moment to draw it, the more on a slow machine), and how
+// long the message may stay queued after Ctrl+Enter before Esc puts it in (SHEP-329): grace looks, every `every` ms.
+export const STEER = { looks: 20, every: 250, grace: 20, after: 12 };
+
+// Claude Code at work, as far as a key may be pressed in it: its status says working (never on a dialog of its own,
+// "blocked", where a key would answer it), or, its status unknown, its screen still offers "esc to interrupt".
+const atWork = (io, screen) => {
+  const st = io.status();
+  return st === "working" || (st !== "blocked" && st !== "idle" && st !== "done" && /esc to interrupt/i.test(screen));
+};
+const screenOf = async (io, addr) => (await io.hc(["read", addr, "--lines", "40"]).catch(() => null))?.stdout ?? "";
+
+// The person's message must reach a working Claude Code within seconds, always (SHEP-329: their message wins). Its
+// own "send now" (Ctrl+Enter) first: it moves a running shell or tool call to the background and takes the message
+// in mid-turn, so nothing is lost. Only while its screen shows a queued message (pressed on an empty prompt or a
+// dialog it would do something else). If the message is still queued after a short grace (~5 s), Esc: the turn stops
+// (a running command is cut off) and Claude Code sends what is queued at once, so the agent reads the person's
+// message first. Also a queued message's own Send now (#662). -> whether it was pressed (true: it went in, or will
+// as the turn ends).
+// body: the message, when known: a Claude Code that puts it back in its box on Esc (older ones did) gets its Enter.
+export async function steerNow(io, addr, opts = STEER, body = null) {
+  let seen = false;
+  for (let i = 0; i < opts.looks; i++) {
+    await io.sleep(i ? opts.every : 150);
+    const screen = await screenOf(io, addr);
+    if (!atWork(io, screen)) return false;
+    if (QUEUED.test(screen)) { seen = true; break; }
   }
-  return false;
+  if (!seen) return false;
+  await io.hc(["keys", addr, "ctrl+enter"]);
+  for (let i = 0; i < opts.grace; i++) {
+    await io.sleep(opts.every);
+    const screen = await screenOf(io, addr);
+    // in, or its turn ended (what is queued goes in by itself), or a dialog came up: never a key on that
+    if (!QUEUED.test(screen) || !atWork(io, screen)) return true;
+  }
+  // still queued behind something Ctrl+Enter didn't move: Esc stops the turn and the queue goes in at once
+  await io.hc(["keys", addr, "esc"]);
+  for (let i = 0; i < opts.after; i++) {
+    await io.sleep(opts.every);
+    const screen = await screenOf(io, addr);
+    if (QUEUED.test(screen)) continue;
+    if (body && holds(inputLine(screen), body, true)) await io.hc(["keys", addr, "enter"]).catch(() => null);
+    return true;
+  }
+  return true;
 }
 
 // A picture's path on a line of its own, as a sent file goes after the words.
@@ -176,12 +216,6 @@ export async function sendTyped(io, addr, kind, body, opts = SETTLE, again = fal
 // A message that stays in Claude Code's box: sending it again presses its Enter (never types it twice).
 export const STUCK = "It's still in the agent's message box: its Enter didn't take.";
 
-// The person wrote to this agent: its terminal says when (herdr.said=<ms>), so Autopilot waits while they chat
-// (herdr-task's news.py chatting, #1217). Never waited on, never fails the send.
-export function markSaid(io, addr, at = Date.now()) {
-  Promise.resolve().then(() => io.hc(["label", addr, `herdr.said=${at}`])).catch(() => {});
-}
-
 // The person's reaction to a message, as the agent reads it (on: added, else removed).
 export const reactionLine = (emoji, text, on = true) => `<hc from="person" ${on ? "reaction" : "reaction-removed"}="${emoji}" to="${excerpt(text)}"/>`;
 
@@ -190,6 +224,6 @@ export const reactionLine = (emoji, text, on = true) => `<hc from="person" ${on 
 export async function sendBody(io, addr, kind, body, again = false) {
   let r = await sendTyped(io, addr, kind, body, SETTLE, again);
   if (r.code !== 0 && refusal(r).kind === "blocked" && (kind === "claude" || kind === "codex")) r = await replyInstead(io, addr, body);
-  if (r.code === 0 && kind === "claude") await steerNow(io, addr);
+  if (r.code === 0 && kind === "claude") await steerNow(io, addr, STEER, body);
   return r;
 }

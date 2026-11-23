@@ -11,26 +11,28 @@ import type { Hub } from "./hub.ts";
 import { HOME, where } from "./paths.ts";
 import * as SC from "../core/secrets.js";
 import * as HC from "../core/host.js";
+import { spawn } from "./spawn.ts";
 import { refusal } from "../core/send.js"; // fork: SHEP-76
 
 const { NAME, ASK, asksIn, keptLine, declinedLine, SECRETS_DOC, secretsRecord, believeRecord, autoKeeper, followTo, COUNT_SCRIPT } = SC as any;
 const { HOST_DOC, newestHost } = HC as any;
 const VAULT = where().vault;
 const MARK = where()["secret-remote"];
-const APP = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
-const BIN = [join(APP, "bin", "herdr-secret"), join(HOME, ".local", "share", "shepherdr", "bin", "herdr-secret"), join(HOME, ".local", "bin", "herdr-secret")].find(existsSync) ?? "herdr-secret";
+// herdr-secret beside this service (Shepherdr's own folder, or a checkout), else the installed one. It runs in
+// Shepherdr's own herdr-core session, as this service does (session.ts), so both read the same record.
+const BIN = [join(import.meta.dir, "..", "bin", "herdr-secret"), join(HOME, ".local", "share", "shepherdr", "bin", "herdr-secret"), join(HOME, ".local", "bin", "herdr-secret")].find(existsSync) ?? "herdr-secret";
 
 /** herdr-secret as installed here. */
 export const secretBin = () => BIN;
 
 async function run(args: string[], input?: string) {
-  const p = Bun.spawn([BIN, ...args], { stdin: input === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" });
+  const p = spawn([BIN, ...args], { stdin: input === undefined ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe" });
   if (input !== undefined) { (p.stdin as any).write(input); (p.stdin as any).end(); }
   const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
   return { code: await p.exited, out, err };
 }
 async function hc(args: string[]) {
-  const p = Bun.spawn([process.env.SHEPHERDR_HC || "hc", ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+  const p = spawn([process.env.SHEPHERDR_HC || "hc", ...args], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
   return p.exited;
 }
 
@@ -52,7 +54,7 @@ function scope(level: string): { args: string[]; words: string } {
 /** fork: SHEP-76: a message for an agent with a dialog open, held in herdr-task's held messages (herdr-task _hold, the
  *  text on stdin, as upstream's Mark up notes, #1213): its scheduler sends it once hc takes it. True once it is kept. */
 async function holdFor(to: string, text: string): Promise<boolean> {
-  const p = Bun.spawn([process.env.SHEPHERDR_HERDR_TASK || "herdr-task", "_hold", to], { stdout: "ignore", stderr: "ignore", stdin: new Blob([text]) });
+  const p = spawn([process.env.SHEPHERDR_HERDR_TASK || "herdr-task", "_hold", to], { stdout: "ignore", stderr: "ignore", stdin: new Blob([text]) });
   return (await p.exited) === 0;
 }
 
@@ -214,7 +216,7 @@ export class SecretsHome {
       const w = t.labels?.["herdr.secret.want"];
       if (!w || !t.address.includes("/") || this.served.has(w)) continue;
       this.served.add(w);
-      void Bun.spawn([BIN, "serve", t.address], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited.catch(() => {});
+      void spawn([BIN, "serve", t.address], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited.catch(() => {});
     }
     if (this.served.size > 200) this.served.clear();
   }

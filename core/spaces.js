@@ -24,11 +24,22 @@ export function chatPane(k) {
 }
 
 // A space's Assistant: the live coordinator terminal labelled for it, on the space's machine (labels hold that
-// machine's own ids, without the "<machine>/" an app id has).
+// machine's own ids, without the "<machine>/" an app id has). null when none runs: one that ended (killed, crashed,
+// exited) is never the agent a message goes to (SHEP-297: a send went to it and failed "That agent isn't running.").
 export function assistantOf(space, ts) {
+  return assistantsOf(space, ts).find((k) => k.state === "live") ?? null;
+}
+
+// The terminal a space's chat reads: its live Assistant, else the latest that ended (its chat's history and unread
+// mark stay until a new one starts; a message to it starts one again: service/actions.ts).
+export function lastAssistantOf(space, ts) {
+  return assistantOf(space, ts) ?? assistantsOf(space, ts).reduce((latest, k) => !latest || (Number(k.created_ms) || 0) >= (Number(latest.created_ms) || 0) ? k : latest, null);
+}
+
+function assistantsOf(space, ts) {
   const id = String(space.id).split("/").pop();
-  return ts.find((k) => k.state === "live" && k.labels?.["herdr.role"] === "coordinator"
-    && k.labels?.["herdr.coordinator.space"] === id && machineOf(k.address) === (space.machine ?? null)) ?? null;
+  return ts.filter((k) => k.labels?.["herdr.role"] === "coordinator"
+    && k.labels?.["herdr.coordinator.space"] === id && machineOf(k.address) === (space.machine ?? null));
 }
 
 // The turn last read. Before any mark: the turn the window last saw it done at (its "chat.seen").
@@ -83,6 +94,24 @@ export function sharedNames(rows) {
   return new Set(rows.filter((r) => (count.get(key(r)) ?? 0) > 1).map((r) => r.id));
 }
 export const isHomeFolder = (path, home = null) => { const p = String(path ?? "").replace(/\/+$/, ""); return (!!home && p === home) || (HOME_AT.test(p) && !p.replace(HOME_AT, "")); };
+// A folder as one path, to compare two (SHEP-296): ~ is home, no trailing slash ("/" stays "/").
+/** @param {unknown} path @param {string | null} [home] */
+export const folderKey = (path, home = null) => {
+  let p = String(path ?? "").trim();
+  if (home && (p === "~" || p.startsWith("~/"))) p = home + p.slice(1);
+  return p.length > 1 ? p.replace(/\/+$/, "") || "/" : p;
+};
+/** @param {unknown} a @param {unknown} b @param {string | null} [home] */
+export const sameFolder = (a, b, home = null) => !!folderKey(a, home) && folderKey(a, home) === folderKey(b, home);
+// Everything: the root space, the serving machine's (machine null) one in its home folder. A store that holds two
+// there (SHEP-296: Everything removed, re-made, then a Home made by hand) always gets the same one, whatever the
+// list's order: the one with id "home" (as the service makes it), else the smallest id. spaces: [{ id, folder, machine }].
+export function everythingOf(spaces, home) {
+  const there = (Array.isArray(spaces) ? spaces : []).filter((s) => s && !s.machine && sameFolder(s.folder, home, home));
+  return there.find((s) => s.id === "home") ?? [...there].sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))[0] ?? null;
+}
+// What the service answers when Everything would be removed or archived (voice says its own).
+export const EVERYTHING_STAYS = "Everything is the root chat, so it can't be removed or archived.";
 export function spaceName(s, { at = s?.folder, repo = null, home = null, named = true } = {}) {
   if ((named && s?.name && s.name !== "~") || !at) return s?.name && s.name !== "~" ? s.name : "Home";
   return isHomeFolder(at, home) ? "Home" : repo ?? String(at).replace(/\/+$/, "").split("/").pop();
@@ -139,27 +168,6 @@ export function withRestoredSection(d, gone) {
   if (!gone?.section || x.sections.some((s) => s.id === gone.section.id)) return x;
   const filed = new Set(x.sections.flatMap((s) => s.spaces ?? []));
   x.sections.splice(Math.min(gone.at, x.sections.length), 0, { ...gone.section, spaces: (gone.section.spaces ?? []).filter((s) => !filed.has(s)) });
-  return x;
-}
-
-// fork: a section dragged among its machine's (SHEP-14). Its new place, from the window's drag: it takes the place of
-// the one it was dropped on (`over`), the rest shift toward where it was. The same list back when nothing moves.
-export function sectionMoved(ids, id, over) {
-  const from = ids.indexOf(id), to = ids.indexOf(over);
-  if (from < 0 || to < 0 || from === to) return ids;
-  const out = ids.filter((x) => x !== id);
-  out.splice(to, 0, id);
-  return out;
-}
-// The sections' new order (the window's drag, the web's `order` action): those `ids` names take, in that order, the
-// places they held among all of them; every other section (another machine's) stays where it was. Unknown ids go.
-export function withSectionOrder(d, ids) {
-  const x = tidyBar(d);
-  const byId = new Map(x.sections.map((s) => [s.id, s]));
-  const want = [...new Set(ids)].filter((id) => byId.has(id));
-  const moving = new Set(want);
-  let k = 0;
-  x.sections = x.sections.map((s) => (moving.has(s.id) ? byId.get(want[k++]) : s));
   return x;
 }
 
