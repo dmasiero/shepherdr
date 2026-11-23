@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { anyMod, EXTRA_KEYS, keyBytes, modText, NO_MODS, parseKey, tapMod, typedDiff, withMods } from './input.ts'
+import { keyBytes, parseKey } from './input.ts'
 
 test("a person's keys are a terminal's bytes, so they go in with their text and never wait (SHEP-20)", () => {
   expect(keyBytes(['enter'], false)).toBe('\r')
@@ -25,26 +25,13 @@ test('a key with no bytes here leaves the whole press to terminal.keys', () => {
   expect(keyBytes(['enter', 'ctrl+1'], false)).toBeNull()
 })
 
-test('the touch box types what changed: new letters, a Backspace per letter taken back, Enter for a newline', () => {
-  expect(typedDiff('', 'ls')).toBe('ls')
-  // a keyboard composing a word: each letter once, in order
-  expect(typedDiff('h', 'he')).toBe('e')
-  expect(typedDiff('he', 'hel')).toBe('l')
-  // its correction swaps the word's end
-  expect(typedDiff('teh', 'the')).toBe('\x7f\x7fhe')
-  expect(typedDiff('hel', 'he')).toBe('\x7f')
-  expect(typedDiff('ls', 'ls\n')).toBe('\r')
-  expect(typedDiff('', '\n')).toBe('\r')
-  expect(typedDiff('é', 'é')).toBe('')
-})
-
 test('a key name splits into its modifiers and its key', () => {
   expect(parseKey('ctrl+alt+up')).toEqual({ ctrl: true, alt: true, shift: false, base: 'up' })
   expect(parseKey('alt++')).toEqual({ ctrl: false, alt: true, shift: false, base: '+' })
   expect(parseKey('enter')).toEqual({ ctrl: false, alt: false, shift: false, base: 'enter' })
 })
 
-test('keys with modifiers are xterm’s bytes, so the sticky Ctrl and Alt go in beside the text too (SHEP-23)', () => {
+test('keys with modifiers are xterm’s bytes, so they go in beside the text too (SHEP-23)', () => {
   expect(keyBytes(['ctrl+l'], false)).toBe('\x0c')
   expect(keyBytes(['ctrl+L'], false)).toBe('\x0c')
   expect(keyBytes(['alt+B'], false)).toBe('\x1bB')
@@ -61,83 +48,4 @@ test('keys with modifiers are xterm’s bytes, so the sticky Ctrl and Alt go in 
   expect(keyBytes(['ctrl+1'], false)).toBeNull()
   expect(keyBytes(['shift+a'], false)).toBeNull()
   expect(keyBytes(['a'], false)).toBeNull()
-})
-
-test('a tap on Ctrl or Alt engages it; a second tap lets it go', () => {
-  const ctrl = tapMod(NO_MODS, 'ctrl')
-  expect(ctrl).toEqual({ ctrl: true, alt: false })
-  expect(anyMod(ctrl)).toBe(true)
-  expect(tapMod(ctrl, 'alt')).toEqual({ ctrl: true, alt: true })
-  expect(tapMod(ctrl, 'ctrl')).toEqual(NO_MODS)
-  expect(anyMod(NO_MODS)).toBe(false)
-})
-
-test('the engaged modifiers go on the next key, the row’s own keys too', () => {
-  expect(withMods('up', { ctrl: true, alt: false })).toBe('ctrl+up')
-  expect(withMods('enter', { ctrl: false, alt: true })).toBe('alt+enter')
-  expect(withMods('ctrl+c', { ctrl: false, alt: true })).toBe('ctrl+alt+c')
-  expect(withMods('ctrl+c', { ctrl: true, alt: false })).toBe('ctrl+c')
-  expect(withMods('shift+tab', { ctrl: false, alt: true })).toBe('alt+shift+tab')
-  expect(withMods('L', { ctrl: true, alt: false })).toBe('ctrl+l')
-  expect(withMods('B', { ctrl: false, alt: true })).toBe('alt+B')
-  expect(withMods('esc', NO_MODS)).toBe('esc')
-})
-
-test('typed text takes the modifiers on its first new character only, the rest in order after it', () => {
-  const ctrl = { ctrl: true, alt: false }, alt = { ctrl: false, alt: true }
-  expect(modText('l', ctrl)).toEqual([{ keys: ['ctrl+l'] }])
-  expect(modText('L', ctrl)).toEqual([{ keys: ['ctrl+l'] }])
-  expect(modText('b', alt)).toEqual([{ keys: ['alt+b'] }])
-  expect(modText('c', { ctrl: true, alt: true })).toEqual([{ keys: ['ctrl+alt+c'] }])
-  // a keyboard that puts in more at once (a suggestion): only its first letter is the combo
-  expect(modText('cd ', ctrl)).toEqual([{ keys: ['ctrl+c'] }, { text: 'd ' }])
-  // a correction's Backspaces first, as they are
-  expect(modText('\x7f\x7fxy', ctrl)).toEqual([{ text: '\x7f\x7f' }, { keys: ['ctrl+x'] }, { text: 'y' }])
-  // the keyboard's Enter is the Enter key
-  expect(modText('\r', alt)).toEqual([{ keys: ['alt+enter'] }])
-  expect(modText('\x7f', ctrl)).toEqual([{ text: '\x7f' }])
-  // nothing engaged: the text as it is
-  expect(modText('ls', NO_MODS)).toEqual([{ text: 'ls' }])
-  expect(modText('', ctrl)).toEqual([])
-})
-
-test('the arrows take the sticky Ctrl and Alt, and Ctrl-C is the sticky Ctrl then c (SHEP-24)', () => {
-  const ctrl = { ctrl: true, alt: false }
-  expect(withMods('left', ctrl)).toBe('ctrl+left')
-  expect(withMods('right', { ctrl: false, alt: true })).toBe('alt+right')
-  expect(keyBytes(['left', 'right'], false)).toBe('\x1b[D\x1b[C')
-  expect(keyBytes([withMods('left', ctrl), withMods('right', ctrl)], false)).toBe('\x1b[1;5D\x1b[1;5C')
-  expect(modText('c', ctrl)).toEqual([{ keys: ['ctrl+c'] }])
-})
-
-test('the extra-keys bar is two rows of seven in groups, each key with the input it sends (SHEP-26, SHEP-32)', () => {
-  expect(EXTRA_KEYS.map((row) => row.map((x) => x.label))).toEqual([
-    ['ESC', 'TAB', 'PGUP', 'HOME', '↑', 'END', '−'],
-    ['CTRL', 'ALT', 'PGDN', '←', '↓', '→', 'ENTER'],
-  ])
-  const sent = (x: (typeof EXTRA_KEYS)[number][number], appCursor = false) =>
-    'key' in x ? keyBytes([x.key], appCursor) : 'text' in x ? x.text : `mod:${x.mod}`
-  expect(EXTRA_KEYS.flat().map((x) => sent(x))).toEqual([
-    '\x1b', '\t', '\x1b[5~', '\x1b[H', '\x1b[A', '\x1b[F', '-',
-    'mod:ctrl', 'mod:alt', '\x1b[6~', '\x1b[D', '\x1b[B', '\x1b[C', '\r',
-  ])
-  // in a full-screen program (application cursor mode) the arrows, HOME and END are SS3
-  expect(EXTRA_KEYS.flat().filter((x) => 'key' in x && /up|down|left|right|home|end/.test(x.key) && !/page/.test(x.key)).map((x) => sent(x, true)))
-    .toEqual(['\x1bOH', '\x1bOA', '\x1bOF', '\x1bOD', '\x1bOB', '\x1bOC'])
-  // no `/` any more: the phone's keyboard has it
-  expect(EXTRA_KEYS.flat().some((x) => x.label === '/')).toBe(false)
-  // every name is unique: it is the button's key and what a screen reader says
-  expect(new Set(EXTRA_KEYS.flat().map((x) => x.name)).size).toBe(14)
-  // ENTER takes the sticky modifiers too: ALT then ENTER is Esc then Enter, CTRL then ENTER plain Enter, both Esc, Enter
-  expect(keyBytes([withMods('enter', { ctrl: false, alt: true })], false)).toBe('\x1b\r')
-  expect(keyBytes([withMods('enter', { ctrl: true, alt: false })], false)).toBe('\r')
-  expect(keyBytes([withMods('enter', { ctrl: true, alt: true })], false)).toBe('\x1b\r')
-  // the bar's keys take the sticky Ctrl and Alt: CTRL then HOME, ALT then PGUP, CTRL then / or −
-  const ctrl = { ctrl: true, alt: false }, alt = { ctrl: false, alt: true }
-  expect(keyBytes([withMods('home', ctrl), withMods('pageup', alt), withMods('end', ctrl)], false)).toBe('\x1b[1;5H\x1b[5;3~\x1b[1;5F')
-  expect(modText('/', ctrl)).toEqual([{ keys: ['ctrl+/'] }])
-  expect(modText('-', alt)).toEqual([{ keys: ['alt+-'] }])
-  expect(keyBytes(['alt+-'], false)).toBe('\x1b-')
-  // CTRL then l on the keyboard clears
-  expect(keyBytes(modText('l', ctrl).flatMap((p) => ('keys' in p ? p.keys : [])), false)).toBe('\x0c')
 })
