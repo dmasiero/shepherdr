@@ -38,3 +38,8 @@ test("the box hands its keys to the list first, and shows it over itself", () =>
   expect(box).toContain("if (paths.onKey(e, e.key === 'Enter' && !e.shiftKey && e.keyCode !== 229)) return")
   expect(box).toContain('{paths.list /* fork: SHEP-50 */}')
 })
+
+test("no effect of the list returns a value: a newer Chrome's scrollIntoView gives a promise, which blanked the page", () => {
+  const src = readFileSync(new URL('./paths.tsx', import.meta.url), 'utf8')
+  expect(src).not.toMatch(/useEffect\(\(\) => [^{]/)
+})

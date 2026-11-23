@@ -91,7 +91,10 @@ export function usePaths(chatKey: string, text: string, setText: (v: string) => 
 /** the list over the box: a tap (or Enter / Tab) takes one */
 export function PathList({ t, items, sel, pick }: { t: Typed; items: string[]; sel: number; pick: (entry: string) => void }) {
   const box = useRef<HTMLDivElement>(null)
-  useEffect(() => box.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' }), [sel, items])
+  // braces: a newer browser's scrollIntoView returns a promise, which React would take for the effect's cleanup
+  useEffect(() => {
+    box.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' })
+  }, [sel, items])
   return (
     <div ref={box} className="ppick" role="listbox" aria-label="Insert a file path">
       <div className="cap">{t.dir}</div>
