@@ -8017,10 +8017,14 @@ class LeftoverRolledBackData(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, True)
         self.file = os.path.join(self.dir, "shepherdr.json")
         with open(self.file, "w") as f:
-            # where write_lessons kept them: Everywhere's and a space's (its bare id or, the window's file, its full one)
-            json.dump({"version": 1, "everywhere": {"lessons": self.OLD, "agents": {"reactions": True}},
+            # where write_lessons kept them: Everywhere's and a space's (its bare id or, the window's file, its full one);
+            # from upstream's SHEP-335 a task's settings are its repo's, so a repo's entry holds them too, and the
+            # merge line the note must still show is Everywhere's (the note lists only Everywhere's task lines)
+            json.dump({"version": 1, "everywhere": {"lessons": self.OLD, "agents": {"reactions": True},
+                                                    "tasks": {"merge": "checks"}},
                        "spaces": {"sp1": {"lessons": self.OLD, "tasks": {"merge": "checks"}},
-                                  "vm/sp2": {"machine": "vm", "lessons": {"on": False}}}}, f)
+                                  "vm/sp2": {"machine": "vm", "lessons": {"on": False}}},
+                       "repos": {os.path.join(self.dir, "proj"): {"lessons": self.OLD, "tasks": {"merge": "checks"}}}}, f)
         self.terminals = {"t5": {"state": "live", "turn": 3, "labels": {"herdr.role": "coordinator", "herdr.space": "sp1"}}}
         self.err = io.StringIO()
         for target, name, value in [
@@ -8057,7 +8061,10 @@ class LeftoverRolledBackData(unittest.TestCase):
             s.dirty = True
         text = text.replace(ROOT, "<repo>").lower()  # the repo's own folder may be named after a task
         self.assertNotIn("lesson", text)
-        self.assertNotIn("touch", text)
+        # touches and touch_logs, never the word: upstream's brief now says "the tests for what you touched"
+        self.assertNotIn("touches", text)
+        self.assertNotIn("touch_log", text)
+        self.assertNotIn("/x/log.jsonl", text)
         with self.store.Store(self.loc, write=False) as s:
             self.assertEqual(s.data["tasks"][0]["title"], "Old, renamed")
         self.assertEqual(self.err.getvalue(), "")
@@ -10702,7 +10709,12 @@ class NeverTypedIntoAShell(unittest.TestCase):
     def test_tell_assistant_on_another_machine_types_nothing_into_its_shell(self):
         from unittest import mock
         self.assistant()
-        with mock.patch.object(self.machines.subprocess, "run", lambda argv, **kw: self.news.run(argv[argv.index("--") + 1:])), \
+
+        def there(argv):
+            inner = argv[argv.index("--") + 1:]
+            # fork: SHEP-61's hops run the command there through layout.there_argv (sh -c 'PATH=...; exec "$@"' sh ...)
+            return inner[4:] if inner[:2] == ["sh", "-c"] else inner
+        with mock.patch.object(self.machines.subprocess, "run", lambda argv, **kw: self.news.run(there(argv))), \
                 mock.patch.object(self.machines, "guard", lambda a: None), \
                 mock.patch.object(self.machines, "typing", lambda *a, **k: None):
             with self.assertRaises(self.machines.Fail) as e:
@@ -10796,6 +10808,9 @@ class RepoSettings(unittest.TestCase):
         with open(os.path.join(tmp, "bin", "hc"), "w") as f:
             f.write("#!/bin/sh\nexit 1\n")
         os.chmod(os.path.join(tmp, "bin", "hc"), 0o755)
+        # fork: on NixOS (nextgate's envfs /usr/bin) the narrow PATH below finds no git for herdr-task: link it in
+        if shutil.which("git"):
+            os.symlink(shutil.which("git"), os.path.join(tmp, "bin", "git"))
         repo = os.path.realpath(os.path.join(tmp, "repo-shep335-cli"))
         os.makedirs(repo)
         subprocess.run(["git", "-C", repo, "init", "-q"], check=True)

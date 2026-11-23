@@ -47,6 +47,15 @@ class Base(unittest.TestCase):
             f.write(FAKE_SHEPHERDR)
         os.chmod(p, 0o755)
         self.log = os.path.join(self.tmp, "log")
+        # fork: on NixOS (nextgate's envfs /usr/bin) the narrow PATH below finds no python3 for herdr-task's shebang, no
+        # git, nor the guard's basename or sed: the tools go in a bin of their own, from the caller's PATH, last (as
+        # test_guard's)
+        self.tools = os.path.join(self.tmp, "tools")
+        os.makedirs(self.tools)
+        for tool in ("basename", "cat", "dirname", "env", "git", "grep", "head", "python3", "readlink", "sed", "tr"):
+            found = shutil.which(tool)
+            if found:
+                os.symlink(found, os.path.join(self.tools, tool))
         for x in (mock.patch.object(store, "STORE", self.store), mock.patch.object(settings, "SETTINGS", os.path.join(self.tmp, "settings.json")),
                   mock.patch.object(automations, "ensure_scheduler", lambda quiet=False: {}),
                   mock.patch.object(automations, "default_space", lambda: "sp1"),
@@ -83,9 +92,9 @@ class Base(unittest.TestCase):
 
     def call(self, line, task_key, **env):
         """One shell call inside a task's terminal: the guard first on PATH, as launch starts its agent."""
-        e = {"HOME": os.environ["HOME"], "PATH": f"{BIN}:{self.fake}:/usr/bin:/bin", "FAKE_LOG": self.log,
+        e = {"HOME": os.environ["HOME"], "PATH": f"{BIN}:{self.fake}:/usr/bin:/bin:{self.tools}", "FAKE_LOG": self.log,
              "HC_SESSION": "shepherdr", "HERDR_TASK_STORE": self.store, "HERDR_BROWSER_TASK": task_key,
-             "SHEPHERDR_NO_MIGRATE": "1", **env}
+             "SHEPHERDR_NO_MIGRATE": "1", **env}  # fork: the tools last
         argv = guard.guard_argv(["sh", "-c", line], "shepherdr", self.store)
         return subprocess.run(argv, env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=120)
 

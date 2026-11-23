@@ -102,6 +102,24 @@ def free_port():
     return p
 
 
+# fork: on NixOS (nextgate's envfs /usr/bin) a PATH narrowed to /usr/bin:/bin finds none of the tools herdr-desktop and
+# the fakes run (sed, python3, tar...): they are linked from the caller's PATH into a bin of their own, put last. Never
+# agent-desktop, nor a display server (Xvnc, Xvfb, x11vnc): the tests say when those are there.
+TOOLS = ("awk", "basename", "cat", "chmod", "cp", "curl", "cut", "date", "dirname", "env", "find", "grep", "gzip", "head",
+         "id", "kill", "ln", "ls", "mkdir", "mktemp", "mv", "nohup", "od", "printf", "ps", "python3", "readlink", "rm",
+         "rmdir", "sed", "sh", "sha256sum", "shasum", "sleep", "sort", "tail", "tar", "tee", "touch", "tr", "uname", "wc",
+         "xargs")
+
+
+def link_tools(d):
+    os.makedirs(d, exist_ok=True)
+    for tool in TOOLS:
+        found = shutil.which(tool)
+        if found and not os.path.lexists(os.path.join(d, tool)):
+            os.symlink(found, os.path.join(d, tool))
+    return d
+
+
 class HerdrDesktop(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="shepherdr-ad-")
@@ -115,6 +133,7 @@ class HerdrDesktop(unittest.TestCase):
         self.mine = os.path.join(self.home, ".local/share/shepherdr/agent-desktop/1.3.1/agent-desktop")
         self.empty = os.path.join(self.tmp, "nothing")
         os.makedirs(self.empty)
+        self.tools = link_tools(os.path.join(self.tmp, "tools"))  # fork: NixOS (TOOLS)
 
     def on_path(self, version):
         d = os.path.join(self.tmp, f"path-{version}")
@@ -125,7 +144,7 @@ class HerdrDesktop(unittest.TestCase):
         return d
 
     def hd(self, *args, path=None, url=None, sha=None, **extra):
-        env = {"HOME": self.home, "PATH": f"{path or self.empty}:/usr/bin:/bin", "HERDR_DESKTOP_URL": url or "file://" + self.rel,
+        env = {"HOME": self.home, "PATH": f"{path or self.empty}:/usr/bin:/bin:{self.tools}", "HERDR_DESKTOP_URL": url or "file://" + self.rel,  # fork: the tools last
                "HERDR_DESKTOP_SHA256": sha or self.sha, "HERDR_DESKTOP_DRIVER": "shared", "HERDR_DESKTOP_WAIT": "0",
                "HERDR_DESKTOP_PORT": str(free_port()), **extra}
         return subprocess.run(["sh", HD, *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
@@ -252,7 +271,7 @@ class HerdrDesktop(unittest.TestCase):
             for n in os.listdir(d):
                 if n not in ("Xvnc", "Xvfb", "x11vnc") and not os.path.lexists(os.path.join(nox, n)):
                     os.symlink(os.path.join(d, n), os.path.join(nox, n))
-        st = self.status(HERDR_DESKTOP_DRIVER="own", PATH=nox)
+        st = self.status(HERDR_DESKTOP_DRIVER="own", PATH=f"{nox}:{self.tools}")  # fork: NixOS (TOOLS)
         self.assertFalse(st["ok"])
         self.assertIn("agent-desktop is here, but this machine still needs a virtual display with a screen server: Xvnc", st["problem"])
 
@@ -348,7 +367,8 @@ class MachinesSync(unittest.TestCase):
                    "ensure": [rel], "files": [{"path": rel, "data": base64.b64encode(data).decode(),
                                                "sha": hashlib.sha256(data).hexdigest(), "mode": 0o755, "at": 1}]}
         r = subprocess.run([sys.executable, "-c", machines.INSTALL], input=json.dumps(payload), capture_output=True, text=True,
-                           env={"HOME": home, "PATH": "/usr/bin:/bin"}, timeout=60)
+                           env={"HOME": home, "PATH": "/usr/bin:/bin:" + link_tools(os.path.join(home, "tools"))},  # fork: NixOS (TOOLS)
+                           timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout.splitlines()[-1])
 
