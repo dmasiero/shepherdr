@@ -45,6 +45,8 @@ export function toHtml(text: string, link?: (a: HTMLAnchorElement, kind: 'space'
     pre.replaceWith(box)
     box.append(pre, btn)
   }
+  // fork: Wide chat tables on phone. A table cell of a sentence or more keeps a readable width: a wide table then scrolls sideways (styles.css)
+  for (const cell of root.querySelectorAll('td, th')) if (longCell(cell.textContent ?? '')) cell.classList.add('long')
   for (const code of root.querySelectorAll('code')) {
     // a bit of code inside a link is the link's
     if (code.closest('pre, a')) continue
@@ -54,6 +56,10 @@ export function toHtml(text: string, link?: (a: HTMLAnchorElement, kind: 'space'
   const one = h.match(/^<p>([\s\S]*)<\/p>$/)
   return one && !one[1].includes('<p>') ? one[1] : h
 }
+
+// fork: Wide chat tables on phone
+/** a table cell long enough to need a minimum width: a few words or more, not a number, a name or a short word */
+export const longCell = (text: string) => text.trim().length > 24
 
 const shown = new WeakMap<Element, ReturnType<typeof setTimeout>>()
 
