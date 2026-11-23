@@ -62,6 +62,7 @@ import { Shows } from "./show.ts";
 import { dictate, liveToken, cachedKey, refused } from "./dictate.ts";
 import { readUsage } from "../core/voice.js";
 import { sh, exec } from "./model.ts";
+import { listPaths, machineOfChat } from "./path-pick.ts"; // fork: SHEP-50's "@~/" list
 import { folders, newSpace, newSpaceInfo } from "./spaces.ts";
 import { kindOf } from "../core/chat-reader.js";
 import * as SL from "../core/slash.js";
@@ -998,6 +999,14 @@ const server = Bun.serve<{ who: string }>({
       const sp = !a ? compat.allSpaces().find((s) => placeKey(s.id) === key) : null;
       const machine = a ? (a.includes("/") ? a.split("/")[0] : null) : sp?.machine ?? null;
       return json(await reachOf(machine));
+    }
+    if (path === "/api/paths") {
+      // fork: the "@~/" and "@/" list above the box (core/path-pick.js, SHEP-50): a folder's entries on the machine
+      // running this chat's agent (a chat with no agent yet: its space's machine)
+      const key = url.searchParams.get("chat") ?? "";
+      const machine = machineOfChat(key, (k) => compat.addrOf(k), (k) => compat.allSpaces().find((s) => placeKey(s.id) === k));
+      const entries = await listPaths((script, args) => sh(hub, script, args, machine), url.searchParams.get("dir") ?? "~/");
+      return entries ? json({ entries }) : json({ entries: [] }, 400);
     }
     if (path === "/api/machines/find") return json(await findMachines(req.method === "POST"));
     if (path === "/api/folders") {

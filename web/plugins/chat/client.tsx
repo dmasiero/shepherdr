@@ -31,6 +31,7 @@ import { ReplyPress, repliesHidden, suggestionOf, suggestionsOn } from './sugges
 import { BoxThumb, openPreview, SentThumb, sourcesOf } from './thumbs.tsx'
 import { heldStep, signOf } from './typing.ts'
 import { newsRow, type NewsRow } from './news.ts'
+import { usePaths } from './paths.tsx' // fork: SHEP-50's "@~/" path list
 import { outOfView, setAway, useAway, type Waiting } from './away.ts'
 
 export { fileUrl } from './thumbs.tsx'
@@ -803,6 +804,8 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const finger = useMemo(touch, [])
   const shared = useLanded() === key
   useGrow(ref, text)
+  // fork: "@~/" or "@/" lists the folder typed so far on this chat's agent's machine (paths.tsx, SHEP-50)
+  const paths = usePaths(key, text, setText, ref)
   const sg = suggestionOf(chat, suggestionsOn(snap.settings))
   const busy = !!chat?.working && !chat.finished
   const call = useUI((u) => u.call)
@@ -846,6 +849,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   return (
     <>
     {sug && <Replies texts={sug.texts} onSend={sendSug} onEdit={editSug} />}
+    {paths.list /* fork: SHEP-50 */}
     <div
       className="cbox"
       onDragOver={(e) => e.preventDefault()}
@@ -900,6 +904,8 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
             attach(key, key, f)
           }}
           onKeyDown={(e) => {
+            // fork: the "@~/" list takes Tab, Up/Down, Escape and the Enter that would send (SHEP-50)
+            if (paths.onKey(e, e.key === 'Enter' && !e.shiftKey && e.keyCode !== 229)) return
             // Enter sends and Shift+Enter makes a new line, the same on phone and desktop
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault()

@@ -42,6 +42,7 @@ export const NOT_DATA: Record<string, string> = {
   "api:desktop": "a machine's desktop, live (its Screen): a picture, not data",
   "api:voice": "the call itself",
   "api:push": "this device's own notification subscription",
+  "api:paths": "the @~/ picker's file names above the message box (fork: SHEP-50)",
   "action:earlier": "a chat's older messages: look chat reads further back itself",
   "action:catalog": "the picker's lists (a machine's agents and their models): look data's models has the same menus",
 };
