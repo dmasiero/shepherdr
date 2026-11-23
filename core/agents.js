@@ -460,13 +460,15 @@ export function forkArgv(kind, argv, session) {
 // edit one worktree. The task's live agent (a terminal record from `all`, reviewers and helpers aside) when `t` is a
 // task's terminal, else null: the fork then asks first (FORK_LIVE).
 const AGENT_APPS = new Set(["claude-code", "claude", "codex"]);
+// fork: a Nix wrapper's name (".claude-wrapped") is its CLI's, as core/chat-reader.js progName (SHEP-90)
+const cliName = (name) => String(name ?? "").replace(/^\./, "").replace(/(-wrapped)+$/, "");
 export function liveTaskAgent(t, all) {
   const task = t?.labels?.["herdr.task"];
   if (!task) return null;
   return [...(all ?? [])].find((k) => k?.state === "live" && k.labels?.["herdr.task"] === task
     && !["reviewer", "helper"].includes(k.labels?.["herdr.role"])
     // an agent runs there (a record that doesn't say what runs counts: better to ask once too often)
-    && (AGENT_APPS.has(k.status?.app) || AGENT_APPS.has(k.foreground?.name) || (!k.status?.app && !k.foreground))) ?? null;
+    && (AGENT_APPS.has(k.status?.app) || AGENT_APPS.has(cliName(k.foreground?.name)) || (!k.status?.app && !k.foreground))) ?? null;
 }
 // The ask, in the window's confirm and the web's alike: keep the live agent (Cancel) or fork anyway.
 export const FORK_LIVE = {

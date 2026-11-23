@@ -8,6 +8,7 @@
 // Shared core: the source is core/send.js; bin/sync-shared copies it into the mods in lib/COPIES.
 
 import { excerpt } from "./chat-log.js";
+import { progName } from "./chat-reader.js"; // fork: SHEP-90
 
 // SHEP-324: what is in front of an agent's terminal, checked right before anything is typed into it. herdr-core keeps a
 // terminal whose program it lost (a core restart, a crash) as a plain shell, and one whose agent exited stays live too:
@@ -36,7 +37,8 @@ export function inFront(k) {
   if (!name) return null;
   if (SHELL.test(name)) return runsCommand(fg?.argv) ? "agent" : "shell";
   const kind = k.labels?.["herdr.agent"];
-  if ((kind === "claude" || kind === "codex") && !name.startsWith(kind) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
+  // fork: Nix runs Claude Code as ".claude-wrapped" (progName): that is the agent, not another program (SHEP-90)
+  if ((kind === "claude" || kind === "codex") && !progName(name).startsWith(kind) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
   return "agent";
 }
 

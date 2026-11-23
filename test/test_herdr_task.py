@@ -10683,6 +10683,11 @@ class NeverTypedIntoAShell(unittest.TestCase):
         self.assertEqual(f(live({"name": "node", "argv": ["node", "codex"]}, labels={"herdr.agent": "codex"})), "agent")
         self.assertEqual(f(live({"name": "2.1.330"}, labels={"herdr.agent": "claude"})), "agent")
         self.assertEqual(f(live({"name": "vim", "argv": ["vim"]}, labels={"herdr.agent": "claude"})), "other")
+        # fork: SHEP-90, Nix runs Claude Code (and Codex) behind a wrapper, as ".claude-wrapped": that is the agent
+        self.assertEqual(f(live({"name": ".claude-wrapped"}, labels={"herdr.agent": "claude"})), "agent")
+        self.assertEqual(f(live({"name": "/nix/store/x/bin/.claude-wrapped"}, labels={"herdr.agent": "claude"})), "agent")
+        self.assertEqual(f(live({"name": ".codex-wrapped"}, labels={"herdr.agent": "codex"})), "agent")
+        self.assertEqual(f(live({"name": ".vim-wrapped"}, labels={"herdr.agent": "claude"})), "other")
         self.assertEqual(f({"state": "finished"}), "gone")
         self.assertEqual(f(None), "gone")
         self.assertEqual(f({"state": "live", "agent": "bash"}), "shell")
