@@ -10,6 +10,7 @@
 //      host shares /shepherdr, the old one stops, the others read and write their shared data there;
 //   5. the new link, once the new host says it.
 // shepherdr web status [--json]: which machine serves it now and its link.
+import { SESSION } from "./session.ts";
 import { CoreClient } from "./hc/client.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +28,7 @@ const [cmd, target] = args.filter((a) => !a.startsWith("--"));
 const say = (s: string) => { if (!json) console.log(s); };
 const fail = (s: string): never => { if (json) console.log(JSON.stringify({ ok: false, error: s })); else console.error(`shepherdr: ${s}`); process.exit(1); };
 
-const c = await CoreClient.endpoint({ binary: process.env.SHEPHERDR_HC || "hc" }).catch((e) => fail(`herdr-core isn't answering here: ${(e as Error).message}`));
+const c = await CoreClient.endpoint({ binary: process.env.SHEPHERDR_HC || "hc", ...(SESSION ? { session: SESSION } : {}) }).catch((e) => fail(`herdr-core isn't answering here: ${(e as Error).message}`));
 const call = <T = any>(method: string, params: Record<string, unknown> = {}, timeout = 20_000) => c.call<T>(method, params, timeout);
 const at = (on: string | null) => (on ? { on } : {});
 const getDoc = (name: string, on: string | null) => call<{ value: any; version: number }>("doc.get", { name, ...at(on) });
@@ -95,7 +96,7 @@ let there = await node(to);
 if (!there || there.version !== VERSION || (there.build && there.build !== BUILD) || (!there.build && to !== null)) {
   say(`Installing Shepherdr's web service on ${to ?? "this computer"}…`);
   const cli = process.env.SHEPHERDR_CLI || "shepherdr";
-  const p = Bun.spawn([cli, "web", "install-on", to ?? "here"], { stdout: json ? "pipe" : "inherit", stderr: "pipe", stdin: "ignore" });
+  const p = spawn([cli, "web", "install-on", to ?? "here"], { stdout: json ? "pipe" : "inherit", stderr: "pipe", stdin: "ignore" });
   const err = await new Response(p.stderr).text();
   if ((await p.exited) !== 0) fail(err.trim().split("\n").pop()?.replace(/^shepherdr: /, "") || `couldn't install it on ${to}`);
   for (let i = 0; i < 60 && !(there?.build === BUILD); i++) { await Bun.sleep(2000); there = await node(to); }
@@ -118,6 +119,7 @@ for hp, web in (s.get("Web") or {}).items():
 if [ -s "$f.tmp" ]; then read port proxy < "$f.tmp"; printf '{"port":"%s","proxy":"%s","at":%s}\\n' "$port" "$proxy" "$(date +%s)" > "$f"
   tailscale serve --https="$port" --set-path /shepherdr off >/dev/null; echo "took $proxy"; fi
 rm -f "$f.tmp"`;
+import { spawn } from "./spawn.ts";
 if (take) {
   const r = await exec(["sh", "-c", `PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/Applications/Tailscale.app/Contents/MacOS:$PATH"; ${TAKE}`], to);
   if (r.code !== 0) fail(`couldn't set aside /shepherdr on ${to ?? "this computer"}: ${r.stderr.trim()}`);

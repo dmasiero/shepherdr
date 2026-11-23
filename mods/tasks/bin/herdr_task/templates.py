@@ -116,7 +116,18 @@ WAIT_OLD = "(again on a timeout, or while it says turn 0: it hadn't started)"
 WAIT_RULE = ('(again on a timeout; still at turn 0 after one, `hc read <its name>` to see why: a startup dialog such as "Allow external CLAUDE.md imports?" or "Trust this folder?" waits for an answer, which you give with `hc keys <its name> enter` (or `down enter`), then wait again)')
 PLAN_OLD = '`claude --permission-mode plan …`; never'
 PLAN_RULE = '`env … claude --permission-mode dontAsk …`; never'
-WORKER_MD = WORKER_MD_BEFORE_WAIT.replace(WAIT_OLD, WAIT_RULE).replace(PLAN_OLD, PLAN_RULE)
+WORKER_MD_BEFORE_LIVE = WORKER_MD_BEFORE_WAIT.replace(WAIT_OLD, WAIT_RULE).replace(PLAN_OLD, PLAN_RULE)
+# Since a task's test stopped the live session it ran in (SHEP-323): never the live one, a throwaway session named on
+# each command. Shepherdr's guard (guard.py) refuses it too.
+LIVE_ANCHOR = "- Run the project's checks before you say you're done.\n"
+LIVE_RULE = ("- Never stop, restart, update or reconfigure the live session you run in, or Shepherdr's own service"
+             's: no `hc server stop|restart` or `hc update` on it, no systemctl, pkill or kill on herdr-core or Sh'
+             'epherdr, no `shepherdr install|update` over the live install. A test that needs a herdr-core uses a '
+             'throwaway session named on the same command, every time (`HC_SESSION=<throwaway> hc …`: an `export` '
+             "from an earlier shell call is gone, and your terminal's own HC_SESSION is the live one), and a throw"
+             'away HOME. Your terminal refuses these; never work around it. If the live one really needs it, ask t'
+             'he person.\n')
+WORKER_MD = WORKER_MD_BEFORE_LIVE.replace(LIVE_ANCHOR, LIVE_ANCHOR + LIVE_RULE)
 
 REVIEWER_MD_BEFORE_SUBAGENT = """You review one Herdr task's work before it can merge. Read only: never edit files, commit or push.
 - Read the task, then the diff of its branch against its base, and run the project's checks.
@@ -138,7 +149,9 @@ REVIEWER_SANDBOX = ("- A check that can't run in a read-only sandbox (Codex's): 
                     "in my sandbox:\", and your worker runs them and checks the output.\n")
 REVIEWER_MD_BEFORE_CLAUDE = REVIEWER_MD_BEFORE_SANDBOX + REVIEWER_SANDBOX
 # Since a Claude reviewer runs in don't-ask mode, which refuses any command that isn't read-only (#1181).
-REVIEWER_MD = REVIEWER_MD_BEFORE_CLAUDE.replace("- A check that can't run in a read-only sandbox (Codex's):", "- A check that can't run in a read-only sandbox (Codex's, or Claude's don't-ask mode, which refuses any command that isn't read-only, tests too):")
+REVIEWER_MD_BEFORE_PAGES = REVIEWER_MD_BEFORE_CLAUDE.replace("- A check that can't run in a read-only sandbox (Codex's):", "- A check that can't run in a read-only sandbox (Codex's, or Claude's don't-ask mode, which refuses any command that isn't read-only, tests too):")
+# Since 3.2 has no Herdr window (no `herdr-app check`): the example is a page that can't be published there.
+REVIEWER_MD = REVIEWER_MD_BEFORE_PAGES.replace("`herdr-app check` hangs there on the window's services", "`herdr-artifact publish` can't write its page there")
 
 
 # Earlier worker defaults: a file still saying one, unedited, gets today's.
@@ -151,7 +164,7 @@ OLD_WORKER_READY = """You work on one Herdr task. Stay within the task's scope a
 - When the work is finished, run the `herdr-task ready` command given at the end of your brief, with a short summary. That puts the task in Ready for the person, who accepts it. Never mark a task done yourself.
 """
 OLD_WORKER_MD = OLD_WORKER_READY.split("- When the work is finished")[0]
-OLD_WORKERS = (WORKER_MD_BEFORE_WAIT, WORKER_MD_BEFORE_ASK, WORKER_MD_BEFORE_OFTEN, WORKER_MD_BEFORE_SUGGEST, WORKER_MD_BEFORE_COMMAND, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
+OLD_WORKERS = (WORKER_MD_BEFORE_LIVE, WORKER_MD_BEFORE_WAIT, WORKER_MD_BEFORE_ASK, WORKER_MD_BEFORE_OFTEN, WORKER_MD_BEFORE_SUGGEST, WORKER_MD_BEFORE_COMMAND, WORKER_MD_BEFORE_FEEDBACK, WORKER_MD_BEFORE_SUBAGENTS, WORKER_MD_BEFORE_LEFT, WORKER_MD_BEFORE_DETAILS, WORKER_MD_BEFORE_CUT, WORKER_MD_BEFORE_ESTIMATE, WORKER_MD_BEFORE_SUMMARY, WORKER_MD_BEFORE_GATE, WORKER_MD_BEFORE_TEMPLATES, WORKER_MD_BEFORE_NEWS, OLD_WORKER_READY, OLD_WORKER_MD, OLD_WORKER_MD.replace(OLD_WORKER_MD.split("\n")[0], OLD_WORKER_FIRST), OLD_WORKER_REVIEW)
 
 
 TEMPLATE_HEADS = {
@@ -185,7 +198,8 @@ def instructions(role):
         text = None
     if body is None or (role == "worker" and body.strip() in [x.strip() for x in OLD_WORKERS]) \
             or (role == "reviewer" and body.strip() in (REVIEWER_MD_BEFORE_SUBAGENT.strip(), REVIEWER_MD_BEFORE_FEEDBACK.strip(),
-                                                    REVIEWER_MD_BEFORE_SANDBOX.strip(), REVIEWER_MD_BEFORE_CLAUDE.strip())):
+                                                    REVIEWER_MD_BEFORE_SANDBOX.strip(), REVIEWER_MD_BEFORE_CLAUDE.strip(),
+                                                    REVIEWER_MD_BEFORE_PAGES.strip())):
         body = WORKER_MD if role == "worker" else REVIEWER_MD
     new = head + body.strip() + "\n"
     if text is None or new.strip() != text.strip():

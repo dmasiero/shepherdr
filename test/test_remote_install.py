@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import fake_ab  # noqa: E402  (test/fake_ab.py: 3.2's stand-in agent-browser)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 J = lambda *p: os.path.join(ROOT, *p)
@@ -110,7 +111,8 @@ class Browser(unittest.TestCase):
     def fake(self, path, says):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            f.write(f'#!/bin/sh\n[ "$1" = --version ] && {{ echo "agent-browser 0.41.1"; exit 0; }}\necho "{says}: $*"\n')
+            # 3.2's herdr-browser starts a space's browser and joins it first (fake_ab answers that)
+            f.write(fake_ab.script(f'echo "{says}: $all"'))
         os.chmod(path, 0o755)
 
     def run_browser(self, tmp, packaged=None):
@@ -124,7 +126,7 @@ class Browser(unittest.TestCase):
             with open(script, "w") as f:
                 f.write(src.replace(RENIX_FROM, "bin=${HERDR_BROWSER_BIN:-%s}" % packaged))
         self.fake(os.path.join(tmp, "path", "agent-browser"), "path")
-        env = {"HOME": tmp, "PATH": f"{tmp}/path:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+        env = {"HOME": tmp, "PATH": f"{tmp}/path:{os.environ.get('PATH', '/usr/bin:/bin')}", **fake_ab.ENV}
         r = subprocess.run(["sh", script, "--task", "t#1", "--own", "get", "url"], capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout

@@ -41,8 +41,6 @@ let theirs: AnalyserNode | null = null
 /** what the call is doing, besides the agent speaking (which the playing audio tells) */
 let phase: 'connecting' | 'listening' | 'thinking' | 'working' | 'reconnecting' = 'connecting'
 let phaseAt = 0
-/** SHEP-113: while working, what it does, in plain words ("checking tasks") */
-let doing = ''
 /** the server's id for this call: a dropped socket goes back to it */
 let callId: string | null = null
 /** until when a dropped socket keeps trying (a little under the server's hold) */
@@ -370,7 +368,7 @@ function connect(resume: boolean) {
       if (!play(e.data)) { stopCall(); h.onError('Voice audio could not keep up. Start a new call.') }
       return
     }
-    const m = JSON.parse(String(e.data)) as { type: string; id?: number | string; message?: string; state?: typeof phase; doing?: string; nav?: Nav; text?: string; why?: string }
+    const m = JSON.parse(String(e.data)) as { type: string; id?: number | string; message?: string; state?: typeof phase; nav?: Nav; why?: string }
     if (m.type === 'call' && typeof m.id === 'string') callId = m.id
     // SHEP-251: the call moved (to Shepherdr Wake as the phone locked, or to another page): this page lets go quietly,
     // no end, no reconnect; the call goes on there and this page may take it back by its id
@@ -385,9 +383,8 @@ function connect(resume: boolean) {
       if (typeof m.id === 'number' && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'navved', id: m.id, ...ack }))
     }
     if (m.type === 'state' && m.state) {
-      if (m.state !== phase || m.state !== 'working' || m.doing !== doing) phaseAt = Date.now()
+      phaseAt = Date.now()
       phase = m.state
-      doing = m.state === 'working' && typeof m.doing === 'string' ? m.doing.slice(0, 60) : ''
     }
     // you talked over it: what it was about to say is dropped
     if (m.type === 'interrupt') {
@@ -533,9 +530,6 @@ export function callPhase(): CallPhase {
   return phase
 }
 
-/** SHEP-113: while working, what it does in plain words ("checking tasks"), else "" */
-export const callDoing = () => (callPhase() === 'working' ? doing : '')
-
 /** for the wave: whoever is louder right now, the agent first (your mic hears it a little too) */
 export function callSample(): Sample {
   const agent = levelOf(theirs)
@@ -619,7 +613,6 @@ function release(chime: boolean, session: boolean) {
   playAt = 0
   muted = false
   phase = 'connecting'
-  doing = ''
   callId = null
   retryUntil = 0
   retries = 0

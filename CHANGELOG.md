@@ -1,5 +1,142 @@
 # Changelog
 
+## 3.2.2
+
+Fixes for 3.2.1: a machine link that broke for good after an update, a smoother app on a phone, and clearer signs of
+an agent at work and of dictation.
+
+### Machines
+
+- A link to another machine that herdr-core refused for good ("a different core answers there") is linked again by
+  carry-over, in the update or by hand, when it's safe: same address, name and session.
+  The records naming the old id follow it. When it can't, `shepherdr doctor`, the home page's health, the sync report
+  and the Machines page say why, in full, and what to run.
+
+### The web app
+
+- On a phone, the app's own colour reaches the edges: no white flash as the keyboard opens and no white strip under
+  the bottom bar, in the dark theme too, also in the installed app.
+- A sent message never leaves a stuck grey copy behind, also after a reload, in an older tab or with another
+  machine's clock a little behind. A send cut off by a reload goes on, never twice, and Retry doesn't send one that
+  arrived after all.
+- While an agent works, the chat's end shows three dots that rise in turn, with the step it's on beside them when
+  known, instead of three still dots and a separate working line. With reduced motion the dots brighten in turn.
+- Dictation turns the message box into the recording: a live wave, the time, Cancel, Done and the words as they're
+  heard. The time holds while the words are written down, and Escape cancels the dictation before it closes a dialog.
+
+## 3.2.1
+
+Fixes for 3.2.0, found on a Mac mini that serves the web app with machines linked to it, and a smoother app on a
+phone.
+
+### Agents and spaces
+
+- Everything Shepherdr starts (Assistants, tasks, helpers) lands in Shepherdr's own session, not herdr-core's
+  default one. The service's launchd plist or systemd unit says which session, an update writes it, and `shepherdr
+  doctor` fails a unit without it.
+- A new space whose Assistant didn't start still opens, with a notice saying why.
+- A message to a space whose Assistant ended starts it again on its own conversation and delivers the message once.
+- A message typed while an agent works goes in at once, as in 3.1. Ctrl/Cmd+Enter still holds it for the end of the
+  turn.
+- Everything can't be removed or archived. New space in this computer's home folder opens Everything, and a second
+  space in another machine's home folder is refused.
+- The message box names the model the Assistant really runs, also before its chat has loaded, and keeps the model
+  picked in New space when its Assistant didn't start.
+
+### The update and carry-over
+
+- `shepherdr update` stops the running service before any file changes and starts it again after, also when the
+  install fails halfway.
+- Carry-over moves Shepherdr's agents left in the default session (an Assistant, a task's agent) into Shepherdr's,
+  each on its own conversation once it's idle; a busy one waits and is named. The update runs it until none is left,
+  and `shepherdr doctor` names any still there.
+- Carry-over changes the records of who keeps the secrets and who serves the web app to each machine's id in the new
+  session, here and on linked machines, and repairs the ones 3.2.0 left naming old ids. `shepherdr doctor` says when
+  one names a machine none knows, and how to fix it.
+
+### The web app
+
+- No square focus outline inside the message box; it shows focus with its own quiet border.
+- No blue flash when pressing things on a phone; buttons fade a little while pressed instead.
+- The warnings line above the chat can always be closed, stays closed over a reload, and comes back only for a new
+  warning.
+- Each space's folder shows under its name in the list and search, in the open space's header, and whole at the top
+  of its menu with Copy folder path.
+- The Working ring turns everywhere it shows; with reduced motion it pulses slowly.
+- Dictation writes the words on a phone: when the live result is empty it uploads the recording instead, and says why
+  when it can't ("Nothing was heard", a blocked microphone). While it records, the mic is a red pill with the time.
+- On a phone, the keyboard stays open in New space and every other dialog with fields.
+- Attachments are square thumbnails in one row, with remove, upload and failed states. A tap opens a full-screen
+  preview, in the message box and in sent messages.
+
+## 3.2.0
+
+Shepherdr is now one web app, on phone, tablet and desktop, private on your tailnet. The Herdr-window layout and its
+mods are gone; the Herdr app gets one "Open Shepherdr" button.
+
+### The new app
+
+- The list: Everything on top, then your machines as headings, with groups and spaces under them. A space shows how
+  many things need you. Drag spaces into order. New space, Feedback and Settings sit at the foot.
+- Chats: Everything's chat reaches every space on every machine; each space has its own. The message box shows the
+  agent, model, effort and speed, and opens the picker.
+- The Tasks pane has two tabs. Now groups tasks under Needs you, Working, Up next and Done. Scheduled lists your
+  schedules, with when each runs, its next run and its last.
+- A task opens as a thread in the pane, with its own reply box, and can take the middle.
+- "Ready for review" is one review card, in the task, its space's chat and Everything's chat. Its button reads "Mark
+  as done and merge" on a branch and "Mark as done" otherwise. One answer clears it everywhere.
+- Screens: every chat and task has a Screen button for the agent's browser and desktop. Watch, Take over, Hand back.
+- Your own terminal in every space and task, in a drawer under the message box (Ctrl+`). An agent's own terminal is
+  behind "Switch to terminal".
+- Artifacts are real web pages. One opens in the pane with its versions, Pin and Mark up: point at a spot, then write.
+- Settings is one window: General, Agents, Tasks, Instructions, Secrets, Machines, Usage and Plugins. A space has its
+  own Agents, Tasks, Instructions and Secrets, and says "Same as Everything" or "Set here".
+- The pickers: Agent, Model and Permissions as searchable lists, read from each agent's own catalog on that machine.
+- Voice runs over the app: it opens things, sends messages and answers for you, and asks before it deletes, merges or
+  stops anything. In a call the button becomes Mute and End call.
+- Search (Ctrl+K) finds spaces, tasks and artifacts by name.
+- Every feature is a plugin. Screens, Voice, Schedules, Reactions and Terminal can be switched off in Settings ›
+  Plugins.
+
+### What is gone
+
+- The Herdr-window layout and all its mods.
+- Autopilot. A repeating schedule does that now, and a schedule can also start on an event, such as a merge.
+- Tasks at once. A task starts the moment it is asked to.
+- Automatic retry and restart. An agent that stopped stays stopped, says why, and has a Restart button.
+- The recipe format for artifacts. Old artifacts are converted to pages once, at the update.
+- The Files and Changes panels, tabs, pinned spaces, per-space Notify, usage insights and the keyboard-shortcuts page.
+
+### What carries over
+
+- Your spaces; sections become groups.
+- Tasks, schedules (the old automations), settings and secrets.
+- Each chat's history, above a "New session" line.
+
+### The update
+
+- `git pull --ff-only`, then `shepherdr update`. It waits while tasks are working and names them; `--force` switches
+  anyway.
+- It takes out what 3.1 put in the Herdr app. A file you changed there is backed up first.
+- If Shepherdr's layout was selected in Herdr, pick another one there.
+- Shepherdr's agents now run in their own herdr-core session. They no longer show in the Herdr app, and terminals
+  opened in the Herdr app don't show in Shepherdr.
+- Settings from 3.1 with no row in the new window still apply. [Settings](docs/settings.md) lists them.
+
+### For people who changed the window
+
+- Mods removed (28): accept-card, artifacts, chat, chat-call, chat-image, chat-models, chat-react, confirm-chat,
+  coordinator, jump, keybinds, machine-add-chat, menu-tasks, new-menu-tasks, newspace, pane-chat, prompt-chat,
+  shepherdr-settings, spaces-chat, tabs-tasks, task-artifacts, task-browser, task-pr, tasks, tasks-menu, toasts,
+  workspace-chrome-shepherdr, workspace-status-chat.
+- Layout `shepherdr` removed, with its node ids (33): root, sidebar, brand, sidebar-lists, spaces, sidebar-footer,
+  work, tabs, work-body, main, panel, panel-body, files, changes, tasks, tasks-list, tasks-thread, tasks-thread-head,
+  tasks-thread-body, tasks-thread-chat, tasks-thread-term, tasks-thread-pr, tasks-thread-browser,
+  tasks-thread-browser-host, tasks-thread-artifacts, artifacts, artifacts-list, artifacts-view, artifacts-view-head,
+  artifacts-view-body, chat-call, toasts, status.
+- `keys.json` contexts removed: global (24 keys), terminal (ctrl-v), mod:chat (3), layout:shepherdr (4).
+- New: one Herdr mod, `open-shepherdr`, and the key `global ctrl-shift-o` (only if that key is free).
+
 ## 3.1.46
 
 The rest of the 21 November triage: steadier task status, a smoother ready and pull request flow, fewer Codex hangs,

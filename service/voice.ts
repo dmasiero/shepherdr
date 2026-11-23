@@ -1,7 +1,6 @@
-// A voice call with Shepherdr, from the web app or the Herdr window (fork: SHEP-57: one call, two ends): the page, or the
-// window's call helper (mods/chat/voice.ts, this machine's microphone and speaker), streams its microphone here as
-// 16 kHz PCM and plays what comes back. The ElevenLabs voice agent (core/voice.js) with the person's key and agent id
-// (<app home>/secrets) is held here, its tools answered here (voice-tools.ts:
+// A voice call from the web (2.1's call: the page streams its microphone here as 16 kHz PCM and plays what comes
+// back), as the window's call (mods/chat/voice.ts) with the phone's microphone and speaker: the same ElevenLabs voice
+// agent (core/voice.js), the same key and agent id (<app home>/secrets), its tools answered here (voice-tools.ts:
 // look, open, send, act, with the reach of the person's web app). SHEP-105: the call is with Shepherdr itself, not a
 // chat: it hears the chats it sent to and the one on screen, and what needs the person anywhere (voice-hear.ts), as
 // [Update]s held until the person and the voice are quiet. The page tells where it is (what it shows) as it moves; an
@@ -16,9 +15,10 @@ import * as V from "../core/voice.js";
 import { secretBin } from "./secrets.ts";
 import { voiceTool, lookHere, shown, type Ack, type Nav, type VoiceIO, type Where } from "./voice-tools.ts";
 import { hearing, type HearIO } from "./voice-hear.ts";
+import { spawn } from "./spawn.ts";
 export type { ChatView } from "./voice-hear.ts";
 
-const { API, opening, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile, toolWords, turnGate, hangUpGuard, closeWords, HUNG_UP, REFUSED } = V as any;
+const { API, opening, whereLine, envLines, apiError, voiceKey, ensureAgent, agentFile, turnGate, hangUpGuard, closeWords, HUNG_UP, REFUSED } = V as any;
 const secretsDir = () => join(appHome(), "secrets");
 
 const envFile = (file: string): Record<string, string> => { try { return envLines(readFileSync(file, "utf8")); } catch { return {}; } };
@@ -29,7 +29,7 @@ export function keyFor(hub: Pick<Hub, "call">) {
   return voiceKey({
     oldFile: () => envFile(join(secretsDir(), "elevenlabs.env")).ELEVENLABS_API_KEY || "",
     where: async () => {
-      const p = Bun.spawn([secretBin(), "where", "--json"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+      const p = spawn([secretBin(), "where", "--json"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" });
       const out = await new Response(p.stdout).text();
       return (await p.exited) === 0 ? JSON.parse(out) : null;
     },
@@ -84,8 +84,8 @@ export function handOff(from: string, who: string) {
   return null;
 }
 /** the words the voice agent gets when the page is back: say so, and say again what was cut */
-export const backLine = (secs: number, client: Where["client"] = "web") => ({ type: "user_message",
-  text: `[Update] The person's ${client === "window" ? "Herdr window" : "phone"} lost the call's connection for about ${Math.max(1, Math.round(secs))} s and is back now: they heard nothing of what you said meanwhile. Say you're back in a few words, then repeat briefly anything they missed.` });
+export const backLine = (secs: number) => ({ type: "user_message",
+  text: `[Update] The person's phone lost the call's connection for about ${Math.max(1, Math.round(secs))} s and is back now: they heard nothing of what you said meanwhile. Say you're back in a few words, then repeat briefly anything they missed.` });
 /** how long the person and the voice must both be quiet before the call says its updates (ms) */
 export const QUIET_MS = 1200;
 /** loud enough to be speech: RMS of 16-bit samples above ~2% of full scale */
@@ -182,19 +182,6 @@ export function pageWhere(m: any): Partial<Where> {
     ...(typeof m.locked === "boolean" ? { locked: m.locked } : {}), ...(typeof m.screen === "boolean" ? { screen: m.screen } : {}) };
 }
 
-/** What a call's socket asked for (/api/voice's query): resume, a dropped page's call id (SHEP-102); key, the chat
- *  whose call button started it (checked by the caller). fork: SHEP-57: the Herdr window's call (mods/chat/voice.ts), from
- *  this machine only (local): client=window, addr (the agent whose chat started it, as its chat's key) and where (what
- *  the window shows, { place, task, tab }). */
-export function voiceAsked(q: URLSearchParams, local: boolean, key: string | null, chatOf: (addr: string) => string | null) {
-  const resume = (q.get("resume") ?? "").slice(0, 64);
-  if (q.get("client") !== "window" || !local) return { key, resume, window: false, at: {} as Partial<Where> };
-  const addr = (q.get("addr") ?? "").slice(0, 300);
-  let at: Partial<Where> = {};
-  try { at = pageWhere(JSON.parse(q.get("where") ?? "{}") ?? {}); } catch {}
-  return { key: addr ? chatOf(addr) : null, resume, window: true, at };
-}
-
 /** One call: the page's audio to the voice agent and back. message(): a frame from the page; end(): the page went. */
 export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
   const { io } = deps;
@@ -227,7 +214,6 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
   const tell = (m: object) => { try { page?.send(JSON.stringify(m)); } catch {} };
   const toVoice = (m: object) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
   const here = () => { const s = io.snap(); return s ? lookHere(s, where) : ""; };
-  let doing = "";
   let said = "", saying: ReturnType<typeof setTimeout> | null = null;
   const end = (why: string | null = null) => {
     if (ended) return;
@@ -296,15 +282,15 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
         if (!/pcm_16000/.test(meta.agent_output_audio_format ?? "pcm_16000")) return end("The voice agent speaks in a format the page can't play.");
         tell({ type: "state", state: "listening" });
       }
-      else if (m.type === "user_transcript") { turn.seen("user_transcript"); guard.seen("user_transcript"); tell({ type: "state", state: "thinking" }); }
+      else if (m.type === "user_transcript") {
+        // SHEP-326: only the state goes to the page, never the words: a call shows no text
+        turn.seen("user_transcript"); guard.seen("user_transcript"); tell({ type: "state", state: "thinking" });
+      }
       else if (m.type === "agent_response") {
         turn.seen("agent_response");
         guard.seen("agent_response", m.agent_response_event?.agent_response);
         // a word before a tool ("On it."): the call is still working on it
-        tell(busy ? { type: "state", state: "working", doing } : { type: "state", state: "listening" });
-        // what it said, for the call card (SHEP-105: the last thing the voice said)
-        const text = m.agent_response_event?.agent_response;
-        if (typeof text === "string" && text.trim()) tell({ type: "said", text: text.trim().slice(0, 300) });
+        tell(busy ? { type: "state", state: "working" } : { type: "state", state: "listening" });
       }
       else if (m.type === "audio" && typeof m.audio_event?.audio_base_64 === "string") {
         const pcm = Buffer.from(m.audio_event.audio_base_64, "base64");
@@ -321,10 +307,8 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
           if (may) hangUp();
           return;
         }
-        // SHEP-113: the call shows what it is doing, in plain words ("Working: checking tasks")
-        doing = toolWords(String(c.tool_name ?? ""), c.parameters ?? {});
         turn.seen("client_tool_call");
-        tell({ type: "state", state: "working", doing });
+        tell({ type: "state", state: "working" });
         busy++;
         const asked = Date.now();
         try {
@@ -382,7 +366,7 @@ export function voiceCall(hub: Hub, deps: CallDeps, first: Page) {
       device = from ?? device;
       if (old && old !== to) { try { old.send(JSON.stringify({ type: "handed" })); } catch {} try { old.close(); } catch {} }
       tell({ type: "resumed", id });
-      if (gone) { toVoice(backLine((Date.now() - gone) / 1000, where.client)); gone = 0; }
+      if (gone) { toVoice(backLine((Date.now() - gone) / 1000)); gone = 0; }
       return true;
     },
     /** the page's microphone: 16 kHz PCM (the page cancels its own speaker's echo, so the person can talk over it);

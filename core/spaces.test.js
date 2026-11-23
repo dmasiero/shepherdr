@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spacesFromDoc, spaceName, tilde, sharedNames, gitTail, inOrder, withOrder, keptOrder, machinesInOrder, byMachineOrder, withMachineOrder, machineOrderOf, sectionMoved, withSectionOrder } from "./spaces.js"; // fork: sectionMoved, withSectionOrder (SHEP-14)
+import { assistantOf, lastAssistantOf, spacesFromDoc, spaceName, tilde, sharedNames, gitTail, inOrder, withOrder, keptOrder, machinesInOrder, byMachineOrder, withMachineOrder, machineOrderOf } from "./spaces.js";
 
 test("two spaces with one name on a machine each show their folder, from ~ (the sidebar's rows, both sides)", () => {
   // built, so the repo's no-home-paths rule has nothing to find
@@ -70,33 +70,6 @@ test("a machine drag keeps the ones it didn't show where they were, and the rest
   expect(machineOrderOf({ machineOrder: ["a", 3, "b"] })).toEqual(["a", "b"]);
 });
 
-// fork: dragging a section among its machine's (SHEP-14), the window's and the web's
-
-test("a dragged section takes the place of the one it's dropped on, the rest shift toward where it was (SHEP-14)", () => {
-  expect(sectionMoved(["a", "b", "c"], "a", "c")).toEqual(["b", "c", "a"]);
-  expect(sectionMoved(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
-  expect(sectionMoved(["a", "b", "c"], "b", "c")).toEqual(["a", "c", "b"]);
-  const same = ["a", "b"];
-  expect(sectionMoved(same, "a", "a")).toBe(same);
-  expect(sectionMoved(same, "a", "z")).toBe(same);
-});
-
-test("a machine's sections reordered keep every other machine's where they were, and nothing else changes (SHEP-14)", () => {
-  const d = { pinned: ["p"], icons: { x: "🏠" }, sections: [
-    { id: "a", machine: null, name: "A", spaces: ["s1"] }, { id: "v1", machine: "vm", name: "V1", spaces: [] },
-    { id: "b", machine: null, name: "B", spaces: [] }, { id: "c", machine: null, name: "C", spaces: ["s2"], icon: "📦" },
-  ] };
-  const x = withSectionOrder(d, ["c", "a", "b"]);
-  expect(x.sections.map((s) => s.id)).toEqual(["c", "v1", "a", "b"]);
-  expect(x.sections[0]).toEqual(d.sections[3]);
-  expect(x.pinned).toEqual(["p"]);
-  expect(x.icons).toEqual({ x: "🏠" });
-  expect(d.sections.map((s) => s.id)).toEqual(["a", "v1", "b", "c"]);   // the one it was given stays as it was
-  // a partial or stale list: only those it names (and knows) move among their own places
-  expect(withSectionOrder(d, ["b", "gone", "a"]).sections.map((s) => s.id)).toEqual(["b", "v1", "a", "c"]);
-  expect(withSectionOrder({}, ["a"]).sections).toEqual([]);
-});
-
 // #818: another machine's herdr-app document already names its terminals with that machine ("box/t6"): its tab's
 // chat key read "t:box/box/t6", no such terminal, Reconnecting… for ever
 test("another machine's tab keeps one machine on its terminals, as written or not", () => {
@@ -107,4 +80,46 @@ test("another machine's tab keeps one machine on its terminals, as written or no
   expect(s.tabs[0].terminals).toEqual(["box/t6", "box/t7"]);
   // this machine's own: as written
   expect(spacesFromDoc(doc, null)[0].tabs[0].terminals).toEqual(["box/t6", "t7"]);
+});
+
+test("an ended assistant stays visible until a new one starts", () => {
+  const space = { id: "sp1", machine: null };
+  const old = { address: "t1", state: "ended", labels: { "herdr.role": "coordinator", "herdr.coordinator.space": "sp1" } };
+  const live = { ...old, address: "t2", state: "live" };
+  expect(lastAssistantOf(space, [old])).toEqual(old);
+  expect(lastAssistantOf(space, [old, live])).toEqual(live);
+  const newer = { ...old, address: "t3", created_ms: 200 };
+  expect(lastAssistantOf(space, [newer, { ...old, created_ms: 100 }])).toEqual(newer);
+});
+
+test("a space whose Assistants all finished has none to send to (SHEP-297)", () => {
+  const space = { id: "box/sp1", machine: "box" };
+  const gone = { address: "box/t1", state: "finished", created_ms: 100, labels: { "herdr.role": "coordinator", "herdr.coordinator.space": "sp1" } };
+  const later = { ...gone, address: "box/t2", created_ms: 200 };
+  expect(assistantOf(space, [gone, later])).toBeNull();
+  // its chat still reads the latest one
+  expect(lastAssistantOf(space, [gone, later])).toEqual(later);
+  // a live one is the one, older or not
+  const live = { ...gone, address: "box/t0", state: "live", created_ms: 50 };
+  expect(assistantOf(space, [gone, live, later])).toEqual(live);
+  // another machine's, or another space's, never
+  expect(assistantOf(space, [{ ...live, address: "t0" }, { ...live, labels: { ...live.labels, "herdr.coordinator.space": "sp2" } }])).toBeNull();
+});
+
+test("folders compare as one path, and Everything is always the same one of two home spaces (SHEP-296)", async () => {
+  const { folderKey, sameFolder, everythingOf } = await import("./spaces.js");
+  const home = ["", "home", "u"].join("/");
+  expect(folderKey("~/", home)).toBe(home);
+  expect(folderKey(`${home}//`, home)).toBe(home);
+  expect(folderKey("/", home)).toBe("/");
+  expect(sameFolder("~/dev/app/", `${home}/dev/app`, home)).toBe(true);
+  expect(sameFolder(`${home}/dev`, `${home}/dev/app`, home)).toBe(false);
+  expect(sameFolder("", "", home)).toBe(false);
+  const a = { id: "spz", folder: `${home}/`, machine: null }, b = { id: "home", folder: home, machine: null }, c = { id: "spa", folder: home, machine: null };
+  const vm = { id: "sp0", folder: home, machine: "vm" };
+  expect(everythingOf([vm, a, b, c], home)).toBe(b);
+  expect(everythingOf([c, b, a].reverse(), home)).toBe(b);
+  expect(everythingOf([a, c, vm], home)).toBe(c);
+  expect(everythingOf([c, a], home)).toBe(c);
+  expect(everythingOf([vm], home)).toBe(null);
 });

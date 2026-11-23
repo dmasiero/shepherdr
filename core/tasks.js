@@ -214,18 +214,17 @@ export function holdingItems(items, truth) {
   });
 }
 
-// Why a queued task waits: the tasks it comes after that aren't done, else the folder is full.
-// running: how many of the list's tasks run with a live agent now.
-export function queueReason(list, task, running) {
+// Why a queued task waits: the tasks it comes after that aren't done, else its machine is too busy. Nothing waits
+// for room (3.2: no limit on how many tasks run at once).
+export function queueReason(list, task) {
   const byId = new Map(list.tasks.map((x) => [x.id, x]));
   const wait = (task.after ?? []).filter((i) => byId.has(i) && byId.get(i).state !== "done");
   // Another folder's or machine's task (herdr-task --after WEB-2, vm-b:HAT-12): its state as
   // herdr-task last read it ("gone": removed, it holds nothing up).
   const ext = (task.after_ext ?? []).filter((x) => !["done", "gone"].includes(x.state)).map((x) => x.ref);
   if (wait.length || ext.length) return `after ${[...wait.map((i) => refOf(list, { id: i })), ...ext].join(", ")}`;
-  // In plain words, as herdr-task's queue_reason: the folder's limit, else its machine too busy
-  // (herdr-task tick's "held": "vm-a's memory is 92% full", HERD-40).
-  if (running >= (list.config?.max_running ?? 10)) return `Waits: ${running === 1 ? "1 task is" : `${running} tasks are`} running here`;
+  // In plain words, as herdr-task's queue_reason: its machine too busy (herdr-task tick's "held": "vm-a's memory is
+  // 92% full", HERD-40).
   return task.held ? `Waits: ${task.held}` : "Starts soon";
 }
 
@@ -238,18 +237,30 @@ export const estimated = (p) => typeof p?.left === "number";
 // stop while it waits on the person (herdr-task notes when: progress.paused_at). own: the progress an
 // agent reports itself (OSC 7501: { pct, msg }), which gives the % done, and its message is the line
 // until it says one through herdr-task status.
+// Both sources stay in step (SHEP-321): the newer of the two gives the % done (own.at, its terminal's status_ms,
+// against the herdr-task report's at); either alone gives it.
 export function reportOf(task, section, own = null, now = Date.now()) {
   const p = task.progress;
   if (task.state !== "running" || !["working", "needs"].includes(section)) return null;
   const text = p?.text || own?.msg || null;
   if (!text && !own) return null;
-  const done = own ? own.pct : p?.done ?? null;
+  const said = typeof p?.done === "number" ? p.done : null;
+  const done = own && (said === null || !own.at || !p?.at || own.at >= p.at) ? own.pct : said;
   let left = null;
   if (estimated(p)) {
     const rem = Math.max(0, p.left - ((p.paused_at ?? now) - (p.at ?? now)));
     left = rem < 60000 ? 0 : Math.ceil(rem / 60000);
   }
   return { text, done, left, paused: section === "needs" };
+}
+
+// The % done an agent's terminal reports itself, as herdr-core keeps it: hc's OSC 7501 record (status.progress, 0-100,
+// with status_ms), or the older Herdr's `report`. { pct, msg, at } or null when it gave none.
+export function ownReport(k) {
+  const r = k?.status && typeof k.status === "object" ? k.status : k?.report;
+  const pct = r?.progress;
+  if (typeof pct !== "number" || !Number.isFinite(pct) || pct < 0) return null;
+  return { pct: Math.min(100, Math.round(pct)), msg: r.msg || null, at: typeof k.status_ms === "number" ? k.status_ms : null };
 }
 
 // Sort within a section: the newest activity first; to do in the order they were added.
