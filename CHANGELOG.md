@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.2.8
+
+Every space can have its own icon, every machine, this one too, gets a home space (~) that works like any space, and a
+task's chat can take the whole middle.
+
+### The web app
+
+- Give a space its own icon: an emoji or a picture. New space, Rename and a space's Settings have an icon button
+  beside the name (Emoji, Photo, Paste picture, Reset). The icon shows everywhere the space's # was.
+- With more than one machine, this machine also gets a home space (~) as the first row under it, beside Everything.
+  It has its own chat and Assistant, which starts with its first message. Everything stays the top row, as before.
+- A machine's home space (~) has the full space menu: rename, group, archive and remove, from its row, a long press or
+  the chat header. Once renamed it shows its new name; clear the name and it reads ~ again.
+- Removing a home space asks first, like any space, and stays removed; New space at ~ brings it back. Everything still
+  can't be removed.
+- The home space shows # like any space, or the icon you give it, in the sidebar, chat header, space pickers, Send to
+  and search.
+- Maximize a task's chat: it moves to the middle and stays there while you close the side pane, open Tasks or
+  Artifacts, press Esc or reload. Minimize puts it back in the pane; going to another space does too. On a phone it
+  opens as the task, as before.
+
+### Tasks
+
+- Tasks in your home folder stay Everything's unless the ~ space started them, and news of a task reaches Everything
+  once, never twice.
+
+## 3.2.7
+
+The step line shows what an agent is doing now, every machine shows its home space, reply bubbles that are easier to
+tap and never cover the chat, and schedules that no longer miss a merge.
+
+### The web app
+
+- The step line beside the working sign shows the step running now. An old step from an earlier turn no longer
+  sticks there.
+- Every other machine in the sidebar shows its home space first, as ~: it opens like any space and has its own
+  Settings. A machine with no other space no longer shows an empty list.
+- New space on a folder that already has a space opens that space and says so.
+- Suggested replies get their own row: the chat ends just above them and fades softly instead of being cut, and a new
+  set starts at its first bubble.
+- All reply bubbles look the same, and a short one is round and at least a fingertip big.
+- The bubbles stay while you type. A tap sends just that bubble's text; your draft, files and quoted reply stay in the
+  box.
+- Bubbles only react to hover with a mouse, not after a tap on a phone.
+
+### Tasks
+
+- A task merged and then reopened (like a release coming back to be tagged) stays merged when it's done again,
+  instead of "Done, not merged".
+- A schedule that listens for merges on another machine catches one that happened between its rounds, once, and one
+  folder's error no longer stops it for the others.
+- A schedule that listens to another machine says when it last heard from it, or that it can't hear it.
+
 ## 3.2.6
 
 Replies you tap to send, replying to a task from the chat, question cards where they were asked, and fewer hangs and

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { Snapshot, Task } from './types.ts'
-import { doneWords, etaOf, folderName, folderOf, headerWhere, leftShort, leftWords, listOf, needsCount, ringOf, nowGroups, statusWord, taskLine, taskWhen, tstate } from './view.ts'
+import { artifactsIn, doneWords, isEverything, isHomeSpace, tasksIn, etaOf, folderName, folderOf, headerWhere, leftShort, leftWords, listOf, needsCount, placeOf, ringOf, nowGroups, spaceLabel, spaceName, spacesOf, statusWord, taskLine, taskWhen, tstate } from './view.ts'
 
 const task = (x: Partial<Task>): Task => ({ id: 'T-1', name: 'A task', place: 'shop', status: 'work', state: 'work', on: 'mini', created: '', age: '', ...x })
 
@@ -86,18 +86,33 @@ test('the ring shows the share done in every unfinished state; Ready and Done sh
 const snap = (x: Partial<Snapshot>): Snapshot => ({ name: '', host: 'mini', user: '', places: [], machines: [], tasks: [], automations: {}, artifacts: [], asks: {}, needs: [], settings: [], ...x })
 const place = (id: string, machine: string, x = {}) => ({ id, name: id, machine, level: 0 as const, status: 'idle' as const, mode: 'regular' as const, chat: id, ...x })
 
-test('the list: machines as headings, groups first, home spaces left out, archived by the filter', () => {
+test("the list: machines as headings, another machine's home space a space like any, groups next, archived by the filter", () => {
   const s = snap({
     everything: 'home',
-    places: [place('home', 'mini', { home: true }), place('shop', 'mini'), place('blog', 'mini', { archived: true }), place('vmhome', 'vm', { home: true }), place('garden', 'vm')],
+    places: [place('home', 'mini', { home: true }), place('shop', 'mini'), place('blog', 'mini', { archived: true }), place('vmhome', 'vm', { home: true, unnamed: true }), place('garden', 'vm')],
     machines: [{ id: 'm:mini', machine: 'mini', name: 'mini', status: 'idle' }, { id: 'm:vm', machine: 'vm', name: 'vm', status: 'off', unreachableSince: '14:02' }],
     sections: [{ id: 's:1', name: 'Store', machine: 'mini', spaces: ['shop', 'blog'] }],
   })
   const active = listOf(s, 'Active')
   expect(active.map((m) => m.machine.name)).toEqual(['mini', 'vm'])
   expect(active[0]!.groups[0]!.spaces.map((p) => p.id)).toEqual(['shop'])
-  expect(active[1]!.spaces.map((p) => p.id)).toEqual(['garden'])
+  expect(active[1]!.spaces.map((p) => p.id)).toEqual(['vmhome', 'garden'])
   expect(active[1]!.warn).toBe("Can't reach")
+  // every machine's home space: vm's is one of its spaces, first; mini's is Everything, never a row of its own
+  expect(active[0]!.spaces.map((p) => p.id)).not.toContain('home')
+  expect(listOf(s, 'Archived')[1]!.spaces).toEqual([])
+  expect(spaceLabel(s, 'vmhome')).toBe('~ on vm')
+  // named, it shows its name as any space; archived, it moves to the Archived filter
+  const named = { ...s, places: s.places.map((p) => (p.id === 'vmhome' ? { ...p, name: 'box', unnamed: undefined, archived: true } : p)) }
+  expect(spaceLabel(named, 'vmhome')).toBe('#box')
+  expect(spaceName(named, named.places[3]!)).toBe('box')
+  expect(listOf(named, 'Active')[1]!.spaces.map((p) => p.id)).toEqual(['garden'])
+  expect(listOf(named, 'Archived')[1]!.spaces.map((p) => p.id)).toEqual(['vmhome'])
+  expect(listOf(named, 'Archived')[1]!.archived).toBe(1)
+  expect(spaceLabel(s, 'home')).toBe('Everything')
+  expect(spaceName(s, s.places[3]!)).toBe('~')
+  expect(placeOf(s, 'vmhome')?.id).toBe('vmhome')
+  expect(spacesOf(s).map((p) => p.id)).toEqual(['shop', 'blog', 'vmhome', 'garden'])
   expect(listOf(s, 'Archived')[0]!.spaces.map((p) => p.id)).toEqual(['blog'])
   expect(listOf(s, 'All')[0]!.groups[0]!.spaces.map((p) => p.id)).toEqual(['shop', 'blog'])
 })
@@ -147,4 +162,26 @@ test("a chat header's where: the folder, the machine only when it adds something
   expect(headerWhere(snap, { id: 'ev', machine: 'mini' })).toEqual({ path: '~', cut: false, full: '~', machine: 'Mac mini' })
   // another space with no folder: nothing
   expect(headerWhere(snap, { id: 'y', machine: 'mini' })).toBeNull()
+})
+
+test("the main machine's own ~ space: a space of its own beside Everything; its Tasks and Artifacts its home folder's (3.2.8)", () => {
+  const s = snap({
+    everything: 'home',
+    places: [place('home', 'mini', { home: true }), place('shop', 'mini'), place('tilde', 'mini', { home: true, unnamed: true }), place('vmhome', 'vm', { home: true, unnamed: true })],
+    machines: [{ id: 'm:mini', machine: 'mini', name: 'mini', status: 'idle' }, { id: 'm:vm', machine: 'vm', name: 'vm', status: 'idle' }],
+    tasks: [{ id: 'A-1', place: 'tilde' }, { id: 'A-2', place: 'home', also: ['tilde'] }, { id: 'A-3', place: 'shop' }] as Task[],
+    artifacts: [{ id: 'a1', place: 'home', at: 2 }, { id: 'a2', place: 'shop', at: 1 }, { id: 'a3', place: 'vmhome', at: 3 }] as Snapshot['artifacts'],
+  })
+  expect(isEverything(s, 'home')).toBe(true)
+  expect(isHomeSpace(s, s.places[2]!)).toBe(true)
+  expect(isHomeSpace(s, s.places[0]!)).toBe(false)
+  expect(listOf(s, 'Active')[0]!.spaces.map((p) => p.id)).toEqual(['shop', 'tilde'])
+  expect(spaceLabel(s, 'tilde')).toBe('~ on mini')
+  expect(spaceLabel(s, 'home')).toBe('Everything')
+  // Everything keeps every machine's; the ~ space its own folder's
+  expect(tasksIn(s, 'home').map((t) => t.id)).toEqual(['A-1', 'A-2', 'A-3'])
+  expect(tasksIn(s, 'tilde').map((t) => t.id)).toEqual(['A-1', 'A-2'])
+  expect(artifactsIn(s, 'tilde').map((a) => a.id)).toEqual(['a1'])
+  expect(artifactsIn(s, 'vmhome').map((a) => a.id)).toEqual(['a3'])
+  expect(artifactsIn(s, 'home').map((a) => a.id)).toEqual(['a3', 'a1', 'a2'])
 })

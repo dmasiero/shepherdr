@@ -145,11 +145,13 @@ export function snapshot(mode: 'normal' | 'empty' | 'down' | 'more' | 'long' = '
     user: 'Sam',
     everything: EV,
     // two spaces called shop, in other folders on other machines, and one deep folder (SHEP-302); a space at the root (SHEP-316)
-    places: [place(EV, 'home', 'mac-mini', at('/Users/sam', '~', { home: true })), place(P.shop, 'shop', 'mac-mini', at('/Users/sam/dev/shop', undefined, { git: 'main' })), place(P.blog, 'blog', 'mac-mini', at('/Users/sam/dev/blog')), place(P.notes, 'notes', 'mac-mini', at('/Users/sam/notes')), place(P.docs, 'docs', 'mac-mini', at('/Users/sam/dev/clients/northwind/website-redesign-2026/docs')), place(P.garden, 'garden-app', 'vm', at('/home/sam/dev/garden-app')), place(P.vmShop, 'shop', 'vm', at('/home/sam/clients/acme/shop')), place(P.vmRoot, 'root', 'vm', at('/')),
+    places: [place(EV, 'home', 'mac-mini', at('/Users/sam', '~', { home: true })), place(P.shop, 'shop', 'mac-mini', at('/Users/sam/dev/shop', undefined, { git: 'main' })), place(P.blog, 'blog', 'mac-mini', at('/Users/sam/dev/blog')), place(P.notes, 'notes', 'mac-mini', at('/Users/sam/notes', undefined, { emoji: '📝' })), place(P.docs, 'docs', 'mac-mini', at('/Users/sam/dev/clients/northwind/website-redesign-2026/docs')), place(P.garden, 'garden-app', 'vm', at('/home/sam/dev/garden-app')), place(P.vmShop, 'shop', 'vm', at('/home/sam/clients/acme/shop')), place(P.vmRoot, 'root', 'vm', at('/')),
       // SHEP-342: an archived space for the machines' filter, a machine with one space and one with none
       place(P.oldSite, 'old-site', 'mac-mini', at('/Users/sam/dev/old-site', undefined, { archived: true })), place(P.studioSite, 'site', 'studio', at('/Users/sam/dev/site')),
       // SHEP-354: a space with a long name, for the Tasks filter's width
-      place(P.vmPortal, 'customer-portal-and-billing-redesign', 'vm', at('/home/sam/clients/northwind/portal'))],
+      place(P.vmPortal, 'customer-portal-and-billing-redesign', 'vm', at('/home/sam/clients/northwind/portal')),
+      // SHEP-429: every other machine's home space, its first row as ~; pi has nothing else
+      place('p:mac-mini:tilde', 'home', 'mac-mini', at('/Users/sam', '~', { home: true, unnamed: true })), place('p:vm:home', 'home', 'vm', at('/home/sam', '~', { home: true, unnamed: true })), place('p:studio:home', 'home', 'studio', at('/Users/sam', '~', { home: true, unnamed: true })), place('p:pi:home', 'home', 'pi', at('/home/sam', '~', { home: true, unnamed: true }))],
     sections: [{ id: 's:store', name: 'Store', machine: 'mac-mini', spaces: [P.shop, P.blog] }],
     machines: [
       { id: 'm:mac-mini', machine: 'mac-mini', name: 'mac-mini', status: 'idle', here: true, health: { meters: [{ name: 'CPU', pct: 34, detail: '', level: 'ok' }, { name: 'Memory', pct: 71, detail: '', level: 'ok' }, { name: 'Disk', pct: 58, detail: '', level: 'ok' }], herdr: true, working: 5, held: 0, at: '' } },

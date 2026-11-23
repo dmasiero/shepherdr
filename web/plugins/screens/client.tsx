@@ -7,7 +7,7 @@
 // "Needs your hands" card with Skip and Take over.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PaneFrame } from '@client/App.tsx'
-import { act as call, definePlugin, getState, notice, openSettings, setUI, togglePane, tryAct, useSnap, useUI, type ScreenAt, type Thread } from '@client/kernel.ts'
+import { act as call, definePlugin, getState, notice, openSettings, openTask, setUI, togglePane, tryAct, useSnap, useUI, type ScreenAt, type Thread } from '@client/kernel.ts'
 import { secretDialog } from '@client/settings.tsx'
 import { openMenu } from '@client/overlay.tsx'
 import { Btn, cx, Hd, I, IB } from '@client/ui.tsx'
@@ -15,7 +15,7 @@ import { DoneRow } from '@plugins/chat/cards.tsx'
 import { StatusIcon } from '@plugins/tasks/icon.tsx'
 import { shortUrl, toUrl, type BrowserDown, type BrowserUp } from '@shared/browser.ts'
 import type { Chat, ScreenInfo, Snapshot, Task } from '@shared/types.ts'
-import { isEverything, machineLabel, placeOf, taskOf, tasksIn, tstate } from '@shared/view.ts'
+import { isEverything, machineLabel, placeOf, spaceName, taskOf, tasksIn, tstate } from '@shared/view.ts'
 import { screenKey, screenRow } from './menu.ts'
 import { fit, keyEvent, modifiers, toPage, type Size } from '@plugins/browser/input.ts'
 import { browserPress, deskPress, enterDevice, keysymOf, leaveDevice, refit, wheelSteps, WHOLE, type Mods, type Pt, type View } from './full.ts'
@@ -516,7 +516,7 @@ function ScreenPane() {
   driveNow.current = drive
   const setScr = (p: Partial<ScreenAt>) => setUI({ scr: { ...scr, ...p } })
   const mach = machineLabel(snap, sc.d?.of ?? machine)
-  const sub = (kind === 'chat' ? `${place && !isEverything(snap, place) ? `#${placeOf(snap, place)?.name ?? ''}` : 'Everything'} on ${mach}` : kind === 'machine' ? '' : mach) + (src === 'd' ? `${kind === 'machine' ? '' : ' · '}${sc.d?.own ? 'its own desktop' : 'shared desktop'}` : '')
+  const sub = (kind === 'chat' ? `${place && !isEverything(snap, place) ? ((p) => (p ? (spaceName(snap, p) === '~' ? '~' : `#${p.name}`) : ''))(placeOf(snap, place)) : 'Everything'} on ${mach}` : kind === 'machine' ? '' : mach) + (src === 'd' ? `${kind === 'machine' ? '' : ' · '}${sc.d?.own ? 'its own desktop' : 'shared desktop'}` : '')
   const back = () => {
     if (kind === 'task') setUI({ pane: 'tasks', task: id })
     else if (kind === 'machine') { setUI({ pane: null }); openSettings('all', 'Machines') }
@@ -637,7 +637,7 @@ function ScreenPane() {
 const openScreen = (key: string, drive = false) => {
   const snap = getState().snap
   const sc = snap ? infoOf(snap, key) : {}
-  setUI({ scr: { key, src: sc.b ? 'b' : 'd', drive }, pane: 'screen', settings: null, drawer: false, art: null, task: key.startsWith('task:') ? key.slice(5) : null, wide: getState().ui.wide && key === `task:${getState().ui.task}` })
+  setUI({ scr: { key, src: sc.b ? 'b' : 'd', drive }, pane: 'screen', settings: null, drawer: false, art: null, task: key.startsWith('task:') ? key.slice(5) : null })
 }
 
 /* ---------- in a thread: the small live picture, and Needs your hands ---------- */
@@ -662,7 +662,7 @@ function HandsCard({ k, sc, t, ref_ }: { k: string; sc: ScreenInfo; t: Task; ref
   if (sc.hands!.settled) return ref_ ? null : <DoneRow>{sc.hands!.settled === 'skip' ? 'You skipped this' : 'You did this step'}</DoneRow>
   return (
     <>
-      {ref_ && <button type="button" className="ref" onClick={() => setUI({ task: t.id, pane: 'tasks', wide: false })}><StatusIcon t={t} time="side" /><span>{t.name}</span></button>}
+      {ref_ && <button type="button" className="ref" onClick={() => openTask(t.id)}><StatusIcon t={t} time="side" /><span>{t.name}</span></button>}
       <div className="card" data-card={`hands:${t.id}`}>
         <span className="t">Needs your hands</span>
         <span className="s">{sc.hands!.what}{sc.b?.url ? ` · ${shortUrl(sc.b.url)}` : ''}</span>

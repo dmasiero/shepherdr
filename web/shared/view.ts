@@ -14,20 +14,30 @@ export function everything(snap: Snapshot): Place | undefined {
 
 export const isEverything = (snap: Snapshot, id: string) => everything(snap)?.id === id
 
-/** a space the app shows: Everything or a space (another machine's home space is not one) */
+/** a machine's home space: its home folder's. The main machine's sits beside Everything in the same folder (3.2.8), a
+ *  space of its own. A space like any other: renamed, grouped, archived or removed; New space at ~ there brings it back. */
+export const isHomeSpace = (snap: Snapshot, p: Pick<Place, 'id' | 'home' | 'machine'>) => !!p.home && !isEverything(snap, p.id)
+
+/** a home space nobody named: it shows as ~ with a folder icon (a name given shows as any space's, with #) */
+export const isTilde = (snap: Snapshot, p: Pick<Place, 'id' | 'home' | 'machine' | 'unnamed'>) => isHomeSpace(snap, p) && !!p.unnamed
+
+/** a space the app shows: Everything, every machine's home space or a space */
 export function placeOf(snap: Snapshot, id: string | null | undefined): Place | undefined {
   if (!id) return undefined
-  const p = snap.places.find((x) => x.id === id)
-  return p && (!p.home || isEverything(snap, p.id)) ? p : undefined
+  return snap.places.find((x) => x.id === id)
 }
 
-/** the spaces of the list: every space but the home ones */
-export const spacesOf = (snap: Snapshot) => snap.places.filter((p) => !p.home)
+/** the spaces of the list: every space but Everything (every machine's home space among them) */
+export const spacesOf = (snap: Snapshot) => snap.places.filter((p) => !isEverything(snap, p.id))
 
-/** "#shop", or "Everything" */
+/** a space's name as its row shows it: ~ for a machine's home space nobody named */
+export const spaceName = (snap: Snapshot, p: Pick<Place, 'id' | 'home' | 'machine' | 'name' | 'unnamed'>) => (isTilde(snap, p) ? '~' : p.name)
+
+/** "#shop", "~ on vm" (another machine's home space, unnamed), or "Everything" */
 export function spaceLabel(snap: Snapshot, id: string): string {
   if (isEverything(snap, id)) return 'Everything'
   const p = snap.places.find((x) => x.id === id)
+  if (p && isTilde(snap, p)) return `~ on ${machineLabel(snap, p.machine)}`
   return p ? `#${p.name}` : ''
 }
 
@@ -114,7 +124,9 @@ export function listOf(snap: Snapshot, filter: ListFilter | ((machine: string) =
   const sections: Section[] = (snap.sections ?? []).filter((s) => s.id !== 'pinned')
   return snap.machines.map((machine) => {
     const f = typeof filter === 'function' ? filter(machine.machine) : filter
-    const all = snap.places.filter((p) => p.machine === machine.machine && !p.home)
+    // its home space (the main machine's beside Everything) is one of its spaces, first in the service's order until
+    // moved: grouped, archived or removed like any
+    const all = snap.places.filter((p) => p.machine === machine.machine && (!p.home || isHomeSpace(snap, p)))
     const mine = all.filter((p) => f === 'All' || (f === 'Archived') === !!p.archived)
     const groups = sections
       .filter((s) => (s.machine ?? snap.host) === machine.machine)
@@ -327,7 +339,7 @@ export function reposOf(snap: Snapshot): Repo[] {
 
 /** the space working in a repo's folder on its machine, if one does */
 export const spaceOnFolder = (snap: Snapshot, r: Pick<Repo, 'folder' | 'machine'>) =>
-  snap.places.find((p) => (!p.home || isEverything(snap, p.id)) && !p.archived && p.machine === r.machine && p.folder === r.folder)
+  snap.places.find((p) => !p.archived && p.machine === r.machine && p.folder === r.folder)
 
 /** "Asked in #root": the space that asked for a task, in words */
 export const askedWords = (snap: Snapshot, t: Task) => (t.asked && snap.places.some((p) => p.id === t.asked) ? `Asked in ${spaceLabel(snap, t.asked)}` : '')
@@ -350,7 +362,7 @@ export function nowGroups(tasks: Task[]): { name: 'Needs you' | 'Working' | 'Up 
 export function needsCount(snap: Snapshot, placeId?: string): number {
   const all = !placeId || isEverything(snap, placeId)
   const tasks = snap.tasks.filter((t) => (all || taskInSpace(t, placeId)) && ['ask', 'ready'].includes(tstate(t))).length
-  const chats = snap.places.filter((p) => p.needs && (all ? !p.home || isEverything(snap, p.id) : p.id === placeId)).length
+  const chats = snap.places.filter((p) => p.needs && (all || p.id === placeId)).length
   return tasks + chats
 }
 
@@ -383,5 +395,8 @@ export function scheduleLine(a: Automation): string {
 export function artifactsIn(snap: Snapshot, placeId: string): Artifact[] {
   const all = isEverything(snap, placeId)
   const proofs = new Set(snap.tasks.map((t) => t.proof).filter(Boolean))
-  return snap.artifacts.filter((a) => !proofs.has(a.id) && !a.proof && (all || a.place === placeId)).sort((a, b) => b.at - a.at)
+  // the main machine's ~ space: its home folder's too, which Everything keeps (as it keeps its tasks)
+  const p = placeOf(snap, placeId)
+  const home = !!p && p.machine === snap.host && isHomeSpace(snap, p) ? snap.everything : null
+  return snap.artifacts.filter((a) => !proofs.has(a.id) && !a.proof && (all || a.place === placeId || (!!home && a.place === home))).sort((a, b) => b.at - a.at)
 }

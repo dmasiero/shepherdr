@@ -57,6 +57,20 @@ test("rename: a space's name in the list of spaces, on its machine only; its ico
   expect(w.calls()).toEqual([]);
 });
 
+test("a space's icon: a real small picture kept, anything posing as one refused, Reset takes it away, the name kept", async () => {
+  const w = world();
+  // a 1x1 PNG
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  expect(await act(w.hub, { type: "rename", id: "vm/sp1", name: "", emoji: png }, w.compat)).toEqual({ ok: true });
+  expect(w.shared["spaces-chat"].icons["vm/sp1"]).toBe(png);
+  expect(w.shared.spaces[2].name).not.toBe("");   // an icon alone leaves the name as it was
+  for (const bad of ["data:text/html;base64,PGh0bWw+", "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "data:image/png;base64,PGh0bWw+PHNjcmlwdD4=", `data:image/png;base64,${"A".repeat(60000)}`, "<b>"])
+    await expect(act(w.hub, { type: "rename", id: "vm/sp1", name: "", emoji: bad }, w.compat)).rejects.toThrow();
+  expect(w.shared["spaces-chat"].icons["vm/sp1"]).toBe(png);
+  await act(w.hub, { type: "rename", id: "vm/sp1", name: "", emoji: "" }, w.compat);
+  expect("vm/sp1" in w.shared["spaces-chat"].icons).toBe(false);
+});
+
 test("reorder: a machine's spaces in the order dragged, kept in the sidebar's data; the rest stay where they were", async () => {
   const w = world();
   await act(w.hub, { type: "order", under: "m:vm", ids: ["vm/sp1", "vm/sp2"] }, w.compat);
@@ -162,9 +176,12 @@ test("the model carries the window's spaces over once per machine, then never re
   expect(doc[IMPORTED]).toEqual(["", "vm"]);
   // this computer's are carried over and none is the home folder: Everything, the root space, is made (once)
   expect(doc.spaces.filter((s: any) => s.id === "home")).toMatchObject([{ id: "home", name: "Home", folder: HOME, machine: null }]);
-  expect(put.spaces.spaces.map((s: any) => s.id).sort()).toEqual(["home", "sp1", "vm/sp1"]);
-  // removed since: it stays removed
-  doc.spaces = doc.spaces.filter((s: any) => s.machine !== "vm");
+  // with another machine, this computer gets its own ~ space beside Everything, unnamed, once (3.2.8)
+  expect(doc.spaces.filter((s: any) => s.folder === HOME)).toMatchObject([{ id: "home" }, { id: "tilde", name: "", folder: HOME, machine: null }]);
+  expect(doc.spaces.findIndex((s: any) => s.id === "tilde")).toBe(doc.spaces.findIndex((s: any) => s.id === "home") + 1);
+  expect(put.spaces.spaces.map((s: any) => s.id).sort()).toEqual(["home", "sp1", "tilde", "vm/sp1"]);
+  // removed since: it stays removed (the ~ space too)
+  doc.spaces = doc.spaces.filter((s: any) => s.machine !== "vm" && s.id !== "tilde");
   await refresh();
   expect(put.spaces.spaces.map((s: any) => s.id).sort()).toEqual(["home", "sp1"]);
   expect(doc.spaces.filter((s: any) => s.id === "home").length).toBe(1);

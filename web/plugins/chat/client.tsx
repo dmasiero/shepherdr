@@ -5,7 +5,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyn
 import { copyText } from '@client/copy.ts'
 import { TEXT_IN_CALL, useDictating } from '@client/dictate.tsx'
 import { attr } from '@client/attr.ts'
-import { act, definePlugin, getState, has, notice, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
+import { act, definePlugin, getState, has, notice, openTask, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
 import { AgentLine, openPicker, pickFor, pickWords, type Pick } from '@client/picker.tsx'
@@ -14,7 +14,7 @@ import { Btn, cx, Empty, I, IB, useGrow } from '@client/ui.tsx'
 import type { IconName } from '@client/icons.ts'
 import { isImage, isVideo } from '@shared/files.ts'
 import type { Chat, Message, Relay, Snapshot, Task, TaskBrief, TurnActivity } from '@shared/types.ts'
-import { isEverything, placeOf, statusWord, taskOf } from '@shared/view.ts'
+import { isEverything, placeOf, spaceLabel, statusWord, taskOf } from '@shared/view.ts'
 import { StatusIcon } from '@plugins/tasks/icon.tsx'
 import { DoneRow, QuestionCard, SecretCard } from './cards.tsx'
 import { briefFrom, deliveryWord, looksLong, startWords } from './brief.ts'
@@ -145,7 +145,7 @@ function TaskRef({ id, title, t }: { id: string; title: string; t?: Task }) {
   // a slide to the right replies to the task here, as to a message
   const { on, slide, armed, skip, moving } = useSlide(() => replyToTask({ id, name: title }))
   return (
-    <button type="button" className="ref tslide" {...on} onClick={() => (skip.current ? void (skip.current = false) : setUI({ task: id, pane: 'tasks', wide: false }))}>
+    <button type="button" className="ref tslide" {...on} onClick={() => (skip.current ? void (skip.current = false) : openTask(id))}>
       <SlideHint slide={slide} armed={armed} />
       <span className={cx('tmv', moving.className)} style={moving.style} onTransitionEnd={moving.onTransitionEnd}>
         {t ? <StatusIcon t={t} time="side" /> : <I n="chat" c="s16" />}
@@ -167,7 +167,7 @@ function TaskQuote({ id, title }: { id: string; title: string }) {
       aria-label={`Replying to the task ${t?.name ?? title}${word ? `, ${word}` : ''}`}
       onClick={(e) => {
         e.stopPropagation()
-        setUI({ task: id, pane: 'tasks', wide: false })
+        openTask(id)
       }}
     >
       {t ? <StatusIcon t={t} time="none" /> : <I n="tasks" c="s16" />}
@@ -623,7 +623,7 @@ function Messages({ thread }: { thread: Thread }) {
   return (
     <>
       {empty && !thread.task && chat && (
-        <Empty title={every ? 'Welcome to Shepherdr' : `Nothing in #${placeOf(snap, thread.place)?.name ?? ''} yet`}>Tell me what you want done{every ? ', here or in a space.' : ' here.'}</Empty>
+        <Empty title={every ? 'Welcome to Shepherdr' : `Nothing in ${spaceLabel(snap, thread.place)} yet`}>Tell me what you want done{every ? ', here or in a space.' : ' here.'}</Empty>
       )}
       {out}
       {thread.task && <StartLine chat={chat} thread={thread} />}
@@ -687,7 +687,7 @@ export function WorkingSign({ chat, thread }: { chat: Chat | undefined; thread?:
   const report = thread?.task?.report
   const sign = signOf(chat, report && !report.paused ? report.msg : undefined)
   // SHEP-421: the line stays while the sign shows, the last step held until the next fades in over it
-  const step = chat ? heldStep(chat.key, sign) : ''
+  const step = chat ? heldStep(chat.key, sign, chat) : ''
   if (!sign) return null
   const n = chat?.messages.length ?? 0
   const el = (
@@ -732,8 +732,8 @@ function StoppedChat({ chat, thread }: { chat: Chat | undefined; thread: Thread 
 /** suggested replies already used: gone once you send something */
 const spent = new Set<string>()
 
-/** The agent's suggested replies as bubbles above the box (SHEP-186), in its order, the first the primary: a tap sends
- *  one as it is, a press held (or a right-click) puts it in the box to edit instead (ReplyPress). One line each; the
+/** The agent's suggested replies as bubbles above the box (SHEP-186), in its order, all alike (no first pick): a tap
+ *  sends one as it is, a press held (or a right-click) puts it in the box to edit instead (ReplyPress). One line each; the
  *  row scrolls sideways when they don't fit. */
 export function Replies({ texts, onSend, onEdit }: { texts: string[]; onSend: (t: string) => void; onEdit: (t: string) => void }) {
   const row = useRef<HTMLDivElement>(null)
@@ -742,12 +742,12 @@ export function Replies({ texts, onSend, onEdit }: { texts: string[]; onSend: (t
   useLayoutEffect(() => (row.current ? rowEdges(row.current) : undefined), [all])
   return (
     <div className="sugs" ref={row} role="group" aria-label="Suggested replies">
-      {texts.map((t, i) => <Reply key={`${i}:${t}`} text={t} primary={i === 0} onSend={onSend} onEdit={onEdit} />)}
+      {texts.map((t, i) => <Reply key={`${i}:${t}`} text={t} onSend={onSend} onEdit={onEdit} />)}
     </div>
   )
 }
 
-function Reply({ text, primary, onSend, onEdit }: { text: string; primary: boolean; onSend: (t: string) => void; onEdit: (t: string) => void }) {
+function Reply({ text, onSend, onEdit }: { text: string; onSend: (t: string) => void; onEdit: (t: string) => void }) {
   const edit = useRef(onEdit)
   edit.current = onEdit
   const press = useMemo(() => new ReplyPress(() => edit.current(text)), [text])
@@ -755,7 +755,7 @@ function Reply({ text, primary, onSend, onEdit }: { text: string; primary: boole
   return (
     <button
       type="button"
-      className={cx('sug', primary && 'pri')}
+      className="sug"
       onMouseDown={keepFocus}
       onPointerDown={(e) => press.down(e.clientX, e.clientY)}
       onPointerMove={(e) => press.move(e.clientX, e.clientY)}
@@ -811,7 +811,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const call = useUI((u) => u.call)
   const dictating = useDictating()
   const sending = useStore((s) => s.outbox.some((o) => o.chat === key))
-  const sug = sg && !repliesHidden({ text, files: files?.length ?? 0, dictating, call, working: busy, sending, spent: spent.has(sg.id) }) ? sg : null
+  const sug = sg && !repliesHidden({ dictating, call, working: busy, sending, spent: spent.has(sg.id) }) ? sg : null
   const machine = snap.places.find((p) => p.id === thread.place)?.machine ?? snap.host
   const pick = pickOf(snap, chat, thread)
   // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn.
@@ -827,13 +827,12 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
     if (shared) putAway()
   }
 
-  /** a suggested reply tapped: sent at once as your message, as if typed (no keyboard comes up: its bubble takes no
-   *  focus) */
+  /** a suggested reply tapped: exactly its text sent at once as its own message (no keyboard comes up: its bubble takes
+   *  no focus). Whatever is in the box (text, files, a quoted reply) is neither sent nor merged: it stays as it was */
   const sendSug = (t: string) => {
     if (!sug || (getState().ui.call && !TEXT_IN_CALL)) return
     spent.add(sug.id)
-    send(key, key, t, false)
-    if (shared) putAway()
+    send(key, key, t, false, true)
   }
   /** a suggested reply held: written into the box to edit, the box focused at its end */
   const editSug = (t: string) => {
@@ -974,7 +973,7 @@ export function AddButtons({ finger, onFiles }: { finger: boolean; onFiles: (f: 
 function SharedChip({ chat, thread }: { chat: string; thread: Thread }) {
   const snap = useSnap()!
   const t = thread.task
-  const where = t ? t.name : isEverything(snap, thread.place) ? 'Everything' : `#${placeOf(snap, thread.place)?.name ?? ''}`
+  const where = t ? t.name : spaceLabel(snap, thread.place)
   return (
     <span className="fchip shared">
       <I n="share" c="s16" />
