@@ -128,22 +128,33 @@ own=""
 [ -z "$argv" ] && [ "$role" = coordinator ] && own=$(awk '/^---[[:space:]]*$/ {f++; next} f == 1 && sub(/^command:[ \t]*/, "") {print; exit}' "$tpl" 2>/dev/null)
 # argv's words into cmd. A read loop, not mapfile: macOS's /bin/bash is 3.2, which has no mapfile (#736).
 argv_cmd() { local a; cmd=(); while IFS= read -r a; do cmd+=("$a"); done < <(jq -r '.[]' <<<"$argv"); }
+# fork: SHEP-92: the new terminal runs with its herdr-core's own PATH, never this script's (hc run children don't get
+# the caller's): on a Mac whose core launchd started that is /usr/bin:/bin:/usr/sbin:/sbin, and a bare claude ended at
+# once ("exec: claude: not found"). The agent goes by its full path as found here (this script's PATH: the service's,
+# or THERE_PATH's above on another machine), and its PATH gets this one after the core's own, as the fresh start's
+# AGENT_PATH (core/clean-env.js) does.
+where() { local p; case $1 in */*) ;; *) p=$(command -v -- "$1" 2>/dev/null); case $p in /*) printf '%s' "$p"; return ;; esac ;; esac; printf '%s' "$1"; }
+q=$(printf '%s' "$PATH" | sed "s/'/'\\\\''/g")
+widen='PATH="${PATH:+$PATH:}"'"'$q'; export PATH;"
 if [ -n "${HERDR_RESTART_RESUME:-}" ] && [ -n "$argv" ]; then
   argv_cmd
   [ ${#cmd[@]} -gt 0 ] || exit 1
-  new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(basename "${cmd[0]}")" -- sh -c "$clean"' exec "$@"' herdr-clean "${cmd[@]}" | jq -r '.address // empty')
+  key=$(basename "${cmd[0]}") cmd[0]=$(where "${cmd[0]}")
+  new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" -- sh -c "$clean $widen"' exec "$@"' herdr-clean "${cmd[@]}" | jq -r '.address // empty')
 elif [ -z "$argv" ] && [ "$role" = coordinator ] && [ -z "$own" ]; then
   new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" assistant "$handoff" | jq -r .address)
 else
   if [ -n "$own" ]; then
     own=${own#exec }
-    line=$own key=$(basename "${own%% *}")
+    first=${own%% *} key=$(basename "${own%% *}")
+    line="$(printf '%q' "$(where "$first")")${own#"$first"}"
   else
     argv_cmd
     [ ${#cmd[@]} -gt 0 ] || exit 1
     key=$(basename "${cmd[0]}")
     # Codex runs its commands outside hc without --no-daemon.
     [ "$key" = codex ] && [[ " ${cmd[*]} " != *" --no-daemon "* ]] && cmd+=(--no-daemon)
+    cmd[0]=$(where "${cmd[0]}")
     line=$(printf '%q ' "${cmd[@]}")
   fi
   msg=$handoff
@@ -155,7 +166,7 @@ else
   # handoff goes in a one-off template, removed once it has started.
   one=herdr-handoff-$$
   file=$tdir/$one.md
-  { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean exec $line"
+  { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean $widen exec $line"
     printf '%s\n' "$msg"; } >"$file"
   out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" "$one")
   rm -f "$file"
@@ -172,6 +183,16 @@ else
   fi
 fi
 [ -n "$new" ] || exit 1
+# fork: SHEP-92: a new one that ended as it started (its CLI not found, a bad flag) is no restart: the old one stays and
+# the caller hears why, rather than a chat mapped to a dead terminal ("started again but isn't ready yet")
+sleep 1
+st=$(hc get "$new" --json 2>/dev/null)
+if [ -n "$(jq -r '.finished_ms // .exit_code // empty' <<<"$st" 2>/dev/null)" ]; then
+  why=$(hc read "$new" --lines 40 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 1)
+  hc rm "$new" >/dev/null 2>&1
+  echo "The new agent ended as it started${why:+: $why}" >&2
+  exit 1
+fi
 hc kill "$old" >/dev/null 2>&1
 hc rm "$old" >/dev/null 2>&1
 echo "$new"
