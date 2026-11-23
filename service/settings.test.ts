@@ -297,11 +297,12 @@ test("a file holding the rolled-back lessons keys shows nothing of them and chan
   try {
     const s = new Settings();
     s.start();
-    const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop" };
+    // a task's setting from a space goes to its repo (upstream's SHEP-335)
+    const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop", repo: "/shop" };
     const shown = JSON.stringify(s.sections(null, [sp], ["vm"]));
     expect(shown.toLowerCase()).not.toContain("lesson");
     s.set("tasks.merge", "Right away", "sp7", sp);
-    expect(JSON.parse(readFileSync(file, "utf8")).spaces.sp7.tasks).toEqual({ merge: "auto" });
+    expect(JSON.parse(readFileSync(file, "utf8")).repos["/shop"].tasks).toEqual({ merge: "auto" });
   } finally {
     console.warn = warn;
     console.error = error;
