@@ -730,7 +730,7 @@ function TasksButton() {
 export default definePlugin({
   name: 'tasks',
   setup(reg) {
-    reg.header.push({ order: 30, View: TasksButton })
+    reg.header.push({ order: 50, View: TasksButton }) // fork: Tasks button on the right (after Artifacts' 40, where the pane's Close lands)
     reg.bar.push({ order: 10, pane: 'tasks', label: 'Tasks', icon: 'tasks', count: (snap, place) => filterCount(snap, getState().ui.tf, place) })
     reg.panes.push({ id: 'tasks', View: TasksPane })
     reg.views.taskHead = TaskHead
