@@ -294,7 +294,8 @@ def seen_pr(s, t):
     repo = github(s)
     found = pr_for_branch(t, repo) if repo else None
     if found:
-        t["pr_seen"] = {"number": found["number"], "url": found["url"], "repo": repo}
+        # fork: a Gitea one's record says so (SHEP-94, gitea.py)
+        t["pr_seen"] = gitea.record(repo, found) if gitea.is_target(repo) else {"number": found["number"], "url": found["url"], "repo": repo}
     elif repo:
         t.pop("pr_seen", None)
 

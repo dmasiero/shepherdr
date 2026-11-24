@@ -92,7 +92,7 @@ def pr_push(s, task, repo):
     # #1215: GitHub locks a branch while its pull request sits in the merge queue (its push is refused):
     # out of the queue first; ready puts it back once its checks pass (finalize()).
     pr = task.get("pr") or {}
-    q = queue_entry(task) if pr.get("number") and pr.get("repo") else None
+    q = queue_entry(task) if pr.get("number") and pr.get("repo") and not gitea.on(task) else None  # fork: no queue on Gitea
     if q and q["in"]:
         ok, err = unqueue(q)
         if not ok:
@@ -287,6 +287,9 @@ def pr_adopt(task, repo):
 def pr_for_branch(task, repo):
     """The open pull request from this repo for the task's branch into its base, whatever its head
     (opened by its agent, ready never knowing: #988), as gh lists it, or None."""
+    if gitea.is_target(repo):  # fork: on Gitea (SHEP-94: the tick's seen_pr gave gh Gitea's target, gitea.py)
+        base = task.get("base") or "main"
+        return next((p for p in gitea.prs_from(repo, task["branch"]) if not p["isCrossRepository"] and p.get("baseRefName") == base), None)
     ok, out, _ = gh("pr", "list", "--repo", repo, "--head", task["branch"], "--state", "open",
                     "--json", "number,url,isCrossRepository,baseRefName,headRefOid")
     try:

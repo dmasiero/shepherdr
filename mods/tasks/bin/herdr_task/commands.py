@@ -234,13 +234,21 @@ def take_pr(s, t, number):
     repo = github(s)
     if not repo:
         raise Fail(github_unreachable(s) or "--pr needs a folder whose remote is on GitHub.")
-    ok, out, err = gh("pr", "view", number, "--repo", repo, "--json", PR_FIELDS)
-    try:
-        v = json.loads(out) if ok else None
-    except ValueError:
-        v = None
-    if not isinstance(v, dict) or not v.get("number"):
-        raise Fail(f"Couldn't find pull request #{number} in {repo}: {err or out or 'no answer'}")
+    if gitea.is_target(repo):  # fork: on Gitea, read through tea in gh's fields (SHEP-94, gitea.py)
+        try:
+            v = gitea.pr_get(repo, number)
+        except Fail as e:
+            raise Fail(f"Couldn't find pull request #{number} in {repo.get('repo') or 'its Gitea repo'} on Gitea: {e}")
+        where = repo["repo"]
+    else:
+        ok, out, err = gh("pr", "view", number, "--repo", repo, "--json", PR_FIELDS)
+        try:
+            v = json.loads(out) if ok else None
+        except ValueError:
+            v = None
+        if not isinstance(v, dict) or not v.get("number"):
+            raise Fail(f"Couldn't find pull request #{number} in {repo}: {err or out or 'no answer'}")
+        where = repo
     n, head, into = v["number"], v.get("headRefName") or "", v.get("baseRefName") or "main"
     if v.get("state") != "OPEN":
         raise Fail(f"Pull request #{n} is {str(v.get('state') or 'not open').lower()}: only an open one can be taken.")
@@ -248,10 +256,10 @@ def take_pr(s, t, number):
         raise Fail(f"Pull request #{n} comes from a fork: Herdr can't push to its branch. Leave --pr out, so ready "
                    "opens the task's own.")
     mine = t.get("pr") or {}
-    if mine.get("number") == n and mine.get("repo") == repo:
+    if mine.get("number") == n and mine.get("repo") == where:  # fork: where, Gitea's "owner/name" too
         return
     other = next((o for o in s.data["tasks"] if o is not t and o.get("state") != "done"
-                  and (o.get("pr") or {}).get("number") == n and (o.get("pr") or {}).get("repo") == repo), None)
+                  and (o.get("pr") or {}).get("number") == n and (o.get("pr") or {}).get("repo") == where), None)
     if other:
         raise Fail(f"Pull request #{n} is already {s.ref(other)}'s.")
     main, wt = s.loc["folder"], t.get("worktree")
@@ -270,8 +278,9 @@ def take_pr(s, t, number):
         if (t.get("base") or into) != into and t.get("base_by") != "space":
             raise Fail(f"Pull request #{n} merges into {into}, not {t['base']}: leave --base out.")
         set_base(s, t, into)
-    t["pr"] = {"number": n, "url": v.get("url"), "repo": repo, "taken": True,
-               **({"branch": head} if head and head != t.get("branch") else {})}
+    # fork: a Gitea one's record says so (gitea.py)
+    t["pr"] = {**(gitea.record(repo, v) if gitea.is_target(repo) else {"number": n, "url": v.get("url"), "repo": repo}),
+               "taken": True, **({"branch": head} if head and head != t.get("branch") else {})}
     for k in ("pr_note", "merge_queued"):
         t.pop(k, None)
     s.dirty = True
@@ -548,15 +557,23 @@ def base_pr(s, t):
     repo = github(s)
     if not repo:
         return
-    ok, out, _ = gh("pr", "list", "--repo", repo, "--head", base, "--state", "open", "--json", PR_FIELDS)
+    if gitea.is_target(repo):  # fork: on Gitea, read through tea (SHEP-94, gitea.py)
+        rows = gitea.prs_from(repo, base)
+    else:
+        ok, out, _ = gh("pr", "list", "--repo", repo, "--head", base, "--state", "open", "--json", PR_FIELDS)
+        try:
+            rows = json.loads(out) if ok and out else []
+        except ValueError:
+            rows = []
     try:
-        found = next((p for p in json.loads(out) if not p.get("isCrossRepository")), None) if ok and out else None
-    except (ValueError, TypeError, AttributeError):
+        found = next((p for p in rows if not p.get("isCrossRepository")), None)
+    except (TypeError, AttributeError):
         found = None
     if not found or found.get("baseRefName") == base:
         return
-    t["pr"] = {"number": found["number"], "url": found.get("url"), "repo": repo, "taken": True, "branch": base,
-               "from_base": True}
+    # fork: a Gitea one's record says so (gitea.py)
+    t["pr"] = {**(gitea.record(repo, found) if gitea.is_target(repo) else {"number": found["number"], "url": found.get("url"), "repo": repo}),
+               "taken": True, "branch": base, "from_base": True}
     for k in ("pr_note", "merge_queued"):
         t.pop(k, None)
     s.dirty = True
