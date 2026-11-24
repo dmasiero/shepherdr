@@ -133,8 +133,18 @@ const longDay = (s: Snapshot): Snapshot => ({
   artifacts: s.artifacts.map((a: any, i: number) => (i === 0 ? { ...a, title: `${a.title}: the whole story, with every screenshot and the numbers behind it` } : a)),
 })
 
-export function snapshot(mode: 'normal' | 'empty' | 'down' | 'more' | 'long' = 'normal'): Snapshot {
+// ?case=one and ?case=five (SHEP-438): the sidebar with one machine only, and with a fifth one to fold and drag
+const oneMachine = (s: Snapshot): Snapshot => ({ ...s, machines: s.machines.slice(0, 1), places: s.places.filter((p) => p.machine === s.host), warnings: [] })
+const fiveMachines = (s: Snapshot): Snapshot => ({
+  ...s,
+  machines: [...s.machines, { id: 'm:laptop', machine: 'laptop', name: 'laptop', status: 'idle' }],
+  places: [...s.places, { ...s.places.find((p) => p.machine === 'pi')!, id: 'p:laptop:home', chat: 'p:laptop:home', machine: 'laptop' }, { ...s.places.find((p) => p.machine === 'studio' && !p.home)!, id: 'p:laptop:notes', chat: 'p:laptop:notes', machine: 'laptop', name: 'notes' }],
+})
+
+export function snapshot(mode: 'normal' | 'empty' | 'down' | 'more' | 'long' | 'one' | 'five' = 'normal'): Snapshot {
   if (mode === 'long') return longDay(snapshot('normal'))
+  if (mode === 'one') return oneMachine(snapshot('normal'))
+  if (mode === 'five') return fiveMachines(snapshot('normal'))
   const empty = mode === 'empty'
   const down = mode === 'down'
   return {
@@ -245,7 +255,7 @@ export const chats: Record<string, Chat> = Object.fromEntries(
       me('Pinned to https://example.com/releases/2026/november/checkout-redesign-final-final-v2-with-the-bigger-button and Pneumonoultramicroscopicsilicovolcanoconiosis too', { reactions: [{ emoji: '🎉', by: 'both' }] }),
       a('Noted: https://example.com/releases/2026/november/checkout-redesign-final-final-v2-with-the-bigger-button is the one, and Pneumonoultramicroscopicsilicovolcanoconiosis stays.', { reactions: [{ emoji: '👍', by: 'me' }] }),
       // links to the app itself, as `herdr-artifact link` prints them: they open in the app (SHEP-339)
-      a('The quotes are compared: [Supplier quotes compared](APP/?artifact=a-quotes). Its task: [Compare supplier quotes](APP/?task=NOTES-4). The [shop space](APP/?place=p:mac-mini:shop). The suppliers\' own site: [example.com](https://example.com/).', { suggests: ['Show me what needs me', 'Start the Adyen paperwork anyway, just in case we pass 50k next quarter', 'status?'] }),
+      a('The quotes are compared: [Supplier quotes compared](APP/?artifact=a-quotes). Its task: [Compare supplier quotes](APP/?task=NOTES-4). The [shop space](APP/?place=p:mac-mini:shop). The suppliers\' own site: [example.com](https://example.com/), the sheet: [`quotes/compare.csv`](https://example.com/compare.csv).', { suggests: ['Show me what needs me', 'Start the Adyen paperwork anyway, just in case we pass 50k next quarter', 'status?'] }),
     ], sonnet),
     chat(P.shop, [relay('from', 'Everything', LONG_NOTE, today(9, 20) - 2 * min), relay('to', 'Everything', LONG_NOTE, today(9, 20), { how: 'assistant', state: 'delivered' }),
       relay('to', 'Bigger checkout button on phones', 'Keep the total above the fold on a 360 px screen too.', today(9, 25), { how: 'reply', state: 'delivered' }),

@@ -1,7 +1,8 @@
 // The demo: `bun web/demo/serve.ts [port]` serves the built app (web/dist) with a fictional day instead of the service,
 // on 127.0.0.1 only. For looking at every screen and comparing it with the design; nothing is wired to a real agent.
 // `?case=empty` and `?case=down` in the page's address show "Nothing yet" and "Can't reach vm"; `?case=more` adds a
-// third warning (the warnings line coming back after it was closed); `?case=long` gives spaces, tasks and pages long names.
+// third warning (the warnings line coming back after it was closed); `?case=long` gives spaces, tasks and pages long names;
+// `?case=one` and `?case=five` show one machine only and five.
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Chat, Message, Snapshot, Task } from '../shared/types.ts'
@@ -19,13 +20,13 @@ const DEMO_HOME: Record<string, string[]> = {
 
 const dist = join(fileURLToPath(new URL('../', import.meta.url)), 'dist')
 const port = Number(process.argv[2] || 7799)
-type Sock = { send(s: string): void; data: { mode: 'normal' | 'empty' | 'down' | 'more' | 'long'; watch: string[]; app?: string } }
+type Sock = { send(s: string): void; data: { mode: 'normal' | 'empty' | 'down' | 'more' | 'long' | 'one' | 'five'; watch: string[]; app?: string } }
 const socks = new Set<Sock>()
-const state = { normal: structuredClone(snapshot('normal')), empty: structuredClone(snapshot('empty')), down: structuredClone(snapshot('down')), more: structuredClone(snapshot('more')), long: structuredClone(snapshot('long')) }
+const state = { normal: structuredClone(snapshot('normal')), empty: structuredClone(snapshot('empty')), down: structuredClone(snapshot('down')), more: structuredClone(snapshot('more')), long: structuredClone(snapshot('long')), one: structuredClone(snapshot('one')), five: structuredClone(snapshot('five')) }
 const chats: Record<string, Chat> = structuredClone(seed)
 let n = 1000
 function resetDemo() {
-  for (const mode of ['normal', 'empty', 'down', 'more', 'long'] as const) state[mode] = structuredClone(snapshot(mode))
+  for (const mode of ['normal', 'empty', 'down', 'more', 'long', 'one', 'five'] as const) state[mode] = structuredClone(snapshot(mode))
   for (const key of Object.keys(chats)) delete chats[key]
   Object.assign(chats, structuredClone(seed))
   n = 1000
@@ -193,7 +194,7 @@ Bun.serve<Sock['data'], never>({
       // which day to show: the page was opened with ?case=empty or ?case=down (kept in a cookie: the app rewrites its address)
       const c = /(?:^|;\s*)demo-case=(\w+)/.exec(req.headers.get('cookie') ?? '')?.[1]
       const app = `${req.headers.get('origin') ?? url.origin}${url.pathname.slice(0, -'api/ws'.length)}`
-      return server.upgrade(req, { data: { mode: c === 'empty' || c === 'down' || c === 'more' || c === 'long' ? c : 'normal', watch: [], app } }) ? undefined : new Response('no', { status: 400 })
+      return server.upgrade(req, { data: { mode: c === 'empty' || c === 'down' || c === 'more' || c === 'long' || c === 'one' || c === 'five' ? c : 'normal', watch: [], app } }) ? undefined : new Response('no', { status: 400 })
     }
     if (path === '/api/screen/shot') return new Response(Bun.file(shotFile(url.searchParams.get('key') ?? '')), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-store' } })
     if (path === '/api/me') return Response.json({ login: 'sam', off: [] })
@@ -246,7 +247,7 @@ Bun.serve<Sock['data'], never>({
         // a stand-in terminal: it shows a prompt and echoes what is typed; nothing runs
         const m = JSON.parse(String(raw)) as { type: string; id: number; text?: string; keys?: string[] }
         const say = (t: string) => ws.send(new TextEncoder().encode(t))
-        if (m.type === 'open') { ws.send(JSON.stringify({ type: 'size', cols: 100, rows: 12 })); say('sam@mac-mini shop % ') }
+        if (m.type === 'open') { ws.send(JSON.stringify({ type: 'size', cols: 100, rows: 12 })); say(TERM_LINKS + 'sam@mac-mini shop % ') }
         else if (m.type === 'text') say(m.text ?? '')
         else if (m.type === 'keys' && m.keys?.includes('enter')) say("\r\n(this demo doesn't run commands)\r\nsam@mac-mini shop % ")
         ws.send(JSON.stringify({ type: 'ack', id: m.id }))
@@ -263,5 +264,16 @@ Bun.serve<Sock['data'], never>({
     },
   },
 })
+/** what the stand-in terminal shows first: links of each kind, a sign-in address broken over three lines at its 100
+ *  columns as Claude Code does, one the program marks (OSC 8) and a file: one that is only copied */
+const SIGN_IN = 'https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile&state=Zx9_-kq'
+const osc8 = (url: string, text: string) => `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`
+const TERM_LINKS = [
+  'Browser didn\'t open? Use the url below to sign in:',
+  ...(SIGN_IN.match(/.{1,100}/g) ?? []),
+  '',
+  `Docs (see https://example.com/docs/getting-started).  ${osc8('https://example.com/changelog', 'What\'s new')}  ${osc8('file:///home/sam/shop/notes.md', 'notes.md')}`,
+  '',
+].join('\r\n')
 console.log(`demo on http://127.0.0.1:${port}/`)
 void config
