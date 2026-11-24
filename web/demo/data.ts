@@ -25,6 +25,8 @@ export const tasks: Task[] = [
   // running (GARDEN-3); merged (SHOP-11); in the folder itself (BLOG-10); research, no repo (NOTES-4)
   task('SHOP-12', 'Faster product search', P.shop, 'ready', { needsAt: NOW - 8 * hour, repo: 'branch', worktree: true, branch: 'task/faster-product-search', base: 'main', pr: { number: 212, url: 'https://github.com/example/shop/pull/212', checks: 'passed' }, summary: 'Results show in about 80 ms, down from 400.', proof: 'a-shop12' }),
   task('BLOG-10', 'Fix typo on the About page', P.blog, 'ready', { needsAt: NOW - hour, repo: 'folder', summary: 'Fixed the typo and two more I found on the same page.' }),
+  // fork: Ready card below new messages: said ready, then questions in its chat and the agent's answer after them
+  task('NOTES-5', 'Home manual: furnace page', P.notes, 'ready', { needsAt: NOW - 50 * min, summary: 'The furnace page has the filter size and when to change it.' }),
   task('NOTES-4', 'Compare supplier quotes', P.notes, 'ready', { needsAt: NOW - 3 * hour, summary: 'Brightpack is cheapest at your volume. Norbox ships fastest.', proof: 'a-quotes' }),
   task('SHOP-14', 'Switch payment provider', P.shop, 'need', { needsAt: NOW - 2 * hour, blocked: 'question', repo: 'branch', report: { msg: 'Which provider, Stripe or Adyen?', progress: 35, paused: true } }),
   task('vm:GARDEN-4', 'Photo upload', P.garden, 'need', { agent: { chat: 'vm:GARDEN-4/worker', role: 'worker', cli: 'claude', status: 'need', running: true, age: '', note: '' }, needsAt: NOW - 5 * min, blocked: 'permission', repo: 'branch', report: { msg: 'Wants to run a command', progress: 80, paused: true } }),
@@ -272,6 +274,9 @@ export const chats: Record<string, Chat> = Object.fromEntries(
     chat('SHOP-14/worker', [a('I compared both for the shop. Stripe is already used for your invoices. Adyen gets cheaper above 50k a month but needs two weeks of paperwork.'), ...payQ().map((x, i) => (i ? x : { ...x, suggests: ['Go with Stripe', 'Compare the fees again'] }))], opus),
     chat('SHOP-12/worker', [a('Search is done. I added an index and cached the top queries.', { suggests: ['Looks good, merge it', 'Show me the diff', 'status?'] })], opus),
     chat('BLOG-10/worker', [a('Fixed it straight in the blog folder, as this space is set up.')], opus),
+    chat('NOTES-5/worker', [a('The furnace page is in the home manual: model, filter size and the service log.', { at: NOW - 51 * min }),
+      me('Which filter brand did we buy last time? And how often should I change it?', { at: NOW - 30 * min }),
+      a("I've added both answers to the home manual, and the task card in Ready is updated to match: you bought the 16x25x1 pleated filters, and they want changing every 90 days.", { at: NOW - 28 * min, suggests: ['Looks good, mark it done'] })], opus),
     chat('NOTES-4/worker', [a('I read the three quotes in your notes folder and wrote up a comparison.')], opus),
     chat('vm:GARDEN-4/worker', permQ().map((x, i) => (i ? x : { ...x, suggests: ['Allow it once'] })), opus),
     chat('SHOP-17/worker', [a("I'm downloading October's invoices. The billing portal sent a sign-in code to your phone, so I need you for this one step.")], opus),
