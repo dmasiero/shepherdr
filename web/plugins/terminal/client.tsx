@@ -13,12 +13,13 @@ import { openMenu } from '@client/overlay.tsx'
 import { copyText } from '@client/copy.ts'
 import type { Chat, Task } from '@shared/types.ts'
 import { machineLabel, placeOf, taskChat, taskOf, tasksIn, tstate } from '@shared/view.ts'
-import { fitGrid, following, footTop, LINE, linesFor, shrinkTo, showKeys } from './fit.ts'
+import { fitGrid, following, fontFor, footTop, LINE, linesFor, shrinkTo, showKeys } from './fit.ts'
 import { spaceTermRow, switchView, taskTermRow, toggleSpaceTerm, viewRow } from './menu.ts'
 import { connectTerminal, streamInput } from './stream.ts'
 import { linkLayer, type LinkLayer } from './linklayer.ts'
 import { opens, type Link } from './links.ts'
 import { mirrorFocus } from './focus.ts' // fork: the cursor follows your keys (focus.ts)
+import { mayAsk, stillHolds } from './owner.ts' // fork: the screen you last used sets the size (owner.ts)
 
 /** a web page opens the way a chat's link does: a new tab (the outside browser in the Android app), or in the app
  *  when it is this app's own (kernel.ts catches it) */
@@ -110,6 +111,9 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
   const [ctrl, setCtrl] = useState(false)
   const ctrlRef = useRef(false)
   ctrlRef.current = ctrl
+  // fork: you used this screen's terminal (a key, a tap, a click, its key row): it takes the terminal's size (owner.ts)
+  const claim = useRef(() => {})
+  const take = () => claim.current()
 
   useEffect(() => {
     let gone = false
@@ -117,6 +121,10 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
     let link: { close(): void } | null = null
     let cols = 80, rows = 24, natural = 0
     let asked = '', wanted = '', opened = false, follow = true, moving = 0, frame = 0
+    // fork: whether this page sets the terminal's size: opened in the window in front, it does, until another screen
+    // takes it; its normal font's cell, so a shrunk font never changes the size it asks for (owner.ts)
+    let held = mayAsk(true), askedAt = 0, fresh = true
+    let norm: { cell: number; line: number; at: number } | null = null
     let later: ReturnType<typeof setTimeout> | undefined
     const el = box.current
     /** a character's width and a row's height per px of font, as xterm really draws them (it rounds to the screen's
@@ -124,7 +132,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
     const metrics = () => {
       const drawn = (term as unknown as { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } })._core?._renderService?.dimensions?.css?.cell
       const at = term!.options.fontSize ?? 13
-      return { cell: drawn && drawn.width > 0 ? drawn.width / at : cellOf(MONO), line: drawn && drawn.height > 0 ? drawn.height / at : LINE, at }
+      return { cell: drawn && drawn.width > 0 ? drawn.width / at : cellOf(MONO), line: drawn && drawn.height > 0 ? drawn.height / at : LINE, at, drawn: !!drawn && drawn.width > 0 && drawn.height > 0 }
     }
     /** where the box is scrolled to when it follows: the last line with something on it at the box's foot */
     const foot = () => {
@@ -160,18 +168,25 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
       if (!term || !el) return
       // the box less its padding (16 left, 8 top and bottom) and room for the scrollbar
       const w = el.clientWidth - 16 - 12
-      const h = el.clientHeight - 16
+      // fork: with the height a sideways scrollbar takes while it pans another screen's wider size, which its own size
+      // never has, so taking the size back asks once (owner.ts)
+      const h = el.offsetHeight - 16
       if (w <= 0 || h <= 0) return
-      const { cell, line } = metrics()
-      const grid = fitGrid(w, h, cell, line)
+      const m = metrics()
+      const { cell, line } = m
+      // fork: the grid at the normal font's cell, never a shrunk one's (owner.ts)
+      if (m.drawn && m.at === fontFor(w)) norm = m
+      const grid = norm && norm.at === fontFor(w) ? fitGrid(w, h, norm.cell, norm.line) : fitGrid(w, h, cell, line)
       const want = own ? grid : { cols: grid.cols, rows: Math.max(grid.rows, Math.min(200, natural || grid.rows)) }
       const key = `${want.cols}x${want.rows}`
-      if (opened && key !== asked && key !== wanted) {
+      if (opened && mayAsk(held) && key !== asked && key !== wanted) { // fork: only the screen that holds it (owner.ts)
         // a drag, a rotation or the keyboard sends many sizes: ask for the last one
         wanted = key
         clearTimeout(later)
         later = setTimeout(() => {
+          if (!mayAsk(held)) { wanted = ''; return } // fork: let go or left the window meanwhile
           asked = key
+          askedAt = Date.now()
           streamInput(stream, { type: 'resize', ...want })
         }, asked ? 150 : 0)
       }
@@ -202,10 +217,15 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
           follow = true
           asked = wanted = ''
           natural = 0
+          fresh = true // fork: the first size after a (re)connect is no takeover (owner.ts)
         },
         (c, r) => {
           // the size it had before this page asked for one: an agent keeps that height
           if (!asked && !wanted) natural = r
+          // fork: another screen took the size: this one lets go and only shrinks to show it (owner.ts)
+          if (!fresh) held = stillHolds(held, `${c}x${r}`, asked, askedAt, Date.now())
+          if (!held) { clearTimeout(later); wanted = '' }
+          fresh = false
           cols = c
           rows = r
           term!.resize(c, r)
@@ -220,7 +240,20 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
     })
     const ro = new ResizeObserver(fit)
     if (el) ro.observe(el)
+    // fork: used here: this page takes the size (asking afresh), once; back in front, a holder catches up (owner.ts)
+    claim.current = () => {
+      if (held) return
+      held = true
+      asked = wanted = ''
+      fit()
+    }
+    const back = () => { if (held) fit() }
+    window.addEventListener('focus', back)
+    document.addEventListener('visibilitychange', back)
     return () => {
+      claim.current = () => {}
+      window.removeEventListener('focus', back)
+      document.removeEventListener('visibilitychange', back)
       gone = true
       clearTimeout(later)
       cancelAnimationFrame(frame)
@@ -252,6 +285,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
     press.current = null
   }
   const sendKey = (k: string) => {
+    take() // fork: owner.ts
     streamInput(stream, { type: 'keys', keys: [k] })
     cap.current?.focus()
   }
@@ -282,6 +316,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
           }}
           onMouseLeave={() => links.current?.hover(null)}
           onMouseDown={(e) => {
+            take() // fork: owner.ts
             if (e.button === 0 && linkAt(e)) e.preventDefault()
           }}
           onClick={(e) => {
@@ -299,6 +334,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
             linkMenu(l, links.current?.rect(l) ?? null)
           }}
           onTouchStart={(e) => {
+            take() // fork: owner.ts
             const t = e.touches[0]
             scrolling.current = { carry: 0, x: t.clientX, y: t.clientY }
             unpress()
@@ -333,6 +369,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
             scrolling.current.y = y
           }}
           onKeyDown={(e) => {
+            take() // fork: owner.ts
             // the app's own keys pass: Ctrl+` closes the drawer, Ctrl+K searches
             if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key.toLowerCase() === 'k')) return
             if (e.nativeEvent.isComposing || e.keyCode === 229) return
@@ -347,6 +384,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
             const t = e.target.value
             e.target.value = ''
             if (!t) return
+            take() // fork: owner.ts
             if (ctrlRef.current && t.length === 1) {
               setCtrl(false)
               streamInput(stream, { type: 'keys', keys: [`ctrl+${t.toLowerCase()}`] })
@@ -354,10 +392,11 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
           }}
           // fork: keys go to this box, never xterm's own, so xterm hears of its focus from here: the solid blinking
           // cursor while your keys go to this terminal, the outline otherwise
-          onFocus={() => mirrorFocus(xt.current, true)}
+          onFocus={() => { take(); mirrorFocus(xt.current, true) }}
           onBlur={() => mirrorFocus(xt.current, false)}
           onPaste={(e) => {
             e.preventDefault()
+            take() // fork: owner.ts
             const t = e.clipboardData.getData('text')
             if (t) streamInput(stream, { type: 'text', text: t })
           }}
@@ -366,7 +405,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
       {showKeys(phone, coarse) && (
         <div className="keys">
           {([['esc', 'esc'], ['tab', 'tab']] as const).map(([l, k]) => <button type="button" key={l} aria-label={`${l} key`} onClick={() => sendKey(k)}>{l}</button>)}
-          <button type="button" aria-label="ctrl key" aria-pressed={ctrl} style={ctrl ? { background: 'rgb(255 255 255/.3)' } : undefined} onClick={() => { setCtrl(!ctrl); cap.current?.focus() }}>ctrl</button>
+          <button type="button" aria-label="ctrl key" aria-pressed={ctrl} style={ctrl ? { background: 'rgb(255 255 255/.3)' } : undefined} onClick={() => { take(); setCtrl(!ctrl); cap.current?.focus() }}>ctrl</button>
           {([['←', 'left'], ['↑', 'up'], ['↓', 'down'], ['→', 'right']] as const).map(([l, k]) => <button type="button" key={k} aria-label={`${k} arrow key`} onClick={() => sendKey(k)}>{l}</button>)}
           <button type="button" aria-label="enter key" onClick={() => sendKey('enter')}>↵</button>
         </div>
