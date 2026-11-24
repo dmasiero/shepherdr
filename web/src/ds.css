@@ -37,6 +37,18 @@ p,h2,h3{margin:0}small{font-size:inherit}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:var(--btn);padding:0 12px;border-radius:8px;background:var(--control);font-size:var(--sec);line-height:var(--secl);font-weight:500;white-space:nowrap;flex:none}
 .btn:hover{background:var(--control2)}.btn.s{height:var(--btns);padding:0 10px}
 .btn.pri{background:var(--fg);color:var(--canvas)}.btn.str{background:var(--control2)}.btn.danger{color:var(--red)}
+/* a press shows at once, by touch, mouse or keyboard (Enter and Space press it too): darker, a touch smaller. A button
+   that asks the server keeps that look while it goes (.going), then a spinner and its words say it is busy (.busy,
+   ui.tsx ActBtn); the card's other buttons wait, disabled. No motion with reduced motion. */
+.btn:active:not(:disabled),.btn.going{box-shadow:inset 0 0 0 999px var(--control2)}
+.btn.pri:active:not(:disabled),.btn.pri.going{box-shadow:none;opacity:.8}
+.chip:active:not(:disabled),.chip.going{background:var(--control2)}
+.btn:active:not(:disabled),.chip:active:not(:disabled){transform:scale(.97)}
+.btn.busy,.chip.busy{cursor:progress}.btn.busy .i,.chip.busy .i{margin-left:-2px}
+.chip.busy{display:inline-flex;align-items:center;gap:6px}
+.acterr{display:block;text-align:right}.card .s.c-red{color:var(--red)}
+.toast.busy{display:flex;align-items:center;gap:8px}
+@media(prefers-reduced-motion:reduce){.btn:active:not(:disabled),.chip:active:not(:disabled){transform:none}}
 .ib{display:inline-grid;place-items:center;width:var(--ib);height:var(--ib);border-radius:8px;color:var(--muted);flex:none}
 .ib:hover,.ib[aria-pressed="true"],.ib[aria-expanded="true"]{background:var(--control);color:var(--fg)}
 .cnt{display:inline-block;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--control2);color:var(--fg);font-size:12px;line-height:18px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums;flex:none}
@@ -288,7 +300,7 @@ button.b{cursor:pointer}
 .app.phone .win{left:0;right:0;grid-template-columns:minmax(0,1fr);border-radius:0;box-shadow:none}
 .app.phone .win .pg{padding:0 16px 24px}.app.phone .win .nav{padding:0 8px 16px;background:none}.app.phone .win .hd{padding:0 4px}
 .srow{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:var(--row2);padding:8px 0;border-top:1px solid var(--line)}
-h3+.srow,.hint+.srow,.banner+.srow{border-top:0}
+h3+.srow,.hint+.srow,.banner+.srow,.promise+.srow{border-top:0}
 .srow .n{flex:1;min-width:0}.srow .n small{display:block;color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
 .srow .val{color:var(--muted);font-size:var(--sec);line-height:var(--secl);text-align:right;min-width:0}
 .srow.wrap{flex-wrap:wrap}.srow.wrap .n{min-width:min(10rem,100%)}
@@ -349,6 +361,11 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 @media (hover:hover) and (pointer:fine){.sug:hover{background:var(--control)}}
 .sug:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .app.tap .sug{--sugh:max(var(--hit),var(--send))}
+/* a tapped one lifts away as it sends (chat client.tsx SUG_GO_MS); with reduced motion it just sends */
+.sug:active{transform:scale(.97)}
+.sug.go{animation:sugout .14s cubic-bezier(.4,0,1,1) forwards;pointer-events:none}
+@media(prefers-reduced-motion:reduce){.sug:active{transform:none}}
+@keyframes sugout{to{transform:translateY(-8px) scale(.96);opacity:0}}
 
 /* screens */
 .scr{position:relative;border-radius:12px;overflow:hidden;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2)}
@@ -464,6 +481,8 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 .wdots i{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor;animation:rise 1.2s ease-in-out infinite}
 .wdots i:nth-child(2){animation-delay:.15s}.wdots i:nth-child(3){animation-delay:.3s}
 .wstep{min-width:0;padding-top:8px;overflow:hidden;overflow-wrap:anywhere;text-wrap:pretty;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;animation:fade .2s ease-out both}
+/* a quiet line under the last message while only background work of its own runs: no motion, nothing to press */
+.bgnote{margin:8px 0 0;max-width:min(82%,560px);color:var(--muted);font-size:14px;line-height:20px;text-wrap:pretty}
 @keyframes wsin{from{opacity:0;transform:scale(.85)}}
 @keyframes rise{0%,60%,100%{transform:none;opacity:.45}30%{transform:translateY(-3px);opacity:1}}
 @media(prefers-reduced-motion:reduce){.i.turn{animation:calm 2.4s ease-in-out infinite}.wsign{animation-name:fade}.wdots i{animation:calm 2.4s ease-in-out infinite}.wdots i:nth-child(2){animation-delay:.4s}.wdots i:nth-child(3){animation-delay:.8s}.sheet.in,.drawer.in,.pop.in,.dlg.in,.win.in,.lbox.in{animation:none}.tg i{transition:none}}
@@ -593,3 +612,15 @@ textarea.cin{overflow-y:auto}
    packed 12 px apart, neighbouring pads split the space between them and each row kept only ~32 px for a finger. Touch
    spacing is looser for it; desktop keeps the tight rhythm above */
 .app.tap .msgs>:is(.fold,.ref,.donerow){padding-block:12px}.app.tap .msgs>:is(.fold,.ref,.donerow):nth-last-child(2){margin-bottom:-12px}
+
+/* personal analytics (web/plugins/analytics) */
+.promise{margin:8px 0 4px;padding:8px 12px;border-radius:8px;background:var(--raised);color:var(--sub);font-size:var(--sec);line-height:var(--secl);font-weight:500}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));gap:8px;margin:12px 0 0}
+.stat{display:grid;gap:2px;min-width:0;padding:12px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line2)}
+.stat dt{color:var(--muted);font-size:var(--sec);line-height:var(--secl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat dd{margin:0;font-size:18px;line-height:24px;font-weight:600;font-variant-numeric:tabular-nums}
+.rawlog{display:grid;gap:0;margin:8px 0 0;padding:0;max-height:60vh;overflow:auto;font-size:var(--sec);line-height:var(--secl)}
+.rawlog li{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:0 12px;padding:6px 0;border-top:1px solid var(--line)}
+.rawlog time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;grid-row:span 2}.rawlog span{color:var(--muted);overflow-wrap:anywhere}
+.anote{display:flex;align-items:center;gap:8px;margin:8px 8px 0;padding:4px 4px 4px 12px;border-radius:12px;background:var(--raised);font-size:14px;line-height:20px}
+.anote .n{flex:1;min-width:0}

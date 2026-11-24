@@ -1,7 +1,8 @@
 // The mic in a message box (and in Feedback): dictation. SHEP-314/SHEP-334: while it records, the box's bottom row
 // becomes the recording: a wave drawn from the microphone's real level and the time, no words while you talk; on Done
 // the clean text lands at the box's cursor in one go, what was typed stays. "Allow the microphone" shows only when the
-// browser really asks (dictation.ts askWhen). Every way it fails says why, there. Escape cancels; leaving the chat
+// browser really asks (dictation.ts askWhen); until the microphone really hears, a quiet dot and no wave (the wave
+// is the signal to start talking: dictation.ts sounds). Every way it fails says why, there. Escape cancels; leaving the chat
 // cancels. SHEP-363: no buttons of its own: the mic itself becomes Done (a green check) and the voice call's button
 // beside it becomes Cancel (a red X), so nothing moves under the thumb; a call and a dictation never run at once.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -58,6 +59,9 @@ export const canStartCall = () => !isDictating()
 export const canStartDictation = () => !getState().ui.call
 export const useDictating = () => useSyncExternalStore((f) => (seen.add(f), () => void seen.delete(f)), isDictating, isDictating)
 
+/** the boxes (their chat keys) whose words came from dictation since their last send: personal analytics' "dictated" */
+export const dictatedInto = new Set<string>()
+
 /** One dictation into a box (setText: the box's whole new text; the words go in at its cursor, what was typed stays).
  *  anchor: an element inside the box (.cbox), to find its text. Escape cancels; leaving the chat cancels; it can't
  *  start during a voice call. */
@@ -71,6 +75,7 @@ export function useDictation(setText: (value: string) => void, scope: string | u
     const box = boxOf()
     const r = insertAt(box?.value ?? '', at.current, text)
     setText(r.value)
+    if (scope) dictatedInto.add(scope)
     landed.current = r.caret
   })
   const live = useRef<Dictation | null>(null)
@@ -187,6 +192,12 @@ export function DictRow({ s }: { s: DictState }) {
             <p className="dhint">{SAY.asking}</p>
           )}
         </div>
+      ) : s.k === 'starting' ? (
+        // getting ready: the microphone isn't really hearing yet, so no wave (the wave is the signal to start
+        // talking, and anything said before it would be lost): one quiet dot breathing until the first real sound
+        <div className="dctl dready">
+          <i className="ddot" />
+        </div>
       ) : (
         <div className="dctl">
           <Wave on={s.k === 'on'} sample={dictSample} />
@@ -197,7 +208,7 @@ export function DictRow({ s }: { s: DictState }) {
         </div>
       )}
       <span className="vh" role="status">
-        {s.k === 'asking' ? SAY.asking : s.k === 'on' ? 'Recording' : s.k === 'writing' ? 'Writing it down' : ''}
+        {s.k === 'asking' ? SAY.asking : s.k === 'starting' ? 'Getting ready' : s.k === 'on' ? 'Recording' : s.k === 'writing' ? 'Writing it down' : ''}
       </span>
     </div>
   )

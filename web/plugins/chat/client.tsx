@@ -3,14 +3,15 @@
 // message box. The same parts draw a space's chat and a task's thread.
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { copyText } from '@client/copy.ts'
-import { TEXT_IN_CALL, useDictating } from '@client/dictate.tsx'
+import { dictatedInto, TEXT_IN_CALL, useDictating } from '@client/dictate.tsx'
 import { attr } from '@client/attr.ts'
-import { act, definePlugin, getState, has, notice, openTask, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
+import { act, attempt, definePlugin, getState, has, notice, openTask, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
 import { AgentLine, openPicker, pickFor, pickWords, type Pick } from '@client/picker.tsx'
 import { attach, detach, dropOut, retry, reupload, send } from '@client/send.ts'
-import { Btn, cx, Empty, I, IB, useGrow } from '@client/ui.tsx'
+import { still } from '@client/motion.ts'
+import { ActBtn, ActError, Btn, cx, Empty, I, IB, useCardActs, useGrow } from '@client/ui.tsx'
 import type { IconName } from '@client/icons.ts'
 import { isImage, isVideo } from '@shared/files.ts'
 import type { Chat, Message, Relay, Snapshot, Task, TaskBrief, TurnActivity } from '@shared/types.ts'
@@ -724,9 +725,17 @@ export function WorkingSign({ chat, thread }: { chat: Chat | undefined; thread?:
   return (
     <div key={n} className="wrow">
       {el}
-      <IB icon="stop" label="Stop" className="wstop" onClick={() => void tryAct({ type: 'stop', chat: chat.key })} />
+      <IB icon="stop" label="Stop" className="wstop" onClick={() => void tryAct({ type: 'stop', chat: chat.key }, undefined, 'Stopping…')} />
     </div>
   )
+}
+
+/** Its turn is over but work of its own still runs in the background (a watcher, a server): one quiet line under its
+ *  last message, "1 background command running". No dots, no Stop: nobody is writing. Once that work wakes it, the
+ *  working sign takes over as usual. */
+export function BackgroundNote({ chat }: { chat: Chat | undefined }) {
+  if (!chat?.bgNote || chat.working || signOf(chat)) return null
+  return <p className="bgnote" role="status">{chat.bgNote}</p>
 }
 
 /** a tap on it takes no focus: the box's focus (and a phone's keyboard) stays as it was */
@@ -736,6 +745,7 @@ export const keepFocus = (e: { preventDefault: () => void }) => e.preventDefault
  *  Restart. Shepherdr never starts it again on its own. */
 function StoppedChat({ chat, thread }: { chat: Chat | undefined; thread: Thread }) {
   const snap = useSnap()
+  const acts = useCardActs(`stopped:${thread.chat}`, `${chat?.notice ?? ''}|${chat?.note ?? ''}`)
   if (!chat || !snap || thread.task || (chat.notice !== 'ended' && chat.notice !== 'gone')) return null
   const pick = pickOf(snap, chat, thread)
   return (
@@ -743,13 +753,17 @@ function StoppedChat({ chat, thread }: { chat: Chat | undefined; thread: Thread 
       <span className="t c-red">Stopped</span>
       <span>{chat.note || 'Its agent is no longer running.'}</span>
       <div className="acts">
-        <Btn kind="pri" onClick={() => void tryAct({ type: 'restart', chat: chat.key, kind: pick.agent, model: pick.model ?? undefined, effort: pick.effort ?? undefined })}>Restart</Btn>
+        <ActBtn acts={acts} id="restart" kind="pri" busy="Restarting…" run={() => attempt({ type: 'restart', chat: chat.key, kind: pick.agent, model: pick.model ?? undefined, effort: pick.effort ?? undefined })}>Restart</ActBtn>
       </div>
+      <ActError acts={acts} />
     </div>
   )
 }
 
 /* ---------- the message box ---------- */
+
+/** a tapped suggested reply's lift away before it sends (ds.css .sug.go) */
+const SUG_GO_MS = 140
 
 /** suggested replies already used: gone once you send something */
 const spent = new Set<string>()
@@ -774,10 +788,18 @@ function Reply({ text, onSend, onEdit }: { text: string; onSend: (t: string) => 
   edit.current = onEdit
   const press = useMemo(() => new ReplyPress(() => edit.current(text)), [text])
   useEffect(() => () => press.stop(), [press])
+  // a tap sends it: the bubble lifts away first (SUG_GO_MS), so the tap is seen to go; with reduced motion it sends at once
+  const [going, setGoing] = useState(false)
+  const leave = () => {
+    if (going) return
+    if (still()) return onSend(text)
+    setGoing(true)
+    setTimeout(() => onSend(text), SUG_GO_MS)
+  }
   return (
     <button
       type="button"
-      className="sug"
+      className={going ? 'sug go' : 'sug'}
       onMouseDown={keepFocus}
       onPointerDown={(e) => press.down(e.clientX, e.clientY)}
       onPointerMove={(e) => press.move(e.clientX, e.clientY)}
@@ -788,7 +810,7 @@ function Reply({ text, onSend, onEdit }: { text: string; onSend: (t: string) => 
         e.preventDefault()
         press.menu()
       }}
-      onClick={() => press.click() && onSend(text)}
+      onClick={() => press.click() && leave()}
     >
       {text}
     </button>
@@ -844,7 +866,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
     const t = text.trim()
     if (!t && !files?.length) return
     if (sg) spent.add(sg.id)
-    send(key, key, t, wait && busy)
+    send(key, key, t, wait && busy, false, dictatedInto.delete(key) ? 'dictated' : 'typed')
     setText('')
     if (shared) putAway()
   }
@@ -947,7 +969,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
         {BoxEnd ? (
           <BoxEnd thread={thread} setText={setText} filled={filled} send={() => go()} />
         ) : stop ? (
-          <button type="button" className="send" aria-label="Stop" onClick={() => void tryAct({ type: 'stop', chat: key })}>
+          <button type="button" className="send" aria-label="Stop" onClick={() => void tryAct({ type: 'stop', chat: key }, undefined, 'Stopping…')}>
             <I n="square" c="s16" />
           </button>
         ) : (
@@ -1014,7 +1036,7 @@ export default definePlugin({
     void landLaunchShare()
     reg.views.messages = Messages
     reg.views.box = Box
-    reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign })
+    reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign }, { order: 96, View: BackgroundNote })
     reg.aboveBox.push({ order: 20, View: AwayCard })
   },
 })
