@@ -401,7 +401,7 @@ function TaskHead({ task: t, where, scrolled }: { task: Task; where: 'chat' | 'p
 }
 
 /** the open task's status under its title (upstream #1473): the row's state, line, % done and time left, live with the
- *  snapshot, one line cut with an ellipsis (.t2). Maximized, its space follows ("· in Shop"). */
+ *  snapshot, one line cut with an ellipsis (.t2), after the row's ring (StatusIcon, its time left already in words). Maximized, its space follows ("· in Shop"). */
 // fork: Task status in its header
 export function HeadStatus({ task: t, space }: { task: Task; space?: string }) {
   const h = headStatus(t)
@@ -409,6 +409,7 @@ export function HeadStatus({ task: t, space }: { task: Task; space?: string }) {
   const rest = [...h.rest, ...(space ? [`in ${space}`] : [])]
   return (
     <span className="hst">
+      <StatusIcon t={t} time="none" />
       {strong ? <b className={h.tone === 'ask' ? 'c-red' : `c-${h.tone}`}>{h.word}</b> : h.word}
       {rest.map((x, i) => <span key={i}> · {x}</span>)}
     </span>

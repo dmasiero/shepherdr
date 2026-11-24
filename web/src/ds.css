@@ -458,6 +458,8 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 .tring .tn{opacity:.2}.tring .tk{stroke:var(--canvas);stroke-width:1.75}
 .tring .tl{margin-top:calc((var(--uil) - var(--ic))/2);font-size:calc(var(--sec) - 2px);line-height:var(--secl);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tring.tside{flex-direction:row;width:auto;gap:4px}.tring.tside .tl{margin-top:0}
+/* fork: Task status in its header. The row's ring before an open task's status line, the line's own height */
+.hst>.tring{width:14px;margin-right:5px;vertical-align:-2px}.hst>.tring>.i{width:14px;height:14px}
 .card .t.tw{display:flex;align-items:center;gap:8px}
 /* the Working ring: the whole icon turns about its centre; reduced motion: a slow, calm pulse instead */
 .i.turn{animation:turn 1s linear infinite}
