@@ -65,3 +65,14 @@ test("Dismiss is Esc; Answer in terminal presses nothing", async () => {
   expect(await A.answerCodex("t7", QS, { terminal: true })).toBeNull();
   expect(pressed()).toEqual(["keys t7 esc"]);
 });
+
+// fork: SHEP-100. The web card sends each step as its pick ({ choice }, { other }), never words: each was pasted into
+// "None of the above" as "[object Object]".
+test("the web card's picks: a number key, and Other's words in the notes", async () => {
+  fresh(PICKER);
+  expect(await A.answerCodex("t7", QS, { answers: [{ choice: 1 }, { other: "Medium, please" }] })).toBeNull();
+  expect(pressed()).toEqual(["keys t7 2", "keys t7 down down tab", "send --force t7 Medium, please"]);
+  fresh(PICKER);
+  expect(await A.answerCodex("t7", QS, { answers: [{ choice: 0 }, { choice: 1 }] })).toBeNull();
+  expect(pressed()).toEqual(["keys t7 1", "keys t7 2"]);
+});

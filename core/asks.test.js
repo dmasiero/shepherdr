@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { codexChoice, codexQuestions, codexOnScreen, codexSteps, words, howAnswered, allow, dismiss } from "./asks.js";
+import { codexChoice, codexQuestions, codexOnScreen, codexSteps, words, howAnswered, allow, dismiss, partAnswer } from "./asks.js";
 
 // request_user_input's arguments as Codex 0.163 logs them (a made-up question)
 const ARGS = JSON.stringify({ questions: [
@@ -60,4 +60,17 @@ test("a Codex approval reads as Claude's: its command, allowed or dismissed in t
   expect(howAnswered({ words: w }, dismiss("permission"), "on the web")).toBe("Dismissed on the web");
   // Codex refuses an answer that rewrites its input: a permission's allow has none
   expect(JSON.parse(allow()).hookSpecificOutput.decision).toEqual({ behavior: "allow" });
+});
+
+// fork: SHEP-100
+test("a step's pick from the web card as words, never [object Object]", () => {
+  const names = ["Red", "Blue", "Green"];
+  expect(partAnswer(names, { choice: 1 })).toBe("Blue");
+  expect(partAnswer(names, { choices: [0, 2] })).toBe("Red, Green");
+  expect(partAnswer(names, { other: " Teal " })).toBe("Teal");
+  expect(partAnswer(names, " Blue ")).toBe("Blue");
+  expect(partAnswer(names, { choice: 7 })).toBe("");
+  expect(partAnswer(names, { choices: [] })).toBe("");
+  expect(partAnswer(names, {})).toBe("");
+  expect(partAnswer(names, null)).toBe("");
 });
