@@ -5,6 +5,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyn
 import { copyText } from '@client/copy.ts'
 import { dictatedInto, TEXT_IN_CALL, useDictating } from '@client/dictate.tsx'
 import { attr } from '@client/attr.ts'
+import { boxPart, focusBox, focusChat } from '@client/commands.ts'
 import { act, attempt, definePlugin, getState, has, notice, openTask, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
@@ -25,6 +26,7 @@ import { replyToTask, SlideHint, useSlide } from './slide.tsx'
 import { dayLabel } from './days.ts'
 import { Markdown, withLinks } from './markdown.tsx'
 import { dropped, pasted } from './paste.ts'
+import { addPaste, dropPaste, isLongMessage, isLongPaste, joined, peekOf, setPastes, sizeOf, usePastes, type Paste } from './fold.ts'
 import { touch } from './clip.ts'
 import { landLaunchShare, putAway, useLanded, watchLastChat } from './share.ts'
 import { openSendTo } from './sendto.tsx'
@@ -36,6 +38,8 @@ import { usePaths } from './paths.tsx' // fork: SHEP-50's "@~/" path list
 import { cardsNow, stillLoading, TRIES, wantsEarlier } from './hold.ts'
 import { outOfView, setAway, useAway, type Waiting } from './away.ts'
 import { keepAtEnd, rowEdges } from './stick.ts'
+import { commandMode, commandOf, commandWord, type CommandState } from './command.ts'
+import { toggleSpaceTerm, toggleTaskTerm } from '@plugins/terminal/menu.ts'
 
 export { fileUrl } from './thumbs.tsx'
 
@@ -259,6 +263,29 @@ function QuickBar({ msg, chat, mine, wrap, y, done, more, reply: onReply }: { ms
   )
 }
 
+/** a `!` command you ran in the agent's shell: the command in monospace with how it went (sending, running, done,
+ *  failed), and what it printed under it; one that didn't go has Retry and Remove, as a message has */
+function CommandRow({ msg, state, failed, gap }: { msg: Message; state: CommandState; failed?: string; gap: boolean }) {
+  const out = msg.command?.out ?? ''
+  const tone = state === 'failed' || state === 'unsent' ? 'c-red' : state === 'running' || state === 'sending' ? 'c-ask' : 'c-mute'
+  return (
+    <div className={cx('cmdrow', gap && 'gap', (state === 'sending' || state === 'running') && 'live')} data-msg={msg.id} data-state={state}>
+      <div className="cmdh">
+        <I n="prompt" c="s16" />
+        <code className="cmdc">{(msg.text ?? '').replace(/^\s*!\s*/, '')}</code>
+        <span className={cx('cmds', tone)} role="status">{commandWord[state]}{state === 'unsent' && failed ? ` · ${failed}` : ''}</span>
+      </div>
+      {out && <pre className="cmdo">{out}</pre>}
+      {state === 'unsent' && msg.cid && (
+        <div className="cmdf">
+          <span className="lk" role="button" tabIndex={0} onClick={() => retry(msg.cid!)}>Retry</span>
+          <span className="lk" role="button" tabIndex={0} onClick={() => dropOut(msg.cid!)}>Remove</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Bubble({ msg, chat, thread, gap, pending, failed, mark, onReply }: { msg: Message; chat: Chat; thread: Thread; gap: boolean; pending?: boolean; failed?: string; mark?: Shown['mark']; onReply?: () => void }) {
   const [sel, setSel] = useState(false)
   const jump = useUI((u) => u.jump === msg.id)
@@ -332,7 +359,9 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark, onReply }: { ms
             onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), full(e.currentTarget))}
           >
             {msg.reply?.task ? <TaskQuote id={msg.reply.task} title={msg.reply.text} /> : msg.reply && <span className="quote">{msg.reply.text}</span>}
-            {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '')}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
+            <Folded text={msg.text ?? ''}>
+              {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '')}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
+            </Folded>
           </div>
           {registry.messageEdge.map((x, i) => <x.View key={i} msg={msg} chat={chat} />)}
         </div>
@@ -346,6 +375,74 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark, onReply }: { ms
           <span className="c-red">Not sent{failed ? ` · ${failed}` : ''}</span>
           <span className="lk" role="button" tabIndex={0} onClick={() => retry(msg.cid!)}>Retry</span>
           <span className="lk" role="button" tabIndex={0} onClick={() => dropOut(msg.cid!)}>Remove</span>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** a very long message (a pasted JSON, a log) shows its first lines and Show more. All its words are on the page, so
+ *  copy and the browser's find still see them; find scrolling into the folded part opens it. */
+export function Folded({ text, children }: { text: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  // folded again: it shows its first lines (not where it was scrolled to), its start in view
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el || open) return
+    el.scrollTop = 0
+    if (el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: 'nearest' })
+  }, [open])
+  if (!isLongMessage(text)) return <>{children}</>
+  return (
+    <>
+      <div ref={box} className={cx('mfold', !open && 'clip')} onScroll={(e) => !open && e.currentTarget.scrollTop > 0 && setOpen(true)}>
+        {children}
+      </div>
+      <button
+        type="button"
+        className="fold mmore"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation()
+          setOpen(!open)
+        }}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        <I n={open ? 'up' : 'down'} c="s16" />
+        {open ? 'Show less' : `Show more · ${sizeOf(text)}`}
+      </button>
+    </>
+  )
+}
+
+/** the long pastes waiting in the message box: each a chip with its first words and size; a tap opens it to read,
+ *  Edit puts it back in the box as text, its x takes it out */
+function PasteChips({ pastes, onRemove, onEdit }: { pastes: Paste[]; onRemove: (id: string) => void; onEdit: (p: Paste) => void }) {
+  const [open, setOpen] = useState<string | null>(null)
+  const shown = pastes.find((p) => p.id === open)
+  return (
+    <>
+      <div className="fchips" role="list" aria-label="Pasted text to send">
+        {pastes.map((p) => (
+          <span key={p.id} role="listitem" className={cx('fchip paste', open === p.id && 'on')}>
+            <button type="button" className="pk" aria-expanded={open === p.id} aria-label={`Pasted text, ${sizeOf(p.text)}: ${open === p.id ? 'close' : 'open'}`} onClick={() => setOpen(open === p.id ? null : p.id)}>
+              <I n="paste" c="s16 c-mute" />
+              <span className="pw">{peekOf(p.text, 60)}</span>
+              <span className="pz">{sizeOf(p.text)}</span>
+            </button>
+            <button type="button" aria-label="Remove the pasted text" onClick={() => { if (open === p.id) setOpen(null); onRemove(p.id) }}><I n="x" c="s16" /></button>
+          </span>
+        ))}
+      </div>
+      {shown && (
+        <div className="pview">
+          <pre tabIndex={0} aria-label="Pasted text">{shown.text}</pre>
+          <div className="pbar">
+            <span className="pz">{sizeOf(shown.text)}</span>
+            <span className="sp" />
+            <button type="button" className="fold" onClick={() => { setOpen(null); onEdit(shown) }}><I n="pen" c="s16" />Edit in the box</button>
+          </div>
         </div>
       )}
     </>
@@ -586,6 +683,8 @@ function Messages({ thread }: { thread: Thread }) {
     if (m.at && (!lastAt || new Date(m.at).toDateString() !== new Date(lastAt).toDateString() || m.at - lastAt > QUIET)) out.push(<div key={`t:${k}`} className="time">{dayLabel(m.at)} {clock(m.at)}</div>)
     if (m.at) lastAt = m.at
     const gap = !!prev && prev !== who
+    // a `!` command you ran: its own row (CommandRow)
+    const cmd = commandOf(m, { pending, failed, mark })
     if (m.newSession) {
       out.push(<div key={k} className="time" role="separator">New session</div>)
       continue
@@ -630,6 +729,10 @@ function Messages({ thread }: { thread: Thread }) {
     }
     else if (m.error) out.push(<div key={k} className="ref c-red"><I n="warn" c="s16" /><span>{m.text}</span></div>)
     else if (m.file) out.push(<FileRow key={k} msg={m} chat={stub} gap={gap} />)
+    else if (cmd) {
+      lastRef = ''
+      out.push(<CommandRow key={k} msg={m} state={cmd} failed={failed} gap={gap} />)
+    }
     else if (m.text) {
       lastRef = ''
       out.push(<Bubble key={k} msg={m} chat={stub} thread={thread} gap={gap} pending={pending} failed={failed} mark={mark} />)
@@ -841,6 +944,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const snap = useSnap()!
   const chat = useChat(key)
   const [text, setText] = useDraft(key)
+  const pastes = usePastes(key)
   const files = useUI((u) => u.files[key])
   const reply = useUI((u) => u.reply[key])
   const phone = useUI((u) => u.phone)
@@ -862,13 +966,26 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn.
   // The round button and Enter send only what is in the box, never a suggested reply (those are their own bubbles).
   // In a voice call the box takes no text (TEXT_IN_CALL).
+  // a line starting with `!` runs as a command in the agent's own shell (Claude Code, Codex); another agent has none,
+  // so its words don't go and the box offers your own terminal
+  const mode = commandMode(text, pick.agent)
   const go = (wait = false) => {
     if (getState().ui.call && !TEXT_IN_CALL) return
-    const t = text.trim()
+    // a long paste folded into a chip goes as text, exactly as pasted, after what was typed
+    const t = joined(text, pastes.map((p) => p.text))
     if (!t && !files?.length) return
+    if (mode === 'cant') return
     if (sg) spent.add(sg.id)
+    if (mode === 'run') {
+      // the command alone, first in the box: a quoted reply, files or a folded paste would go with it and it would be
+      // a message. Those stay in the box for the next message
+      send(key, key, text.trim(), false, true, dictatedInto.delete(key) ? 'dictated' : 'typed')
+      setText('')
+      return
+    }
     send(key, key, t, wait && busy, false, dictatedInto.delete(key) ? 'dictated' : 'typed')
     setText('')
+    setPastes(key, () => [])
     if (shared) putAway()
   }
 
@@ -887,9 +1004,16 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
     box.focus()
     requestAnimationFrame(() => box.setSelectionRange(t.length, t.length))
   }
-  const filled = !!text.trim() || !!files?.length
+  const filled = !!text.trim() || !!files?.length || !!pastes.length
   const BoxEnd = has('voice') ? registry.views.boxEnd : undefined
-  const stop = busy && !text.trim() && !files?.length
+  const stop = busy && !filled
+  /** a paste's chip opened to edit: its text goes into the box, at the end of what is there */
+  const editPaste = (p: Paste) => {
+    const t = text ? `${text.replace(/\n*$/, '')}\n\n${p.text}` : p.text
+    dropPaste(key, p.id)
+    setText(t)
+    ref.current?.focus()
+  }
   return (
     <>
     {paths.list /* fork: SHEP-50 (before the replies, which hide once the box has words) */}
@@ -928,10 +1052,27 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           ))}
         </div>
       )}
+      {!!pastes.length && <PasteChips pastes={pastes} onRemove={(id) => dropPaste(key, id)} onEdit={editPaste} />}
+      {mode && (
+        <div className="fchips" role="status">
+          {mode === 'run' ? (
+            <span className="fchip cmdchip"><I n="prompt" c="s16" />Run as a command</span>
+          ) : (
+            <>
+              <span className="fchip cmdchip cant"><I n="warn" c="s16" />{pickWords(pick).agent} can't run ! commands</span>
+              {has('terminal') && (
+                <button type="button" className="fchip" onClick={() => (thread.task ? toggleTaskTerm(thread.task.id) : toggleSpaceTerm())}>
+                  <I n="prompt" c="s16" />Open your terminal{!phone && <kbd>Ctrl+`</kbd>}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div className="crow">
         <textarea
           ref={ref}
-          className="cin"
+          className={cx('cin', mode && 'mono')}
           rows={1}
           name="message"
           data-box={key}
@@ -943,9 +1084,16 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           onChange={(e) => setText(e.target.value)}
           onPaste={(e) => {
             const f = pasted(e.clipboardData)
-            if (!f.length) return
+            if (f.length) {
+              e.preventDefault()
+              attach(key, key, f)
+              return
+            }
+            // a long paste (a log, a JSON) folds into a chip instead of filling the box
+            const t = e.clipboardData?.getData('text/plain') ?? ''
+            if (!isLongPaste(t)) return
             e.preventDefault()
-            attach(key, key, f)
+            addPaste(key, t)
           }}
           onKeyDown={(e) => {
             // fork: the "@~/" list takes Tab, Up/Down, Escape and the Enter that would send (SHEP-50)
@@ -974,7 +1122,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
             <I n="square" c="s16" />
           </button>
         ) : (
-          <button type="button" className="send" aria-label="Send" onClick={() => go()}>
+          <button type="button" className="send" aria-label="Send" disabled={mode === 'cant'} onClick={() => go()}>
             <I n="send" c="s16" />
           </button>
         )}
@@ -1032,6 +1180,12 @@ function SharedChip({ chat, thread }: { chat: string; thread: Thread }) {
 export default definePlugin({
   name: 'chat',
   setup(reg) {
+    // R puts the cursor in the message box (Gmail's, Superhuman's reply); Cmd+Shift+M opens the agent line's model and
+    // effort picker (T3 Code's, Claude's)
+    reg.commands.push(
+      { id: 'chat.reply', title: 'Write in the chat', area: 'Chat', icon: 'reply', keys: ['R'], words: 'reply message box type focus compose', when: () => !!focusChat(), run: () => void focusBox() },
+      { id: 'chat.model', title: 'Change model or effort', area: 'Chat', icon: 'agent', keys: ['Mod+Shift+M'], words: 'agent picker claude codex fast', when: () => !!boxPart('button.agent'), run: () => boxPart('button.agent')?.click() },
+    )
     // Share into Shepherdr (SHEP-345): a share lands in the chat open last
     watchLastChat()
     void landLaunchShare()

@@ -47,7 +47,6 @@ p,h2,h3{margin:0}small{font-size:inherit}
 .btn.busy,.chip.busy{cursor:progress}.btn.busy .i,.chip.busy .i{margin-left:-2px}
 .chip.busy{display:inline-flex;align-items:center;gap:6px}
 .acterr{display:block;text-align:right}.card .s.c-red{color:var(--red)}
-.toast.busy{display:flex;align-items:center;gap:8px}
 @media(prefers-reduced-motion:reduce){.btn:active:not(:disabled),.chip:active:not(:disabled){transform:none}}
 .ib{display:inline-grid;place-items:center;width:var(--ib);height:var(--ib);border-radius:8px;color:var(--muted);flex:none}
 .ib:hover,.ib[aria-pressed="true"],.ib[aria-expanded="true"]{background:var(--control);color:var(--fg)}
@@ -309,7 +308,16 @@ h3+.srow,.hint+.srow,.banner+.srow,.promise+.srow{border-top:0}
 .mcard .nm{font-weight:600;white-space:nowrap}
 .tri{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.tri>div{display:grid;gap:4px}
 .um{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 12px;align-items:center}.um .num{font-size:18px;line-height:24px}
-.toast{position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:60;max-width:calc(100% - 32px);padding:8px 12px;border-radius:8px;background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);font-size:14px;line-height:20px}
+/* toasts (toasts.ts): a stack at the top, newest last, clear of the message box at the bottom; the list itself lets
+   clicks through, only a toast takes them */
+.toasts{position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;gap:8px;width:max-content;max-width:min(480px,calc(100% - 32px));margin:0;padding:0;list-style:none;pointer-events:none}
+.toast{display:flex;align-items:flex-start;gap:8px;max-width:100%;padding:8px 6px 8px 12px;border-radius:8px;background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);font-size:14px;line-height:20px;pointer-events:auto;animation:toastin .18s ease-out}
+.toast>.i{margin-top:2px}.toast .tt{flex:1;min-width:0;overflow-wrap:anywhere}
+.toast .tx{display:grid;place-items:center;width:20px;height:20px;margin-left:2px;border-radius:6px;color:var(--muted);flex:none}
+.toast .tx:hover{background:var(--control);color:var(--fg)}
+.toast.err{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--red) 40%,transparent),var(--shadow)}
+@keyframes toastin{from{opacity:0;transform:translateY(-6px)}}
+@media(prefers-reduced-motion:reduce){.toast{animation:fade .18s}}
 
 /* phone bar and voice */
 .bar{display:flex;align-items:center;gap:8px;padding:8px 12px 12px}
@@ -342,14 +350,16 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 .crow .cin{flex:1;min-width:0;text-overflow:ellipsis}
 .cin::placeholder{text-overflow:ellipsis}
 /* the agent's suggested replies above the box (SHEP-186), as smart replies are: one line of pills, all alike (outlined,
-   no first pick filled); a row that scrolls sideways (no bar) rather than wrapping. A long one
-   truncates in its pill; a short one (a "1") is never narrower than it is tall: at least the send button and, by touch,
+   no first pick filled); a row that scrolls sideways (no bar) rather than wrapping. A bubble always shows its whole
+   text, never an ellipsis (a tap sends all of it, SHEP-463): one longer than its line wraps to a second line, its
+   bubble taller, the others staying centred pills (agents keep to 30 characters, one line; web/shared/suggest.ts leaves
+   out one far over). A short one (a "1") is never narrower than it is tall: at least the send button and, by touch,
    the 44 px fingertip (--sugh), its text centred. Hover only with a mouse, so a tap never leaves an outlined bubble grey.
    A held press is the app's (edit), never the phone's text selection or callout.
    It has its own space under the chat (the chat's scroll ends above it, nothing of the chat behind it), its first
    bubble at the box's left edge (its 4 px padding, pulled back out at the sides, only makes room for a focus ring, never over the chat), 8 px between bubbles and
    down to the box. Where more bubbles continue sideways, that edge fades softly (--fl, --fr: stick.ts rowEdges). */
-.sugs{--fl:0px;--fr:0px;display:flex;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;margin:0 -4px 4px;padding:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent);mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent)}
+.sugs{--fl:0px;--fr:0px;display:flex;align-items:center;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;margin:0 -4px 4px;padding:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent);mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent)}
 /* the chat's bottom edge, above the box and the replies: what scrolls under it fades over 16 px (the list's own
    bottom gap, so at the end nothing is faded) instead of being sliced. Only over a chat with its box, never a terminal. A space's chat and
    a task's (in the middle or in the side pane) alike. */
@@ -357,7 +367,7 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 :is(.chat,.pane)>.foot:has(>.cbox)::before{content:"";position:absolute;left:0;right:0;bottom:100%;height:16px;background:linear-gradient(to bottom,transparent,var(--canvas));pointer-events:none}
 :is(.chat,.pane):has(>.scroll>.msgs>.tw)>.foot::before{display:none}
 .sugs::-webkit-scrollbar{display:none}
-.sug{--sugh:max(36px,var(--send));flex:none;max-width:min(280px,78%);min-width:var(--sugh);height:var(--sugh);padding:0 14px;border-radius:calc(var(--sugh)/2);text-align:center;box-shadow:inset 0 0 0 1px var(--line2);background:var(--canvas);color:var(--sub);font-size:var(--sec);line-height:var(--secl);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-x}
+.sug{--sugh:max(36px,var(--send));flex:none;max-width:min(280px,78%);min-width:var(--sugh);min-height:var(--sugh);padding:2px 14px;border-radius:calc(var(--sugh)/2);text-align:center;box-shadow:inset 0 0 0 1px var(--line2);background:var(--canvas);color:var(--sub);font-size:var(--sec);line-height:var(--secl);overflow-wrap:anywhere;text-wrap:balance;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-x}
 @media (hover:hover) and (pointer:fine){.sug:hover{background:var(--control)}}
 .sug:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .app.tap .sug{--sugh:max(var(--hit),var(--send))}
@@ -626,3 +636,42 @@ textarea.cin{overflow-y:auto}
 .rawlog time{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;grid-row:span 2}.rawlog span{color:var(--muted);overflow-wrap:anywhere}
 .anote{display:flex;align-items:center;gap:8px;margin:8px 8px 0;padding:4px 4px 4px 12px;border-radius:12px;background:var(--raised);font-size:14px;line-height:20px}
 .anote .n{flex:1;min-width:0}
+/* a `!` command you ran in the agent's shell (CommandRow): on your side, the command in monospace with how it went, what
+   it printed in a well under it that scrolls in place when long; the box in command mode types in monospace too */
+.cmdrow{justify-self:end;display:grid;gap:6px;width:fit-content;min-width:min(240px,92%);max-width:min(92%,640px);padding:8px 12px;border-radius:12px;background:var(--mine)}
+.cmdh{display:flex;align-items:flex-start;gap:8px}.cmdh .i{flex:none;margin-top:2px;color:var(--muted)}
+.cmdc{flex:1;min-width:0;font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.cmds{flex:none;font-size:12px;line-height:20px;white-space:nowrap}
+.cmdo{margin:0;max-height:240px;overflow:auto;overscroll-behavior:contain;padding:8px 10px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);color:var(--sub);font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.cmdf{display:flex;justify-content:flex-end;gap:12px;font-size:var(--sec);line-height:var(--secl)}
+.cin.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.cmdchip.cant{color:var(--red)}.fchip kbd{color:var(--muted);font:12px/16px ui-monospace,SFMono-Regular,Menlo,monospace}
+.cmdrow+.cmdrow{margin-top:4px}
+/* SHEP-470: shortcuts. A key cap beside a row; none where a finger is the pointer (no keyboard to press it with) */
+.kcap{display:inline-flex;align-items:center;gap:3px;flex:none;color:var(--muted);font-size:12px;line-height:16px;white-space:nowrap}
+.kcap kbd{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 5px;border-radius:5px;background:var(--control);font:inherit;font-variant-numeric:tabular-nums}
+.kcap .then{padding:0 2px}
+.app.tap .kcap{display:none}
+.row .kcap{margin-left:4px}
+/* the palette: its box, then rows; the row the keys are on is lit */
+.pal .palq{position:relative}.pal .palq>.i{position:absolute;left:12px;top:calc((var(--field) - var(--ic))/2);color:var(--muted);pointer-events:none}
+.pal .palq .inp{padding-left:36px}
+.pal .row[aria-selected="true"]{background:var(--control);color:var(--fg)}
+.pal .row .v{margin-left:8px}
+/* the sheet: areas in two columns where there is room */
+.ksheet .kcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:0 24px;max-height:58dvh;overflow-y:auto;align-content:start}
+.ksheet section{display:grid;align-content:start;min-width:0}
+.krow{display:flex;align-items:center;gap:8px;min-height:var(--row);padding:0 8px;color:var(--sub)}
+.krow .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.krow.off{opacity:.45}
+.app.tap .krow .kcap{display:inline-flex}
+/* Settings › Shortcuts: the keys are a button that listens */
+.kbtn{display:inline-flex;align-items:center;gap:6px;min-width:96px;height:var(--btn);padding:0 8px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2);justify-content:flex-end}
+.kbtn.on{box-shadow:inset 0 0 0 2px var(--link)}
+.app.tap .kbtn .kcap{display:inline-flex}
+.ibgap{width:var(--ib);flex:none}
+.kset .srow{gap:8px}
+.kwarn{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 8px;padding:8px 12px;border-radius:12px;background:var(--raised);color:var(--sub);font-size:var(--sec);line-height:var(--secl)}
+.kwarn>.i{color:var(--amber)}.kwarn .n{flex:1;min-width:min(12rem,100%)}
+.pal button.row:hover:not([aria-selected="true"]){background:none}
+.dlg.wide:has(>.ksheet){width:min(760px,calc(100% - 32px))}

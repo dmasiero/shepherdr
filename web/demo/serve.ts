@@ -54,6 +54,8 @@ const uploaded = new Map<string, File>()
 const say = (key: string, m: Partial<Message>) => { (chats[key] ??= { key, messages: [], cli: 'claude', top: true }).messages.push({ id: `n${++n}`, who: 'agent', at: Date.now(), ...m } as Message); pushChat(key) }
 
 const analytics = { on: true, noted: false }
+let demoVoiceKey = ''
+
 const H = 3600_000
 function demoAnalytics(days: number) {
   const k = days === 1 ? 0.2 : days === 30 ? 4 : 1
@@ -85,6 +87,18 @@ function action(a: Record<string, any>): unknown {
   if (a.type === 'screen') {
     if (a.op === 'handback' || a.op === 'skip') each((snap) => { const screen = snap.screens?.[a.key]; if (screen?.hands) screen.hands.settled = a.op === 'skip' ? 'skip' : 'done' })
     return { ok: true }
+  }
+  // Settings › Voice: the key kept by name only, and its test (a key with "bad" in it is refused)
+  if (a.type === 'secret' && typeof a.name === 'string') {
+    if (a.name === 'ELEVENLABS_API_KEY') demoVoiceKey = a.value === null ? '' : String(a.value)
+    each((snap) => { if (!snap.config) return; snap.config.secrets = snap.config.secrets.filter((x) => !(x.name === a.name && x.scope === a.level)); if (a.value !== null) snap.config.secrets.push({ name: a.name, scope: a.level, at: Date.now() }) })
+    return { ok: true }
+  }
+  if (a.type === 'voice-check') {
+    if (!demoVoiceKey) return { ok: false, state: 'none', says: 'Voice calls need an ElevenLabs key: add it in Settings › Voice.' }
+    return /bad/i.test(demoVoiceKey)
+      ? { ok: false, state: 'refused', from: 'here', says: "ElevenLabs doesn't accept this key. Copy it again from elevenlabs.io › Developers › API Keys and replace it." }
+      : { ok: true, state: 'works', from: 'here', says: 'Works: ElevenLabs accepts this key.' }
   }
   if (a.type === 'catalog') return { ok: true, catalog: catalog(a.machine) }
   // Settings › Personal analytics: a fictional week (web/plugins/analytics)
@@ -175,6 +189,16 @@ function action(a: Record<string, any>): unknown {
     each((snap) => {
       const c = snap.config!
       if (a.key.startsWith('plugin.')) return void (c.plugins = c.plugins.map((p) => (p.id === a.key.slice(7) ? { ...p, on: !!a.value } : p)))
+      // Settings › Shortcuts (SHEP-470), as the service keeps them
+      if (a.key.startsWith('shortcut')) {
+        const sc = (c.shortcuts ??= { keys: {}, letters: true })
+        if (a.key === 'shortcuts.letters') sc.letters = a.value !== false
+        else if (a.key === 'shortcuts.reset') sc.keys = {}
+        else if (a.value === null) { const { [a.key.slice(9)]: _, ...rest } = sc.keys; sc.keys = rest }
+        else sc.keys = { ...sc.keys, [a.key.slice(9)]: a.value }
+        c.shortcuts = { ...sc }
+        return
+      }
       const lv: any = a.place === 'all' ? c.all : (c.spaces[a.place] ??= { ...structuredClone(c.all), own: [] })
       const own: string[] = a.place === 'all' ? [] : lv.own
       const [k, sub] = a.key.split('.')
@@ -205,7 +229,9 @@ const PAGES: Record<string, string> = {
   'a-mock': `<h2>Your basket</h2><div class="r"><span>Garden gloves</span><span class="qty"><button id="m" aria-label="Fewer">−</button><b id="q">1</b><button id="p" aria-label="More">+</button></span></div><div class="r"><span>Total</span><b id="t">€12</b></div><button class="pay" id="pay">Pay now</button><p>A real page the agent made. You can use it here.</p><script>let q=1,paid=false;const u=()=>{document.getElementById('q').textContent=q;document.getElementById('t').textContent='€'+12*q;document.getElementById('pay').textContent=paid?'Paid':'Pay now'};m.onclick=()=>{q=Math.max(1,q-1);paid=false;u()};p.onclick=()=>{q++;paid=false;u()};pay.onclick=()=>{paid=!paid;u()}</script>`,
   // a long page with pictures beside its index.html: the panel shows all of it and scrolls to its end (SHEP-340)
   'a-picks': `<h2>Garden chair picks</h2><p>Five chairs under €200 that fit a small balcony, best first.</p><h2>The best matches</h2>${['Oak folding chair', 'Rattan lounger', 'Steel bistro chair', 'Teak deck chair', 'Rope swing seat'].map((t, i) => `<section class="pick"><h3>${i + 1}. ${t}</h3><img src="pic${(i % 4) + 1}.jpg" alt="${t}" width="640" height="400"><p>Folds flat, weatherproof, about €${120 + i * 15}. Delivery in a week.</p></section>`).join('')}<p>More: <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">a video review</a> · <a href="#end">to the end</a> · <a href="../../../../?artifact=a-mock">the basket</a></p><p id="end">That's the whole list.</p>`,
-  'a-shop12': `<h2>Faster product search · Proof</h2><div class="bar" style="width:100%"></div><p>Before · 400 ms</p><div class="bar g" style="width:20%"></div><p>After · 80 ms</p><p>214 tests pass. 3 files changed.</p>`,
+  // a proof as long as a real one, ending in a reply box an agent wrote with a plain form (it would reload the frame,
+  // or meet the service's read-only answer, if the link catcher let it go)
+  'a-shop12': `<h2>Faster product search · Proof</h2><p>Search answers from the new index: results show in about 80 ms, down from 400.</p><div class="bar" style="width:100%"></div><p>Before · 400 ms</p><div class="bar g" style="width:20%"></div><p>After · 80 ms</p>${['Searching “gloves” on a phone', 'Searching “chair” with 2,000 products', 'A typo: “glvoes”'].map((t, i) => `<h3>${t}</h3><img src="pic${i + 1}.jpg" alt="${t}" width="640" height="400" style="display:block;width:100%;height:auto;border-radius:8px">`).join('')}<h3>Tests</h3><p>214 tests pass. 3 files changed.</p><h3>Not proven</h3><p>Search on the vm's shop, which has no index yet.</p><form method="post" onsubmit="parent.postMessage({ shepherdr: 'answer', text: this.r.value }, '*')"><textarea name="r" aria-label="Your reply" style="display:block;width:100%;box-sizing:border-box;min-height:60px"></textarea><button class="pay">Reply</button></form>`,
 }
 const page = (id: string) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light dark}body{margin:0;padding:16px;font:14px/20px system-ui,sans-serif}h2{font-size:18px;margin:0 0 12px}.r{display:flex;justify-content:space-between;align-items:center;min-height:40px;border-top:1px solid #8883}.qty{display:flex;align-items:center;gap:8px}.qty button{display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:6px;background:transparent;color:CanvasText;font:inherit}.pay{width:100%;margin-top:12px;height:32px;padding:0 12px;border:0;border-radius:8px;background:CanvasText;color:Canvas;font:inherit;font-weight:500}.l{height:8px;border-radius:4px;background:#8884;margin:12px 0}.bar{height:6px;border-radius:3px;background:#8886}.bar.g{background:#15803d}p{color:#737373;font-size:13px;line-height:18px}.pick img{display:block;width:100%;height:auto;border-radius:8px}h3{font-size:16px;margin:24px 0 8px}@media(max-width:443px){body{font-size:16px;line-height:24px}.pay{height:40px}p{font-size:14px;line-height:20px}}</style>${PAGES[id] ?? `<h2>${artifacts.find((x) => x.id === id)?.title ?? id}</h2>${[92, 78, 85, 40, 88, 64].map((w) => `<div class="l" style="width:${w}%"></div>`).join('')}`}`
 
@@ -254,6 +280,8 @@ Bun.serve<Sock['data'], never>({
     // ?case=nopics: no page has its picture (a machine with no browser): each tile shows its first lines instead
     if (m?.[2] === 'thumb' && /(?:^|;\s*)demo-case=nopics/.test(req.headers.get('cookie') ?? '')) return new Response('no picture', { status: 404, headers: { 'cache-control': 'no-store' } })
     if (m?.[2] === 'thumb') return new Response(thumb(decodeURIComponent(m[1]!), url.searchParams.has('dark')), { headers: { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' } })
+    // the page is read only, as the service serves it
+    if (m?.[2] === 'page' && req.method !== 'GET' && req.method !== 'HEAD') return new Response('read only', { status: 405, headers: { 'content-security-policy': 'sandbox allow-scripts allow-forms' } })
     if (m) return new Response(withLinks(page(decodeURIComponent(m[1]!))), { headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "sandbox allow-scripts allow-forms" } })
     if (path.startsWith('/api/')) return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } })
     // The fictional day starts over when the demo is reloaded.
