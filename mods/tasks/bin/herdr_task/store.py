@@ -299,6 +299,9 @@ class Store:
         if not (self.lock and self.write):
             yield
             return
+        # fork: saved whether or not a change was flagged (FORK.md, "Ready card after chat replies"): the list is read
+        # again below, so an unflagged change (ready's head, set just before its base fetch) was lost there
+        self.dirty = True
         self.save()
         fcntl.flock(self.lock, fcntl.LOCK_UN)
         try:

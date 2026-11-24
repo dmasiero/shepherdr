@@ -1457,6 +1457,133 @@ class BackToWork(unittest.TestCase):
         self.assertNotIn("attention", t)  # Ready, its Accept back
 
 
+# fork: Ready card after chat replies. A Ready task whose agent only answers a message in its chat is Ready again with its
+# card (ready's head kept, show's take-back its agent's own turn); Mark as done on a Working task with its pull request
+# open merges it when nothing changed since it said ready, else says why in plain words; the brief says to run ready
+# again when asked to merge.
+class ReadyCardAfterChatReplies(unittest.TestCase):
+    setUp, agent, ready, args = BackToWork.setUp, BackToWork.agent, BackToWork.ready, BackToWork.args
+
+    def worker(self, status, turn):
+        return [dict(self.agent({"address": "t1", "status": status, "turn": turn, "role": "worker"}), agent="claude")]
+
+    def taken_back(self, head="abc", now="abc", dirty=""):
+        """A Ready task with its pull request open, taken back to work by a message in its chat, its branch at `now`."""
+        t = self.ready(mode="worktree", worktree=tempfile.mkdtemp(), branch="b", head=head, summary="Notes added.",
+                       proof={"id": "p1", "title": "Notes · Proof"}, pr={"number": 130, "url": "u", "repo": "o/r"})
+        self.addCleanup(shutil.rmtree, t["worktree"], True)
+        for mod, name, value in ((self.tick, "git", lambda cwd, *a: (True, now if a[0] == "rev-parse" else dirty, "")),
+                                 (self.tick, "own_work", lambda t, live, ready=False: False)):
+            p = self.mock.patch.object(mod, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.commands.back_to_work(self.store, t, "its agent is at work again", auto=True)
+        return t
+
+    def test_released_keeps_a_change_it_was_not_told_of(self):
+        """The root cause: ready set the task's head, then fetched its base with the list let go (released()), which read
+        the list again and dropped the head, never saved (not flagged dirty). Without it the tick never put the task back
+        in Ready, so its card stayed gone ("Question answers show as object", "Blinking cursor when active")."""
+        import herdr_task.store as st
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "x.json")
+        with open(path, "w") as f:
+            json.dump({"tasks": [{"id": 1, "title": "A", "state": "running"}], "prefix": "X", "next": 2, "version": 1,
+                       "folder": d, "kind": "folder", "name": "x", "slug": "x"}, f)
+        for name, value in (("STORE", d), ("store_path", lambda folder: ("x", path))):
+            p = self.mock.patch.object(st, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        with st.Store({"folder": d, "kind": "folder", "name": "x", "common": None}) as s:
+            self.assertFalse(s.dirty, "a list read as it is: nothing flagged")
+            t = s.data["tasks"][0]
+            t["head"] = "abc"
+            with s.released():
+                pass
+            self.assertEqual(t.get("head"), "abc")
+        with open(path) as f:
+            self.assertEqual(json.load(f)["tasks"][0].get("head"), "abc")
+
+    def test_show_takes_it_back_as_its_agents_own_turn(self):
+        """show (the card reads it) saw the agent at work first: its take-back wasn't marked as the agent's own turn, so
+        the tick never put it back in Ready either."""
+        t = self.ready(mode="worktree", worktree="/nowhere", branch="b", head="abc")
+        self.live = self.worker("working", 5)
+        for name, value in (("task_settings", lambda s, t: []), ("review_limits", lambda s, t: (False, 0)),
+                            ("after_refs", lambda s, t: [])):
+            p = self.mock.patch.object(self.commands, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        try:
+            self.commands.cmd_show(self.args(evidence=False))
+        except Exception:
+            pass  # what show says after doesn't matter here: what it saved does
+        self.assertEqual((t["state"], t["back"].get("auto")), ("running", True))
+
+    def test_an_answer_that_changed_nothing_is_ready_again_with_its_card(self):
+        t = self.taken_back()
+        self.live = self.worker("idle", 6)
+        report = {"started": []}
+        self.tick.tick_store(self.store, report)
+        self.assertEqual((t["state"], t["summary"], t["proof"]["id"], report["ready_again"]), ("ready", "Notes added.", "p1", ["SHEP-7"]))
+
+    def test_an_answer_with_new_commits_says_ready_again_itself(self):
+        t = self.taken_back(now="def")
+        self.live = self.worker("idle", 6)
+        self.tick.tick_store(self.store, {"started": []})
+        self.assertEqual(t["state"], "running")
+
+    def merges(self):
+        merged = []
+        for name, value in (("merge_now", lambda s, t, accept=False: (merged.append(t["id"]), t.update(merged=True))[0] and None),
+                            ("finish", lambda s, t, **k: t.update(state="done"))):
+            p = self.mock.patch.object(self.commands, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        return merged
+
+    def test_mark_as_done_on_one_taken_back_with_nothing_new_merges_it(self):
+        """Mark as done on "Question answers show as object" while it said Working again: merged, as its card would."""
+        t = self.taken_back()
+        self.live = self.worker("idle", 6)
+        merged = self.merges()
+        self.commands.cmd_accept(self.args())
+        self.assertEqual((merged, t.get("accepted_at") is not None), ([7], True))
+        self.assertNotIn("back", t)
+
+    def test_mark_as_done_refuses_in_plain_words_otherwise(self):
+        merged = self.merges()
+        for change, live, words in (({"now": "def"}, ("idle", 6), "its work changed since it said ready"),
+                                    ({"dirty": " M a.py"}, ("idle", 6), "its work changed since it said ready"),
+                                    ({}, ("working", 6), "its agent is working on it again")):
+            t = self.taken_back(**change)
+            self.live = self.worker(*live)
+            with self.assertRaises(self.commands.Fail) as e:
+                self.commands.cmd_accept(self.args())
+            self.assertIn(words, str(e.exception))
+            self.assertIn("isn't merged", str(e.exception))
+            self.assertIn("pull request #130 stays open", str(e.exception))
+            self.assertEqual(t["state"], "running")
+        self.assertEqual(merged, [])
+
+    def test_mark_as_done_before_it_ever_said_ready_merges_nothing(self):
+        t = self.ready(state="running", mode="worktree", worktree="/nowhere", branch="b")
+        t.pop("ready_at")
+        with self.assertRaises(self.commands.Fail) as e:
+            self.commands.cmd_accept(self.args())
+        self.assertIn("isn't ready yet", str(e.exception))
+        self.assertIn("nothing was merged", str(e.exception))
+
+    def test_the_brief_says_to_put_the_card_back_when_asked_to_merge(self):
+        """templates/worker.md's fork line (no fork: comment there, as AGENTS.md says): pinned here."""
+        with open(os.path.join(ROOT, "templates", "worker.md")) as f:
+            brief = f.read()
+        self.assertIn("Asked in your chat after ready to merge it or mark it done (\"merge it\"), with nothing left to change: "
+                      "run the same ready command again (it puts the task back in Ready with its card), then say in one line "
+                      "that it waits on that card; never point the person at a card you haven't just put back.", brief)
+
+
 class OwnBackgroundWork(unittest.TestCase):
     """SHEP-53: an agent quiet with its own work still running (a background shell, a Monitor,
     Codex's background terminal), or whose fresh status line says it waits on CI or a review, is
