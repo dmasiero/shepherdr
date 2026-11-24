@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { Snapshot, Task } from './types.ts'
-import { artifactsIn, doneWords, isEverything, isHomeSpace, tasksIn, etaOf, folderName, folderOf, headerWhere, leftShort, leftWords, listOf, needsCount, placeOf, ringOf, nowGroups, spaceLabel, spaceName, spacesOf, statusWord, taskLine, taskWhen, tstate } from './view.ts'
+import { artifactsIn, doneWords, isEverything, isHomeSpace, tasksIn, etaOf, folderName, folderOf, headStatus, headerWhere, leftShort, leftWords, listOf, needsCount, placeOf, ringOf, nowGroups, spaceLabel, spaceName, spacesOf, statusWord, taskLine, taskWhen, tstate } from './view.ts'
 
 const task = (x: Partial<Task>): Task => ({ id: 'T-1', name: 'A task', place: 'shop', status: 'work', state: 'work', on: 'mini', created: '', age: '', ...x })
 
@@ -184,4 +184,16 @@ test("the main machine's own ~ space: a space of its own beside Everything; its 
   expect(artifactsIn(s, 'tilde').map((a) => a.id)).toEqual(['a1'])
   expect(artifactsIn(s, 'vmhome').map((a) => a.id)).toEqual(['a3'])
   expect(artifactsIn(s, 'home').map((a) => a.id)).toEqual(['a3', 'a1', 'a2'])
+})
+
+// fork: Task status in its header
+test('an open task\'s header line: the row\'s word, line, % done and time left, never a word said twice', () => {
+  expect(headStatus(task({ status: 'work', report: { msg: 'Running the full tests', progress: 40, eta: 5 } }))).toEqual({ word: 'Working', tone: 'mute', rest: ['40%', '5 min left', 'Running the full tests'] })
+  expect(headStatus(task({ status: 'work' }))).toEqual({ word: 'Working', tone: 'mute', rest: [] })
+  expect(headStatus(task({ status: 'need', report: { msg: 'Needs a go for a screenshot', progress: 80 } }))).toEqual({ word: 'Needs you', tone: 'ask', rest: ['80%', 'Needs a go for a screenshot'] })
+  expect(headStatus(task({ status: 'ready', report: { msg: '', progress: 100 } }))).toEqual({ word: 'Ready for review', tone: 'ready', rest: [] })
+  expect(headStatus(task({ status: 'merging' }))).toEqual({ word: 'Merging', tone: 'working', rest: [] })
+  expect(headStatus(task({ status: 'done', merged: true, doneNote: '1 link fixed' })).word).toBe('Done and merged · 1 link fixed')
+  expect(headStatus(task({ status: 'need', stopped: { by: 'error', why: 'It crashed' } }))).toEqual({ word: 'Stopped · It crashed', tone: 'red', rest: [] })
+  expect(headStatus(task({ status: 'queued', afterTitle: 'Fix typo' }))).toEqual({ word: 'Up next', tone: 'mute', rest: ['Starts after Fix typo'] })
 })

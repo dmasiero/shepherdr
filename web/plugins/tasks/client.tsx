@@ -13,7 +13,7 @@ import { ActBtn, ActError, Btn, Cnt, cx, Empty, Hd, I, IB, MenuGroup, Row, useCa
 import { waiting } from '@client/pending.ts'
 import { SpaceIcon } from '@client/space-icon.tsx'
 import type { MergeEvidence, Snapshot, Task } from '@shared/types.ts'
-import { askedWords, isEverything, machineLabel, nowGroups, onBranch, placeDown, reposOf, spaceLabel, spaceOnFolder, spacesOf, etaOf, leftWords, statusWord, taskChat, taskLine, taskWhen, tasksIn, tstate, workKey, workName, workWords, type Repo } from '@shared/view.ts'
+import { askedWords, isEverything, machineLabel, nowGroups, onBranch, placeDown, reposOf, spaceLabel, spaceOnFolder, spacesOf, etaOf, headStatus, leftWords, statusWord, taskChat, taskLine, taskWhen, tasksIn, tstate, workKey, workName, workWords, type Repo } from '@shared/view.ts'
 import { DoneRow } from '@plugins/chat/cards.tsx'
 import { replyToTask, SlideHint, useSlide } from '@plugins/chat/slide.tsx'
 import { StatusIcon } from './icon.tsx'
@@ -387,7 +387,7 @@ function TaskHead({ task: t, where, scrolled }: { task: Task; where: 'chat' | 'p
       back={big ? undefined : { label: 'Back to tasks', run: () => setUI({ task: null }) }}
       lead={big ? <>{hidden && !ph && <IB icon="panel" label="Show the list" onClick={showList} />}<IB icon="shrink" label="Minimize" onClick={minimize} /></> : undefined}
       title={t.name}
-      sub={big && snap ? `Task in ${spaceLabel(snap, t.place)}` : undefined}
+      sub={<HeadStatus task={t} space={big && snap ? spaceLabel(snap, t.place) : ''} />} // fork: Task status in its header
       scrolled={scrolled}
     >
       {registry.taskHeader.map((h, i) => <h.View key={i} thread={thread} />)}
@@ -397,6 +397,22 @@ function TaskHead({ task: t, where, scrolled }: { task: Task; where: 'chat' | 'p
       {where === 'pane' && !ph && <IB icon="expand" label="Maximize" onClick={() => maximize(t.id)} />}
       {where === 'pane' && !ph && <IB icon="x" label="Close" onClick={() => togglePane(null)} />}
     </Hd>
+  )
+}
+
+/** the open task's status under its title (upstream #1473): the row's state, line, % done and time left, live with the
+ *  snapshot, one line cut with an ellipsis (.t2), after the row's ring (StatusIcon, its time left already in words). Maximized, its space follows ("· in Shop"). */
+// fork: Task status in its header
+export function HeadStatus({ task: t, space }: { task: Task; space?: string }) {
+  const h = headStatus(t)
+  const strong = h.tone === 'ask' || h.tone === 'ready' || h.tone === 'red'
+  const rest = [...h.rest, ...(space ? [`in ${space}`] : [])]
+  return (
+    <span className="hst">
+      <StatusIcon t={t} time="none" />
+      {strong ? <b className={h.tone === 'ask' ? 'c-red' : `c-${h.tone}`}>{h.word}</b> : h.word}
+      {rest.map((x, i) => <span key={i}> · {x}</span>)}
+    </span>
   )
 }
 
