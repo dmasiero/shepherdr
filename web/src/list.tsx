@@ -159,7 +159,7 @@ export function newGroupDialog(machine?: string, then?: (id: string) => void) {
         if (!name.trim()) return
         close()
         const r = await act<{ ok?: boolean; id?: string; error?: string }>({ type: 'section', op: 'new', name: name.trim(), machine: m }).catch(() => ({ ok: false, error: 'That did not work.' }) as { ok?: boolean; id?: string; error?: string })
-        if (r.ok === false) return notice(r.error || 'That did not work.')
+        if (r.ok === false) return notice(r.error || 'That did not work.', { tone: 'error' })
         if (r.id) then?.(r.id)
       }
       return (
@@ -211,7 +211,7 @@ export function newSpaceDialog(machine?: string, pre?: { name: string; folder: s
           if (had || j.warning) notice(had ? `${had} already works in that folder, so it's open now.` : j.warning!, 10000)
         } catch (e) {
           setBusy(false)
-          notice(e instanceof Error ? e.message : 'The space could not be made.')
+          notice(e instanceof Error ? e.message : 'The space could not be made.', { tone: 'error' })
         }
       }
       return (
@@ -306,11 +306,22 @@ export function folderMenu(anchor: Element, placeId: string) {
 export function spaceMenu(anchor: Element, placeId: string, head = false) {
   const snap = getState().snap
   const p = snap && placeOf(snap, placeId)
-  if (!snap || !p) return
+  const rows = spaceRows(placeId, head)
+  if (!snap || !p || !rows) return
+  const tilde = isTilde(snap, p)
+  if (isEverything(snap, p.id)) return openMenu(anchor, rows, { label: 'Everything' })
+  openMenu(anchor, rows, { label: spaceLabel(snap, p.id), ...(nameCut(anchor) && !tilde ? { top: () => <WholeName name={p.name} id={p.id} /> } : {}) })
+}
+
+/** a space's menu's rows (its menu, and the palette's actions on the space shown) */
+export function spaceRows(placeId: string, head = false): MenuRow[] | null {
+  const snap = getState().snap
+  const p = snap && placeOf(snap, placeId)
+  if (!snap || !p) return null
   // no folder here (SHEP-328): the header's folder line shows it and copies it
   const first = [...registry.spaceMenu.flatMap((m) => m.rows(p, head)), ...(head ? swapRow(getState().ui) : [])]
   const line = first.length > 0
-  if (isEverything(snap, p.id)) return openMenu(anchor, [...first, { icon: 'gear', label: 'Settings', line, run: () => openSettings('all') }], { label: 'Everything' })
+  if (isEverything(snap, p.id)) return [...first, { icon: 'gear', label: 'Settings', cmd: 'shortcuts.settings', line, run: () => openSettings('all') }]
   // a machine's home space is a space like any other; unnamed it shows as ~, and an emptied name goes back to that
   const home = isHomeSpace(snap, p)
   const tilde = isTilde(snap, p)
@@ -339,7 +350,7 @@ export function spaceMenu(anchor: Element, placeId: string, head = false) {
     { icon: 'archive', label: p.archived ? 'Unarchive' : 'Archive', run: () => archive(snap, p) },
     { icon: 'bin', label: 'Remove', danger: true, line: true, run: () => remove(snap, p) },
   ]
-  openMenu(anchor, rows, { label: spaceLabel(snap, p.id), ...(nameCut(anchor) && !tilde ? { top: () => <WholeName name={p.name} id={p.id} /> } : {}) })
+  return rows
 }
 
 /** a cut-off name (one line, or two that wrap) shows whole where it opens: its menu's first line (SHEP-356) */

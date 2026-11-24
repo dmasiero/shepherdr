@@ -593,6 +593,9 @@ export interface Reaction {
 export interface Message {
   id: string
   who: 'you' | 'agent'
+  /** a `!` command you ran in the agent's own shell (its text is the command, with its `!`): running until what it
+   *  printed comes back, then done or failed; out: what it printed (its end, when long) */
+  command?: { state: 'running' | 'done' | 'failed'; out?: string }
   /** This answer was given through the voice call. */
   byVoice?: boolean
   /** the agent's first suggested reply (an older page's single suggestion; suggests holds them all) */
@@ -1327,6 +1330,7 @@ export type Action =
   | { type: 'plugin'; plugin: string; method: string; input?: unknown; cid: string }
   /** read every machine's plan limits again, unless they were read a moment ago */
   | { type: 'limits-check' }
+  | { type: 'voice-check' }
   /** cid: the screen's own id for what it sent, which comes back on the message (Message.cid); reply: the id of the
       message it answers; human: said in the app itself, the only kind of message that can take back a merge yes. Scripts
       leave it off */
@@ -1532,6 +1536,9 @@ export interface Config {
   addMachine?: string
   /** machines with a real screen whose desktop can be opened (Settings › Machines) */
   desktops?: string[]
+  /** Settings › Shortcuts: the shortcuts the person changed (a command's id to its keys; empty: none), and whether
+   *  single-letter keys work; the same on every device */
+  shortcuts?: { keys: Record<string, string[]>; letters: boolean }
 }
 
 /* ---------- 3.2: screens, an agent's browser and desktop ---------- */

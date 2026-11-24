@@ -8,7 +8,7 @@
 
 <p align="center"><a href="https://github.com/eliasstravik/shepherdr/blob/main/docs/install.md"><img src="assets/buttons/install-shepherdr.svg" alt="Install Shepherdr" /></a></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.16,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.18,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>
 
 <br />
 
@@ -40,7 +40,7 @@ Each space's chat is in the middle and its tasks on the right, by what they need
 
 ### 🧩 Make it yours: every feature is a plugin
 
-Tasks, chat, artifacts, voice, reactions, Screens, schedules, the terminal, search, alerts: every feature of Shepherdr is a plugin, listed in one file. Switch Screens, Voice, Schedules, Reactions or Terminal off in Settings › Plugins; the rest is always on in 3.2.16. Every space starts with Everything's settings and can set its own Assistant and secrets; each repo can set how its tasks run. An update replaces only Shepherdr's own folder, and keeps a copy of anything of yours it replaces. The Herdr app stays yours: it only gets one "Open Shepherdr" button. [Plugins](docs/plugins.md) lists each one and its switch.
+Tasks, chat, artifacts, voice, reactions, Screens, schedules, the terminal, search, alerts: every feature of Shepherdr is a plugin, listed in one file. Switch Screens, Voice, Schedules, Reactions or Terminal off in Settings › Plugins; the rest is always on in 3.2.18. Every space starts with Everything's settings and can set its own Assistant and secrets; each repo can set how its tasks run. An update replaces only Shepherdr's own folder, and keeps a copy of anything of yours it replaces. The Herdr app stays yours: it only gets one "Open Shepherdr" button. [Plugins](docs/plugins.md) lists each one and its switch.
 
 ### ⚡ Stop briefing every agent yourself
 
@@ -56,7 +56,7 @@ An agent that asks you something, wants a permission or a plan approved shows un
 <tr>
 <td align="center" valign="top" width="33%"><h3>1️⃣</h3><b>Install it on your machine</b><br /><sub>With herdr-core installed, clone this repo and run <code>./install.sh --dry-run</code> to see what it does, then <code>./install.sh</code>. It builds the web app and starts its service.</sub></td>
 <td align="center" valign="top" width="33%"><h3>2️⃣</h3><b>Check it and open it</b><br /><sub>Run <code>shepherdr doctor</code>. Open the link it prints, on any device on your tailnet.</sub></td>
-<td align="center" valign="top" width="33%"><h3>3️⃣</h3><b>Write in a chat</b><br /><sub>Make a space for a folder (<code>New space</code>) and say what needs doing. <code>Ctrl+K</code> searches everything and <code>Ctrl+`</code> opens your own terminal.</sub></td>
+<td align="center" valign="top" width="33%"><h3>3️⃣</h3><b>Write in a chat</b><br /><sub>Make a space for a folder (<code>New space</code>) and say what needs doing. <code>⌘K</code> (<code>Ctrl+K</code>) finds anything and runs any command, and <code>?</code> shows every shortcut.</sub></td>
 </tr>
 </table>
 
@@ -165,4 +165,4 @@ Nowhere: 2.1 is on the `v2.1` branch and 2.0 on the `v2.0` branch, each with its
 
 <p align="center"><a href="https://github.com/eliasstravik/shepherdr/blob/main/docs/install.md"><img src="assets/buttons/install-shepherdr.svg" alt="Install Shepherdr" /></a></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.16,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.18,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>

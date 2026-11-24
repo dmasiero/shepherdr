@@ -58,12 +58,12 @@ import { Agents } from "./agents.ts";
 import { Machines } from "./machines.ts";
 import { Push, alertsOf, agentAlerts } from "./push.ts";
 import { waiting } from "../web/shared/alerts.ts";
-import { GlanceFeed, MAX_CHATS, glanceOf, openUrlOk } from "./glance.ts";
+import { GlanceFeed, MAX_CHATS, glanceOf, openUrlOk, saidToPerson } from "./glance.ts";
 import { chatPage } from "./native-chat.ts";
 import { unreadChats } from "../web/shared/needs-you.ts";
 import type { Watcher } from "./chats.ts";
 import { Shows } from "./show.ts";
-import { dictate, liveToken, cachedKey, refused } from "./dictate.ts";
+import { dictate, liveToken, cachedKey, refused, forgetKey, checkVoiceKey } from "./dictate.ts";
 import { readUsage } from "../core/voice.js";
 import { sh, exec } from "./model.ts";
 import { listPaths, machineOfChat } from "./path-pick.ts"; // fork: SHEP-50's "@~/" list
@@ -194,8 +194,9 @@ const lastSaid = (key: string) => {
 // a chat's newest message with words (the person's or its agent's), for the glance's suggested replies
 const lastWords = (key: string) => {
   const a = compat.addrOf(key), items: any[] = (a ? live.chats?.reader(a)?.conv?.items : null) ?? [];
-  // as the chat lists them (compat.ts): its words, a message it sent another agent (no bubbles), the person's
-  const m = items.findLast((x) => (x.kind === "agent" || x.kind === "sent" || x.kind === "user") && x.text);
+  // as the chat lists them (compat.ts): its words or the person's; messages between agents (another agent's in, one it
+  // sent) never clear the bubbles, as web/plugins/chat/suggest.ts suggestionOf
+  const m = items.findLast(saidToPerson);
   return m ? { who: m.kind === "user" ? "you" as const : "agent" as const, text: m.text as string, ...(m.kind === "agent" ? { suggests: m.suggests as string[] | undefined } : {}) } : null;
 };
 // SHEP-447: an unread Assistant chat's newest words, for the glance feed's chats: Chats reads a chat only while someone
@@ -815,7 +816,8 @@ async function doAction(body: any): Promise<Response> {
       if (body.card != null && typeof body.card?.chat !== "string") throw new Error("That card isn't here any more.");
       const card = body.card ? { address: compat.addrOf(body.card.chat) ?? "" } : undefined;
       if (card && !card.address) throw new Error("That agent isn't here any more.");
-      await secrets.keep(body.level, body.name, body.value, card);
+      await secrets.keep(body.level, body.name, typeof body.value === "string" ? body.value : null, card);
+      if (body.name === "ELEVENLABS_API_KEY") forgetKey();
       await refreshSecrets();
       return json({ ok: true });
     } catch (err) { return new Response((err as Error).message, { status: 400 }); }
@@ -858,6 +860,8 @@ async function doAction(body: any): Promise<Response> {
     try { return json({ ok: true, text: settings.template(body.role, typeof body.text === "string" ? body.text : undefined) }); }
     catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }
+  // Settings › Voice's test: whether the ElevenLabs key works, in plain words (never the key)
+  if (body?.type === "voice-check") return json(await checkVoiceKey(hub));
   if (body?.type === "limits-check") { await machines.checkNow(); return json({ ok: true }); }
   if (body?.type === "secrets-move") {
     // Settings › Secrets › Kept on: the vault moves (shepherdr secrets move-to); the page sees it as it goes

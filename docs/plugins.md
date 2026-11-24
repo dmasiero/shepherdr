@@ -8,12 +8,13 @@ the rest. [`web/plugins.json`](../web/plugins.json) is the list, in order.
 | chat | always on | A chat's messages, cards and message box | |
 | tasks | always on | The Tasks pane, a task's thread, the review card | |
 | artifacts | always on | The Artifacts pane, a page's tile in a chat, Mark up | |
-| search | always on | One search for spaces, tasks and artifacts (Ctrl+K) | |
+| search | always on | The command palette: finds anything and runs any command (⌘K, Ctrl+K) | |
+| shortcuts | always on | The shortcuts sheet (?), Settings › Shortcuts and the app's own commands ([shortcuts.md](shortcuts.md)) | |
 | alerts | always on | Push alerts, one choice per device | |
 | analytics | always on | Settings › Personal analytics, kept only on your machines ([analytics.md](analytics.md)); its own switch turns recording off | |
 | terminal | yes | Your own terminal in a space or a task, and "View as terminal" | No Terminal menu items |
 | screens | yes | An agent's browser and desktop: watch, Take over, Hand back | No Screen menu item, live picture or card |
-| voice | yes | Voice over the whole app, and dictation in the message box | No voice or mic button |
+| voice | yes | Voice over the whole app, dictation in the message box, and Settings › Voice (the ElevenLabs key) | No voice or mic button, no Voice page |
 | schedules | yes | Tasks › Scheduled | No Scheduled tab |
 | reactions | yes | Emoji reactions on messages | No emoji row in a message's menu |
 
@@ -49,7 +50,8 @@ Settings › Plugins has the switches. They are kept as `everywhere.plugins_off`
 | `aboveBox`, `boxButtons`, `drawer` | Above the message box, inside its bar, and under the column |
 | `sideHead`, `middle`, `overlays`, `topBars` | The list's top row, the whole middle column, whole-screen layers, thin lines at the top |
 | `settings` | Sections of the settings window, for everything, a space, or both |
-| `keys` | Keyboard shortcuts |
+| `commands` | What the palette lists and the shortcuts run: each with its default keys ([shortcuts.md](shortcuts.md)) |
+| `keys` | Raw key handlers that run before the commands' shortcuts |
 
 ## Add one
 

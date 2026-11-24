@@ -2,6 +2,7 @@
 
 Shepherdr is one web app, the same on a phone, a tablet and a desktop. This page says where it is, who gets in and
 how it runs.
+What a chat's box takes besides messages (`!` commands) and its keys: [The chat](chat.md).
 
 ## Where it is
 
@@ -38,7 +39,15 @@ An artifact's page runs in a frame that cannot reach the app.
 - A status is worked out by plain rules from the agent's own report and facts Shepherdr knows
   (`web/shared/view.ts`). No model sits in that path.
 - Every feature of the page is a plugin ([Plugins](plugins.md)).
-- Voice and dictation use ElevenLabs with your key, the secret `ELEVENLABS_API_KEY`.
+- Voice and dictation use ElevenLabs with your own key. Add it in Settings › Voice: it says whether voice is set up,
+  takes the key in a masked box (kept with your secrets, never shown again), tests it, and removes it. Talk or the mic
+  without a key opens that page.
+- The key is the secret `ELEVENLABS_API_KEY` (Everywhere), so adding it in Settings › Secrets or with
+  `herdr-secret set ELEVENLABS_API_KEY` is the same key: whichever was saved last is the one used. An old
+  `~/.config/herdr-app/secrets/elevenlabs.env` with `ELEVENLABS_API_KEY=` still wins over it while it is there;
+  Settings › Voice says when the key comes from that file.
+- Test asks ElevenLabs for one voice agent with the key (free). A key needs access to ElevenLabs Agents (Talk) and
+  Speech to Text (dictation). The voice itself is fixed; there is no voice to choose.
 
 ## Serve from an always-on machine
 

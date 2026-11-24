@@ -45,6 +45,7 @@ export const NOT_DATA: Record<string, string> = {
   "api:paths": "the @~/ picker's file names above the message box (fork: SHEP-50)",
   "action:earlier": "a chat's older messages: look chat reads further back itself",
   "action:catalog": "the picker's lists (a machine's agents and their models): look data's models has the same menus",
+  "action:voice-check": "Settings › Voice's test of the ElevenLabs key: a call that is on already proves it works",
 };
 
 /** The web app's actions that change something (act, send or screen do them), not data to read: every one the page
