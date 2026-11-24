@@ -35,6 +35,10 @@ The answer is kept for an hour per repo (as upstream keeps GitHub's).
   and title, its prompt, summary and details as the body. A pull request already open for the branch (opened by hand or
   by the agent, from this repo, at the branch's tip) is adopted; ready again comments its new summary there. A
   `WIP:` title is taken off, since Gitea won't merge it. A branch that already had one merged is refused, as on GitHub.
+- **`--pr <n>`** (ready, add, start, edit) takes a Gitea pull request that is already open, read through tea, as on
+  GitHub: the task's commits go on its branch and ready comments there instead of opening its own. One that is closed,
+  from a fork or not found is refused in words; one closed after it was taken is said at ready. A task started on an
+  open pull request's branch goes on that one too, and a Working task's own pull request shows before ready.
 - **Checks**: the commit statuses on its head (Gitea Actions' or any CI's) are its checks, `warning` passing. A status
   the base's branch protection requires that hasn't shown yet counts as running (only a repo admin's token can read
   the protection). The task shows Working while they run and goes back to its agent when one fails or it conflicts,

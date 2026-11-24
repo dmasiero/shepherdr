@@ -254,6 +254,32 @@ def shaped(p):
             "headRefOid": (p.get("head") or {}).get("sha"), "mergeCommit": {"oid": mc} if SHA.match(mc or "") else None}
 
 
+def viewed(p):
+    """A Gitea pull request in gh pr view's fields (commands.PR_FIELDS: take_pr, base_pr)."""
+    head, base = p.get("head") or {}, p.get("base") or {}
+    cross = head.get("repo_id") is not None and base.get("repo_id") is not None and head["repo_id"] != base["repo_id"]
+    return {**shaped(p), "state": state_of(p), "isCrossRepository": cross, "headRefName": head.get("ref") or ""}
+
+
+def pr_get(t, number):
+    """SHEP-94: pull request #number on target t in gh pr view's fields, for --pr (Fail with Gitea's words)."""
+    usable(t)
+    p = call(t, "GET", f"{root(t)}/pulls/{number}")
+    if not isinstance(p, dict) or not isinstance(p.get("number"), int):
+        raise Fail("Gitea returned no pull request")
+    return viewed(p)
+
+
+def prs_from(t, head):
+    """SHEP-94: the open pull requests from branch head (any repo's), in gh pr list's fields; [] when Gitea didn't answer."""
+    if t.get("error"):
+        return []
+    try:
+        return [viewed(p) for p in pages(t, f"{root(t)}/pulls?state=open") if ((p.get("head") or {}).get("ref")) == head]
+    except Fail:
+        return []
+
+
 def usable(t):
     if t.get("error"):
         raise Fail(t["error"])
@@ -320,6 +346,10 @@ def pr_open(s, task, t, summary=None):
             if summary:
                 comment(pr, summary)
             return pr
+        if p and pr.get("taken"):
+            # SHEP-94, as github.pr_open: the pull request --pr took is closed: said, never a new one of its own instead.
+            raise Fail(f"Pull request #{pr['number']}, which this task took, is {state_of(p).lower()}. Reopen it, take "
+                       f"another (ready --pr <n>), or let it go (ready --pr \"\") for a pull request of its own.")
     if pr_adopt(task, t):
         unwip(task["pr"])
         if summary:

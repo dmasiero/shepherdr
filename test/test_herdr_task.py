@@ -7106,6 +7106,94 @@ class GiteaTasks(unittest.TestCase):
         self.assertEqual(self.git(self.main, "rev-parse", "main"), self.git(self.bare, "rev-parse", "main"))
         self.assertEqual(self.calls("tea"), [], "tea is never asked about a GitHub repo")
 
+    def open_pr(self, head, base="main", state="open", repo_id=1):
+        """A pull request opened on Gitea by someone else (a person, a bot), in the fake tea's list: its number."""
+        st = self.tea_state() if os.path.exists(os.path.join(self.bin, "tea.json")) else {"pulls": [], "comments": {}, "statuses": {}}
+        n = len(st["pulls"]) + 1
+        st["pulls"].append({"number": n, "title": "Theirs", "body": "", "state": state, "merged": False, "mergeable": True,
+                            "html_url": f"https://gitea.test/o/r/pulls/{n}", "merge_commit_sha": None,
+                            "head": {"ref": head, "sha": self.git(self.bare, "rev-parse", "refs/heads/" + head), "repo_id": repo_id},
+                            "base": {"ref": base, "repo_id": 1}})
+        with open(os.path.join(self.bin, "tea.json"), "w") as f:
+            json.dump(st, f)
+        return n
+
+    def test_gitea_ready_takes_a_pull_request_with_pr(self):
+        """SHEP-94: ready --pr <n> on a Gitea repo crashed (gh was handed Gitea's target, a dict: TypeError). It takes the
+        open Gitea pull request through tea, as on GitHub: no second pull request, its commits pushed to that branch."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        tip = self.git(self.wt, "rev-parse", "HEAD")
+        self.git(self.wt, "push", "-q", "origin", "task/1:refs/heads/fix/thing")
+        n = self.open_pr("fix/thing")
+        args = self.args()
+        args.pr = f"#{n}"
+        self.commands.cmd_ready(args)
+        self.assertEqual(t["state"], "ready", t.get("attention"))
+        self.assertEqual(t["pr"], {"number": n, "url": f"https://gitea.test/o/r/pulls/{n}", "repo": "o/r", "forge": "gitea", "login": "t",
+                                   "web": "https://gitea.test", "taken": True, "branch": "fix/thing", **({"checked": t["pr"]["checked"]} if "checked" in t["pr"] else {}),
+                                   **({"wait": t["pr"]["wait"]} if "wait" in t["pr"] else {})})
+        self.assertEqual(len(self.tea_state()["pulls"]), 1, "no second pull request")
+        self.assertEqual(self.tea_state()["comments"][str(n)], ["Notes added."])
+        later = os.path.join(self.wt, "notes.txt")
+        with open(later, "a") as f:
+            f.write("more\n")
+        self.git(self.wt, "commit", "-qam", "more")
+        t["state"] = "running"
+        self.commands.cmd_ready(self.args())  # a later ready keeps it, its commits on its branch
+        self.assertEqual(self.git(self.bare, "rev-parse", "refs/heads/fix/thing"), self.git(self.wt, "rev-parse", "HEAD"))
+        self.assertEqual(self.git(self.bare, "branch", "--list", "task/1"), "")
+        self.assertNotEqual(self.git(self.wt, "rev-parse", "HEAD"), tip)
+        self.assertEqual(t["pr"]["number"], n)
+        self.assertEqual(self.calls("gh"), [], "gh is never asked about a Gitea repo")
+
+    def test_gitea_pr_that_cant_be_taken_is_refused_in_words(self):
+        """SHEP-94: closed, from a fork, or no such pull request on Gitea: refused in plain words, nothing kept."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.git(self.wt, "push", "-q", "origin", "task/1:refs/heads/x")
+        closed, forked = self.open_pr("x", state="closed"), self.open_pr("x", repo_id=2)
+        for n, said in ((closed, "is closed"), (forked, "from a fork"), (77, "Couldn't find pull request #77 in o/r on Gitea")):
+            with self.assertRaises(self.commands.Fail) as e:
+                self.commands.take_pr(self.store, t, str(n))
+            self.assertIn(said, str(e.exception))
+        self.assertNotIn("pr", t)
+        self.assertEqual(self.calls("gh"), [])
+
+    def test_gitea_taken_pull_request_closed_since_is_said(self):
+        """As on GitHub: a taken pull request closed meanwhile is said at ready, never a new one of the task's own instead."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.git(self.wt, "push", "-q", "origin", "task/1:refs/heads/fix/thing")
+        n = self.open_pr("fix/thing")
+        self.commands.take_pr(self.store, t, str(n))
+        st = self.tea_state()
+        st["pulls"][0]["state"] = "closed"
+        with open(os.path.join(self.bin, "tea.json"), "w") as f:
+            json.dump(st, f)
+        with self.assertRaises(self.commands.Fail) as e:
+            self.github.pr_open(self.store, t, self.github.github(self.store), "Done")
+        self.assertIn(f"Pull request #{n}, which this task took, is closed", str(e.exception))
+        self.assertEqual(len(self.tea_state()["pulls"]), 1)
+
+    def test_gitea_pull_requests_seen_before_ready_and_from_the_base(self):
+        """SHEP-94: the tick's look for a Working task's own pull request, and a task started on an open pull request's
+        branch, read Gitea's through tea (they handed gh Gitea's target too)."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.git(self.wt, "push", "-q", "origin", "task/1")
+        n = self.open_pr("task/1")
+        self.tick.seen_pr(self.store, t)
+        self.assertEqual(t["pr_seen"], {"number": n, "url": f"https://gitea.test/o/r/pulls/{n}", "repo": "o/r", "forge": "gitea",
+                                        "login": "t", "web": "https://gitea.test"})
+        t.pop("pr_seen")
+        t.update(base="task/1", base_set=True)
+        self.git(self.wt, "push", "-q", "origin", "task/1:refs/heads/other")
+        self.commands.base_pr(self.store, t)
+        self.assertEqual((t["pr"]["number"], t["pr"]["forge"], t["pr"]["taken"], t["pr"]["branch"], t["pr"]["from_base"]),
+                         (n, "gitea", True, "task/1", True))
+        self.assertEqual(self.calls("gh"), [])
+
     def test_local_repo_merges_here_as_before(self):
         t = self.task()
         tip = self.git(self.wt, "rev-parse", "HEAD")
