@@ -18,6 +18,7 @@ import { DoneRow } from '@plugins/chat/cards.tsx'
 import { replyToTask, SlideHint, useSlide } from '@plugins/chat/slide.tsx'
 import { StatusIcon } from './icon.tsx'
 import { reviewAt } from './card-place.ts' // fork: Ready card below new messages
+import { doneRows } from './done-rows.ts' // fork: Ready card after chat replies
 import { chipsOf, choices, clean, filterCount, filterOn, filterTasks, hereOn, NO_FILTER, toggle, type GroupKey, type TaskFilter } from '@shared/task-filter.ts'
 
 export { StatusIcon }
@@ -178,8 +179,10 @@ export function taskMenu(anchor: Element, t: Task, where: 'row' | 'thread') {
     ...(t.work ? [{ icon: 'folder' as const, label: `All tasks in ${workName(t)}`, run: () => showRepo(workKey(t)) }] : []),
     ...extra.filter((r) => r.label === 'Show screen'),
     ...(s === 'next' ? [{ icon: 'folder' as const, label: 'Move to', sub: spacesOf(snap).filter((p) => p.id !== t.place && !p.archived).map((p) => ({ label: spaceLabel(snap, p.id), run: () => void tryAct({ type: 'task-move', chat, place: p.id }, undefined, 'Moving…') })) }] : []),
-    // from the menu it closes without merging: "Done · not merged" for a task on its own branch
-    ...(s !== 'done' && s !== 'archived' ? [{ icon: 'check' as const, label: 'Mark as done', run: () => void tryAct({ type: 'close', chat, force: true }, undefined, 'Marking as done…') }] : []),
+    // fork: one with its pull request open merges first (done-rows.ts); Done, not merged closes it as it is
+    ...doneRows(t, s).map((r) => ({ icon: 'check' as const, label: r.label, run: () => void (r.how === 'accept'
+      ? tryAct({ type: 'accept', task: t.id }, undefined, 'Merging…')
+      : tryAct({ type: 'close', chat, force: true }, undefined, 'Marking as done…')) })),
     { icon: 'pen', label: 'Rename', run: () => renameDialog(t.name, (name) => tryAct({ type: 'task-rename', chat, name })) },
     // Stop pauses the agent, like pressing Esc: it drops what it was doing and waits
     ...(s === 'working' ? [{ icon: 'stop' as const, label: 'Stop', run: () => void tryAct({ type: 'stop', chat }, undefined, 'Stopping…') }] : []),

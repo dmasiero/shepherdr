@@ -355,17 +355,33 @@ def settle_back(s, t, report):
     b = t.get("back") or {}
     if t["state"] != "running" or not b.get("auto") or t.get("attention") or t.get("stopped_by"):
         return False
+    live = rests_as_ready(s, t)  # fork: shared with Mark as done (FORK.md, "Ready card after chat replies")
+    if live is None or any(last_question(t, k.get("address")) for k in live):
+        return False
+    return ready_again(s, t, live, report)
+
+
+def rests_as_ready(s, t):
+    """Fork (FORK.md, "Ready card after chat replies"): a Working task taken back from Ready whose agents are at rest
+    (none at work, no work of their own left running) with its branch where it said ready and nothing uncommitted:
+    its live agents, else None. settle_back() and the person's Mark as done (cmd_accept) ask it."""
+    if t["state"] != "running" or not t.get("back") or t.get("stopped_by"):
+        return None
     wt = t.get("worktree") if t.get("mode") == "worktree" else None
     if not wt or not t.get("head") or not os.path.isdir(wt):
-        return False
+        return None
     live = [k for k in map(detail, live_agents(s.key(t))) if agent_running(k)]
     if not live or any(status_word(k) not in ("idle", "done") for k in live):
-        return False
+        return None
     ok, head, _ = git(wt, "rev-parse", "HEAD")
     if not ok or head != t["head"] or git(wt, "status", "--porcelain", "--untracked-files=no")[1]:
-        return False
-    if any(last_question(t, k.get("address")) for k in live) or own_work(t, live):
-        return False
+        return None
+    return None if own_work(t, live) else live
+
+
+def ready_again(s, t, live, report):
+    """Back in Ready as it was: its summary, proof and card as at its last ready."""
+    b = t.get("back") or {}
     t["state"], t["ready_turns"] = "ready", ready_turns(live)
     if b.get("progress"):
         t["progress"] = b["progress"]

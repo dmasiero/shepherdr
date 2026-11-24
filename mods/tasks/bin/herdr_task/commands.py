@@ -304,7 +304,8 @@ def cmd_show(args):
         # Back at work since it said ready: saved at once, so the Accept card (which reads this)
         # says it's Working, not Ready.
         if busy_again(t, live):
-            back_to_work(s, t, "its agent is at work again")
+            # fork: its agent's own turn, as the tick's (FORK.md, "Ready card after chat replies"): Ready again when it changed nothing
+            back_to_work(s, t, "its agent is at work again", auto=True)
         v = view(s, t, live)
         if t["state"] == "queued":
             v["reason"] = queue_reason(s, t)
@@ -1857,6 +1858,29 @@ def ready_command(s, t):
     return f"{own_path()} ready {s.ref(t)} --folder {shlex.quote(s.loc['folder'])}"
 
 
+def not_ready_accept(s, t):
+    """Fork (FORK.md, "Ready card after chat replies"): Mark as done on a task that isn't Ready. One taken back to work
+    from Ready whose agent is at rest with its branch where it said ready (it only answered a message) is Ready again
+    and accepted as the card would be: merged. Anything else is refused in plain words, never done with its pull
+    request left open (`herdr-task done` is that choice)."""
+    from .tick import ready_again, rests_as_ready
+    live = rests_as_ready(s, t)
+    if live is not None:
+        ready_again(s, t, live, {})
+        return
+    pr = t.get("pr") or t.get("pr_seen") or {}
+    what = f"its pull request #{pr['number']}" if pr.get("number") else "its branch"
+    if t["state"] == "running" and t.get("back"):
+        at_work = any(status_word(k) not in ("idle", "done") for k in map(detail, live_agents(s.key(t))))
+        why = ("its agent is working on it again since it said ready" if at_work
+               else "its work changed since it said ready, so its agent has to say ready again first")
+        raise Fail(f"{s.name(t)} isn't merged: {why}. Mark it as done once it's Ready again; {what} stays open until then.")
+    if t["state"] in ("running", "queued", "scheduled", "todo") and t.get("mode") == "worktree":
+        raise Fail(f"{s.name(t)} isn't ready yet ({'its agent is still on it' if t['state'] == 'running' else 'not started'}): "
+                   f"nothing was merged. Mark it as done once it's Ready.")
+    raise Fail(f"{s.name(t)} isn't ready ({t['state']}); only a Ready task can be accepted.")
+
+
 def cmd_accept(args):
     """The person's Accept on a Ready task (the one thing they do in the Tasks panel): Done at
     once when there is nothing to merge, else merged first, as the merge settings say how: a pull
@@ -1866,7 +1890,7 @@ def cmd_accept(args):
     with open_store(args) as s:
         t = s.find(args.id)
         if t["state"] != "ready":
-            raise Fail(f"{s.name(t)} isn't ready ({t['state']}); only a Ready task can be accepted.")
+            not_ready_accept(s, t)  # fork: Ready again and merged, or refused in plain words (FORK.md)
         # Its agent at work again since it said ready: never accepted half done. Working again
         # (saved), and refused after the store is.
         if busy_again(t, [detail(k) for k in live_agents(s.key(t))]):
