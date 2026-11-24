@@ -342,6 +342,17 @@ async function sendToEnded(hub: Hub, b: any, compat: Compat, old: string): Promi
   return sendNow(hub, { ...b, addr: got.addr, quote, tags, quoteTask, hold: true }, compat);
 }
 
+// fork: a step's answer of a several-questions card, as the card sends it (SHEP-100): words, or its pick ({ choice },
+// { choices }, { other }), which core/asks.js partAnswer names. String() of a pick was "[object Object]".
+export function cardAnswer(x: unknown): string | { choice?: number; choices?: number[]; other?: string } {
+  if (typeof x === "string") return x.slice(0, 4000);
+  if (!x || typeof x !== "object") return "";
+  const v = x as any;
+  if (typeof v.other === "string") return { other: v.other.slice(0, 4000) };
+  if (Array.isArray(v.choices)) return { choices: v.choices.filter((n: unknown) => typeof n === "number").slice(0, 50) };
+  return typeof v.choice === "number" ? { choice: v.choice } : "";
+}
+
 export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
   // 2.1's screen names a chat by its key (compat.ts): its terminal here.
   const chat = (key: unknown) => {
@@ -364,7 +375,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     // SHEP-324: answered by typing on its screen: only while Codex itself is in front
     const f = await hub.front?.(a);
     if (f && f !== "agent") throw new Error(NOT_TYPED[f]);
-    const why = await answerCodex(hc, a, item.questions, b);
+    const why = await answerCodex(hc, a, item.questions, { ...b, answers: Array.isArray(b.answers) ? b.answers.slice(0, 20).map(cardAnswer) : undefined }); // fork: cardAnswer (SHEP-100)
     if (why) throw new Error(why);
     return { ok: true };
   }
@@ -374,7 +385,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     await (compat.asks as any).answer(str(b.question, 200), { choice: typeof b.choice === "number" ? b.choice : undefined,
       choices: Array.isArray(b.choices) ? b.choices.filter((n: unknown) => typeof n === "number") : undefined,
       note: typeof b.note === "string" ? b.note.slice(0, 4000) : undefined, other: typeof b.other === "string" ? b.other.slice(0, 4000) : undefined,
-      answers: Array.isArray(b.answers) ? b.answers.slice(0, 20).map((x: unknown) => String(x ?? "").slice(0, 4000)) : undefined,
+      answers: Array.isArray(b.answers) ? b.answers.slice(0, 20).map(cardAnswer) : undefined, // fork: cardAnswer (SHEP-100)
       terminal: b.terminal === true, talk: b.talk === true, dismiss: b.dismiss === true });
     return { ok: true };
   }

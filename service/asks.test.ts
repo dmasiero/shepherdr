@@ -169,3 +169,36 @@ test("a question's previews show on the card and go back with the pick and its n
   expect(d.updatedInput.answers).toEqual({ "Which layout?": "List" });
   expect(d.updatedInput.annotations).toEqual({ "Which layout?": { preview: "- a\n- b", notes: "keep it short" } });
 });
+
+// fork: SHEP-100. The web's several-questions card sends each step as its pick ({ choice: i }, { choices: [...] },
+// { other }), never words: the action handler made each "[object Object]", which Claude got as both answers and the
+// chat showed as the person's bubble. The same shape as the real case: two single-select questions, a pick on each.
+test("several questions answered from the web card: Claude gets the picked options' words", async () => {
+  const { act } = await import("./actions.ts");
+  put("t11.100.1", { tool_name: "AskUserQuestion", tool_input: { questions: [
+    { question: "Save the file, then set up the payment?", header: "Save & pay", multiSelect: false, options: [
+      { label: "Yes, save and set up (Recommended)", description: "Both" }, { label: "Save only", description: "No payment yet" }, { label: "Hold everything", description: "Nothing" }] },
+    { question: "Which category for the charge?", header: "Category", multiSelect: false, options: [
+      { label: "COGS:Service", description: "A cost of service" }, { label: "EXPENSE:Subscriptions", description: "Software" }] }] } });
+  const asks = new Asks();
+  asks.start();
+  // the card's body as web/plugins/chat/cards.tsx sends it
+  await act({} as any, { type: "answer", chat: "p:sp1", question: "t11.100.1", answers: [{ choice: 0 }, { choice: 1 }] }, { asks } as any);
+  const out = JSON.parse(readFileSync(join(dir, "ans", "t11.100.1.json"), "utf8")).hookSpecificOutput.decision;
+  expect(out.updatedInput.answers).toEqual({ "Save the file, then set up the payment?": "Yes, save and set up", "Which category for the charge?": "EXPENSE:Subscriptions" });
+  expect(readFileSync(join(dir, "end", "t11.100.1"), "utf8").trim()).toBe("Answered on the web");
+});
+
+test("several questions from the web card: several picks joined, Other as written, a missing pick refused", async () => {
+  const { act } = await import("./actions.ts");
+  put("t12.100.1", { tool_name: "AskUserQuestion", tool_input: { questions: [
+    { question: "Which sizes?", multiSelect: true, options: [{ label: "S" }, { label: "M" }, { label: "L" }] },
+    { question: "Which color?", options: [{ label: "Red" }, { label: "Blue" }] }] } });
+  const asks = new Asks();
+  asks.start();
+  await expect(act({} as any, { type: "answer", chat: "p:sp1", question: "t12.100.1", answers: [{ choices: [] }, { choice: 0 }] }, { asks } as any)).rejects.toThrow(/Answer every question/);
+  await expect(act({} as any, { type: "answer", chat: "p:sp1", question: "t12.100.1", answers: [{ choices: [0] }, { choice: 9 }] }, { asks } as any)).rejects.toThrow(/Answer every question/);
+  await act({} as any, { type: "answer", chat: "p:sp1", question: "t12.100.1", answers: [{ choices: [0, 2] }, { other: " Green, please " }] }, { asks } as any);
+  const out = JSON.parse(readFileSync(join(dir, "ans", "t12.100.1.json"), "utf8")).hookSpecificOutput.decision;
+  expect(out.updatedInput.answers).toEqual({ "Which sizes?": "S, L", "Which color?": "Green, please" });
+});

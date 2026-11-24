@@ -99,6 +99,18 @@ export function annotationsOf(w, map, note) {
   });
   return out;
 }
+// fork: a step's answer of the web's several-questions card as words (SHEP-100). The card sends each step as its pick,
+// { choice } or { choices } (indexes into that question's options), or { other } (words of one's own); a plain string
+// is already the answer. names: that question's option names, in order. Several picks are joined with ", ", as
+// Claude's own prompt joins them; anything else is "" (unanswered), never "[object Object]".
+export function partAnswer(names, a) {
+  const at = (i) => (Number.isInteger(i) && i >= 0 ? String(names?.[i] ?? "") : "");
+  if (typeof a === "string") return a.trim();
+  if (!a || typeof a !== "object") return "";
+  if (typeof a.other === "string" && a.other.trim()) return a.other.trim();
+  if (Array.isArray(a.choices)) return a.choices.map(at).filter(Boolean).join(", ");
+  return at(a.choice);
+}
 // "Chat about this": no answers; Claude hears the person wants to talk it over first.
 export const chatAbout = () => deny("The person wants to talk about these questions before answering. Don't ask them again now: wait for their message in the chat and answer it.");
 // "Dismiss" (or Esc on the card): closed without an answer, as Esc in Claude's own prompt, except Claude goes on
