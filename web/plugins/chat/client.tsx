@@ -565,7 +565,8 @@ function Messages({ thread }: { thread: Thread }) {
   let lastEnded = ''
   // the app's own cards (a review, a stopped agent), each where it came up among the messages
   // none while its messages are still on their way: never a wall of task rows standing in for the chat (SHEP-445)
-  const cards = cardsNow(registry.chatCards.flatMap((c) => c.cards(snap, thread)), chat, tried).sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
+  // fork: Ready card below new messages: each gets the chat, so a waiting review card follows the agent's newest word
+  const cards = cardsNow(registry.chatCards.flatMap((c) => c.cards(snap, thread, chat)), chat, tried).sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity))
   // what you sent still shows at once; the rest waits with the cards
   const held = stillLoading(chat, tried)
   const cardsUntil = (at: number) => {
