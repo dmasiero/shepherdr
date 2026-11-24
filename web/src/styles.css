@@ -49,7 +49,10 @@ div.b[data-menu]{cursor:pointer}
 .md .code.block{align-items:flex-start;padding:8px 4px 8px 12px}
 .md .code.block .ib[data-copied]{color:var(--green)}
 .md table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;font-size:14px;line-height:20px}
-.md th,.md td{padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+/* fork: Wide chat tables on phone. A cell breaks only between words (the bubble's overflow-wrap:anywhere let a wide table squeeze each column to a letter); a
+   table wider than the bubble scrolls sideways in its own box */
+.md th,.md td{padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:normal}
+.md td.long,.md th.long{min-width:10em}
 .md th{font-weight:600}
 .md img{max-width:100%;border-radius:8px}
 .md blockquote{padding-left:12px;border-left:2px solid var(--line2);color:var(--sub)}

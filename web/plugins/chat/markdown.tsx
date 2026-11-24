@@ -11,6 +11,7 @@ import { go, notice, openTask, useSnap } from '@client/kernel.ts'
 import type { Message, Snapshot } from '@shared/types.ts'
 import { spacesOf, taskRef } from '@shared/view.ts'
 import { parseTask } from '@core/mentions.js'
+import { longCell } from './cells.ts' // fork: Wide chat tables on phone
 
 marked.setOptions({ gfm: true, breaks: false })
 
@@ -45,6 +46,8 @@ export function toHtml(text: string, link?: (a: HTMLAnchorElement, kind: 'space'
     pre.replaceWith(box)
     box.append(pre, btn)
   }
+  // fork: Wide chat tables on phone. A table cell of a sentence or more keeps a readable width: a wide table then scrolls sideways (styles.css)
+  for (const cell of root.querySelectorAll('td, th')) if (longCell(cell.textContent ?? '')) cell.classList.add('long')
   for (const code of root.querySelectorAll('code')) {
     // a bit of code inside a link is the link's
     if (code.closest('pre, a')) continue
