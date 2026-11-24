@@ -18,6 +18,7 @@ import { spaceTermRow, switchView, taskTermRow, toggleSpaceTerm, viewRow } from 
 import { connectTerminal, streamInput } from './stream.ts'
 import { linkLayer, type LinkLayer } from './linklayer.ts'
 import { opens, type Link } from './links.ts'
+import { mirrorFocus } from './focus.ts' // fork: the cursor follows your keys (focus.ts)
 
 /** a web page opens the way a chat's link does: a new tab (the outside browser in the Android app), or in the app
  *  when it is this app's own (kernel.ts catches it) */
@@ -191,6 +192,8 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
         term.textarea.readOnly = true
         term.textarea.tabIndex = -1
       }
+      // fork: the box over it already has your keys (a terminal opened from a key): xterm draws its focused cursor
+      if (cap.current && document.activeElement === cap.current) mirrorFocus(term, true)
       link = connectTerminal(
         stream,
         (bytes, done) => term!.write(bytes, () => { done(); landSoon() }),
@@ -349,6 +352,10 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
               streamInput(stream, { type: 'keys', keys: [`ctrl+${t.toLowerCase()}`] })
             } else streamInput(stream, { type: 'text', text: t })
           }}
+          // fork: keys go to this box, never xterm's own, so xterm hears of its focus from here: the solid blinking
+          // cursor while your keys go to this terminal, the outline otherwise
+          onFocus={() => mirrorFocus(xt.current, true)}
+          onBlur={() => mirrorFocus(xt.current, false)}
           onPaste={(e) => {
             e.preventDefault()
             const t = e.clipboardData.getData('text')
