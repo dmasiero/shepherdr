@@ -21,5 +21,5 @@ test('only the window in front that holds the terminal asks for a size', () => {
   // a hidden tab or a window in the background: never, even holding it
   expect(mayAsk(true, doc('hidden', false))).toBe(false)
   expect(mayAsk(true, doc('visible', false))).toBe(false)
-  expect(mayAsk(true, undefined)).toBe(false)
+  expect(mayAsk(true, null)).toBe(false) // no page at all
 })

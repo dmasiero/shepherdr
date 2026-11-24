@@ -15,6 +15,6 @@ export function stillHolds(held: boolean, size: string, asked: string, askedAt: 
 }
 
 /** a page asks for a size only while it holds the terminal and is the window in front: a hidden or background tab never */
-export function mayAsk(held: boolean, doc: { visibilityState: string; hasFocus(): boolean } | undefined = typeof document === 'undefined' ? undefined : document) {
+export function mayAsk(held: boolean, doc: { visibilityState: string; hasFocus(): boolean } | null = typeof document === 'undefined' ? null : document) {
   return held && !!doc && doc.visibilityState === 'visible' && doc.hasFocus()
 }
