@@ -8,7 +8,7 @@
 
 <p align="center"><a href="https://github.com/eliasstravik/shepherdr/blob/main/docs/install.md"><img src="assets/buttons/install-shepherdr.svg" alt="Install Shepherdr" /></a></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.13,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.16,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>
 
 <br />
 
@@ -40,7 +40,7 @@ Each space's chat is in the middle and its tasks on the right, by what they need
 
 ### 🧩 Make it yours: every feature is a plugin
 
-Tasks, chat, artifacts, voice, reactions, Screens, schedules, the terminal, search, alerts: every feature of Shepherdr is a plugin, listed in one file. Switch Screens, Voice, Schedules, Reactions or Terminal off in Settings › Plugins; the rest is always on in 3.2.13. Every space starts with Everything's settings and can set its own Assistant and secrets; each repo can set how its tasks run. An update replaces only Shepherdr's own folder, and keeps a copy of anything of yours it replaces. The Herdr app stays yours: it only gets one "Open Shepherdr" button. [Plugins](docs/plugins.md) lists each one and its switch.
+Tasks, chat, artifacts, voice, reactions, Screens, schedules, the terminal, search, alerts: every feature of Shepherdr is a plugin, listed in one file. Switch Screens, Voice, Schedules, Reactions or Terminal off in Settings › Plugins; the rest is always on in 3.2.16. Every space starts with Everything's settings and can set its own Assistant and secrets; each repo can set how its tasks run. An update replaces only Shepherdr's own folder, and keeps a copy of anything of yours it replaces. The Herdr app stays yours: it only gets one "Open Shepherdr" button. [Plugins](docs/plugins.md) lists each one and its switch.
 
 ### ⚡ Stop briefing every agent yourself
 
@@ -121,7 +121,7 @@ Settings › Machines says how each machine is, with its agents, processor, memo
 
 ### Does Shepherdr send my work to a hosted service?
 
-No. Shepherdr runs on your own machine, keeps its files there, talks to your local herdr-core, and reaches your other machines over herdr-core's remote and your own SSH. The web app is served from your own machine to your tailnet only. Your agent CLI still uses its own service as usual, `gh` talks to GitHub, and voice and dictation go through ElevenLabs if you set them up.
+No. Shepherdr runs on your own machine, keeps its files there, talks to your local herdr-core, and reaches your other machines over herdr-core's remote and your own SSH. The web app is served from your own machine to your tailnet only. Your agent CLI still uses its own service as usual, `gh` talks to GitHub, and voice and dictation go through ElevenLabs if you set them up. Its personal analytics, a record of how you use it for you and your agents, stay on your machines and are never sent to anyone, us included ([docs/analytics.md](docs/analytics.md)).
 
 ### Will it touch my branches or worktrees on its own?
 
@@ -165,4 +165,4 @@ Nowhere: 2.1 is on the `v2.1` branch and 2.0 on the `v2.0` branch, each with its
 
 <p align="center"><a href="https://github.com/eliasstravik/shepherdr/blob/main/docs/install.md"><img src="assets/buttons/install-shepherdr.svg" alt="Install Shepherdr" /></a></p>
 
-<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.13,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>
+<p align="center"><sub>✓&nbsp;Free,&nbsp;MIT&nbsp;licensed &nbsp; ✓&nbsp;Runs&nbsp;on&nbsp;your&nbsp;machines,&nbsp;private&nbsp;on&nbsp;your&nbsp;tailnet &nbsp; ✓&nbsp;Shepherdr&nbsp;3.2.16,&nbsp;herdr-core&nbsp;0.1.17+</sub></p>

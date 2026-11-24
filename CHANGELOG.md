@@ -1,5 +1,67 @@
 # Changelog
 
+## 3.2.16
+
+Agents with a command running in the background no longer look busy, and dictation no longer flashes "allow the
+microphone" when it is already allowed.
+
+### Agents and chat
+
+- An agent that finished its turn but left a command running in the background now shows as at rest: no typing dots,
+  no Stop button, not counted as Working and no "still working" alerts. The chat shows a quiet "1 background command
+  running" line instead.
+- A message an agent only wrote inside a background command, a loop or a function no longer shows as a "Message to …
+  · Delivered" row: only a message it really sent does.
+
+### Dictation
+
+- The "allow the microphone" hint no longer flashes, or stays up, when the microphone is already allowed (seen in the
+  installed Android app). It shows only while a prompt is really waiting and goes the moment the microphone is ready.
+- When the microphone is blocked in the Android app, Shepherdr says to turn it on in the phone's settings for the app.
+
+## 3.2.15
+
+Shepherdr now keeps a private record of how you use it, for you and your agents, and messages you send quickly to an
+agent arrive one by one.
+
+### Personal analytics
+
+- Shepherdr keeps a record of how you use it: messages sent and how (typed, dictated, a suggested reply or Talk),
+  tasks and how long they waited, schedules, failures. Never what was said: no message text, titles or secrets.
+- It stays on your machines and is never sent to anyone, not to Shepherdr's makers either.
+- Settings › Personal analytics shows the main numbers for a day, week or month, lists every event as kept, and can
+  export, switch it off or delete it all on every machine. It is on by default; a quiet note says so once.
+- Ask your Assistant "how do I use Shepherdr, and what should I change?": it reads the record and answers. Agents use
+  `herdr-task analytics`.
+
+### Sending to agents
+
+- Two messages sent to one agent at once no longer arrive glued together as one: they go one at a time, and the chat
+  shows each one once.
+- A message Claude Code takes mid-turn no longer shows twice in the chat.
+- A chat that went quiet on screen notices a dead link and reconnects, so replies keep coming.
+
+## 3.2.14
+
+Buttons react the moment you tap them, dictation keeps your first words, and an Assistant's answer from a machine that
+can't reach yours still arrives.
+
+### Buttons
+
+- A button looks pressed as soon as you tap it, then says what it's doing with a small spinner; the other buttons on
+  the card wait until it's done, and a failure shows on the card itself.
+- After an action on another machine's task, its task list is read again right away, so the row changes at once.
+
+### Dictation
+
+- The wave that says "start talking" now shows only once the microphone really hears you. Until then a quiet dot shows
+  that it's getting ready, so a phone no longer loses your first words.
+
+### Assistants on other machines
+
+- When an Assistant answers a machine it can't reach, the answer waits on its own machine and yours fetches it, for up
+  to 12 hours. It shows in the chat as an incoming message, and the sender's row says it's waiting and why.
+
 ## 3.2.13
 
 The phone and watch app can see more: your spaces, unread chats, failed schedules, machines in trouble and how much
