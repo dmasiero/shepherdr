@@ -36,6 +36,13 @@ export function keyBytes(keys: string[]): string | null {
 }
 type Socket = { send(data: Uint8Array | string): void; close(): void; buffered(): number };
 
+// fork: Ctrl+D closes the terminal. herdr-core closes a stream with why: a terminal that ended says when
+// (`{ reason: "exited" | "killed", finished_ms, ... }`), a dropped link only `{ reason: "disconnected" }`.
+/** the stream closed because its terminal ended (its program exited or was killed), not because the link dropped */
+export function endedBy(reason: unknown): boolean {
+  return !!reason && typeof reason === "object" && typeof (reason as { finished_ms?: unknown }).finished_ms === "number";
+}
+
 /** own: your own shell (service/shells.ts). Either takes the page's size while the page watches; an agent's goes back
  *  to its own size when the page leaves (herdr-core does that when the full attach closes). */
 export function terminalBridge(hub: Hub, address: string, ws: Socket, own = false) {
@@ -46,7 +53,21 @@ export function terminalBridge(hub: Hub, address: string, ws: Socket, own = fals
   const first = hub.terminals.get(address);
   const live = () => hub.terminals.get(address);
   const valid = () => !ended && !!first && live()?.state === "live" && live()?.pid === first.pid;
-  const fail = () => { if (!ended) { finish(); ws.close(); } };
+  // fork: your own shell that ended (Ctrl+D, exit) tells the page so, which closes it and starts no fresh one; a
+  // dropped link or a stopped service says nothing, and the page reconnects to the same shell
+  const exited = (reason?: unknown) => {
+    if (!own || !hub.up || (reason as { reason?: unknown } | undefined)?.reason === "disconnected") return false;
+    if (endedBy(reason)) return true;
+    const now = live();
+    return !!now && !!first && now.state === "finished" && now.pid === first.pid;
+  };
+  const fail = (reason?: unknown) => {
+    if (ended) return;
+    const out = exited(reason);
+    finish();
+    if (out) ws.send(JSON.stringify({ type: "exited" }));
+    ws.close();
+  };
   const moved = () => { const now = live(); return !!now && !!shown && (now.cols !== shown.cols || now.rows !== shown.rows); };
   const unwatch = hub.on((e) => {
     if (ended || !("terminal" in e) || e.terminal !== address || repainting || !moved()) return;
@@ -64,7 +85,7 @@ export function terminalBridge(hub: Hub, address: string, ws: Socket, own = fals
     const core = await hub.core();
     const next = await core.attach(address, {
       data(bytes) { if (mine !== watches) return; if (!valid() || ws.buffered() > 1024 * 1024) return fail(); ws.send(bytes); },
-      close() { if (mine === watches) fail(); },
+      close(reason) { if (mine === watches) fail(reason); }, // fork: why it closed (endedBy)
     }, cols, rows, { observe: true });
     if (ended || mine !== watches) { next.close(); return; }
     stream = next;

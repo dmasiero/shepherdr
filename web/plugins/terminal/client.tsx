@@ -99,7 +99,7 @@ const useCoarse = () => useSyncExternalStore(onCoarse, () => typeof matchMedia =
  *  least the pane's): herdr sends only the screen, never older lines, so its tall screen is the history you scroll
  *  up through. It opens at the last line shown and follows new output, unless you scroll up; back down, it follows
  *  again. */
-function Term({ stream, fill }: { stream: string; fill?: boolean }) {
+function Term({ stream, fill, onExit }: { stream: string; fill?: boolean; onExit?: () => void }) {
   const phone = useUI((u) => u.phone)
   const coarse = useCoarse()
   const own = stream.startsWith('sh:')
@@ -125,6 +125,9 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
   // fork: you used this screen's terminal (a key, a tap, a click, its key row): it takes the terminal's size (owner.ts)
   const claim = useRef(() => {})
   const take = () => claim.current()
+  // fork: your own shell ended (Ctrl+D, exit): its pane closes as its close button does (stream.ts's `exited`)
+  const exit = useRef(onExit)
+  exit.current = onExit
 
   useEffect(() => {
     let gone = false
@@ -246,6 +249,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
         setStatus,
         // fork: the program's cursor mode, for the arrows sent as bytes (SHEP-20, stream.ts's input)
         () => !!term?.modes.applicationCursorKeysMode,
+        () => { if (!gone) exit.current?.() }, // fork: Ctrl+D closes the terminal
       )
       fit()
     })
@@ -441,7 +445,8 @@ function Drawer({ thread }: { thread: Thread }) {
         <span>{whereOf(thread)}</span>
         <IB icon="x" label="Close the terminal" onClick={() => setUI(thread.task ? { tterm: false } : { term: false })} />
       </div>
-      <Term stream={shellKey(thread)} />
+      {/* fork: Ctrl+D closes the terminal */}
+      <Term stream={shellKey(thread)} onExit={() => setUI(thread.task ? { tterm: false } : { term: false })} />
     </>
   )
 }
@@ -462,7 +467,8 @@ function TerminalPane() {
           <span>{whereOf(thread)}</span>
           <IB icon="x" label="Close the terminal" onClick={() => setUI(t ? { pane: 'tasks' } : { pane: null })} />
         </div>
-        <Term stream={shellKey(thread)} fill />
+        {/* fork: Ctrl+D closes the terminal */}
+        <Term stream={shellKey(thread)} fill onExit={() => setUI(t ? { pane: 'tasks' } : { pane: null })} />
       </div>
     </PaneFrame>
   )

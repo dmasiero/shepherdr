@@ -7,7 +7,8 @@ export function streamInput(chat: string, message: Input) {
   inputs.get(chat)?.(message)
 }
 export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: () => void) => void,
-  reset: () => void, size: (cols: number, rows: number) => void, status: (text: string) => void, appCursor: () => boolean = () => false) {
+  reset: () => void, size: (cols: number, rows: number) => void, status: (text: string) => void, appCursor: () => boolean = () => false,
+  exited: () => void = () => {}) {
   let disposed = false, socket: WebSocket | undefined, retry: ReturnType<typeof setTimeout> | undefined
   let attempt = 0, queued = 0, serial = 0, acknowledged = 0, painting = 0, uncertain = false
   const send = (message: object) => {
@@ -36,6 +37,8 @@ export function connectTerminal(chat: string, output: (bytes: Uint8Array, done: 
           const said = JSON.parse(event.data)
           if (said.type === 'ack' && Number.isSafeInteger(said.id)) acknowledged = Math.max(acknowledged, said.id)
           else if (said.type === 'size' && Number.isInteger(said.cols) && Number.isInteger(said.rows)) size(said.cols, said.rows)
+          // fork: your own shell ended (Ctrl+D, exit): no reconnect, which would start a fresh one; the pane closes
+          else if (said.type === 'exited') { disposed = true; clearTimeout(retry); if (inputs.get(chat) === input) inputs.delete(chat); ws.close(); exited() }
         } catch { ws.close() }
       } else {
         const bytes = new Uint8Array(event.data)
