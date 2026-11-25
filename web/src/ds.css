@@ -510,6 +510,17 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 
 textarea.cin{overflow-y:auto}
 .pane .scroll>.tdr .tw{flex:1;display:flex;flex-direction:column}
+/* fork: the on-screen keyboard up (.kb, viewport.ts): a terminal shrinks to what is left above it, fewer rows, so its
+   cursor line and key row sit on the keyboard. Its rows sized it before (a flex item's automatic minimum is its content),
+   so the page shrank and the terminal, its newest lines and its keys stayed below, under the keyboard. The drawer under a
+   chat gives up rows (never its bar or keys) to the message box when the box has the keys; when the terminal has them,
+   the box (and what sits over it) steps aside for it until the keyboard goes down, as does a phone's bottom bar. The
+   phone's terminal pane loses its 240px floor */
+.kb .col>.tdr{flex:0 1 auto;display:flex;flex-direction:column}
+.kb .col:has(.tcap:focus)>.foot,.app.kb:has(.tcap:focus) .bar{display:none}
+.kb .col>.tdr>.tw{flex:0 1 auto;min-height:0;display:flex;flex-direction:column}
+.kb .col>.tdr .termbox{flex:0 1 auto;min-height:0}
+.kb .pane .scroll>.tdr .tw,.kb .termbox.fill{min-height:0}
 .srch .list{max-height:56dvh;overflow-y:auto}
 
 /* attachments: square thumbnails in one row that scrolls sideways (the message box, what you sent), and the preview */

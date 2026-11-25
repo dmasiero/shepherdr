@@ -314,7 +314,10 @@ Bun.serve<Sock['data'], never>({
         const m = JSON.parse(String(raw)) as { type: string; id: number; text?: string; keys?: string[] }
         const say = (t: string) => ws.send(new TextEncoder().encode(t))
         if (m.type === 'open') { ws.send(JSON.stringify({ type: 'size', cols: 100, rows: 12 })); say(TERM_LINKS + 'sam@mac-mini shop % ') }
-        else if (m.type === 'text') say(m.text ?? '')
+        // fork: it takes the size asked for and answers Enter's byte with a fresh prompt, as a real shell, so the
+        // terminal's refit above a phone's keyboard shows in the demo (Terminal keyboard on phone)
+        else if (m.type === 'resize') ws.send(JSON.stringify({ type: 'size', cols: (m as { cols?: number }).cols ?? 100, rows: (m as { rows?: number }).rows ?? 12 }))
+        else if (m.type === 'text') say((m.text ?? '').replace(/\r/g, '\r\nsam@mac-mini shop % ')) // Enter comes as its byte
         else if (m.type === 'keys' && m.keys?.includes('enter')) say("\r\n(this demo doesn't run commands)\r\nsam@mac-mini shop % ")
         ws.send(JSON.stringify({ type: 'ack', id: m.id }))
         return

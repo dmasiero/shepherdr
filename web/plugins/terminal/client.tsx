@@ -22,6 +22,7 @@ import { opens, type Link } from './links.ts'
 import { mirrorFocus } from './focus.ts' // fork: the cursor follows your keys (focus.ts)
 import { mayAsk, stillHolds } from './owner.ts' // fork: the screen you last used sets the size (owner.ts)
 import { isNight, useNight } from '@client/prefs.ts' // fork: Night's black terminal
+import { focusAfterPress, keyRow } from './keyrow.ts' // fork: a key-row press leaves the phone's keyboard as it was
 
 /** fork: the terminal's background, ds.css's --term: true black in Night */
 const termBg = () => (isNight() ? '#000000' : '#0a0a0a')
@@ -299,10 +300,13 @@ function Term({ stream, fill, onExit }: { stream: string; fill?: boolean; onExit
     if (press.current) clearTimeout(press.current.timer)
     press.current = null
   }
+  // fork: a key-row press never takes the focus, and only a mouse's hands the keys to the box (keyrow.ts)
+  const row = useMemo(keyRow, [])
+  const keysHere = () => { if (focusAfterPress(row.last())) cap.current?.focus() }
   const sendKey = (k: string) => {
     take() // fork: owner.ts
     streamInput(stream, { type: 'keys', keys: [k] })
-    cap.current?.focus()
+    keysHere()
   }
   return (
     <>
@@ -418,9 +422,9 @@ function Term({ stream, fill, onExit }: { stream: string; fill?: boolean; onExit
         />
       </div>
       {showKeys(phone, coarse) && (
-        <div className="keys">
+        <div className="keys" onPointerDown={row.onPointerDown} onMouseDown={row.onMouseDown}>
           {([['esc', 'esc'], ['tab', 'tab']] as const).map(([l, k]) => <button type="button" key={l} aria-label={`${l} key`} onClick={() => sendKey(k)}>{l}</button>)}
-          <button type="button" aria-label="ctrl key" aria-pressed={ctrl} style={ctrl ? { background: 'rgb(255 255 255/.3)' } : undefined} onClick={() => { take(); setCtrl(!ctrl); cap.current?.focus() }}>ctrl</button>
+          <button type="button" aria-label="ctrl key" aria-pressed={ctrl} style={ctrl ? { background: 'rgb(255 255 255/.3)' } : undefined} onClick={() => { take(); setCtrl(!ctrl); keysHere() }}>ctrl</button>
           {([['←', 'left'], ['↑', 'up'], ['↓', 'down'], ['→', 'right']] as const).map(([l, k]) => <button type="button" key={k} aria-label={`${k} arrow key`} onClick={() => sendKey(k)}>{l}</button>)}
           <button type="button" aria-label="enter key" onClick={() => sendKey('enter')}>↵</button>
         </div>
