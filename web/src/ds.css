@@ -370,9 +370,11 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
    bottom gap, so at the end nothing is faded) instead of being sliced. Only over a chat with its box, never a terminal. A space's chat and
    a task's (in the middle or in the side pane) alike. */
 :is(.chat,.pane)>.foot{position:relative}
-/* fork: Fade off the scrollbar: the fade ends at the scrollbar of what scrolls above it (--sbw, useScrollbarWidth) */
-:is(.chat,.pane)>.foot:has(>.cbox)::before{content:"";position:absolute;left:0;right:var(--sbw,0px);bottom:100%;height:16px;background:linear-gradient(to bottom,transparent,var(--canvas));pointer-events:none}
-:is(.chat,.pane):has(>.scroll>.msgs>.tw)>.foot::before{display:none}
+/* fork: Fade off the scrollbar. The fade is a mask on what scrolls, not a layer of the canvas over it: a see-through
+   canvas over the canvas came out a level off it at some zooms (#111 in dark, a band across the chat), where a mask
+   leaves the empty canvas untouched. Its scrollbar (--sbw, useScrollbarWidth) stays out of it, and a live view in
+   full screen (.scrfull, fixed inside it) too. */
+:is(.chat,.pane):has(>.foot>.cbox):not(:has(>.scroll>.msgs>.tw)):not(:has(>.scroll .scrfull))>.scroll{--fade:linear-gradient(#000 0 0) right top/var(--sbw,0px) 100% no-repeat,linear-gradient(to bottom,#000 calc(100% - 16px),transparent) 0 0/100% 100% no-repeat;-webkit-mask:var(--fade);mask:var(--fade)}
 .sugs::-webkit-scrollbar{display:none}
 .sug{--sugh:max(36px,var(--send));flex:none;max-width:min(280px,78%);min-width:var(--sugh);min-height:var(--sugh);padding:2px 14px;border-radius:calc(var(--sugh)/2);text-align:center;box-shadow:inset 0 0 0 1px var(--line2);background:var(--canvas);color:var(--sub);font-size:var(--sec);line-height:var(--secl);overflow-wrap:anywhere;text-wrap:balance;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-x}
 @media (hover:hover) and (pointer:fine){.sug:hover{background:var(--control)}}

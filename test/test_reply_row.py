@@ -97,8 +97,10 @@ class ReplyRow(unittest.TestCase):
         self.assertRegex(css, r"\.sugs\{[^}]*padding:4px[;}]")
         self.assertRegex(css, r"\.sugs\{[^}]*mask-image:linear-gradient\(to right,transparent,#000 var\(--fl\)")
         # the chat's bottom edge fades instead of slicing, and never over a terminal
-        self.assertIn(":is(.chat,.pane)>.foot:has(>.cbox)::before{", css)
-        self.assertIn(":is(.chat,.pane):has(>.scroll>.msgs>.tw)>.foot::before{display:none}", css)
+        # fork: Fade off the scrollbar: the fade is a mask on what scrolls (no canvas layer over the canvas, which
+        # rounded to a band at some zooms), its scrollbar left out, still never over a terminal
+        self.assertIn(":is(.chat,.pane):has(>.foot>.cbox):not(:has(>.scroll>.msgs>.tw)):not(:has(>.scroll .scrfull))>.scroll{", css)
+        self.assertIn("linear-gradient(to bottom,#000 calc(100% - 16px),transparent)", css)
         client = open(os.path.join(ROOT, "web", "plugins", "chat", "client.tsx"), encoding="utf-8").read()
         self.assertIn("keepAtEnd(sc, box, () => stuck.current)", client)
         self.assertIn("rowEdges(row.current)", client)
