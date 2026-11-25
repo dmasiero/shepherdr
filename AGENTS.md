@@ -224,3 +224,4 @@ How to run, build and lay out the code: [docs/develop.md](docs/develop.md).
 
 - On NixOS, a repro PATH that leaves out /etc/profiles/per-user/<user>/bin also loses the guard hc's real hc (it loops on itself): link the store's hc into the stand-in folder and name HC_SESSION=<throwaway> on every call. (from Agent restart finds claude)
 - The demo's stand-in terminal never sends ESC[?25h, so xterm draws no cursor there until the terminal is focused; a real shell draws the outline from the start: check unfocused cursor looks on a throwaway real service, not the demo. (from SHEP-96)
+- On NixOS (nextgate) the playwright headless shell won't start and PIL needs zlib: use `nix-shell -p chromium` and `nix-shell -p 'python3.withPackages(p:[p.pillow])'`; leave out --hide-scrollbars when the bug involves scroll bars. (from SHEP-103)
