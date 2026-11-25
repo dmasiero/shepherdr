@@ -684,3 +684,16 @@ textarea.cin{overflow-y:auto}
 .kwarn>.i{color:var(--amber)}.kwarn .n{flex:1;min-width:min(12rem,100%)}
 .pal button.row:hover:not([aria-selected="true"]){background:none}
 .dlg.wide:has(>.ksheet){width:min(760px,calc(100% - 32px))}
+/* fork: Jump to bottom: no scroll bars on what scrolls up and down (the chat, a task's thread, panes, the list, menus,
+   sheets); wheel, touch and keys still scroll. The terminal, code and wide tables, which also scroll sideways, keep theirs. */
+.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb{scrollbar-width:none}
+:is(.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb)::-webkit-scrollbar{display:none}
+/* scrolled up, a round arrow at the chat's bottom right, just above the box (and the reminder line), over the round
+   call button's column; its badge counts what came meanwhile (chat/client.tsx JumpButton) */
+.jmp{position:absolute;bottom:calc(100% + 12px);right:max(var(--gut),calc((100% - var(--chat-w,720px))/2));z-index:3;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:var(--fg);background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);animation:jmp-in .16s ease-out both}
+.jmp:hover{background:var(--raised)}.jmp:active{opacity:.6}
+.app.tap .jmp{width:var(--hit);height:var(--hit)}
+.jmp>.jn{position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--fg);color:var(--canvas);font-size:11px;line-height:20px;font-weight:600;text-align:center}
+@keyframes jmp-in{from{opacity:0;transform:translateY(6px)}}
+@media(prefers-reduced-motion:reduce){.jmp{animation:none}}
+:root[data-motion="reduced"] .jmp{animation:none}
