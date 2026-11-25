@@ -262,6 +262,8 @@ let vaultList: Awaited<ReturnType<Secrets["entries"]>> = [];
 const refreshSecrets = async () => { [secretNames, vaultList] = await Promise.all([secrets.names(), secrets.entries()]); model.rebuild(); };
 void refreshSecrets();
 setInterval(() => void refreshSecrets(), 30_000);
+// stale secret asks close by themselves: withdrawn, their agent gone, or their task finished (Secrets.sweep)
+setInterval(() => void secrets.sweep((addr) => compat.workerFinished(addr)).then((c) => { if (c) model.rebuild(); }).catch(() => {}), 5000);
 // which machine keeps the secrets; there, other machines' requests are answered
 const home = new SecretsHome(hub);
 home.on(() => { void refreshSecrets(); });
@@ -814,7 +816,9 @@ async function doAction(body: any): Promise<Response> {
       // a card that isn't one never falls through to Remove
       if (typeof body.value !== "string" && body.value !== null) throw new Error("Type or paste the value first.");
       if (body.card != null && typeof body.card?.chat !== "string") throw new Error("That card isn't here any more.");
-      const card = body.card ? { address: compat.addrOf(body.card.chat) ?? "" } : undefined;
+      // the asking agent by the card's own id: a task's ask shows in its Assistant's chat too, whose chat isn't the asker's
+      const asker = body.card && typeof body.card.id === "string" ? secrets.asks().find((a) => a.id === body.card.id)?.address : undefined;
+      const card = body.card ? { address: asker ?? compat.addrOf(body.card.chat) ?? "" } : undefined;
       if (card && !card.address) throw new Error("That agent isn't here any more.");
       await secrets.keep(body.level, body.name, typeof body.value === "string" ? body.value : null, card);
       if (body.name === "ELEVENLABS_API_KEY") forgetKey();

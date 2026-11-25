@@ -4,11 +4,11 @@
 // Secrets from the web: an agent's ask (herdr.secret.ask.<NAME> on its terminal) as 2.1's masked card, a value kept
 // in the vault on this machine with herdr-secret set (from stdin: a value is never in a command line, a chat or a log),
 // and the agent told by name only (core/secrets.js), as the window's card does. Settings > Secrets lists names only.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { MachineRow } from "./host.ts";
 import { join } from "node:path";
 import type { Hub } from "./hub.ts";
-import { HOME, where } from "./paths.ts";
+import { DATA, HOME, where } from "./paths.ts";
 import * as SC from "../core/secrets.js";
 import * as HC from "../core/host.js";
 import { PY } from "../core/paths.js";
@@ -85,35 +85,94 @@ async function holdFor(to: string, text: string): Promise<boolean> {
   return (await p.exited) === 0;
 }
 
+/** A secret ask that closed without the person keeping or declining it (its agent withdrew it with herdr-secret
+ *  cancel, its terminal is gone, or its task finished): a quiet "No longer needed" line where it was asked. */
+export type SecretEnd = { id: string; address: string; name: string; why: string; at: number; how: string };
+type Seen = { id: string; address: string; name: string; why: string; at: number };
+export const NO_LONGER = "No longer needed";
+
 export class Secrets {
+  /** each ask seen open, by its id, with when it was first seen (its label holds no time) */
+  seen = new Map<string, Seen>();
+  /** closed asks, newest last, the last 200 */
+  ends: SecretEnd[] = [];
+  /** asks the person answered here (kept or declined): those close without a line */
+  private answered = new Set<string>();
+  /** a newly seen ask's moment, not yet written */
+  private unsaved = false;
   /** fork: SHEP-76: asks the person declined from a card, as the window's quiet "Declined" line in that chat */
-  ends: { address: string; name: string; at: number }[] = [];
+  declines: { address: string; name: string; at: number }[] = [];
 
-  /** local: this machine's vault, as a count; hold: a message held for an agent with a dialog open; secret: herdr-secret
-   *  here (tests give their own of each) */
-  constructor(private hub: Hub, private local = localVault, private hold = holdFor, private secret = run) {}
+  /** local: this machine's vault, as a count (tests give their own); file: where seen and ended asks are kept;
+   *  fork: SHEP-76: hold: a message held for an agent with a dialog open; secret: herdr-secret here (tests give their own) */
+  constructor(private hub: Hub, private local = localVault, private file: string | null = join(DATA, "secret-asks.json"), private hold = holdFor, private secret = run) {
+    try {
+      const j = JSON.parse(readFileSync(this.file!, "utf8"));
+      for (const x of j.seen ?? []) this.seen.set(x.id, x);
+      this.ends = j.ends ?? [];
+    } catch {}
+  }
 
-  /** fork: SHEP-76: the declined asks of one agent, newest last */
+  /** Every agent's waiting asks: [{ address, name, why, at }]. */
+  asks(): { address: string; name: string; why: string; id: string; at: number }[] {
+    return [...this.hub.terminals.values()].filter((t) => t.state === "live")
+      .flatMap((t) => asksIn(t.labels).map((a: any) => {
+        const id = `secret:${t.address}:${a.name}`;
+        // first seen now: its card keeps this moment, its place in the chat (saved with the next change)
+        if (!this.seen.has(id)) { this.seen.set(id, { id, address: t.address, name: a.name, why: a.why, at: Date.now() }); this.unsaved = true; }
+        return { address: t.address, ...a, id, at: this.seen.get(id)!.at };
+      }));
+  }
+
+  /** The closed asks of an agent, for its chat's quiet lines. */
   endsOf(address: string) { return this.ends.filter((e) => e.address === address); }
 
+  /** fork: SHEP-76: the declined asks of one agent, newest last */
+  declinedOf(address: string) { return this.declines.filter((e) => e.address === address); }
+
   /** fork: SHEP-76: a card's Decline: the agent hears it was declined (held while it has a dialog open, never typed
-   *  into it), then its ask goes. Never touches a kept secret. */
+   *  into it), then its ask goes, without upstream's "No longer needed" line. Never touches a kept secret. */
   async decline(address: string, name: string) {
     const text = declinedLine(name);
-    const r = await this.hub.send(address, text);
-    if (r.code !== 0) {
+    const r: any = await this.hub.send(address, text);
+    if (r && r.code !== 0) {
       const e = refusal(r);
       if (e.kind !== "blocked") throw new Error(e.message);
       if (!(await this.hold(address, text))) throw new Error("It's waiting on a question, and your answer couldn't be kept for it: answer that, then decline again.");
     }
+    this.answered.add(`secret:${address}:${name}`);
     await hc(["label", address, `${ASK}${name}=`]);
-    this.ends = [...this.ends, { address, name, at: Date.now() }].slice(-50);
+    this.declines = [...this.declines, { address, name, at: Date.now() }].slice(-50);
   }
 
-  /** Every agent's waiting asks: [{ address, name, why }]. */
-  asks() {
-    return [...this.hub.terminals.values()].filter((t) => t.state === "live")
-      .flatMap((t) => asksIn(t.labels).map((a: any) => ({ address: t.address, ...a })));
+  /** Closes what no longer waits (every few seconds, from main): an ask whose label is gone (withdrawn, or its
+   *  terminal ended) ends as "No longer needed", and so does one whose agent's task finished (done: by address),
+   *  its label cleared so Needs you, the badge and the feeds let it go. An ask that comes back opens again. */
+  async sweep(done: (address: string) => boolean = () => false) {
+    // no terminals at all: herdr-core isn't read yet (a start, a reconnect), not every agent gone
+    if (!this.hub.terminals.size) return;
+    const now = this.asks();
+    let changed = false;
+    for (const a of now) {
+      if (done(a.address)) { await hc(["label", a.address, `${ASK}${a.name}=`]); continue; }
+      if (this.ends.some((e) => e.id === a.id)) { this.ends = this.ends.filter((e) => e.id !== a.id); changed = true; }
+    }
+    const open = new Set(now.filter((a) => !done(a.address)).map((a) => a.id));
+    for (const s of [...this.seen.values()]) {
+      if (open.has(s.id)) continue;
+      this.seen.delete(s.id);
+      changed = true;
+      if (this.answered.delete(s.id)) continue;
+      this.ends = [...this.ends.filter((e) => e.id !== s.id), { ...s, how: NO_LONGER }].slice(-200);
+    }
+    if (changed || this.unsaved) this.save();
+    return changed;
+  }
+
+  private save() {
+    if (!this.file) return;
+    this.unsaved = false;
+    try { writeFileSync(`${this.file}.tmp`, JSON.stringify({ seen: [...this.seen.values()], ends: this.ends })); renameSync(`${this.file}.tmp`, this.file); } catch {}
   }
 
   /** Every kept secret by name: Everywhere's, and each space's (by its id as the snapshot has it). */
@@ -154,6 +213,7 @@ export class Secrets {
     if (r.code !== 0) throw new Error(r.err.trim().split("\n").pop() || "It wasn't kept.");
     // as the window's: every agent waiting for this name hears it's kept
     for (const a of this.asks().filter((x) => x.name === name)) {
+      this.answered.add(a.id);
       await hc(["label", a.address, `${ASK}${name}=`]);
       await this.hub.send(a.address, keptLine(name, s.words));
     }
