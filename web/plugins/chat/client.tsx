@@ -37,6 +37,7 @@ import { newsRow, type NewsRow } from './news.ts'
 import { usePaths } from './paths.tsx' // fork: SHEP-50's "@~/" path list
 import { cardsNow, stillLoading, TRIES, wantsEarlier } from './hold.ts'
 import { outOfView, setAway, useAway, type Waiting } from './away.ts'
+import { badge, freshSince, jumpNow, jumpOf, NONE, newestAt, setJump, useJump } from './jump.ts' // fork: Jump to bottom
 import { keepAtEnd, rowEdges } from './stick.ts'
 import { commandMode, commandOf, commandWord, type CommandState } from './command.ts'
 import { toggleSpaceTerm, toggleTaskTerm } from '@plugins/terminal/menu.ts'
@@ -574,6 +575,22 @@ function Messages({ thread }: { thread: Thread }) {
       })
   }, [chat, tried, thread.chat])
 
+  // fork: Jump to bottom: while you are up, how far and how many messages from others came since you left the end
+  const msgs = useRef<Message[]>([])
+  msgs.current = rows.map((r) => r.msg)
+  const leftAt = useRef<number | null>(null)
+  const report = (sc: HTMLElement) => {
+    if (stuck.current) leftAt.current = null
+    else leftAt.current ??= newestAt(msgs.current)
+    const since = leftAt.current
+    const fresh = since === null ? 0 : freshSince(msgs.current, since)
+    setJump(thread.chat, jumpOf(stuck.current ? 0 : sc.scrollHeight - sc.scrollTop - sc.clientHeight, sc.clientHeight, fresh))
+  }
+  useEffect(() => {
+    const sc = end.current?.closest<HTMLElement>('.scroll')
+    if (sc) report(sc)
+  })
+  useEffect(() => () => setJump(thread.chat, NONE), [thread.chat])
   // it opens at the newest message and stays there as new ones come, unless you scrolled up; scrolling up to the top
   // loads earlier ones
   useLayoutEffect(() => {
@@ -589,6 +606,7 @@ function Messages({ thread }: { thread: Thread }) {
         if (stuck.current) return void (sc.scrollTop = sc.scrollHeight)
       }
       stuck.current = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80
+      report(sc) // fork: Jump to bottom
       const c = getState().chats[thread.chat]
       if (sc.scrollTop < 40 && c?.earlier && !loading.has(thread.chat)) {
         loading.add(thread.chat)
@@ -772,6 +790,26 @@ export function waitingIn(rows: Shown[], thread: Thread): Waiting[] {
     if (m.secret && !m.secret.saved) return [{ id: m.secret.id, words: `A secret is asked for: ${m.secret.name}` }]
     return []
   })
+}
+
+/** fork: Jump to bottom: back to the newest message, smoothly (at once with reduced motion); the chat follows again */
+export function toBottom(chat: string) {
+  const sc = document.querySelector<HTMLElement>(`.scroll[data-scroll="${attr(chat)}"]`)
+  sc?.scrollTo({ top: sc.scrollHeight, behavior: still() ? 'auto' : 'smooth' })
+}
+
+/** fork: Jump to bottom: a round arrow at the chat's bottom right, above the box, while you are up; its badge counts
+ *  what came meanwhile */
+function JumpButton({ thread }: { thread: Thread }) {
+  const j = useJump(thread.chat)
+  if (!j.show) return null
+  const n = badge(j.fresh)
+  return (
+    <button type="button" className="jmp" aria-label={n ? `Jump to bottom, ${n} new` : 'Jump to bottom'} onClick={() => toBottom(thread.chat)}>
+      <I n="down" />
+      {n && <span className="jn">{n}</span>}
+    </button>
+  )
 }
 
 /** one quiet line above the box while a waiting card is out of view; a tap scrolls to it */
@@ -1016,6 +1054,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   }
   return (
     <>
+    <JumpButton thread={thread} /* fork: Jump to bottom: in the foot (the chat's and a task pane's), over what scrolls */ />
     {paths.list /* fork: SHEP-50 (before the replies, which hide once the box has words) */}
     {sug && <Replies texts={sug.texts} onSend={sendSug} onEdit={editSug} />}
     <div
@@ -1184,6 +1223,8 @@ export default definePlugin({
     // effort picker (T3 Code's, Claude's)
     reg.commands.push(
       { id: 'chat.reply', title: 'Write in the chat', area: 'Chat', icon: 'reply', keys: ['R'], words: 'reply message box type focus compose', when: () => !!focusChat(), run: () => void focusBox() },
+      // fork: Jump to bottom: End, when nothing else takes it (a text box keeps it; a pane in focus scrolls itself)
+      { id: 'chat.bottom', title: 'Jump to the newest message', area: 'Chat', icon: 'down', keys: ['End'], words: 'jump bottom newest latest end scroll down', when: () => { const c = focusChat(); return !!c && jumpNow(c).show && !document.activeElement?.closest('.pane') }, run: () => { const c = focusChat(); if (c) toBottom(c) } },
       { id: 'chat.model', title: 'Change model or effort', area: 'Chat', icon: 'agent', keys: ['Mod+Shift+M'], words: 'agent picker claude codex fast', when: () => !!boxPart('button.agent'), run: () => boxPart('button.agent')?.click() },
     )
     // Share into Shepherdr (SHEP-345): a share lands in the chat open last
