@@ -19,11 +19,11 @@ function world(send: { code: number; stdout: string; stderr: string } = { code: 
     terminals: new Map([[ADDR, { address: ADDR, state: "live", labels: { "herdr.secret.ask.UNITED_SMS_CODE": "the code by text" } }]]),
     async send(to: string, text: string) { sent.push({ to, text }); return send; },
   };
-  const s = new Secrets(hub as any, () => ({ count: 0, remote: false }),
+  const s = new Secrets(hub as any, () => ({ count: 0, remote: false }), null,
     async (to, text) => { holds.push({ to, text }); return held; },
     async (args: string[]) => { secret.push(args); return { code: 0, out: "[]", err: "" }; });
   const hcLog = () => { try { return readFileSync(log, "utf8").trim().split("\n"); } catch { return []; } };
-  return { s, sent, holds, secret, hcLog, hc };
+  return { s, hub, sent, holds, secret, hcLog, hc };
 }
 
 async function withHc<T>(hc: string, fn: () => Promise<T>) {
@@ -42,7 +42,11 @@ test("Decline with a card: the agent hears it was declined, its ask is cleared, 
   // herdr-secret never ran: no rm (nor anything else) for a card's Decline
   expect(w.secret).toEqual([]);
   expect(w.holds).toEqual([]);
-  expect(w.s.endsOf(ADDR).map((e) => e.name)).toEqual(["UNITED_SMS_CODE"]);
+  expect(w.s.declinedOf(ADDR).map((e) => e.name)).toEqual(["UNITED_SMS_CODE"]);
+  // upstream's "No longer needed" never follows a Decline
+  w.hub.terminals.set(ADDR, { address: ADDR, state: "live", labels: {} } as any);
+  await withHc(w.hc, () => w.s.sweep());
+  expect(w.s.endsOf(ADDR)).toEqual([]);
 });
 
 test("without a card, null still removes the kept secret (Settings' Remove), as before", async () => {
@@ -70,5 +74,5 @@ test("a hold that can't be kept, or another refusal: it says why and the ask sta
   const gone = world({ code: 1, stdout: "", stderr: JSON.stringify({ error: { kind: "not_found", message: "No such terminal." } }) });
   await expect(withHc(gone.hc, () => gone.s.keep("all", "UNITED_SMS_CODE", null, { address: ADDR }))).rejects.toThrow("No such terminal.");
   expect(gone.hcLog()).toEqual([]);
-  expect(gone.s.endsOf(ADDR)).toEqual([]);
+  expect(gone.s.declinedOf(ADDR)).toEqual([]);
 });
