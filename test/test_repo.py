@@ -283,14 +283,14 @@ console.log(JSON.stringify(out));"""
         self.assertIn("interactive-widget=resizes-content", head)
         self.assertIn("viewport-fit=cover", head)
         prefs = open(J("web/src/prefs.ts")).read()
-        self.assertIn("const BAR = { light: '%s', dark: '%s' }" % (L, D), prefs)
+        self.assertIn("const BAR = { light: '%s', dark: '%s', night: '#000000' }" % (L, D), prefs)  # fork: Night's
         self.assertIn("querySelectorAll<HTMLMetaElement>('meta[name=theme-color]')", prefs)
         # SHEP-341: the manifest linked with no script is dark, the app's own: an installed Android app keeps the one
         # it was installed with and paints the window under the gesture bar in its background_color (the white strip
         # of 3.2.2, whose default manifest was white). Light swaps in manifest-light. The same URL stays dark, so an
         # app installed from it sees the new colours at its next manifest check and Chrome updates it.
         self.assertIn('<link rel="manifest" href="manifest.webmanifest"', head)
-        self.assertIn("const MANIFEST = { light: 'manifest-light.webmanifest', dark: 'manifest.webmanifest' }", prefs)
+        self.assertIn("const MANIFEST = { light: 'manifest-light.webmanifest', dark: 'manifest.webmanifest', night: 'manifest-night.webmanifest' }", prefs)  # fork: Night's
         self.assertIn("if (!dark) document.querySelector('link[rel=manifest]').setAttribute('href', 'manifest-light.webmanifest')", head)
         md = json.load(open(J("web/public/manifest.webmanifest")))
         ml = json.load(open(J("web/public/manifest-light.webmanifest")))
@@ -300,9 +300,14 @@ console.log(JSON.stringify(out));"""
         self.assertEqual((md["background_color"], md["theme_color"]), (D, D))
         # the same app in either (the same id: a new id would install a second app): only the colours differ
         self.assertEqual(md["id"], "./")
+        # fork: Night's manifest is black, the same app otherwise (FORK.md)
+        mn = json.load(open(J("web/public/manifest-night.webmanifest")))
+        self.assertEqual((mn["background_color"], mn["theme_color"]), ("#000000", "#000000"))
+        self.assertIn("night: 'manifest-night.webmanifest'", prefs)
         for k in ("background_color", "theme_color"):
-            ml.pop(k), md.pop(k)
+            ml.pop(k), md.pop(k), mn.pop(k)
         self.assertEqual(ml, md)
+        self.assertEqual(mn, md)
         # the bottom under the gesture bar: the phone's bottom bar runs under it, and without that bar (a tablet, an
         # unfolded phone) the layout keeps the inset clear, painted by the page's canvas
         self.assertIn(".bar{padding-bottom:calc(12px + env(safe-area-inset-bottom))}", css)

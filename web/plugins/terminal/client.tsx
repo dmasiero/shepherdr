@@ -21,6 +21,10 @@ import { linkLayer, type LinkLayer } from './linklayer.ts'
 import { opens, type Link } from './links.ts'
 import { mirrorFocus } from './focus.ts' // fork: the cursor follows your keys (focus.ts)
 import { mayAsk, stillHolds } from './owner.ts' // fork: the screen you last used sets the size (owner.ts)
+import { isNight, useNight } from '@client/prefs.ts' // fork: Night's black terminal
+
+/** fork: the terminal's background, ds.css's --term: true black in Night */
+const termBg = () => (isNight() ? '#000000' : '#0a0a0a')
 
 /** a web page opens the way a chat's link does: a new tab (the outside browser in the Android app), or in the app
  *  when it is this app's own (kernel.ts catches it) */
@@ -112,6 +116,12 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
   const [ctrl, setCtrl] = useState(false)
   const ctrlRef = useRef(false)
   ctrlRef.current = ctrl
+  // fork: a theme switched with the terminal open repaints it
+  const night = useNight()
+  useEffect(() => {
+    const t = xt.current
+    if (t) t.options.theme = { ...t.options.theme, background: termBg() }
+  }, [night])
   // fork: you used this screen's terminal (a key, a tap, a click, its key row): it takes the terminal's size (owner.ts)
   const claim = useRef(() => {})
   const take = () => claim.current()
@@ -197,7 +207,7 @@ function Term({ stream, fill }: { stream: string; fill?: boolean }) {
     }
     void Promise.all([import('@xterm/xterm'), import('@xterm/addon-unicode11')]).then(([{ Terminal }, { Unicode11Addon }]) => {
       if (gone || !host.current) return
-      term = xt.current = new Terminal({ cols: 80, rows: 24, scrollback: 2000, disableStdin: true, cursorBlink: true, fontFamily: MONO, fontSize: 13, lineHeight: LINE, allowProposedApi: true, theme: { background: '#0a0a0a', foreground: '#d4d4d4', cursor: '#d4d4d4', selectionBackground: 'rgb(255 255 255 / 0.25)' } })
+      term = xt.current = new Terminal({ cols: 80, rows: 24, scrollback: 2000, disableStdin: true, cursorBlink: true, fontFamily: MONO, fontSize: 13, lineHeight: LINE, allowProposedApi: true, theme: { background: termBg(), foreground: '#d4d4d4', cursor: '#d4d4d4', selectionBackground: 'rgb(255 255 255 / 0.25)' } })
       term.loadAddon(new Unicode11Addon())
       term.unicode.activeVersion = '11'
       // keys go to the terminal on its machine through the box over it; xterm only draws
