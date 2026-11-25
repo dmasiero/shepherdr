@@ -26,7 +26,7 @@
 
 /* an agent's own logo */
 .logo.img{box-shadow:none}.logo.img img{display:block;width:16px;height:16px;object-fit:contain}
-:root[data-theme="dark"] .logo.img.pi img{filter:invert(1)}
+:root:is([data-theme="dark"],[data-theme="night"]) .logo.img.pi img{filter:invert(1)}/* fork: Night is dark */
 @media(prefers-color-scheme:dark){:root:not([data-theme]) .logo.img.pi img{filter:invert(1)}}
 
 /* a bubble is a button where it has a menu; its words can still be selected when asked */
