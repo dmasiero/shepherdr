@@ -196,19 +196,12 @@ export function taskLine(t: Task): string {
   return t.afterTitle ? afterWords(t) : t.startsAt ? `Starts ${dayTime(t.startsAt)}` : ''
 }
 
-/** An open task's status under its title in its header (upstream #1473): its state word (statusWord, toned), then its
- *  % done and time left (ringOf, leftWords), first so a phone's cut keeps them, then the rest of its row's line
- *  (taskLine, left out where it only repeats the word): the row's own pieces, so the header and the row never disagree. */
-// fork: Task status in its header
-export function headStatus(t: Task): { word: string; tone: Tone; rest: string[] } {
-  const w = statusWord(t)
-  const line = taskLine(t)
-  // Done's word is its line's start ("Done and merged" of "Done and merged · 1 link fixed"): the line says it whole
-  const word = line && line !== w.word && line.startsWith(`${w.word} · `) ? line : w.word
-  const said = line === w.word || line === `${w.word}…` || word === line
-  const r = ringOf(t)
-  const pct = r.kind === 'ring' && typeof t.report?.progress === 'number' && r.pct !== null ? `${r.pct}%` : ''
-  return { word, tone: w.tone, rest: [pct, leftWords(etaOf(t)), said ? '' : line].filter(Boolean) }
+/** an open task's header line (#1473): its list row's words, else its state in a word ("Working", "Up next"), and the
+ *  time left; one line, cut with … where it doesn't fit */
+export function headLine(t: Task): string {
+  const words = taskLine(t) || statusWord(t).word
+  const left = leftWords(etaOf(t))
+  return left && !words.includes(left) ? `${words} · ${left}` : words
 }
 
 /** what an Up next task waits for, short: "Starts after Fix typo", or "Starts after 6 tasks" when it waits for several

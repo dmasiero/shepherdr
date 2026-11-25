@@ -2,12 +2,10 @@
 :root{color-scheme:light;--canvas:#fff;--well:#fafafa;--raised:#f5f5f5;--overlay:#fff;--control:rgb(0 0 0/.05);--control2:rgb(0 0 0/.1);--fg:#0a0a0a;--sub:#404040;--muted:#737373;--line:rgb(0 0 0/.08);--line2:rgb(0 0 0/.12);--mine:#e5e5e5;--rx:#fff;--scrim:rgb(0 0 0/.3);--green:#15803d;--blue:#0369a1;--link:#1d4ed8;--amber:#b45309;--red:#dc2626;--term:#0a0a0a;--shadow:0 8px 28px rgb(0 0 0/.14)}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#262626;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--link:#8ab4f8;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}}
 :root[data-theme="dark"]{color-scheme:dark;--canvas:#121212;--well:#0a0a0a;--raised:#1e1e1e;--overlay:#1f1f1f;--control:rgb(255 255 255/.1);--control2:rgb(255 255 255/.16);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.08);--line2:rgb(255 255 255/.12);--mine:rgb(255 255 255/.14);--rx:#262626;--scrim:rgb(0 0 0/.6);--green:#4ade80;--blue:#7dd3fc;--link:#8ab4f8;--amber:#fbbf24;--red:#f87171;--shadow:0 0 0 0 transparent}
-/* fork: Night, for OLED: the page and its big surfaces (canvas, side bar, panes, terminal) true black; bubbles, menus,
-   dialogs and toasts keep a small raised grey, and the lines are a bit stronger so things stay apart on black (FORK.md) */
-:root[data-theme="night"]{color-scheme:dark;--canvas:#000;--well:#000;--raised:#171717;--overlay:#1a1a1a;--control:rgb(255 255 255/.11);--control2:rgb(255 255 255/.17);--fg:#ededed;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.11);--line2:rgb(255 255 255/.17);--mine:rgb(255 255 255/.15);--rx:#262626;--scrim:rgb(0 0 0/.72);--green:#4ade80;--blue:#7dd3fc;--link:#8ab4f8;--amber:#fbbf24;--red:#f87171;--term:#000;--shadow:0 0 0 0 transparent}
-/* fork: Night: a black part of a window or the phone's side list over the dimmed black page would lose its edge:
-   Settings' list keeps a grey, the side list a thin line */
-:root[data-theme="night"] .win .nav{background:#0f0f0f}:root[data-theme="night"] .drawer{box-shadow:0 0 0 1px var(--line2)}
+/* Night (#1505): true black for OLED, picked by hand. Not Dark with the canvas swapped: on #000 nothing sits lower
+   than the page, so every layer steps up from it (well, then bubbles and cards, then menus), the hairlines are a
+   little stronger to keep layers apart without shadows, and the scrim is darker so a sheet still lifts off the page */
+:root[data-theme="night"]{color-scheme:dark;--canvas:#000;--well:#0a0a0a;--raised:#171717;--overlay:#121212;--control:rgb(255 255 255/.12);--control2:rgb(255 255 255/.18);--fg:#fafafa;--sub:#d4d4d4;--muted:#a3a3a3;--line:rgb(255 255 255/.1);--line2:rgb(255 255 255/.16);--mine:rgb(255 255 255/.16);--rx:#1f1f1f;--scrim:rgb(0 0 0/.75);--green:#4ade80;--blue:#7dd3fc;--link:#8ab4f8;--amber:#fbbf24;--red:#f87171;--term:#0a0a0a;--shadow:0 0 0 0 transparent}
 *{box-sizing:border-box}[hidden]{display:none!important}html{background:var(--canvas);-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--canvas);color:var(--fg);font:16px/24px InterVariable,ui-sans-serif,system-ui,sans-serif;font-feature-settings:"cv02","cv03","cv04","cv11";-webkit-font-smoothing:antialiased}
 button,input{font:inherit;color:inherit;letter-spacing:inherit}
@@ -129,6 +127,8 @@ button.row:hover,.row[aria-current="true"],.rowx:has(>.row[aria-current="true"])
 .hp,.hm{min-width:0;overflow:hidden;text-overflow:ellipsis}.hp{flex:0 1 auto}.hp.cut{direction:rtl}.hp bdi{direction:ltr}.hm{flex:none;max-width:60%}.hp:not(.cut){flex:none}.hp:not(.cut)+.hm{flex:0 1 auto;max-width:none}.hm::before{content:"·";padding:0 4px}
 .t1{font-weight:600}.t1,.t2{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .t2{color:var(--muted);font-size:var(--sec);line-height:var(--secl)}
+/* an open task's status line under its title (#1473): its ring, small, then its words, one line cut with … */
+.t2>.hline{display:flex;align-items:center;gap:6px;min-width:0}.hline>.tring{width:14px}.hline>.tring>.i{width:14px;height:14px}.hline>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .tbtn{display:inline-flex;align-items:center;gap:4px;max-width:100%;height:var(--btn);padding:0 8px;margin-left:-4px;border-radius:8px;font-weight:600;min-width:0}
 .tbtn:hover,.tbtn[aria-expanded="true"]{background:var(--control)}.tbtn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* SHEP-326: the call's mark, no words: a live wave of whoever talks, still dots that breathe while it connects */
@@ -368,14 +368,18 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 .sugs{--fl:0px;--fr:0px;display:flex;align-items:center;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;margin:0 -4px 4px;padding:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent);mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent)}
 /* the chat's bottom edge, above the box and the replies: what scrolls under it fades over 16 px (the list's own
    bottom gap, so at the end nothing is faded) instead of being sliced. Only over a chat with its box, never a terminal. A space's chat and
-   a task's (in the middle or in the side pane) alike. */
+   a task's (in the middle or in the side pane) alike.
+   #1499: a mask on what scrolls, not a layer over it (a layer rounded one shade off the background into a band and
+   dimmed the scroll bar's end); the scroll bar's own strip (--sbw: ui.tsx useScrolled) stays out of it. */
 :is(.chat,.pane)>.foot{position:relative}
-/* fork: Fade off the scrollbar. The fade is a mask on what scrolls, not a layer of the canvas over it: a see-through
-   canvas over the canvas came out a level off it at some zooms (#111 in dark, a band across the chat), where a mask
-   leaves the empty canvas untouched. Its scrollbar (--sbw, useScrollbarWidth) stays out of it, and a live view in
-   full screen (.scrfull, fixed inside it) too. */
-:is(.chat,.pane):has(>.foot>.cbox):not(:has(>.scroll>.msgs>.tw)):not(:has(>.scroll .scrfull))>.scroll{--fade:linear-gradient(#000 0 0) right top/var(--sbw,0px) 100% no-repeat,linear-gradient(to bottom,#000 calc(100% - 16px),transparent) 0 0/100% 100% no-repeat;-webkit-mask:var(--fade);mask:var(--fade)}
+:is(.chat,.pane):has(>.foot>.cbox):not(:has(>.scroll>.msgs>.tw))>.scroll{-webkit-mask:linear-gradient(#000,#000) right/var(--sbw,0px) 100% no-repeat,linear-gradient(to bottom,#000 calc(100% - 16px),transparent);mask:linear-gradient(#000,#000) right/var(--sbw,0px) 100% no-repeat,linear-gradient(to bottom,#000 calc(100% - 16px),transparent)}
 .sugs::-webkit-scrollbar{display:none}
+/* #1504: scrolled up away from the chat's end, a round ↓ floats over the chat's bottom right, above the box and its
+   lines; its count is the messages that came since (the app's badge). A tap glides back to the newest. */
+.toend{position:absolute;right:4px;bottom:calc(100% + 12px);z-index:2;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--overlay);color:var(--sub);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);animation:fade .15s ease-out}
+.toend::after{content:"";position:absolute;inset:-4px;border-radius:50%}
+.toend .cnt{position:absolute;top:-6px;right:-6px;min-width:18px;background:var(--fg);color:var(--canvas);box-shadow:0 0 0 2px var(--canvas)}
+@media(hover:hover){.toend:hover{color:var(--fg);background:var(--raised)}}
 .sug{--sugh:max(36px,var(--send));flex:none;max-width:min(280px,78%);min-width:var(--sugh);min-height:var(--sugh);padding:2px 14px;border-radius:calc(var(--sugh)/2);text-align:center;box-shadow:inset 0 0 0 1px var(--line2);background:var(--canvas);color:var(--sub);font-size:var(--sec);line-height:var(--secl);overflow-wrap:anywhere;text-wrap:balance;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-x}
 @media (hover:hover) and (pointer:fine){.sug:hover{background:var(--control)}}
 .sug:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
@@ -477,8 +481,6 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 .tring .tn{opacity:.2}.tring .tk{stroke:var(--canvas);stroke-width:1.75}
 .tring .tl{margin-top:calc((var(--uil) - var(--ic))/2);font-size:calc(var(--sec) - 2px);line-height:var(--secl);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tring.tside{flex-direction:row;width:auto;gap:4px}.tring.tside .tl{margin-top:0}
-/* fork: Task status in its header. The row's ring before an open task's status line, the line's own height */
-.hst>.tring{width:14px;margin-right:5px;vertical-align:-2px}.hst>.tring>.i{width:14px;height:14px}
 .card .t.tw{display:flex;align-items:center;gap:8px}
 /* the Working ring: the whole icon turns about its centre; reduced motion: a slow, calm pulse instead */
 .i.turn{animation:turn 1s linear infinite}
@@ -509,18 +511,10 @@ html,body{height:100%}body{padding:0;overflow:hidden}
 @media(prefers-reduced-motion:reduce){.i.turn{animation:calm 2.4s ease-in-out infinite}.wsign{animation-name:fade}.wdots i{animation:calm 2.4s ease-in-out infinite}.wdots i:nth-child(2){animation-delay:.4s}.wdots i:nth-child(3){animation-delay:.8s}.sheet.in,.drawer.in,.pop.in,.dlg.in,.win.in,.lbox.in{animation:none}.tg i{transition:none}}
 
 textarea.cin{overflow-y:auto}
-.pane .scroll>.tdr .tw{flex:1;display:flex;flex-direction:column}
-/* fork: the on-screen keyboard up (.kb, viewport.ts): a terminal shrinks to what is left above it, fewer rows, so its
-   cursor line and key row sit on the keyboard. Its rows sized it before (a flex item's automatic minimum is its content),
-   so the page shrank and the terminal, its newest lines and its keys stayed below, under the keyboard. The drawer under a
-   chat gives up rows (never its bar or keys) to the message box when the box has the keys; when the terminal has them,
-   the box (and what sits over it) steps aside for it until the keyboard goes down, as does a phone's bottom bar. The
-   phone's terminal pane loses its 240px floor */
-.kb .col>.tdr{flex:0 1 auto;display:flex;flex-direction:column}
-.kb .col:has(.tcap:focus)>.foot,.app.kb:has(.tcap:focus) .bar{display:none}
-.kb .col>.tdr>.tw{flex:0 1 auto;min-height:0;display:flex;flex-direction:column}
-.kb .col>.tdr .termbox{flex:0 1 auto;min-height:0}
-.kb .pane .scroll>.tdr .tw,.kb .termbox.fill{min-height:0}
+.pane .scroll>.tdr .tw{flex:1;display:flex;flex-direction:column;min-height:0}
+/* the page shrinking for an on-screen keyboard (an unfolded foldable, a tablet) shrinks the terminal, down to a few rows,
+   rather than pushing its key row under the keyboard: the chat gives its room first */
+.col>.tdr{display:flex;flex-direction:column;min-height:0}.col>.tdr>.tw{display:flex;flex-direction:column;min-height:0}.col>.tdr .termbox{min-height:64px}.col>.tdr>.tbar{flex:none}
 .srch .list{max-height:56dvh;overflow-y:auto}
 
 /* attachments: square thumbnails in one row that scrolls sideways (the message box, what you sent), and the preview */
@@ -695,16 +689,8 @@ textarea.cin{overflow-y:auto}
 .kwarn>.i{color:var(--amber)}.kwarn .n{flex:1;min-width:min(12rem,100%)}
 .pal button.row:hover:not([aria-selected="true"]){background:none}
 .dlg.wide:has(>.ksheet){width:min(760px,calc(100% - 32px))}
-/* fork: Jump to bottom: no scroll bars on what scrolls up and down (the chat, a task's thread, panes, the list, menus,
-   sheets); wheel, touch and keys still scroll. The terminal, code and wide tables, which also scroll sideways, keep theirs. */
+/* fork: No scroll bars on what scrolls up and down (the chat, a task's thread, panes, the list, menus, sheets); wheel,
+   touch and keys still scroll, and upstream's round arrow goes back to the newest message. The terminal, code and wide
+   tables, which also scroll sideways, keep theirs. */
 .side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb{scrollbar-width:none}
 :is(.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb)::-webkit-scrollbar{display:none}
-/* scrolled up, a round arrow at the chat's bottom right, just above the box (and the reminder line), over the round
-   call button's column; its badge counts what came meanwhile (chat/client.tsx JumpButton) */
-.jmp{position:absolute;bottom:calc(100% + 12px);right:max(var(--gut),calc((100% - var(--chat-w,720px))/2));z-index:3;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:var(--fg);background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);animation:jmp-in .16s ease-out both}
-.jmp:hover{background:var(--raised)}.jmp:active{opacity:.6}
-.app.tap .jmp{width:var(--hit);height:var(--hit)}
-.jmp>.jn{position:absolute;top:-6px;right:-6px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--fg);color:var(--canvas);font-size:11px;line-height:20px;font-weight:600;text-align:center}
-@keyframes jmp-in{from{opacity:0;transform:translateY(6px)}}
-@media(prefers-reduced-motion:reduce){.jmp{animation:none}}
-:root[data-motion="reduced"] .jmp{animation:none}

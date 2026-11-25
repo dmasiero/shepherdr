@@ -54,10 +54,17 @@ def detail(k):
     return hc_json("get", k["address"]) or k
 
 
+def prog_name(name):
+    """A foreground program's own name: its path's last part, and Nix's makeWrapper's ".claude-wrapped" as "claude"
+    (#1410). The same as core/send.js progName()."""
+    base = os.path.basename(str(name or ""))
+    return base[1:-len("-wrapped")] if base.startswith(".") and base.endswith("-wrapped") and len(base) > 9 else base
+
+
 def agent_running(k):
     fg = k.get("foreground") or {}
     if fg.get("name"):
-        if os.path.basename(fg["name"]) not in SHELLS:
+        if prog_name(fg["name"]) not in SHELLS:
             return True
         # fish keeps the agent its child, in its own process group (#780): the terminal's foreground
         # stays the shell running its launch command (fish -ic "claude …; exec fish -i") the whole
@@ -72,26 +79,20 @@ def agent_running(k):
 RUNTIMES = {"node", "bun", "deno"}  # a CLI run as a script shows its runtime's name
 
 
-def prog_name(name):
-    """fork: a program's name as its CLI is called: Nix's wrapper execs ".claude-wrapped" (SHEP-90)."""
-    return re.sub(r"(-wrapped)+$", "", re.sub(r"^\.", "", name))
-
-
 def front(k):
     """What is in front in terminal k (its hc get): "agent", "shell" (its agent exited: a plain shell), "other" (another
     program than its agent, an editor say) or "gone" (no such terminal, or finished)."""
     if not k or k.get("state") != "live":
         return "gone"
     fg = k.get("foreground") or {}
-    name = os.path.basename(str(fg.get("name") or ""))
+    name = prog_name(fg.get("name"))
     if not name:
         # not told (an older hc's record): hc ls's own word for its program, else as before (core/send.js: null)
         return "shell" if os.path.basename(str(k.get("agent") or "")) in SHELLS else "agent"
     if name in SHELLS:
         return "agent" if runs_command(fg.get("argv")) else "shell"
     kind = (k.get("labels") or {}).get("herdr.agent")
-    # fork: Nix runs Claude Code as ".claude-wrapped": its CLI's name (core/chat-reader.js progName), not another program (SHEP-90)
-    if kind in ("claude", "codex") and not prog_name(name).startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
+    if kind in ("claude", "codex") and not name.startswith(kind) and name not in RUNTIMES and not name[:1].isdigit():
         return "other"
     return "agent"
 
@@ -233,6 +234,7 @@ def task_status(task, live):
 STOPPED = "Agent stopped"
 GONE = "Its agent is no longer running."
 BY_YOU = "Stopped by you."
+NOT_TRUSTED = "You didn't trust its folder, so it didn't start."
 
 
 def carried_on(task, live, states=None):

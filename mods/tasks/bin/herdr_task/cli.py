@@ -239,16 +239,18 @@ def main():
                        help="one task's setting, a line of its brief's Settings block: review=on|off, review.rounds=1..10, "
                             "review.mustFix=blocker|major|minor, proof=on|off, flags=\"--advisor opus\", merge=\"on its own\"|\"after checks\"|\"ask me first\" (\"\": Settings' again)")
         c.add_argument("--base", help="the branch its worktree branches from and merges into (default: its space's Base branch "
-                                      "setting, else the folder's current branch)")
+                                      "setting, else the folder's current branch); on a started task, edit moves it there: its pull request "
+                                      "retargeted and its own commits rebased (a task on another task's branch moves by itself once that merges)")
         c.add_argument("--branch", help="its branch's exact name, e.g. a ticket's ABC-2137 (default: the folder's Branch names "
-                                        "setting, else task/<n>-<title words>); refused when that branch exists already (\"\": the pattern's)")
+                                        "setting, else task/<n>-<title words>); refused when that branch exists already (\"\": the pattern's). "
+                                        "Once started, edit takes the existing branch its work is on (in the worktree it's checked out in)")
         c.add_argument("--pr", help="take a pull request already open, by its number (#1155): its review, checks and Accept go there "
                                 "instead of a new one, and ready pushes to its branch (\"\" lets go)")
 
     def pick_opts(c):
         c.add_argument("--speed", help="its agent's speed, where its model has more than one: regular, fast, ultrafast (default: Settings')")
         c.add_argument("--permission", help="its agent's permission mode, in its CLI's words: Claude Code's default, acceptEdits, plan, "
-                                            "auto, bypassPermissions; Codex's read-only, auto, full (\"\": Settings' again)")
+                                            "auto, bypassPermissions; Codex's read-only, auto, approve (Approve for me), full (\"\": Settings' again)")
 
     def agent_opts(c):
         c.add_argument("--agent", help="agent key (claude, codex, ...)")
@@ -321,7 +323,8 @@ def main():
     c = cmd("reviewed", cmd_reviewed, "a task's agent records one review round of its current commit (Review: on): ready then "
                                       "accepts that commit; uses one of its Review rounds")
     c.add_argument("--report", help="the round's findings in a line (levels, what was fixed)")
-    c.add_argument("--commit", help="the commit the round reviewed, when fixes were committed since (default: HEAD)")
+    c.add_argument("--commit", help="the commit the round reviewed, when fixes were committed since (default: the newest commit of "
+                                         "the task's branch, wherever it is checked out)")
     cmd("review-more", cmd_review_more, "the Assistant gives a task one more review round, once all are used (never its own agent)")
     c = cmd("status", cmd_status, "a task's agent says what it's doing now, at the start, each natural step and at least every 5 minutes: status 4 \"Fixing the two failing tests\" --done 40 --left 5m")
     c.add_argument("text", help=f"what it is doing, at most {ROW_MAX} characters to show uncut on a phone, a few plain words "
@@ -354,8 +357,10 @@ def main():
     c.add_argument("--dry-run", action="store_true", help="--file: show the redacted draft and duplicates, file nothing")
     cmd("done", lambda a: cmd_state(a, "done"), "mark done without merging (the person's call: only when they ask; agents finish "
                                                 "with ready): a task on its own branch is closed unmerged, its branch and pull request left as they are")
-    cmd("stop", cmd_stop, "the person's Stop: pause its agent like pressing Esc (it drops what it was doing and waits); the next "
-                          "message to it carries on")
+    c = cmd("stop", cmd_stop, "the person's Stop: pause its agent like pressing Esc (it drops what it was doing and waits); the next "
+                              "message to it carries on")
+    c.add_argument("--untrusted", action="store_true", help="the person said No to its CLI's folder-trust screen (its agent "
+                                                            "exited): stopped, saying so; the next message starts it again")
     c = cmd("reply", cmd_reply, "the person's message to a task: to its agent, or (none left, or the task is Done) its agent starts "
                                 "again on its own session with it")
     c.add_argument("text", nargs="?", help="the message (default: what is piped in)")
@@ -535,6 +540,7 @@ def main():
     c = sub.add_parser("_allow")  # Codex's PermissionRequest hook (own_argv)
     c.add_argument("--command", required=True)
     c.add_argument("--sandboxed", action="store_true")  # Codex's: its proof and commits run escalated (#866)
+    c.add_argument("--auto-review", action="store_true")  # Codex's Approve for me: its own review answers the rest (#1464)
     c.set_defaults(fn=cmd_allow, json=False)
     c = sub.add_parser("_outbox")  # another machine fetching the Assistants' answers left here for it (machines.replies_pass)
     c.add_argument("--for", dest="for_", required=True)

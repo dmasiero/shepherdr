@@ -1,9 +1,9 @@
-// fork: the web terminal's cursor follows where your keys go. Keys go to the box over the terminal, never xterm's own
-// textarea (readOnly, out of the tab order), so xterm always thought itself unfocused and drew its outline cursor,
-// never the solid blinking block. The box's focus and blur are handed to xterm's textarea as events: xterm's own
-// handlers switch its cursor (and its selection's colour). Its stdin is off, so its focus report (ESC [ I) never goes.
+// The cursor. Keys go to the app's own box over the terminal (the .tcap input), never to xterm's textarea, so xterm
+// would always think it is unfocused and draw the hollow outline. The box's focus and blur are passed on to xterm's
+// textarea as events: xterm listens for those (not for document.activeElement), so the terminal your keys go to draws a
+// solid blinking cursor, and every other one the outline.
 
-/** tells xterm its terminal has (on) or lost the keys, without focusing it */
-export function mirrorFocus(t: { textarea?: { dispatchEvent(e: Event): boolean } } | null | undefined, on: boolean) {
-  t?.textarea?.dispatchEvent(new Event(on ? 'focus' : 'blur'))
+/** tell xterm's textarea it gained (true) or lost (false) the keys */
+export function mirrorFocus(textarea: EventTarget | undefined | null, on: boolean) {
+  textarea?.dispatchEvent(new Event(on ? 'focus' : 'blur'))
 }

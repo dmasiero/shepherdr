@@ -1,6 +1,7 @@
 // The view model every source (live herdr, demo) fills and the screen draws.
 // Plain JSON both ways: the server sends a Snapshot and chat contents; the client sends Actions.
 import type { BrowserNote } from './browser.ts'
+import type { ChatPatch, SnapPatch } from './patch.ts'
 
 /** Status marks: red needs you, green ready, green turning ring merging, amber working, grey ring idle or to do, grey
  * clock queued, grey check done, dashed ring unreachable. */
@@ -438,6 +439,8 @@ export interface Automation {
 /** A question card: built-in choice cards, a CLI's own menus, plans. */
 export interface Choice {
   label: string
+  /** its words on a notification's or a watch's button, when label is too long for one ("Trust and start") */
+  short?: string
   description?: string
   /** the agent marked it (Recommended) */
   recommended?: boolean
@@ -461,6 +464,9 @@ export interface Question {
   terminal?: boolean
   /** A CLI's own menu: a tap presses that choice at once. */
   press?: boolean
+  /** #1441: a CLI's folder-trust screen, as its own card: choice 0 trusts the folder and starts, 1 says no. cli: who
+   *  asks; folder: the folder it names; waits and allows: its two plain lines */
+  trust?: { cli: string; folder?: string; waits: string; allows: string }
   /** a task worker's ask in its Assistant's chat (3.0's): headed by its task, "Open chat" goes to its own chat */
   by?: { ref: string; title?: string; chat: string }
   /** A terminal checkbox prompt can be declined without enabling any of its choices. */
@@ -1425,6 +1431,11 @@ export interface TermScreen {
 export type ServerEvent =
   | { type: 'snapshot'; snapshot: Snapshot }
   | { type: 'chat'; chat: Chat }
+  /** what changed since the snapshot and the chat the page has (web/shared/patch.ts, #1468) */
+  | { type: 'patch'; patch: SnapPatch }
+  | ({ type: 'chatp'; key: string } & ChatPatch)
+  /** a page off screen hears only this: how many things need the person (its title and app icon) */
+  | { type: 'needs'; n: number }
   | ({ type: 'terminal'; chat: string } & TermScreen)
   | { type: 'offline'; since: number }
   /** the build of the web app the server serves, and its version: a screen on another build updates (SHEP-337) */

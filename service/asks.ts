@@ -10,7 +10,7 @@ import { DATA, appHome, writable } from "./paths.ts";
 import * as A from "../core/asks.js";
 import type { Hub } from "./hub.ts";
 
-const { words, allow, deny, answers, annotationsOf, howAnswered, release, chatAbout, dismiss, partAnswer } = A as any; // fork: partAnswer (SHEP-100)
+const { words, allow, deny, answers, annotationsOf, howAnswered, release, chatAbout, dismiss, stepWords } = A as any;
 const dir = () => join(appHome(), "data", "chat-asks");
 const ID = /^[\w.-]+$/;
 const MACHINE = /^[\w.-]+$/;
@@ -166,8 +166,7 @@ export class Asks {
     else if (a.talk && w.kind === "questions") out = chatAbout();
     else if (w.kind === "questions" && w.questions.length > 1) {
       // the multi-step card: each question's answer in order, all of them
-      // fork: each step's pick ({ choice }, { choices }, { other }) as its option names (SHEP-100)
-      const got = (a.answers ?? []).map((x, i) => partAnswer(w.questions[i]?.options.map((o: any) => o.name) ?? [], x));
+      const got = (a.answers ?? []).map((x, i) => stepWords(x, w.questions[i]?.options.map((o: any) => o.name)));
       if (got.length !== w.questions.length || got.some((x) => !x)) throw new Error("Answer every question first.");
       const map = Object.fromEntries(w.questions.map((q: any, i: number) => [q.text, got[i]]));
       out = answers(ask.req, map, annotationsOf(w, map, a.note));

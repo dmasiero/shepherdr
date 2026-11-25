@@ -15,6 +15,11 @@ set -u
 # there too. layout.py's THERE_PATH, word for word (test/test_herdr_task.py checks).
 PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin${PATH:+:$PATH}"; export PATH;
 old=$1 argv=${2:-}
+# #1431: a herdr-core started outside a login shell (launchd, ssh) runs this, and each terminal it starts, with only
+# /usr/bin:/bin: hc, jq and the agent CLIs are looked for where they install too, after its own PATH. The same line
+# as core/clean-env.js AGENT_PATH (test_restart keeps them equal); the new agent's command gets it as well.
+apath='PATH="${PATH:+$PATH:}$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"; export PATH;'
+eval "$apath"
 # Another machine's agent (<machine>/<address>): this script runs there (its logs, templates and hc are
 # that machine's), carried over hc like any cross-machine command; the new address comes back as
 # <machine>/<address>, as this side names it.

@@ -3,7 +3,7 @@
 // before the first paint.
 import { useSyncExternalStore } from 'react'
 
-// fork: Night, true black for OLED screens, a dark of its own (FORK.md); stored as "Night"
+/** Night: true black for OLED screens (#1505), picked by hand; System still picks Light or Dark */
 export const THEMES = ['System', 'Light', 'Dark', 'Night'] as const
 export const WIDTHS = ['Narrow', 'Medium', 'Wide'] as const
 export const MOTIONS = ['System', 'Reduced'] as const
@@ -18,10 +18,10 @@ export const CHAT_WIDTH: Record<Prefs['width'], number> = { Narrow: 720, Medium:
 const KEY = 'shepherdr.prefs'
 const START: Prefs = { theme: 'System', width: 'Narrow', motion: 'System' }
 /** the bars over the app (the browser's, the phone's status bar): the canvas */
-const BAR = { light: '#ffffff', dark: '#121212', night: '#000000' } // fork: Night's
+const BAR = { light: '#ffffff', dark: '#121212', night: '#000000' }
 /** the app's manifest in each, its background_color and theme_color the canvas (index.html picks it before the paint);
  *  the default one is dark, what an installed app shows if it never sees the swap */
-const MANIFEST = { light: 'manifest-light.webmanifest', dark: 'manifest.webmanifest', night: 'manifest-night.webmanifest' } // fork: Night's
+const MANIFEST = { light: 'manifest-light.webmanifest', dark: 'manifest.webmanifest', night: 'manifest-night.webmanifest' }
 
 function load(): Prefs {
   try {
@@ -40,11 +40,10 @@ let prefs = load()
 const listeners = new Set<() => void>()
 const system = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null
 
-// fork: Night counts as dark everywhere dark is asked (pictures, thumbnails); isNight for what is darker still
-export const isNight = () => prefs.theme === 'Night'
-export const isDark = () => prefs.theme === 'Dark' || isNight() || (prefs.theme === 'System' && !!system?.matches)
-/** fork: which of BAR and MANIFEST this device shows */
-const shade = () => (isNight() ? 'night' : isDark() ? 'dark' : 'light')
+/** dark or night: the app's dark pictures (artifact thumbnails) and colours */
+export const isDark = () => prefs.theme === 'Dark' || prefs.theme === 'Night' || (prefs.theme === 'System' && !!system?.matches)
+/** which of the three looks the page has now: the phone's bars and the installed app's manifest follow it */
+export const look = (): keyof typeof BAR => (prefs.theme === 'Night' ? 'night' : isDark() ? 'dark' : 'light')
 
 function apply() {
   const root = document.documentElement
@@ -55,10 +54,10 @@ function apply() {
   if (prefs.motion === 'Reduced') root.dataset.motion = 'reduced'
   else delete root.dataset.motion
   // both of index.html's (light and dark by media): the theme picked wins over the device's
-  for (const bar of document.querySelectorAll<HTMLMetaElement>('meta[name=theme-color]')) bar.content = BAR[shade()]
+  for (const bar of document.querySelectorAll<HTMLMetaElement>('meta[name=theme-color]')) bar.content = BAR[look()]
   // the installed app's window and the phone's navigation bar: the manifest's colours, read when the app updates
   const manifest = document.querySelector<HTMLLinkElement>('link[rel=manifest]')
-  if (manifest) manifest.setAttribute('href', MANIFEST[shade()])
+  if (manifest) manifest.setAttribute('href', MANIFEST[look()])
   for (const l of listeners) l()
 }
 
@@ -88,4 +87,3 @@ const subscribe = (l: () => void) => {
 }
 export const usePrefs = () => useSyncExternalStore(subscribe, () => prefs)
 export const useDark = () => useSyncExternalStore(subscribe, isDark)
-export const useNight = () => useSyncExternalStore(subscribe, isNight) // fork: Night

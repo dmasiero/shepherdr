@@ -180,6 +180,25 @@ def open_lock(path):
         return None, False
 
 
+class Busy(Fail):
+    """The list's lock not free within a change's wait."""
+
+
+def progress_dir(path):
+    """#1490: where status lines wait while their list is busy: one file per task, the newest replacing the last."""
+    return os.path.join(STORE, "." + os.path.basename(path) + ".progress")
+
+
+def queue_progress(path, task_id, progress):
+    """A status line kept for the list's next holder (Store.save()), since its lock is held now."""
+    d = progress_dir(path)
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, f".{task_id}.{os.getpid()}.tmp")
+    with open(tmp, "w") as f:
+        json.dump({"id": task_id, "progress": progress}, f)
+    os.replace(tmp, os.path.join(d, f"{task_id}.json"))
+
+
 class Store:
     """One folder's tasks, locked while open. `with Store(loc) as s: s.data[...]; s.dirty = True`.
     write: True (refused where nothing can be written), False (read only), or "try" (a read that
@@ -189,6 +208,7 @@ class Store:
         self.loc, self.write, self.best_effort = loc, bool(write), write == "try"
         self.slug, self.path = store_path(loc["folder"])
         self.dirty = self.read_only = False
+        self.read_as = None   # the list as read or saved last (save() writes when it differs)
         self.wait = wait  # seconds a change waits for the lock before it gives up (None: as long as it takes)
 
     def __enter__(self):
@@ -246,7 +266,13 @@ class Store:
                     n += 1
                 d["prefix"] = base if n == 1 else f"{base}{n}"
                 self.dirty = self.new_prefix = bool(d["tasks"]) or os.path.exists(self.path)
+        self.read_as = self.text() if self.write else None
         return self
+
+    def text(self):
+        # compact (#1175: the panels read every list through one capped exec; indented, a busy list was
+        # a third spaces); ASCII-escaped still, since readers open it in the locale's encoding
+        return json.dumps(self.data, separators=(",", ":"))
 
     def take_lock(self):
         try:
@@ -270,20 +296,59 @@ class Store:
                 if time.time() >= end:
                     self.lock.close()
                     self.lock = None
-                    raise Fail(f"The task list for {self.loc['name']} is busy: another herdr-task has held it for over "
+                    raise Busy(f"The task list for {self.loc['name']} is busy: another herdr-task has held it for over "
                                f"{self.wait:g} s (the scheduler, or a slow command), so nothing was changed. Try again in a minute.")
                 time.sleep(0.2)
 
+    def take_progress(self):
+        """#1490: the status lines queued while the list was busy (queue_progress()), on their tasks: a newer one
+        than its task shows wins. Each file is claimed by a rename first, so one queued meanwhile waits for the next."""
+        d = progress_dir(self.path)
+        try:
+            names = os.listdir(d)
+        except OSError:
+            return False
+        by_id = {t.get("id"): t for t in self.data.get("tasks") or [] if isinstance(t, dict)}
+        changed = False
+        for n in names:
+            if not n.endswith(".json"):
+                continue
+            mine = os.path.join(d, f".{n}.{os.getpid()}.taking")
+            try:
+                os.rename(os.path.join(d, n), mine)
+            except OSError:
+                continue
+            try:
+                with open(mine) as f:
+                    q = json.load(f)
+            except (OSError, ValueError):
+                q = None
+            try:
+                os.remove(mine)
+            except OSError:
+                pass
+            t = by_id.get(q.get("id")) if isinstance(q, dict) else None
+            p = q.get("progress") if t else None
+            if isinstance(p, dict) and t.get("state") in ("running", "ready") and \
+                    (p.get("set") or 0) >= ((t.get("progress") or {}).get("set") or 0):
+                t["progress"] = p
+                changed = True
+        return changed
+
     def save(self):
-        if self.write and self.dirty:
+        """Writes the list when anything in it changed since it was read or saved, flagged (`dirty`) or not
+        (#1489, #1488: ready's head, set without `dirty`, was dropped when released() read the list again)."""
+        if not self.write:
+            return
+        if self.lock and self.take_progress():
+            self.dirty = True
+        text = self.text()
+        if self.dirty or text != self.read_as:
             tmp = f"{self.path}.{os.getpid()}.tmp"
             with open(tmp, "w") as f:
-                # compact (#1175: the panels read every list through one capped exec; indented, a busy list was
-                # a third spaces); ASCII-escaped still, since readers open it in the locale's encoding
-                json.dump(self.data, f, separators=(",", ":"))
-                f.write("\n")
+                f.write(text + "\n")
             os.replace(tmp, self.path)
-            self.dirty = False
+            self.dirty, self.read_as = False, text
             # personal analytics (analytics.py): what changed, as ids and timings, on this machine only
             if self.before is not None:
                 analytics.saved(self.before, self.data)
@@ -299,9 +364,6 @@ class Store:
         if not (self.lock and self.write):
             yield
             return
-        # fork: saved whether or not a change was flagged (FORK.md, "Ready card after chat replies"): the list is read
-        # again below, so an unflagged change (ready's head, set just before its base fetch) was lost there
-        self.dirty = True
         self.save()
         fcntl.flock(self.lock, fcntl.LOCK_UN)
         try:
@@ -328,8 +390,10 @@ class Store:
                 self.data.update(fresh)
                 # what others changed meanwhile, they recorded themselves
                 self.before = analytics.snapshot(tasks)
-            # Saved again on the way out: the caller goes on changing its task without saying so.
-            self.dirty = True
+                # what is on disk now: anything the caller changes after this is saved on the way out (save())
+                self.read_as = self.text()
+            else:
+                self.dirty = True   # unreadable just now: what this command holds is saved on the way out
 
     def __exit__(self, kind, *_):
         try:
