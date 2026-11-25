@@ -243,7 +243,8 @@ export function App() {
   const Search = registry.views.search
   const Middle = registry.middle.find((m) => m.when(ui))
   return (
-    <div className={cx('app', ui.phone && 'phone', (ui.phone || coarse) && 'tap')}>
+    // fork: `kb` while the on-screen keyboard is up: a terminal shrinks to fit above it (ds.css, terminal/keyrow.ts)
+    <div className={cx('app', ui.phone && 'phone', (ui.phone || coarse) && 'tap', ui.keyboard && 'kb')}>
       <div className="device">
         {registry.topBars.map((V, i) => <V key={i} />)}
         <div className={cx('shell', ui.pane && 'has-pane', hidden && 'noside', swap && 'swap')}>
