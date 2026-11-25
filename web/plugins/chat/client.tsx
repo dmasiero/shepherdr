@@ -35,6 +35,7 @@ import { BoxThumb, openPreview, SentThumb, sourcesOf } from './thumbs.tsx'
 import { heldStep, signOf } from './typing.ts'
 import { newsRow, type NewsRow } from './news.ts'
 import { usePaths } from './paths.tsx' // fork: SHEP-50's "@~/" path list
+import { isEcho, sentFrom } from './echo.ts' // fork: the keyboard's echo of a sent message (echo.ts)
 import { cardsAfter, cardsNow, stillLoading, TRIES, wantsEarlier } from './hold.ts'
 import { keepAtEnd, rowEdges } from './stick.ts'
 import { OFF_PX, isOffEnd, newSince, onEnd, setOffEnd, toEnd, useOffEnd } from './newest.ts'
@@ -971,10 +972,12 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
       // the command alone, first in the box: a quoted reply, files or a folded paste would go with it and it would be
       // a message. Those stay in the box for the next message
       send(key, key, text.trim(), false, true, dictatedInto.delete(key) ? 'dictated' : 'typed')
+      sentFrom(key, text) // fork: echo.ts
       setText('')
       return
     }
     send(key, key, t, wait && busy, false, dictatedInto.delete(key) ? 'dictated' : 'typed')
+    sentFrom(key, text) // fork: echo.ts
     setText('')
     setPastes(key, () => [])
     if (shared) putAway()
@@ -1072,7 +1075,8 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           enterKeyHint="send"
           autoComplete="off"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          // fork: a phone keyboard writing back what was just sent is dropped (echo.ts)
+          onChange={(e) => !isEcho(key, text, e.target.value, (e.nativeEvent as InputEvent).data) && setText(e.target.value)}
           onPaste={(e) => {
             const f = pasted(e.clipboardData)
             if (f.length) {
