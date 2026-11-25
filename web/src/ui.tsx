@@ -212,6 +212,36 @@ export function useScrolled(ref: RefObject<HTMLElement | null>): boolean {
   return sc
 }
 
+/** fork: Fade off the scrollbar. The width of what scrolls' scrollbar, as `--sbw` on its column, so the fade at the
+ *  foot's top (ds.css) stops beside the scrollbar instead of dimming its end. Kept as the scrollbar comes and goes
+ *  (the content box changes) and as the window or zoom changes; 0 where scrollbars float over the page. */
+export function watchScrollbar(el: HTMLElement): () => void {
+  const col = el.parentElement
+  if (!col) return () => {}
+  const set = () => col.style.setProperty('--sbw', `${Math.max(0, Math.ceil(el.getBoundingClientRect().width - el.clientWidth))}px`)
+  set()
+  const ro = new ResizeObserver(set)
+  ro.observe(el)
+  return () => {
+    ro.disconnect()
+    col.style.removeProperty('--sbw')
+  }
+}
+
+/** fork: Fade off the scrollbar: watchScrollbar on what the ref holds, again when the element changes */
+export function useScrollbarWidth(ref: RefObject<HTMLElement | null>) {
+  const seen = useRef<HTMLElement | null>(null)
+  const stop = useRef<() => void>(undefined)
+  useEffect(() => {
+    const el = ref.current
+    if (el === seen.current) return
+    stop.current?.()
+    seen.current = el
+    stop.current = el ? watchScrollbar(el) : undefined
+  })
+  useEffect(() => () => stop.current?.(), [])
+}
+
 /** the one header build: optional back, title (one line, cut with …) with an optional second line, actions right */
 export function Hd({ back, title, sub, pad, scrolled, children, lead }: { back?: { label: string; run: () => void }; title?: ReactNode; sub?: ReactNode; pad?: number; scrolled?: boolean; children?: ReactNode; lead?: ReactNode }) {
   return (
