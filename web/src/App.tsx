@@ -14,7 +14,7 @@ import { closeTop, Layers } from './overlay.tsx'
 import { edge } from './resize.ts'
 import { columnsOf, swapSides, useSides } from './sides.ts'
 import { SettingsWindow } from './settings.tsx'
-import { cx, Empty, I, IB, useScrolled } from './ui.tsx'
+import { cx, Empty, I, IB, useScrolled, useScrollbarWidth } from './ui.tsx'
 import { SpaceIcon } from './space-icon.tsx'
 
 /** the thread the middle column shows: the open task when it has the middle, else the space's chat */
@@ -65,6 +65,7 @@ function ChatColumn({ snap }: { snap: Snapshot }) {
   const ui = useUI()
   const scroll = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(scroll)
+  useScrollbarWidth(scroll) // fork: Fade off the scrollbar
   const thread = middleThread(snap, ui)
   const place = placeOf(snap, ui.at)
   if (!thread || !place) return <section className="col chat"><Empty title="Welcome to Shepherdr">Add a space to start: New space, at the foot of the list.</Empty></section>
@@ -122,6 +123,7 @@ function PaneColumn() {
 export function PaneFrame({ head, children, foot, drawer, scrollKey, flush }: { head: (scrolled: boolean) => ReactNode; children: ReactNode; foot?: ReactNode; drawer?: ReactNode; scrollKey?: string; flush?: boolean }) {
   const scroll = useRef<HTMLDivElement>(null)
   const scrolled = useScrolled(scroll)
+  useScrollbarWidth(scroll) // fork: Fade off the scrollbar
   return (
     <>
       {head(scrolled)}
