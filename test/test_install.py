@@ -77,6 +77,36 @@ def assert_notices(t, root, names):
 DATA_PLACES = (".config/shepherdr/", ".local/share/shepherdr/", ".local/state/shepherdr/", ".cache/shepherdr/", ".herdr/")
 
 
+class HelperOutput(unittest.TestCase):
+    """#1429: a helper's output that isn't UTF-8 (agent-desktop's first download wrote a 0x80 byte) never stops the
+    install: herdr-desktop's and herdr-browser's --install and --status are read with what can't be decoded replaced."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="shepherdr-bytes-")
+        os.makedirs(os.path.join(self.root, SHARE, "bin"))
+        for name, ready in (("herdr-desktop", "agent-desktop is ready"), ("herdr-browser", "agent-browser is ready")):
+            with open(os.path.join(self.root, SHARE, "bin", name), "w") as f:
+                f.write(f"printf 'odd \\200 byte\\n' >&2\necho '{name}: {ready}'\n")
+        self.sh = installer()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_odd_bytes_from_a_helper(self):
+        r = self.sh.Run(self.root, False)
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said), mock.patch.object(self.sh, "browser_env", lambda root: dict(os.environ)):
+            self.sh.ensure_agent_desktop(r, True)
+            self.sh.ensure_agent_browser(r, True)
+            desktop = self.sh.agent_desktop_state(self.root, True)
+            browser = self.sh.agent_browser_state(self.root)
+        self.assertIn("agent-desktop is ready", said.getvalue())
+        self.assertIn("agent-browser is ready", said.getvalue())
+        self.assertIn("odd \ufffd byte", " ".join(r.notes))
+        self.assertIsInstance(desktop, list)
+        self.assertTrue(browser is None or isinstance(browser, str))
+
+
 class Install(unittest.TestCase):
     """One kind of install (3.2): everything under .local/share/shepherdr, helper links in .local/bin, the role
     instructions, the agents' hooks; in a Herdr app, only the Open Shepherdr button and its one key."""
@@ -125,7 +155,7 @@ class Install(unittest.TestCase):
         out = run("install", "--root", self.root, "--yes").stdout
         self.assertRegex(out, r"files: \d+ new\n")
         rec = json.load(open(self.p(RECORD)))
-        self.assertEqual(rec["version"], "3.2.18")
+        self.assertEqual(rec["version"], "3.2.19")
         self.assertFalse(os.path.exists(self.p(OLD_RECORD)), "no record in the Herdr app any more")
         self.assertTrue(os.path.isfile(self.p(SHARE, "mods/tasks/bin/herdr-task")))
         self.assertEqual(os.path.realpath(self.p(".local/bin/herdr-task")), os.path.realpath(self.p(SHARE, "mods/tasks/bin/herdr-task")))
@@ -151,11 +181,14 @@ class Install(unittest.TestCase):
         # Codex's approvals come to the chat's card too (SHEP-91)
         codex = json.load(open(self.p(".codex/hooks.json")))
         self.assertIn("/hooks/ask-hook.sh", json.dumps(codex["hooks"]["PermissionRequest"]))
-        # Helpers changed: the sync to other machines is held until doctor passes.
-        self.assertTrue(os.path.exists(self.p(".herdr/sync-hold")))
+        # Helpers changed: the sync to other machines was held while they moved, and a whole install lets it go at
+        # its end, doctor or not (#1419)
+        self.assertNotIn("is held until", out)
+        self.assertIn("the install is whole: the sync to other machines may go again", out)
+        self.assertFalse(os.path.exists(self.p(".herdr/sync-hold")))
+        self.assertIs(rec["whole"], True)
         d = run("doctor", "--root", self.root)
         self.assertIn("whole", d.stdout)
-        self.assertFalse(os.path.exists(self.p(".herdr/sync-hold")))
 
         # Again: nothing changes, no hold, no second hook.
         again = run("install", "--root", self.root, "--yes").stdout
@@ -429,6 +462,21 @@ class Install(unittest.TestCase):
         finally:
             shutil.rmtree(src, ignore_errors=True)
 
+    def test_the_installed_copy_uninstalls_to_its_end(self):
+        """#1430: the installed shepherdr removes its own herdr_task, then still needs layout.py (the sync hold's and
+        the data folders' paths): uninstall finishes and takes away everything it lists."""
+        run("install", "--root", self.root, "--yes")
+        with open(self.p(".herdr/sync-hold"), "w") as f:
+            f.write("held\n")
+        own = self.p(SHARE, "bin", "shepherdr")
+        p = subprocess.run([sys.executable, own, "uninstall", "--root", self.root], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("Shepherdr uninstalled", p.stdout)
+        self.assertFalse(os.path.exists(self.p(".herdr/sync-hold")))
+        self.assertFalse(os.path.exists(self.p(RECORD)))
+        self.assertFalse(os.path.exists(self.p(SHARE, "mods")), "its emptied folders go too")
+
     def test_update_says_loudly_when_the_install_is_not_whole(self):
         """An update that goes in but leaves doctor failing says so at its end, with the ✗ lines and no 'done' (#905):
         here a helper whose SHEP block isn't layout.py's."""
@@ -448,6 +496,7 @@ class Install(unittest.TestCase):
             self.assertNotIn("  done. Next:", up)
             self.assertIn("has no SHEP block", run("doctor", "--root", self.root, ok=False).stdout)
             self.assertTrue(os.path.exists(self.p(".herdr/sync-hold")), "the sync stays held")
+            self.assertIs(json.load(open(self.p(SHARE, "installed.json")))["whole"], False)
             # the fixed release goes in over it, and doctor passes
             up = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
             self.assertIn("  done. Next:", up)
@@ -1173,7 +1222,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         # the task finished: the same update switches
         self.set_tasks("done")
         out = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
-        self.assertIn("Shepherdr 3.2.18 update", out)
+        self.assertIn("Shepherdr 3.2.19 update", out)
         self.assertIn("switching from Shepherdr 3.1.46 (the Herdr-window install)", out)
         self.assertIn("removed what 3.1 put in the Herdr app: 28 mods, 1 artifact mod (kept in the backup)", out)
         self.assertIn("3 files you changed are in the backup", out)
@@ -1222,7 +1271,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         self.assertNotIn("3.1.46", open(self.p(SHARE, "bin/shepherdr")).read()[:200])
         # (e) the new record is written, the old one gone; nothing of the window is in it
         rec = json.load(open(self.p(RECORD)))
-        self.assertEqual(rec["version"], "3.2.18")
+        self.assertEqual(rec["version"], "3.2.19")
         self.assertFalse(os.path.exists(self.p(OLD_RECORD)))
         self.assertFalse([f for f in rec["files"] if f.startswith(APP) and "/mods/open-shepherdr/" not in f])
         self.assertNotIn("mods", rec)
@@ -1254,7 +1303,7 @@ class SwitchFromTheWindow(unittest.TestCase):
     def test_force_switches_while_tasks_work(self):
         out = run("install", "--root", self.root, "--yes", "--source", ROOT, "--force").stdout
         self.assertIn("switched while these tasks were working (--force): SHOP-3 Fix the cart", out)
-        self.assertEqual(json.load(open(self.p(RECORD)))["version"], "3.2.18")
+        self.assertEqual(json.load(open(self.p(RECORD)))["version"], "3.2.19")
         self.assertFalse(os.path.exists(self.p(APP, "mods/tasks/live.js")), "3.1's code is gone")
         assert_notices(self, self.root, ["tasks"])
 
@@ -1335,7 +1384,7 @@ class SwitchFromTheWindow(unittest.TestCase):
             for gone in ("lib", "mods/coordinator", "mods/artifacts/recipe-view.js"):
                 self.assertFalse(os.path.exists(P(SHARE, gone)), gone)
             rec = json.load(open(P(RECORD)))
-            self.assertEqual(rec["version"], "3.2.18")
+            self.assertEqual(rec["version"], "3.2.19")
             self.assertNotIn("web", rec)
             self.assertNotIn("backups", rec)
             self.assertFalse(os.path.exists(P(APP, "mods")), "no Herdr app here: no button")
@@ -1684,3 +1733,33 @@ class RemoteSwitchGuard(unittest.TestCase):
             result = mod.remote_working_tasks("/fake/home", run=lambda *a, **kw: subprocess.CompletedProcess(a, 1, "", "offline"))
         self.assertEqual(result, ["linked machines: cannot check their tasks"])
         self.assertIsInstance(result[0], mod.UncheckedMachine)
+
+
+class DoctorSyncedMachines(unittest.TestCase):
+    """#1507: doctor says when herdr-core's config pins one socket for every session, and which other machines' last
+    sync found current files but something that stops task agents there."""
+
+    def test_a_pinned_socket_and_a_machine_that_needs_a_fix(self):
+        mod = installer()
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        cfg = os.path.join(root, "cfg", "herdr-core")
+        os.makedirs(cfg)
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": os.path.join(root, "cfg")}):
+            self.assertIsNone(mod.pinned_socket_problem())
+            with open(os.path.join(cfg, "config.toml"), "w") as f:
+                f.write('[x]\nsocket = "/elsewhere.sock"\n')
+            self.assertIsNone(mod.pinned_socket_problem())   # only a top-level line pins
+            with open(os.path.join(cfg, "config.toml"), "w") as f:
+                f.write('socket = "/s/default/default.sock"\n')
+            got = mod.pinned_socket_problem()
+        self.assertIn('pins every herdr-core session\'s socket to "/s/default/default.sock"', got)
+        self.assertIn("hc server stop", got)
+        tasks = mod.where_for(root).path("tasks")
+        os.makedirs(tasks, exist_ok=True)
+        with open(os.path.join(tasks, ".machines.json"), "w") as f:
+            json.dump({"machines": {"vm-demo": {"state": "needs-fix", "details": ["its link leads to 'default'"]},
+                                    "laptop": {"state": "current", "details": []}}}, f)
+        got = mod.machines_needing_fix(root)
+        self.assertEqual(got, ["vm-demo needs a fix (its last sync): its link leads to 'default'. "
+                               "`herdr-task machines sync vm-demo` checks again"])

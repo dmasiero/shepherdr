@@ -105,10 +105,12 @@ test("#1050: forking a task's chat while its agent runs asks first; a plain chat
   expect(liveTaskAgent(agent("t4", {}), all)).toBe(null);
   // the agent quit, its shell stays
   expect(liveTaskAgent(worker, [{ ...worker, status: { app: null }, foreground: { name: "bash" } }])).toBe(null);
-  // fork: SHEP-90, before it reports itself, Nix's ".claude-wrapped" is the agent
-  expect(liveTaskAgent(worker, [{ ...worker, status: {}, foreground: { name: ".claude-wrapped" } }])?.address).toBe("t1");
   // only the reviewer left
   expect(liveTaskAgent(worker, [all[1]])).toBe(null);
+  // #1410: a Nix-wrapped agent, its status not told
+  const nix = { ...worker, status: {}, foreground: { name: ".claude-wrapped" } };
+  expect(liveTaskAgent(worker, [nix])?.address).toBe("t1");
+  expect(liveTaskAgent(worker, [{ ...nix, foreground: { name: ".bash-wrapped" } }])).toBe(null);
   expect(FORK_LIVE.verb).toBe("Fork anyway");
 });
 
@@ -216,6 +218,21 @@ test("#1219: a switch carries the old agent's permission in the new CLI's words"
   const claude = argvFor({ agent: "claude", perm: "full" }, { agent: "codex", argv: [] }).argv;
   expect(claude).toContain("--dangerously-skip-permissions");
   expect(argvFor({ agent: "claude", perm: "acceptEdits" }, { agent: "claude", argv: [] }).argv.join(" ")).toContain("--permission-mode acceptEdits");
+});
+
+test("#1464: Codex's Approve for me starts with --approve-for-me, reads back, resumes with it and carries to Claude's auto", () => {
+  const { argv } = argvFor({ agent: "codex", perm: "approve" }, { agent: "codex", argv: [] });
+  expect(argv).toContain("--approve-for-me");
+  // it sets the sandbox and approvals itself (Codex refuses -s or -a beside it)
+  expect(argv).not.toContain("-s");
+  expect(argv).not.toContain("-a");
+  expect(current("codex", argv, {}, {}).perm).toBe("approve");
+  expect(current("codex", ["codex", "-s", "workspace-write"], {}, {}).perm).toBe("auto");
+  // a restart on Codex with the same session resumes with it, and it isn't an extra flag of the person's
+  const again = argvFor({ agent: "codex", perm: "approve" }, { agent: "codex", argv, session: "s1" });
+  expect(again.argv.filter((a) => a === "--approve-for-me")).toHaveLength(1);
+  expect(extraFlags("codex", argv)).toEqual([]);
+  expect(AGall.permAcross("approve", "claude")).toBe("auto");
 });
 
 // SHEP-298: what an Assistant really runs, never Settings: its CLI's arguments, its log, its resume label once it ended

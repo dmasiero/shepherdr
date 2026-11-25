@@ -7,6 +7,7 @@ import { afterLoad, mayRetry, OWN_VERSION, readMark, safeNow, writeMark, type No
 import type { Action, Chat, Message, ReplyQuote, ServerEvent, Snapshot, Task, UpdateStatus } from '@shared/types.ts'
 import { everything, placeOf, taskChat, taskOf, type ListFilter, type Space } from '@shared/view.ts'
 import { clean, NO_FILTER, type TaskFilter } from '@shared/task-filter.ts'
+import { apply, chatApply } from '@shared/patch.ts'
 import type { IconName } from './icons.ts'
 import { catchLink } from './applink.ts'
 import { heartbeatDue, OPEN_WITHIN, PONG_LATE, PONG_WITHIN, retryIn, SAY_LOST_AFTER } from './link.ts'
@@ -109,7 +110,7 @@ export interface Registry {
     search?: FC<{ close: () => void }>
     /** the picker row a dialog shows for an agent choice lives in picker.tsx; the settings window in settings.tsx */
   }
-  /** buttons at the right of a chat's header, in order: Tasks, Artifacts. Terminal and Screen are rows of the space's
+  /** buttons at the right of a chat's header, in order: Artifacts, Tasks (Tasks last: it opens where its pane's Close lands). Terminal and Screen are rows of the space's
    *  name menu instead; the voice call is the message box's round button. `phone`: also in a phone's header (none: the
    *  rest live in its bottom bar) */
   header: { order: number; phone?: boolean; View: FC<{ thread: Thread }> }[]
@@ -135,9 +136,9 @@ export interface Registry {
   messageMenu: { order: number; Top?: FC<{ msg: Message; chat: Chat; close: () => void }>; rows?: (msg: Message, chat: Chat) => MenuRow[] }[]
   /** cards the app puts in a chat from a task's status, not an agent: each sits where it came up (`at`), among the
    *  messages of that time; one without a time goes after the last message. past: history (a task's Done line), which
-   *  waits for its stretch of chat to load; any other card always shows once the chat's messages are in. chat: its
-   *  messages, for a card that follows them (fork: Ready card below new messages) */
-  chatCards: { order: number; cards: (snap: Snapshot, thread: Thread, chat?: Chat) => { key: string; at?: number; past?: boolean; node: ReactNode }[] }[]
+   *  waits for its stretch of chat to load; any other card always shows once the chat's messages are in. after: a card
+   *  still waiting on you goes below the newest later message this matches (hold.ts cardsAfter) */
+  chatCards: { order: number; cards: (snap: Snapshot, thread: Thread) => { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; node: ReactNode }[] }[]
   /** after a chat's messages (cards the app puts there from a task's status, the live picture, the working line) */
   chatTail: { order: number; View: FC<{ chat: Chat | undefined; thread: Thread }> }[]
   /** takes a chat's place (the agent's own terminal) */
@@ -282,6 +283,8 @@ interface State {
   update: UpdateStatus | null
   /** the web app the service serves (SHEP-337): its build and version; a page on another build updates itself */
   served: { build: string; version: string } | null
+  /** what needs the person, as the service counts it while this page is off screen (it sends nothing else then) */
+  needs: number | null
   ui: UI
 }
 
@@ -319,6 +322,7 @@ let state: State = {
   outbox: loadOutbox(),
   update: null,
   served: null,
+  needs: null,
   ui: {
     phone: !!MQ?.matches,
     narrow: !!MQ2?.matches,
@@ -579,6 +583,8 @@ let saying: ReturnType<typeof setTimeout> | null = null
 let downSince: number | null = null
 let pruned = false
 let tried = 0
+/** each chat as the service last sent it (its patches build on that, not on what the screen made of it) */
+const sentChats = new Map<string, Chat>()
 /** when the link last heard from the server */
 let heard = 0
 
@@ -599,6 +605,7 @@ export function connect() {
     if (saying) clearTimeout(saying)
     saying = null
     watched = ''
+    sentChats.clear()
     // the link is back: what waits to send goes now
     wakeAll()
     if (state.ui.offline) setUI({ offline: null })
@@ -609,8 +616,21 @@ export function connect() {
     if (pinging) clearTimeout(pinging)
     pinging = null
     if (typeof ev.data !== 'string') return
-    const msg = JSON.parse(ev.data) as ServerEvent
+    let msg = JSON.parse(ev.data) as ServerEvent
     if (msg.type === 'pong') return
+    // what changed since the snapshot or chat this page has (#1468); one it can't build on: all of it again
+    if (msg.type === 'needs') {
+      state = { ...state, needs: msg.n }
+      return emit()
+    }
+    if (msg.type === 'patch') {
+      if (!state.snap) return sock.send(JSON.stringify({ type: 'resync' }))
+      msg = { type: 'snapshot', snapshot: apply(state.snap, msg.patch) }
+    } else if (msg.type === 'chatp') {
+      const chat = chatApply(sentChats.get(msg.key), msg)
+      if (!chat) return sock.send(JSON.stringify({ type: 'resync' }))
+      msg = { type: 'chat', chat }
+    }
     if (msg.type === 'show') return setUI({ art: msg.artifact, artV: null, pane: 'artifacts', task: null })
     if (msg.type === 'voice') return registry.voiceWake?.()
     if (msg.type === 'go') return openLink(msg.url)
@@ -627,6 +647,7 @@ export function connect() {
       }
       watchVisible()
     } else if (msg.type === 'chat') {
+      sentChats.set(msg.chat.key, msg.chat)
       const was = state.chats[msg.chat.key]
       // a chat with no agent yet (not started, or ended): the conversation the screen shows stays
       const chat = msg.chat.fresh && was && !was.fresh && was.messages.length ? { ...was, agent: msg.chat.agent, cli: msg.chat.cli } : msg.chat

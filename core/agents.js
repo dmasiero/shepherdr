@@ -15,17 +15,19 @@ const CLAUDE_MODELS = [
 ];
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // Permission modes as each CLI has them (Claude: --permission-mode, or
-// --dangerously-skip-permissions for full access; Codex: its sandbox and approvals).
+// --dangerously-skip-permissions for full access; Codex: its sandbox and approvals, and Approve for me: its own
+// automatic review answers what it would ask, #1464).
 const PERMS = {
   claude: [{ id: "manual", label: "Ask" }, { id: "auto", label: "Auto" }, { id: "acceptEdits", label: "Accept edits" },
     { id: "plan", label: "Plan" }, { id: "bypassPermissions", label: "Full access" }],
-  codex: [{ id: "read-only", label: "Read only" }, { id: "auto", label: "Auto" }, { id: "full", label: "Full access" }],
+  codex: [{ id: "read-only", label: "Read only" }, { id: "auto", label: "Auto" },
+    { id: "approve", label: "Approve for me" }, { id: "full", label: "Full access" }],
 };
 // A permission mode carried to the other agent when the agent is switched: its nearest mode there (auto stays auto,
 // full access stays full access, Claude's accept edits is Codex's auto, plan and read only swap), else that agent's
 // default (Claude's ask has no Codex match). Never silently drops auto to ask on a round trip (#758).
 const PERM_ACROSS = {
-  claude: { "read-only": "plan", auto: "auto", full: "bypassPermissions" },
+  claude: { "read-only": "plan", auto: "auto", approve: "auto", full: "bypassPermissions" },
   codex: { plan: "read-only", auto: "auto", acceptEdits: "auto", bypassPermissions: "full" },
 };
 export function permAcross(perm, agent, permDefault) {
@@ -132,7 +134,7 @@ export function current(kind, argv, meta, dflt) {
   const model = meta.model ?? flag(argv, "-m", "--model") ?? o.model ?? dflt.model;
   const sandbox = flag(argv, "-s", "--sandbox") ?? o.sandbox_mode ?? dflt.sandbox;
   const perm = argv.includes("--dangerously-bypass-approvals-and-sandbox") || sandbox === "danger-full-access" ? "full"
-    : sandbox === "read-only" ? "read-only" : "auto";
+    : argv.includes("--approve-for-me") || argv.includes("--not-so-yolo") ? "approve" : sandbox === "read-only" ? "read-only" : "auto";
   return { agent: "codex", model, label: dflt.models?.find((m) => m.id === model)?.label ?? null, perm,
     effort: meta.effort ?? o.model_reasoning_effort ?? dflt.effort,
     fast: meta.speed ? speedOf(meta.speed) : tier ? speedOf(tier) : dflt.fast === "ultrafast" ? "ultrafast" : Boolean(dflt.fast), used: meta.used ?? null, window: meta.window ?? null };
@@ -336,7 +338,7 @@ function kept(kind, argv) {
       if (a.startsWith("-")) out.push(a);
     } else {
       if (i === 0 && (a === "resume" || a === "fork")) { if (rest[1] && !rest[1].startsWith("-")) i++; continue; }
-      if (a === "--no-daemon" || a === "--dangerously-bypass-approvals-and-sandbox" || a === "--full-auto") continue;
+      if (a === "--no-daemon" || a === "--dangerously-bypass-approvals-and-sandbox" || a === "--full-auto" || a === "--approve-for-me" || a === "--not-so-yolo") continue;
       if (["-m", "--model", "-s", "--sandbox", "-a", "--ask-for-approval"].includes(a)) { i++; continue; }
       if ((a === "-c" || a === "--config") && /^(model|model_reasoning_effort|service_tier)=/.test(rest[i + 1] ?? "")) { i++; continue; }
       if (CODEX_VALUE.has(a)) { out.push(a, rest[++i]); continue; }
@@ -349,7 +351,7 @@ function kept(kind, argv) {
 // The extra flags a task's agent was started with (#1222: herdr-task's flags.py keeps them one word each,
 // --advisor=opus, or a bare --verbose), for the line under the box: none of what Shepherdr sets itself, a flag's
 // separate value or a first message.
-const OWN_BARE = new Set(["--dangerously-skip-permissions", "--continue", "--fork-session", "--no-daemon", "--dangerously-bypass-approvals-and-sandbox", "--last"]);
+const OWN_BARE = new Set(["--dangerously-skip-permissions", "--continue", "--fork-session", "--no-daemon", "--dangerously-bypass-approvals-and-sandbox", "--approve-for-me", "--not-so-yolo", "--last"]);
 export function extraFlags(kind, argv) {
   argv = argv ?? [];
   const at = agentAt(argv);
@@ -422,6 +424,7 @@ export function argvFor(pick, old) {
   // always said, so Fast off wins over a service_tier in config.toml (default: the standard tier)
   a.push("-c", `service_tier="${codexTier(pick.fast)}"`);
   if (pick.perm === "full") a.push("--dangerously-bypass-approvals-and-sandbox");
+  else if (pick.perm === "approve") a.push("--approve-for-me");  // workspace-write, on-request, its own review answers
   else if (pick.perm === "read-only") a.push("-s", "read-only", "-a", "on-request");
   else if (pick.perm) a.push("-s", "workspace-write", "-a", "on-request");
   if (same && old.session) return { argv: ["codex", "resume", ...a, old.session], resume: true, base: ["codex", ...a] };
@@ -460,15 +463,15 @@ export function forkArgv(kind, argv, session) {
 // edit one worktree. The task's live agent (a terminal record from `all`, reviewers and helpers aside) when `t` is a
 // task's terminal, else null: the fork then asks first (FORK_LIVE).
 const AGENT_APPS = new Set(["claude-code", "claude", "codex"]);
-// fork: a Nix wrapper's name (".claude-wrapped") is its CLI's, as core/chat-reader.js progName (SHEP-90)
-const cliName = (name) => String(name ?? "").replace(/^\./, "").replace(/(-wrapped)+$/, "");
+// a foreground program's own name, Nix's ".claude-wrapped" as "claude" (#1410; core/send.js progName)
+const progName = (name) => String(name ?? "").split("/").pop().replace(/^\.(.+)-wrapped$/, "$1");
 export function liveTaskAgent(t, all) {
   const task = t?.labels?.["herdr.task"];
   if (!task) return null;
   return [...(all ?? [])].find((k) => k?.state === "live" && k.labels?.["herdr.task"] === task
     && !["reviewer", "helper"].includes(k.labels?.["herdr.role"])
     // an agent runs there (a record that doesn't say what runs counts: better to ask once too often)
-    && (AGENT_APPS.has(k.status?.app) || AGENT_APPS.has(cliName(k.foreground?.name)) || (!k.status?.app && !k.foreground))) ?? null;
+    && (AGENT_APPS.has(k.status?.app) || AGENT_APPS.has(progName(k.foreground?.name)) || (!k.status?.app && !k.foreground))) ?? null;
 }
 // The ask, in the window's confirm and the web's alike: keep the live agent (Cancel) or fork anyway.
 export const FORK_LIVE = {

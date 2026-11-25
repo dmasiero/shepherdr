@@ -13,12 +13,11 @@ import { ActBtn, ActError, Btn, Cnt, cx, Empty, Hd, I, IB, MenuGroup, Row, useCa
 import { waiting } from '@client/pending.ts'
 import { focusBox, focusChat, focusTask } from '@client/commands.ts'
 import { SpaceIcon } from '@client/space-icon.tsx'
-import type { Chat, MergeEvidence, Snapshot, Task } from '@shared/types.ts'
-import { askedWords, isEverything, machineLabel, nowGroups, onBranch, placeDown, reposOf, spaceLabel, spaceOnFolder, spacesOf, etaOf, headStatus, leftWords, statusWord, taskChat, taskLine, taskWhen, tasksIn, tstate, workKey, workName, workWords, type Repo } from '@shared/view.ts'
+import type { MergeEvidence, Message, Snapshot, Task } from '@shared/types.ts'
+import { askedWords, isEverything, machineLabel, nowGroups, onBranch, placeDown, reposOf, spaceLabel, spaceOnFolder, spacesOf, etaOf, headLine, leftWords, statusWord, taskChat, taskLine, taskWhen, tasksIn, tstate, workKey, workName, workWords, type Repo } from '@shared/view.ts'
 import { DoneRow } from '@plugins/chat/cards.tsx'
 import { replyToTask, SlideHint, useSlide } from '@plugins/chat/slide.tsx'
 import { StatusIcon } from './icon.tsx'
-import { reviewAt } from './card-place.ts' // fork: Ready card below new messages
 import { doneRows } from './done-rows.ts' // fork: Ready card after chat replies
 import { chipsOf, choices, clean, filterCount, filterOn, filterTasks, hereOn, NO_FILTER, toggle, type GroupKey, type TaskFilter } from '@shared/task-filter.ts'
 
@@ -356,21 +355,20 @@ export function StoppedCard({ t }: { t: Task }) {
 
 /** In a chat: the cards of the tasks that need the person there (a review, a stopped agent), each where it came up.
  *  The app puts them there from each task's status, not an agent. In a task: its own review or stopped card. */
-function taskCards(snap: Snapshot, thread: Thread, chat?: Chat): { key: string; at?: number; past?: boolean; node: ReactNode }[] {
+function taskCards(snap: Snapshot, thread: Thread): { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; node: ReactNode }[] {
   // a task handed in: its card while it waits, and where the card was, one quiet line once it is done
   const reviewing = (t: Task) => tstate(t) === 'ready' || t.status === 'merging' || !!t.accepting || (tstate(t) === 'done' && !t.quiet && !!t.needsAtWas)
   const halted = (t: Task) => tstate(t) === 'ask' && !!t.stopped && t.stopped.by !== 'you'
   if (thread.task) {
     const t = thread.task
     // each where it came up among the messages, never held at the end (SHEP-419)
-    // fork: Ready card below new messages: while it waits, after the agent's newest word (card-place.ts)
-    return [...(reviewing(t) ? [{ key: `review:${t.id}`, at: reviewAt(t, t.needsAt ?? t.needsAtWas, chat?.messages, true, tstate(t) === 'done'), past: tstate(t) === 'done', node: <ReviewCard t={t} ctx="thread" /> }] : []), ...(halted(t) ? [{ key: `stopped:${t.id}`, at: t.needsAt, node: <StoppedCard t={t} /> }] : [])]
+    // a Ready card still waiting goes below what was said after it (#1475)
+    return [...(reviewing(t) ? [{ key: `review:${t.id}`, at: t.needsAt ?? t.needsAtWas, past: tstate(t) === 'done', after: () => true, node: <ReviewCard t={t} ctx="thread" /> }] : []), ...(halted(t) ? [{ key: `stopped:${t.id}`, at: t.needsAt, node: <StoppedCard t={t} /> }] : [])]
   }
   // cards stay in the chat that asked (SHEP-325): a space's Tasks also holds what works in its folder, its chat does not
   const mine = tasksIn(snap, thread.place).filter((t) => isEverything(snap, thread.place) || t.place === thread.place)
-  // fork: Ready card below new messages: a waiting one follows only its own task's later rows, never the Assistant's
   return [
-    ...mine.filter(reviewing).map((t, i) => ({ key: `review:${t.id}`, at: reviewAt(t, snap.demo ? new Date().setHours(7, 30, 0, i + 1) : t.needsAt ?? t.needsAtWas, chat?.messages, false, tstate(t) === 'done'), past: tstate(t) === 'done', node: <ReviewCard t={t} ctx="chat" /> })),
+    ...mine.filter(reviewing).map((t, i) => ({ key: `review:${t.id}`, at: snap.demo ? new Date().setHours(7, 30, 0, i + 1) : t.needsAt ?? t.needsAtWas, past: tstate(t) === 'done', after: (m: Message) => m.news?.task === t.id, node: <ReviewCard t={t} ctx="chat" /> })),
     ...mine.filter(halted).map((t) => ({
       key: `stopped:${t.id}`,
       at: t.needsAt,
@@ -395,37 +393,29 @@ function TaskHead({ task: t, where, scrolled }: { task: Task; where: 'chat' | 'p
   const snap = useSnap()
   const thread: Thread = { chat: taskChat(t), place: t.place, task: t, where }
   const big = where === 'chat'
+  // #1473: how it is doing, live, as its row in the list: its ring and its words (maximized, then its space)
+  const live = (snap && snap.tasks.find((x) => x.id === t.id)) || t
+  const line = headLine(live)
   return (
     <Hd
       back={big ? undefined : { label: 'Back to tasks', run: () => setUI({ task: null }) }}
       lead={big ? <>{hidden && !ph && <IB icon="panel" label="Show the list" onClick={showList} />}<IB icon="shrink" label="Minimize" onClick={minimize} /></> : undefined}
       title={t.name}
-      sub={<HeadStatus task={t} space={big && snap ? spaceLabel(snap, t.place) : ''} />} // fork: Task status in its header
+      sub={
+        <span className="hline">
+          <StatusIcon t={live} time="none" />
+          <span>{big && snap ? `${line} · in ${spaceLabel(snap, t.place)}` : line}</span>
+        </span>
+      }
       scrolled={scrolled}
     >
       {registry.taskHeader.map((h, i) => <h.View key={i} thread={thread} />)}
       <IB icon="dots" label="More" aria-haspopup="menu" onClick={(e) => taskMenu(e.currentTarget, t, 'thread')} />
-      {/* maximized, the space header's own buttons (Tasks, Artifacts) open the pane beside it */}
+      {/* maximized, the space header's own buttons (Artifacts, Tasks) open the pane beside it */}
       {big && !ph && registry.header.map((h, i) => <h.View key={`h${i}`} thread={thread} />)}
       {where === 'pane' && !ph && <IB icon="expand" label="Maximize" onClick={() => maximize(t.id)} />}
       {where === 'pane' && !ph && <IB icon="x" label="Close" onClick={() => togglePane(null)} />}
     </Hd>
-  )
-}
-
-/** the open task's status under its title (upstream #1473): the row's state, line, % done and time left, live with the
- *  snapshot, one line cut with an ellipsis (.t2), after the row's ring (StatusIcon, its time left already in words). Maximized, its space follows ("· in Shop"). */
-// fork: Task status in its header
-export function HeadStatus({ task: t, space }: { task: Task; space?: string }) {
-  const h = headStatus(t)
-  const strong = h.tone === 'ask' || h.tone === 'ready' || h.tone === 'red'
-  const rest = [...h.rest, ...(space ? [`in ${space}`] : [])]
-  return (
-    <span className="hst">
-      <StatusIcon t={t} time="none" />
-      {strong ? <b className={h.tone === 'ask' ? 'c-red' : `c-${h.tone}`}>{h.word}</b> : h.word}
-      {rest.map((x, i) => <span key={i}> · {x}</span>)}
-    </span>
   )
 }
 
@@ -743,7 +733,7 @@ function TasksButton() {
 export default definePlugin({
   name: 'tasks',
   setup(reg) {
-    reg.header.push({ order: 50, View: TasksButton }) // fork: Tasks button on the right (after Artifacts' 40, where the pane's Close lands)
+    reg.header.push({ order: 50, View: TasksButton })
     reg.bar.push({ order: 10, pane: 'tasks', label: 'Tasks', icon: 'tasks', count: (snap, place) => filterCount(snap, getState().ui.tf, place) })
     reg.panes.push({ id: 'tasks', View: TasksPane })
     reg.views.taskHead = TaskHead

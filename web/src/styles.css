@@ -26,7 +26,7 @@
 
 /* an agent's own logo */
 .logo.img{box-shadow:none}.logo.img img{display:block;width:16px;height:16px;object-fit:contain}
-:root:is([data-theme="dark"],[data-theme="night"]) .logo.img.pi img{filter:invert(1)}/* fork: Night is dark */
+:root:is([data-theme="dark"],[data-theme="night"]) .logo.img.pi img{filter:invert(1)}
 @media(prefers-color-scheme:dark){:root:not([data-theme]) .logo.img.pi img{filter:invert(1)}}
 
 /* a bubble is a button where it has a menu; its words can still be selected when asked */
@@ -50,9 +50,7 @@ div.b[data-menu]{cursor:pointer}
 .md .code.block{align-items:flex-start;padding:8px 4px 8px 12px}
 .md .code.block .ib[data-copied]{color:var(--green)}
 .md table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;font-size:14px;line-height:20px}
-/* fork: Wide chat tables on phone. A cell breaks only between words (the bubble's overflow-wrap:anywhere let a wide table squeeze each column to a letter); a
-   table wider than the bubble scrolls sideways in its own box */
-.md th,.md td{padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:normal}
+.md th,.md td{padding:4px 12px 4px 0;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:break-word}
 .md td.long,.md th.long{min-width:10em}
 .md th{font-weight:600}
 .md img{max-width:100%;border-radius:8px}
@@ -69,13 +67,15 @@ div.b[data-menu]{cursor:pointer}
 
 /* a real terminal (xterm) in the dark drawer */
 .termbox{position:relative;height:var(--term-h,170px);min-height:0;padding:8px 0 8px 16px;background:var(--term);overflow:auto;scrollbar-color:rgb(255 255 255/.25) transparent;scrollbar-width:thin}
-.termbox.fill{flex:1;height:auto;min-height:240px}
+.termbox.fill{flex:1;height:auto;min-height:64px}
 .termbox .xterm{height:100%}
 .termbox .xterm-viewport{background:transparent!important}
 /* an agent's terminal fills the chat's place exactly: it scrolls its own history, the chat around it doesn't */
 .scroll:has(>.msgs>.tw){overflow:hidden}
 .msgs:has(>.tw){height:100%;grid-template-rows:auto minmax(0,1fr) auto}
 .msgs>.tw{justify-self:stretch;display:flex;flex-direction:column;min-height:0;border-radius:8px;overflow:hidden;background:var(--term)}
+/* Night: the terminal is a step above the black page, too slight to see on its own: a hairline marks its edge */
+:root[data-theme="night"] .msgs>.tw{box-shadow:0 0 0 1px var(--line2)}
 .msgs>.keys{justify-self:stretch;border-radius:8px;margin-top:4px}
 .msgs>.tw .termbox{flex:1;height:auto}
 .pane .scroll>.tdr .termbox{flex:1;height:auto}
@@ -91,6 +91,8 @@ div.b[data-menu]{cursor:pointer}
    video, the picture zoomed by hand (its transform), a slim bar on top that hides, the key row under it */
 .scrfull{position:fixed;left:0;right:0;top:0;height:var(--app-h,100dvh);z-index:30;display:flex;flex-direction:column;background:#000;color:var(--fg);--fg:#fafafa;--canvas:#0a0a0a;--sub:#d4d4d4;--muted:#a3a3a3;--control:rgb(255 255 255/.12);--control2:rgb(255 255 255/.2);--well:rgb(255 255 255/.08);--line2:rgb(255 255 255/.16);--term:#0a0a0a}
 .fbox{position:relative;flex:1;min-height:0;overflow:hidden}
+.sbox{position:relative}
+.pane>.foot>.fkeys{margin:0 calc(-1 * var(--gut)) 8px;padding-bottom:8px}
 .scr.full{position:absolute;inset:0;border-radius:0;background:none;box-shadow:none;transform-origin:0 0;overflow:visible}
 .scr.full canvas{width:auto;height:auto}
 .scr.full.drive{box-shadow:none}

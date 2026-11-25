@@ -198,7 +198,7 @@ export function Empty({ title, children }: { title?: string; children: ReactNode
   )
 }
 
-/** a header draws its bottom line only once what is under it has scrolled */
+/** a header draws its bottom line only once what is under it has scrolled; the element knows its scroll bar's width (--sbw) */
 export function useScrolled(ref: RefObject<HTMLElement | null>): boolean {
   const [sc, setSc] = useState(false)
   useEffect(() => {
@@ -207,39 +207,17 @@ export function useScrolled(ref: RefObject<HTMLElement | null>): boolean {
     const on = () => setSc(el.scrollTop > 4)
     on()
     el.addEventListener('scroll', on, { passive: true })
-    return () => el.removeEventListener('scroll', on)
+    // the scroll bar's width (0 where it overlays): the fade above the message box leaves its strip out (#1499)
+    const bar = () => el.style.setProperty('--sbw', `${el.offsetWidth - el.clientWidth}px`)
+    bar()
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(bar)
+    ro?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', on)
+      ro?.disconnect()
+    }
   }, [ref])
   return sc
-}
-
-/** fork: Fade off the scrollbar. The width of what scrolls' scrollbar, as `--sbw` on its column, so the fade above
- *  the foot (a mask on what scrolls, ds.css) leaves the scrollbar out instead of dimming its end. Kept as the scrollbar comes and goes
- *  (the content box changes) and as the window or zoom changes; 0 where scrollbars float over the page. */
-export function watchScrollbar(el: HTMLElement): () => void {
-  const col = el.parentElement
-  if (!col) return () => {}
-  const set = () => col.style.setProperty('--sbw', `${Math.max(0, Math.ceil(el.getBoundingClientRect().width - el.clientWidth))}px`)
-  set()
-  const ro = new ResizeObserver(set)
-  ro.observe(el)
-  return () => {
-    ro.disconnect()
-    col.style.removeProperty('--sbw')
-  }
-}
-
-/** fork: Fade off the scrollbar: watchScrollbar on what the ref holds, again when the element changes */
-export function useScrollbarWidth(ref: RefObject<HTMLElement | null>) {
-  const seen = useRef<HTMLElement | null>(null)
-  const stop = useRef<() => void>(undefined)
-  useEffect(() => {
-    const el = ref.current
-    if (el === seen.current) return
-    stop.current?.()
-    seen.current = el
-    stop.current = el ? watchScrollbar(el) : undefined
-  })
-  useEffect(() => () => stop.current?.(), [])
 }
 
 /** the one header build: optional back, title (one line, cut with …) with an optional second line, actions right */

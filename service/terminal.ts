@@ -6,7 +6,7 @@
 // page-shaped while someone looks at it here. The page is told the terminal's size before a first paint at that size,
 // and again whenever something else moves it. Typed text alone needs a full attach, at the size the terminal already
 // has, so it moves nothing; without a resize it ends 2 s after the last key. Input lost to a disconnect is never
-// replayed.
+// replayed. When your own shell ends (Ctrl+D, exit), the page is told so ("ended") and closes it.
 import type { Hub } from "./hub.ts";
 
 type Stream = { input(b: Uint8Array): void; resize(cols: number, rows: number): void; close(): void };
@@ -36,13 +36,6 @@ export function keyBytes(keys: string[]): string | null {
 }
 type Socket = { send(data: Uint8Array | string): void; close(): void; buffered(): number };
 
-// fork: Ctrl+D closes the terminal. herdr-core closes a stream with why: a terminal that ended says when
-// (`{ reason: "exited" | "killed", finished_ms, ... }`), a dropped link only `{ reason: "disconnected" }`.
-/** the stream closed because its terminal ended (its program exited or was killed), not because the link dropped */
-export function endedBy(reason: unknown): boolean {
-  return !!reason && typeof reason === "object" && typeof (reason as { finished_ms?: unknown }).finished_ms === "number";
-}
-
 /** own: your own shell (service/shells.ts). Either takes the page's size while the page watches; an agent's goes back
  *  to its own size when the page leaves (herdr-core does that when the full attach closes). */
 export function terminalBridge(hub: Hub, address: string, ws: Socket, own = false) {
@@ -53,29 +46,22 @@ export function terminalBridge(hub: Hub, address: string, ws: Socket, own = fals
   const first = hub.terminals.get(address);
   const live = () => hub.terminals.get(address);
   const valid = () => !ended && !!first && live()?.state === "live" && live()?.pid === first.pid;
-  // fork: your own shell that ended (Ctrl+D, exit) tells the page so, which closes it and starts no fresh one; a
-  // dropped link or a stopped service says nothing, and the page reconnects to the same shell
-  const exited = (reason?: unknown) => {
-    if (!own || !hub.up || (reason as { reason?: unknown } | undefined)?.reason === "disconnected") return false;
-    if (endedBy(reason)) return true;
-    const now = live();
-    return !!now && !!first && now.state === "finished" && now.pid === first.pid;
-  };
-  const fail = (reason?: unknown) => {
-    if (ended) return;
-    const out = exited(reason);
-    finish();
-    if (out) ws.send(JSON.stringify({ type: "exited" }));
-    ws.close();
-  };
+  const fail = () => { if (!ended) { finish(); ws.close(); } };
+  // your own shell ended by itself (Ctrl+D, exit): the page closes the terminal instead of reconnecting, which would
+  // start a fresh shell. A dropped link or a lost process still just closes, and the page reconnects.
+  const over = () => { const now = live(); return !now || now.state === "finished"; };
+  const done = () => { if (!ended) { ws.send(JSON.stringify({ type: "ended" })); fail(); } };
+  const gone = () => (own && over() ? done() : fail());
+  let closing: ReturnType<typeof setTimeout> | undefined;
   const moved = () => { const now = live(); return !!now && !!shown && (now.cols !== shown.cols || now.rows !== shown.rows); };
   const unwatch = hub.on((e) => {
+    if (own && !ended && "terminal" in e && e.terminal === address && over()) return done();
     if (ended || !("terminal" in e) || e.terminal !== address || repainting || !moved()) return;
     repainting = true;
     chain = chain.then(() => { repainting = false; return moved() ? watch() : undefined; }).catch(fail);
   });
   const stopTyping = () => { clearTimeout(idle); typist?.stream.close(); typist = undefined; };
-  function finish() { ended = true; unwatch(); stopTyping(); stream?.close(); }
+  function finish() { ended = true; clearTimeout(closing); unwatch(); stopTyping(); stream?.close(); }
 
   async function watch() {
     const { cols, rows } = live()!, mine = ++watches;
@@ -84,8 +70,13 @@ export function terminalBridge(hub: Hub, address: string, ws: Socket, own = fals
     ws.send(JSON.stringify({ type: "size", cols, rows }));
     const core = await hub.core();
     const next = await core.attach(address, {
-      data(bytes) { if (mine !== watches) return; if (!valid() || ws.buffered() > 1024 * 1024) return fail(); ws.send(bytes); },
-      close(reason) { if (mine === watches) fail(reason); }, // fork: why it closed (endedBy)
+      data(bytes) { if (mine !== watches) return; if (!valid()) return gone(); if (ws.buffered() > 1024 * 1024) return fail(); ws.send(bytes); },
+      close() {
+        if (mine !== watches) return;
+        // the stream can end just before herdr-core says the shell finished: give that word a moment to arrive
+        if (own) { if (over()) done(); else closing ??= setTimeout(fail, 1000); }
+        else fail();
+      },
     }, cols, rows, { observe: true });
     if (ended || mine !== watches) { next.close(); return; }
     stream = next;
@@ -110,7 +101,7 @@ export function terminalBridge(hub: Hub, address: string, ws: Socket, own = fals
       if (raw.length > 32_768 || pending >= 64) return fail();
       pending++;
       chain = chain.then(async () => {
-        if (!valid()) return fail();
+        if (!valid()) return gone();
         const m = JSON.parse(raw);
         if (!Number.isSafeInteger(m.id) || m.id <= last) return fail();
         last = m.id;

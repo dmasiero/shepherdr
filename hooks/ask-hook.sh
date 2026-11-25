@@ -55,6 +55,11 @@ if [ -z "${HERDR_ASK_CHAINED:-}" ] && [ "$watch" = 1 ] \
          or any($a[]; tostring | test("(^|[ /])(claude --settings|codex -c) \u0027(hooks\\.PermissionRequest=)?[^\u0027]* _allow --command ")))' >/dev/null 2>&1; then
   exit 0
 fi
+# Codex's Approve for me (#1464): Codex runs this before its own automatic review, which answers the request (a
+# risky one is refused and the agent told to ask the person), so a card here would only wait on the person.
+if [ "$watch" = 1 ] && hc get "$t" --json 2>/dev/null | jq -e '(.argv // []) | index("--approve-for-me") != null or index("--not-so-yolo") != null' >/dev/null 2>&1; then
+  exit 0
+fi
 
 id="$t.$(date +%s).$$"
 req="$d/req/$id.json"

@@ -16,7 +16,7 @@ import sys
 import time
 
 from .base import ASK_HOME, ENTRY, Fail, git, hc_json, HOME, now, run, SHARE, WORKTREES
-from .settings import agent_key, ASSISTANT_TEMPLATES, cli_env, CLAUDE_PROFILE, REVIEW_TOOLS, codex_too_old, codex_update_words, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
+from .settings import agent_key, ASSISTANT_TEMPLATES, cli_env, CLAUDE_PROFILE, REVIEW_TOOLS, codex_too_old, codex_update_words, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for, TEMPLATES
 from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, ROW_MAX, SUMMARY_MAX
 from .github import finish, remote_of
@@ -95,11 +95,13 @@ def own_rules(path):
     return rules
 
 
-def ask_command(path, sandboxed=False):
+def ask_command(path, sandboxed=False, auto_review=False):
     """The PermissionRequest hook every task worker gets at launch (`herdr-task _allow`): its own
     commands allowed, anything else (a permission, its question tool, a plan) on the chat's card.
-    sandboxed (Codex's): its proof and commits also run escalated, so they're its own too (#866)."""
-    return f"{shlex.quote(sys.executable)} {shlex.quote(ENTRY)} _allow --command {shlex.quote(path)}" + (" --sandboxed" if sandboxed else "")
+    sandboxed (Codex's): its proof and commits also run escalated, so they're its own too (#866).
+    auto_review (Codex's Approve for me, #1464): no card, Codex's own review answers the rest."""
+    return (f"{shlex.quote(sys.executable)} {shlex.quote(ENTRY)} _allow --command {shlex.quote(path)}"
+            + (" --sandboxed" if sandboxed else "") + (" --auto-review" if auto_review else ""))
 
 
 def artifact_path():
@@ -153,7 +155,9 @@ def own_argv(argv, folder=None):
             return out
         return out[:1] + ["--settings", json.dumps(merged)] + out[1:]
     if k == "codex":
-        hook = ask_command(path, sandboxed=True)
+        # #1464: Approve for me. Codex runs this hook before its own review: a card here would wait on the person
+        # for what the review answers by itself, so the hook then only allows the worker's own commands.
+        hook = ask_command(path, sandboxed=True, auto_review=any(a in ("--approve-for-me", "--not-so-yolo") for a in out))
         # Codex runs a new hook only once trusted. This one hook's trust comes with it, for this
         # launch only: Codex's own key and hash for a -c hook (codex-rs/hooks discovery.rs
         # hook_hash, config fingerprint.rs version_for_toml), so no other hook is trusted by it.
@@ -291,7 +295,9 @@ REVIEWERS = {"codex": (["codex", "--no-daemon", "--sandbox", "read-only", "--ask
                        {"--disable": re.compile(r"hooks"), "-m": re.compile(r"[\w.:-]+"),
                         "-c": re.compile(r'projects=\{.*\}|model_reasoning_effort="?\w+"?', re.S)}),
              "claude": (["claude", "--permission-mode", "dontAsk", "--tools=" + REVIEW_TOOLS, "--strict-mcp-config"],
-                        {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+")})}
+                        {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+"),
+                         # #1458: its templates folder, one word (a brief from before it has none)
+                         "--add-dir=": re.compile(re.escape(TEMPLATES))})}
 HELPER = re.compile(r"[\w.-]+-(?:review|helper)(?:-[\w.-]+)?")
 
 
@@ -323,7 +329,16 @@ def helper_hc(words):
             continue
         rest = cmd[len(base):]
         k = 0
-        while k < len(rest) - 1 and rest[k] in flags:
+        while k < len(rest) - 1:
+            flag, _, value = rest[k].partition("=")
+            if flag + "=" in flags and _:
+                # --flag=value, one word
+                if not flags[flag + "="].fullmatch(value):
+                    return False
+                k += 1
+                continue
+            if rest[k] not in flags or rest[k].endswith("="):
+                break
             if not flags[rest[k]].fullmatch(rest[k + 1]):
                 return False
             k += 2
@@ -384,7 +399,8 @@ def ask_card(raw):
 def cmd_allow(args):
     """The PermissionRequest hook of a task worker (Claude Code and Codex, own_argv): allows this
     launch's own herdr-task commands; anything else goes to the chat's card (ask_card), and without
-    one's answer the agent asks the person in its terminal as usual."""
+    one's answer the agent asks the person in its terminal as usual. --auto-review (Codex's Approve
+    for me): no card, Codex's own review answers."""
     raw = sys.stdin.buffer.read(1 << 20)
     try:
         data = json.loads(raw or b"{}")
@@ -399,6 +415,10 @@ def cmd_allow(args):
         cmd = cmd[2] if len(cmd) == 3 and cmd[1] in ("-c", "-lc") else shlex.join(cmd)
     if own_command(args.command, cmd, getattr(args, "sandboxed", False)):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}))
+        return
+    if getattr(args, "auto_review", False):
+        # #1464: Codex's Approve for me. No decision: its automatic review answers (a safe step runs, a risky one is
+        # refused and the worker is told to ask the person), never a card waiting on the person first.
         return
     out = ask_card(raw)
     if out:
@@ -841,10 +861,13 @@ def branch_taken(s, t, name):
 def set_branch(s, t, name):
     """--branch: the task's exact branch name (#570), e.g. a ticket's ABC-2137, instead of its
     folder's pattern. Checked as git does, and refused when that branch exists already (here, on
-    the remote, or another task's): never a silent suffix. "" goes back to the pattern."""
+    the remote, or another task's): never a silent suffix. "" goes back to the pattern. #1443: once the task has
+    started, an existing branch its work is on is adopted (adopt_branch)."""
     if name is None:
         return
     name = name.strip()
+    if name and t.get("state") not in ("todo", "scheduled", "queued", None):
+        return adopt_branch(s, t, name)
     if t.get("worktree"):
         if name == t.get("branch"):
             return
@@ -977,20 +1000,88 @@ def fence_node(root):
         pass
 
 
+def worktree_list(main):
+    """Every worktree git has registered for the repo at main, the main checkout first: [{path, head, branch}]
+    (branch None when detached); prunable ones (their folder gone) left out."""
+    ok, out, _ = git(main, "worktree", "list", "--porcelain")
+    trees = []
+    for block in out.split("\n\n") if ok else []:
+        rows = dict((ln.split(" ", 1) + [""])[:2] for ln in block.splitlines() if ln.strip())
+        if rows.get("worktree") and "prunable" not in rows and "bare" not in rows:
+            ref = rows.get("branch") or ""
+            trees.append({"path": rows["worktree"], "head": rows.get("HEAD"),
+                          "branch": ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else None})
+    return trees
+
+
 def registered_worktree(main, path):
     """The worktree git has registered at path for the repo at main ({path, head, branch}: branch
     None when detached), when its folder is there; else None."""
     if not os.path.isdir(path):
         return None
-    ok, out, _ = git(main, "worktree", "list", "--porcelain")
     want = os.path.realpath(path)
-    for block in out.split("\n\n") if ok else []:
-        rows = dict((ln.split(" ", 1) + [""])[:2] for ln in block.splitlines() if ln.strip())
-        if rows.get("worktree") and os.path.realpath(rows["worktree"]) == want and "prunable" not in rows:
-            ref = rows.get("branch") or ""
-            return {"path": path, "head": rows.get("HEAD"),
-                    "branch": ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else None}
+    for w in worktree_list(main):
+        if os.path.realpath(w["path"]) == want:
+            return {**w, "path": path}
     return None
+
+
+def checked_out(main, branch):
+    """#1443: the worktree (main checkout included) where branch is checked out, else None."""
+    return next((w for w in worktree_list(main) if branch and w["branch"] == branch), None)
+
+
+def default_branch(main):
+    """The repo's main line: its remote's HEAD (origin/HEAD), else a local main or master; None when unknown."""
+    remote = remote_of(main)
+    ok, ref, _ = git(main, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD")
+    if ok and ref.startswith(remote + "/"):
+        return ref[len(remote) + 1:]
+    for b in ("main", "master"):
+        if git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{b}")[0]:
+            return b
+    return None
+
+
+def adopt_branch(s, t, name):
+    """#1443: a started task pointed at an existing branch, the one its work is really on (a worker that made its own
+    worktree and branch, its task added to work in a shared folder on another branch). It becomes a worktree task on
+    that branch: in the worktree the branch is checked out in, else a new one; reviewed and ready then check that
+    branch, and ready pushes it and opens its pull request. Its earlier worktree, if any, is left as it is."""
+    if t["state"] in ("ready", "done"):
+        raise Fail(f"{s.name(t)} is {'in Ready' if t['state'] == 'ready' else 'done'}: its branch can change only while "
+                   "it is worked on.")
+    if s.loc["kind"] != "repo":
+        raise Fail("Worktrees need a git repo.")
+    main = s.loc["folder"]
+    if t.get("mode") == "worktree" and name == t.get("branch") and t.get("worktree") and os.path.isdir(t["worktree"]):
+        return
+    problem = branch_problem(main, name)
+    if problem:
+        raise Fail(problem)
+    for o in s.data.get("tasks") or []:
+        if o is not t and o.get("branch") == name and o.get("state") != "done":
+            raise Fail(f"Branch {name}: the task {s.name(o)} already uses it.")
+    if not git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{name}")[0]:
+        try:
+            base_ref(main, name)  # only on the remote: fetched, with a local branch made to track it
+        except Fail:
+            raise Fail(f"{s.name(t)} has started, so --branch takes the existing branch its work is on, and there is no "
+                       f"branch {name} here or on {remote_of(main)}. Check its name with git branch -a.")
+    tree = checked_out(main, name)
+    if tree and os.path.realpath(tree["path"]) == os.path.realpath(main):
+        raise Fail(f"{name} is checked out in {main} itself, the folder the task list belongs to: a task can't own that "
+                   f"checkout. Switch the folder to another branch (or make a worktree for {name}), then try again.")
+    base = t.get("base") or default_branch(main) or current_base(main)
+    t.update(mode="worktree", branch=name, base=base)
+    t.pop("folder_start", None)
+    if tree:
+        t["worktree"] = tree["path"]
+    else:
+        t.pop("worktree", None)
+        folder_for(s, t)  # its branch exists: a worktree on it
+    t["start"] = git(main, "merge-base", base, name)[1] or t.get("start") or git(main, "rev-parse", name)[1]
+    s.dirty = True
 
 
 # ---- Before the agent starts (#1197, SHEP-272) -------------------------------------------------

@@ -8,7 +8,6 @@
 // Shared core: the source is core/send.js; bin/sync-shared copies it into the mods in lib/COPIES.
 
 import { excerpt } from "./chat-log.js";
-import { progName } from "./chat-reader.js"; // fork: SHEP-90
 
 // SHEP-324: what is in front of an agent's terminal, checked right before anything is typed into it. herdr-core keeps a
 // terminal whose program it lost (a core restart, a crash) as a plain shell, and one whose agent exited stays live too:
@@ -16,6 +15,10 @@ import { progName } from "./chat-reader.js"; // fork: SHEP-90
 // agents.front().
 export const SHELL = /^(ba|z|fi|da|k|tc|c)?sh$|^nu$|^pwsh$|^powershell$|^xonsh$|^elvish$/;
 const RUNTIMES = new Set(["node", "bun", "deno"]); // a CLI run as a script shows its runtime's name
+
+/** A foreground program's own name: its path's last part, and Nix's makeWrapper's ".claude-wrapped" as "claude"
+ *  (#1410). The same as herdr-task's agents.prog_name() and core/agents.js liveTaskAgent's. */
+export const progName = (name) => String(name ?? "").split("/").pop().replace(/^\.(.+)-wrapped$/, "$1");
 
 /** A shell's argv that runs a command (-c, -ic, -lic, --command), not a plain shell (herdr-task's runs_command()). */
 export function runsCommand(argv) {
@@ -33,12 +36,11 @@ export function runsCommand(argv) {
 export function inFront(k) {
   if (!k || k.state !== "live") return "gone";
   const fg = k.foreground;
-  const name = String(fg?.name ?? "").split("/").pop();
+  const name = progName(fg?.name);
   if (!name) return null;
   if (SHELL.test(name)) return runsCommand(fg?.argv) ? "agent" : "shell";
   const kind = k.labels?.["herdr.agent"];
-  // fork: Nix runs Claude Code as ".claude-wrapped" (progName): that is the agent, not another program (SHEP-90)
-  if ((kind === "claude" || kind === "codex") && !progName(name).startsWith(kind) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
+  if ((kind === "claude" || kind === "codex") && !name.startsWith(kind) && !RUNTIMES.has(name) && !/^\d/.test(name)) return "other";
   return "agent";
 }
 

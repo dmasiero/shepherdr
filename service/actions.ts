@@ -12,8 +12,11 @@ import * as SCa from "../core/screens.js"; // fork: SHEP-28
 const { starting } = SCa as any;
 import { WORDS } from "../core/chat-view.js";
 import { settle } from "../core/pending.js";
+import * as SCREENS_ from "../core/screens.js";
+const SCREENS = SCREENS_ as any;
 import * as AGa from "../core/agents.js";
 import { answerCodex } from "./codex-ask.ts";
+import { steps as answerSteps } from "../core/asks.js";
 const { CHOICE_KEY, choiceOf, withChoice, speedOf } = AGa as any;
 import * as SP from "../core/spaces.js";
 import { iconValue } from "../core/space-icon.js";
@@ -342,17 +345,6 @@ async function sendToEnded(hub: Hub, b: any, compat: Compat, old: string): Promi
   return sendNow(hub, { ...b, addr: got.addr, quote, tags, quoteTask, hold: true }, compat);
 }
 
-// fork: a step's answer of a several-questions card, as the card sends it (SHEP-100): words, or its pick ({ choice },
-// { choices }, { other }), which core/asks.js partAnswer names. String() of a pick was "[object Object]".
-export function cardAnswer(x: unknown): string | { choice?: number; choices?: number[]; other?: string } {
-  if (typeof x === "string") return x.slice(0, 4000);
-  if (!x || typeof x !== "object") return "";
-  const v = x as any;
-  if (typeof v.other === "string") return { other: v.other.slice(0, 4000) };
-  if (Array.isArray(v.choices)) return { choices: v.choices.filter((n: unknown) => typeof n === "number").slice(0, 50) };
-  return typeof v.choice === "number" ? { choice: v.choice } : "";
-}
-
 export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
   // 2.1's screen names a chat by its key (compat.ts): its terminal here.
   const chat = (key: unknown) => {
@@ -364,8 +356,16 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     // a CLI's start screen (service/watch.ts): a tap presses that choice, only on the screen the card was drawn from;
     // "Answer in terminal" just shows the terminal
     if (b.terminal === true) return { ok: true };
-    const why = await (compat as any).watch?.press(str(b.question, 300), typeof b.choice === "number" ? b.choice : -1);
-    return why ? { ok: false, error: why } : { ok: true };
+    const id = str(b.question, 300), watch = (compat as any).watch;
+    const card = watch?.card?.(id), choice = typeof b.choice === "number" ? b.choice : -1;
+    const why = await watch?.press(id, choice);
+    if (why) return { ok: false, error: why };
+    // #1441: No on a task's worker's folder-trust screen (its CLI exits): the task stops, saying why, instead of
+    // hanging as an agent that vanished. Its next message or Resume starts it again (and asks again).
+    const w = card && SCREENS.trustOf(card) && choice === 1 ? compat.trustWho?.(card.addr) : null;
+    const t = w?.worker && w.task ? compat.taskOf(w.task) : null;
+    if (t) await task(["stop", t.ref, "--untrusted"], t.folder, t.machine).catch(() => null);
+    return { ok: true };
   }
   if (b?.type === "answer" && typeof b.question === "string" && b.question.startsWith("cq:")) {
     // Codex's own questions (compat.ts codexQuestion): answered on its screen, as a person would
@@ -375,7 +375,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     // SHEP-324: answered by typing on its screen: only while Codex itself is in front
     const f = await hub.front?.(a);
     if (f && f !== "agent") throw new Error(NOT_TYPED[f]);
-    const why = await answerCodex(hc, a, item.questions, { ...b, answers: Array.isArray(b.answers) ? b.answers.slice(0, 20).map(cardAnswer) : undefined }); // fork: cardAnswer (SHEP-100)
+    const why = await answerCodex(hc, a, item.questions, b);
     if (why) throw new Error(why);
     return { ok: true };
   }
@@ -385,7 +385,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     await (compat.asks as any).answer(str(b.question, 200), { choice: typeof b.choice === "number" ? b.choice : undefined,
       choices: Array.isArray(b.choices) ? b.choices.filter((n: unknown) => typeof n === "number") : undefined,
       note: typeof b.note === "string" ? b.note.slice(0, 4000) : undefined, other: typeof b.other === "string" ? b.other.slice(0, 4000) : undefined,
-      answers: Array.isArray(b.answers) ? b.answers.slice(0, 20).map(cardAnswer) : undefined, // fork: cardAnswer (SHEP-100)
+      answers: Array.isArray(b.answers) ? answerSteps(b.answers) : undefined,
       terminal: b.terminal === true, talk: b.talk === true, dismiss: b.dismiss === true });
     return { ok: true };
   }

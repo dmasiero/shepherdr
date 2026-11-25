@@ -16,7 +16,6 @@
       html{color-scheme:light;background:#ffffff}
       @media (prefers-color-scheme: dark){html:not([data-theme="light"]){color-scheme:dark;background:#121212}}
       html[data-theme="dark"]{color-scheme:dark;background:#121212}
-      /* fork: Night, true black (FORK.md) */
       html[data-theme="night"]{color-scheme:dark;background:#000000}
     </style>
     <script>
@@ -40,14 +39,12 @@
         var t = 'System'
         try { t = (JSON.parse(localStorage.getItem('shepherdr.prefs') || '{}') || {}).theme || 'System' } catch (e) {}
         if (t !== 'System') document.documentElement.dataset.theme = t.toLowerCase()
-        /* fork: Night is dark, its bars and manifest black */
         var night = t === 'Night'
-        var dark = t === 'Dark' || night || (t === 'System' && matchMedia('(prefers-color-scheme: dark)').matches)
+        var dark = night || t === 'Dark' || (t === 'System' && matchMedia('(prefers-color-scheme: dark)').matches)
         var bars = document.querySelectorAll('meta[name=theme-color]')
         for (var i = 0; i < bars.length; i++) bars[i].content = night ? '#000000' : dark ? '#121212' : '#ffffff'
         /* the app installed from here: its window and the phone's navigation bar take the manifest's colours */
-        if (!dark) document.querySelector('link[rel=manifest]').setAttribute('href', 'manifest-light.webmanifest')
-        if (night) document.querySelector('link[rel=manifest]').setAttribute('href', 'manifest-night.webmanifest')
+        if (!dark || night) document.querySelector('link[rel=manifest]').setAttribute('href', night ? 'manifest-night.webmanifest' : 'manifest-light.webmanifest')
       })()
       /* a link's #part (#accept=SHEP-7), kept before the app's own address takes the bar */
       window.shepherdrLink = location.hash
