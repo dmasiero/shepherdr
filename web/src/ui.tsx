@@ -212,8 +212,8 @@ export function useScrolled(ref: RefObject<HTMLElement | null>): boolean {
   return sc
 }
 
-/** fork: Fade off the scrollbar. The width of what scrolls' scrollbar, as `--sbw` on its column, so the fade at the
- *  foot's top (ds.css) stops beside the scrollbar instead of dimming its end. Kept as the scrollbar comes and goes
+/** fork: Fade off the scrollbar. The width of what scrolls' scrollbar, as `--sbw` on its column, so the fade above
+ *  the foot (a mask on what scrolls, ds.css) leaves the scrollbar out instead of dimming its end. Kept as the scrollbar comes and goes
  *  (the content box changes) and as the window or zoom changes; 0 where scrollbars float over the page. */
 export function watchScrollbar(el: HTMLElement): () => void {
   const col = el.parentElement
