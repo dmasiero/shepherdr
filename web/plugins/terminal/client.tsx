@@ -7,7 +7,7 @@
 // and the arrows.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { PaneFrame } from '@client/App.tsx'
-import { definePlugin, getState, notice, openTask, setUI, useSnap, useUI, type Thread } from '@client/kernel.ts'
+import { definePlugin, getState, notice, openTask, setUI, subscribe, useSnap, useUI, type Thread, type UI } from '@client/kernel.ts'
 import { Btn, Hd, I, IB } from '@client/ui.tsx'
 import { openMenu } from '@client/overlay.tsx'
 import { copyText } from '@client/copy.ts'
@@ -23,6 +23,7 @@ import { mirrorFocus } from './focus.ts' // fork: the cursor follows your keys (
 import { mayAsk, stillHolds } from './owner.ts' // fork: the screen you last used sets the size (owner.ts)
 import { isNight, useNight } from '@client/prefs.ts' // fork: Night's black terminal
 import { focusAfterPress, keyRow } from './keyrow.ts' // fork: a key-row press leaves the phone's keyboard as it was
+import { acrossFold } from './fold.ts' // fork: one terminal across a fold or an unfold
 
 /** fork: the terminal's background, ds.css's --term: true black in Night */
 const termBg = () => (isNight() ? '#000000' : '#0a0a0a')
@@ -518,6 +519,22 @@ export default definePlugin({
   name: 'terminal',
   setup(reg) {
     reg.panes.push({ id: 'terminal', View: TerminalPane })
+    // fork: a fold or an unfold carries the open terminal over to the other width's place (fold.ts)
+    let phone = getState().ui.phone
+    let before: UI['pane'] = null
+    let pane = getState().ui.pane
+    subscribe(() => {
+      const ui = getState().ui
+      if (ui.phone !== phone) {
+        phone = ui.phone
+        const was = ui.pane
+        const patch = acrossFold(ui, before)
+        before = ui.phone && patch.pane === 'terminal' ? was : null
+        if (Object.keys(patch).length) return setUI(patch)
+      }
+      // the terminal pane closed or another took its place: nothing to give back
+      if (ui.pane !== pane) { if (pane === 'terminal') before = null; pane = ui.pane }
+    })
     reg.drawer.push({ when: (ui, thread) => !ui.phone && (thread.task ? ui.tterm : ui.term), View: Drawer })
     reg.chatBody.push({ when: (ui, thread) => !!ui.aterm[thread.chat], View: AgentTerminal })
     reg.chatTail.push({ order: 25, View: Stuck })
