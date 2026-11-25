@@ -24,6 +24,8 @@ import { relayLabel, relayState, relayWhy } from './relay.ts'
 import { quickFit, type QuickFit } from './press.ts'
 import { replyToTask, SlideHint, useSlide } from './slide.tsx'
 import { dayLabel } from './days.ts'
+// fork: a repeated row key made its own (Terminal view shows date labels, unique.ts)
+import { uniqueKeys } from './unique.ts'
 import { Markdown, withLinks } from './markdown.tsx'
 import { dropped, pasted } from './paste.ts'
 import { addPaste, dropPaste, isLongMessage, isLongPaste, joined, peekOf, setPastes, sizeOf, usePastes, type Paste } from './fold.ts'
@@ -751,7 +753,8 @@ function Messages({ thread }: { thread: Thread }) {
       {empty && !thread.task && chat && (
         <Empty title={every ? 'Welcome to Shepherdr' : `Nothing in ${spaceLabel(snap, thread.place)} yet`}>Tell me what you want done{every ? ', here or in a space.' : ' here.'}</Empty>
       )}
-      {out}
+      {/* fork: two sessions' messages can share an id: each row its own key, or React leaves rows behind (unique.ts) */}
+      {uniqueKeys(out)}
       {thread.task && <StartLine chat={chat} thread={thread} />}
       {cards.map((c) => <Fragment key={`c:${c.key}`}>{c.node}</Fragment>)}
       {registry.chatTail.map((t, i) => <t.View key={i} chat={chat} thread={thread} />)}
