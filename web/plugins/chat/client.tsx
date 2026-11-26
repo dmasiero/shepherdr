@@ -1191,7 +1191,7 @@ export default definePlugin({
     reg.views.messages = Messages
     reg.views.box = Box
     reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign }, { order: 96, View: BackgroundNote })
-    reg.aboveBox.push({ order: 5, View: ToEnd })
+    reg.aboveBox.push({ order: 5, View: ToEnd, pane: true }) // fork: in the side pane's task chat too
   },
 })
 

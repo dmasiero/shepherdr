@@ -457,7 +457,13 @@ function TaskPane({ t }: { t: Task }) {
     <PaneFrame
       head={(sc) => <TaskHead task={t} where="pane" scrolled={sc} />}
       scrollKey={thread.chat}
-      foot={!down && !Body && Box ? <Box thread={thread} placeholder={placeholderOf(snap, thread)} /> : undefined}
+      // fork: the above-box views meant for the pane (the jump to the newest message) go over its box, as in the middle
+      foot={!down && !Body && Box ? (
+        <>
+          {registry.aboveBox.filter((a) => a.pane).map((a, i) => <a.View key={i} thread={thread} />)}
+          <Box thread={thread} placeholder={placeholderOf(snap, thread)} />
+        </>
+      ) : undefined}
       drawer={drawer && (
         <>
           <div className="rzh" {...edge('term')} />
