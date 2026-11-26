@@ -1,4 +1,4 @@
-import { expect, mock, test } from 'bun:test'
+import { afterAll, expect, mock, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { snapshot } from '../../demo/data.ts'
 
@@ -10,6 +10,15 @@ mock.module('@plugins/chat/markdown.tsx', () => ({ Markdown: ({ text }: { text: 
 const { getState, registry, setUI } = await import('@client/kernel.ts')
 const tasks = (await import('./client.tsx')).default
 const { OFF_PX } = await import('@plugins/chat/newest.ts')
+
+// the kernel is one per test run: put back what this file changes, so later files see it as they left it
+const was = { snap: getState().snap, ui: { pane: getState().ui.pane, task: getState().ui.task }, box: registry.views.box, lists: Object.fromEntries(Object.entries(registry).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, [...(v as unknown[])]])) }
+afterAll(() => {
+  Object.assign(getState(), { snap: was.snap })
+  setUI(was.ui)
+  registry.views.box = was.box
+  for (const [k, v] of Object.entries(was.lists)) (registry as unknown as Record<string, unknown[]>)[k]!.splice(0, Infinity, ...v)
+})
 
 test("a task's chat in the side pane has the jump to the newest message above its box, and not the warnings line", () => {
   tasks.setup(registry)
