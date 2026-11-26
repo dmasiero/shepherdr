@@ -404,7 +404,7 @@ console.log(JSON.stringify(out));"""
 
     def test_version_everywhere(self):
         v = re.search(r'^VERSION = "([^"]+)"', open(J("bin", "shepherdr")).read(), re.M).group(1)
-        self.assertEqual(v, "3.2.19")
+        self.assertEqual(v, "3.2.20")
         self.assertEqual(json.load(open(J("package.json")))["version"], v)
         self.assertRegex(open(J("CHANGELOG.md")).read(), rf"(?m)^## {re.escape(v)}\b", "CHANGELOG's newest entry")
         self.assertEqual(re.search(r"(?m)^## (\d+\.\d+\.\d+)", open(J("CHANGELOG.md")).read()).group(1), v, "CHANGELOG's top heading")
@@ -456,6 +456,13 @@ class NoTaskNumbers(unittest.TestCase):
         self.assertIn("Name tasks by their titles in everything you write", w)
         self.assertIn("is for commands only: never write it anywhere the person reads", w)
         self.assertIn("[@Fix login](task:", w)
+
+    def test_the_worker_proof_starts_with_for_you(self):
+        w = self.read("worker.md")
+        proof = next(l for l in w.splitlines() if l.startswith("- Proof,"))
+        self.assertLess(proof.index('"For you"'), proof.index("what changed"))
+        for words in ("check or decide", "could not prove", "decisions you took on your own"):
+            self.assertIn(words, proof)
 
 
 class ShellScripts(unittest.TestCase):

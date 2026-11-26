@@ -6,7 +6,8 @@ import { copyText } from '@client/copy.ts'
 import { dictatedInto, TEXT_IN_CALL, useDictating } from '@client/dictate.tsx'
 import { attr } from '@client/attr.ts'
 import { boxPart, focusBox, focusChat } from '@client/commands.ts'
-import { act, attempt, definePlugin, getState, has, notice, openTask, registry, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
+import { act, attempt, definePlugin, getDraft, getState, has, notice, openTask, registry, setDraft, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
+import { endComposition, isEcho, type Sent } from './echo.ts'
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
 import { AgentLine, openPicker, pickFor, pickWords, type Pick } from '@client/picker.tsx'
@@ -16,7 +17,7 @@ import { ActBtn, ActError, Btn, cx, Empty, I, IB, useCardActs, useGrow } from '@
 import type { IconName } from '@client/icons.ts'
 import { isImage, isVideo } from '@shared/files.ts'
 import type { Chat, Message, Relay, Snapshot, Task, TaskBrief, TurnActivity } from '@shared/types.ts'
-import { isEverything, placeOf, spaceLabel, statusWord, taskOf } from '@shared/view.ts'
+import { isEverything, placeOf, spaceLabel, statusWord, taskChat, taskOf } from '@shared/view.ts'
 import { StatusIcon } from '@plugins/tasks/icon.tsx'
 import { DoneRow, QuestionCard, SecretCard } from './cards.tsx'
 import { briefFrom, deliveryWord, looksLong, startWords } from './brief.ts'
@@ -27,20 +28,25 @@ import { dayLabel } from './days.ts'
 // fork: a repeated row key made its own (Terminal view shows date labels, unique.ts)
 import { uniqueKeys } from './unique.ts'
 import { Markdown, withLinks } from './markdown.tsx'
+import { expandPicked, useMentions } from './mentions.tsx'
+import { modelTyped, useSlash } from './slash.tsx'
 import { dropped, pasted } from './paste.ts'
 import { addPaste, dropPaste, isLongMessage, isLongPaste, joined, peekOf, setPastes, sizeOf, usePastes, type Paste } from './fold.ts'
-import { touch } from './clip.ts'
+import { fineOnly, touch } from './clip.ts'
 import { landLaunchShare, putAway, useLanded, watchLastChat } from './share.ts'
 import { openSendTo } from './sendto.tsx'
 import { ReplyPress, repliesHidden, suggestionOf, suggestionsOn } from './suggest.ts'
+import { UpdateHint, updateRows } from './update.tsx'
+import { endRows, restartRows } from './restart.tsx'
 import { BoxThumb, openPreview, SentThumb, sourcesOf } from './thumbs.tsx'
 import { heldStep, signOf } from './typing.ts'
+import { Jobs } from './jobs.tsx'
 import { newsRow, type NewsRow } from './news.ts'
 import { usePaths } from './paths.tsx' // fork: SHEP-50's "@~/" path list
-import { isEcho, sentFrom } from './echo.ts' // fork: the keyboard's echo of a sent message (echo.ts)
 import { cardsAfter, cardsNow, stillLoading, TRIES, wantsEarlier } from './hold.ts'
 import { keepAtEnd, rowEdges } from './stick.ts'
-import { OFF_PX, isOffEnd, newSince, onEnd, setOffEnd, toEnd, useOffEnd } from './newest.ts'
+import { OFF_PX, asksBelow, isOffEnd, newSince, onAsk, onEnd, questionsBelow, setOffEnd, toAsk, toEnd, useOffEnd } from './newest.ts'
+import { editedDraft, heldOf, isHeld, ownAsk } from './queued.ts'
 import { commandMode, commandOf, commandWord, type CommandState } from './command.ts'
 import { toggleSpaceTerm, toggleTaskTerm } from '@plugins/terminal/menu.ts'
 
@@ -117,6 +123,20 @@ function QuietRow({ icon, label, meta = [], body, startOpen = false, kind }: { i
   )
 }
 
+/** a recap of what happened while you were away: a quiet block of its own, its words in the chat's size, labelled */
+function RecapNote({ text, at }: { text: string; at?: number }) {
+  return (
+    <section className="recap" aria-label="Recap">
+      <div className="rh">
+        <I n="clock" c="s16" />
+        <span>Recap</span>
+        {at ? <span className="qm">{clock(at)}</span> : null}
+      </div>
+      <Markdown text={text} />
+    </section>
+  )
+}
+
 /** a task's news as one quiet row (news.ts newsRow); longer words wait behind its fold */
 function NewsLine({ row, at }: { row: NewsRow; at?: number }) {
   return <QuietRow kind="news" icon="note" label={row.label} meta={at ? [{ word: clock(at) }] : []} body={row.body ? <div className="qt">{row.body}</div> : undefined} />
@@ -182,6 +202,23 @@ function TaskQuote({ id, title }: { id: string; title: string }) {
       {t ? <StatusIcon t={t} time="none" /> : <I n="tasks" c="s16" />}
       <span className="qt1">{t?.name ?? title}</span>
       {word && <span className="qt2">{word}</span>}
+    </button>
+  )
+}
+
+/** the message a reply answers, quoted above its words: a tap goes to it and lights it, while the chat still has it */
+function Quote({ q }: { q: NonNullable<Message['reply']> }) {
+  if (!q.id) return <span className="quote">{q.text}</span>
+  return (
+    <button
+      type="button"
+      className="quote"
+      onClick={(e) => {
+        e.stopPropagation()
+        setUI({ jump: q.id! })
+      }}
+    >
+      {q.text}
     </button>
   )
 }
@@ -361,7 +398,7 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark, onReply }: { ms
             }}
             onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), full(e.currentTarget))}
           >
-            {msg.reply?.task ? <TaskQuote id={msg.reply.task} title={msg.reply.text} /> : msg.reply && <span className="quote">{msg.reply.text}</span>}
+            {msg.reply?.task ? <TaskQuote id={msg.reply.task} title={msg.reply.text} /> : msg.reply && <Quote q={msg.reply} />}
             <Folded text={msg.text ?? ''}>
               {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '')}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
             </Folded>
@@ -542,7 +579,8 @@ function shownOf(chat: Chat | undefined, key: string, outbox: Outgoing[]): Shown
   const rows: Shown[] = (chat?.messages ?? [])
     .filter((m) => !(m.waiting && m.waitsFor === 'turn' && m.cid && outbox.some((o) => o.cid === m.cid)))
     .map((msg) => (msg.waiting && msg.waitsFor === 'queue' ? { msg, mark: 'sent' } : { msg, pending: !!msg.waiting }))
-  const mine = outbox.filter((o) => o.chat === key)
+  // held for the agent's turn (Ctrl+Enter, a long press on Send): a row over the box (Held), not in the chat yet
+  const mine = outbox.filter((o) => o.chat === key && !isHeld(o))
   if (mine.length) {
     const at = placesOf(rows.map((r) => ({ id: r.msg.id, cid: r.msg.cid })), mine)
     rows.splice(0, rows.length, ...placeOutgoing(rows, mine.map((o) => ({ at: at.get(o.cid) ?? rows.length, rows: partsOf(o, chat).map((msg) => ({ msg, ...showsAs(o) })) }))))
@@ -600,7 +638,7 @@ function Messages({ thread }: { thread: Thread }) {
       // well away from the end: the jump button shows, counting what comes from now; back at the end it goes
       if (off > OFF_PX) {
         if (left.current == null) left.current = seen.current.at(-1)?.id ?? ''
-        setOffEnd(thread.chat, { count: newSince(seen.current, left.current) })
+        setOffEnd(thread.chat, { count: newSince(seen.current, left.current), asks: asksBelow(sc).length })
       } else if (stuck.current) {
         left.current = null
         setOffEnd(thread.chat, null)
@@ -623,10 +661,16 @@ function Messages({ thread }: { thread: Thread }) {
       const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
       sc.scrollTo({ top: sc.scrollHeight, behavior: still ? 'auto' : 'smooth' })
     })
+    // the "1 question below" pill: the first question under the view, in its middle
+    const offAsk = onAsk(thread.chat, () => {
+      const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      asksBelow(sc)[0]?.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' })
+    })
     left.current = null
     setOffEnd(thread.chat, null)
     return () => {
       sc.removeEventListener('scroll', on)
+      offAsk()
       off()
       setOffEnd(thread.chat, null)
     }
@@ -637,7 +681,8 @@ function Messages({ thread }: { thread: Thread }) {
   })
   // new messages while you're away from the end: the button's count goes up
   useEffect(() => {
-    if (left.current != null) setOffEnd(thread.chat, { count: newSince(seen.current, left.current) })
+    const sc = end.current?.closest<HTMLElement>('.scroll')
+    if (left.current != null) setOffEnd(thread.chat, { count: newSince(seen.current, left.current), asks: sc ? asksBelow(sc).length : 0 })
   }, [rows, thread.chat])
   // a picture that loads later (a card's, a tile's) grows the chat: it stays at the newest message
   useEffect(() => {
@@ -731,8 +776,14 @@ function Messages({ thread }: { thread: Thread }) {
       if (!line) continue
       out.push(<DoneRow key={k}>{line}</DoneRow>)
     }
+    // a recap of what happened (the agent's own, or its answer to Recap), and a heads-up its CLI wrote: never bubbles
+    else if (m.recap === 'heads') out.push(<QuietRow key={k} kind="heads" icon="info" label={m.text ?? ''} meta={m.at ? [{ word: clock(m.at) }] : []} />)
+    else if (m.recap) out.push(<RecapNote key={k} text={m.text ?? ''} at={m.at} />)
     else if (m.error) out.push(<div key={k} className="ref c-red"><I n="warn" c="s16" /><span>{m.text}</span></div>)
     else if (m.file) out.push(<FileRow key={k} msg={m} chat={stub} gap={gap} />)
+    // pictures the chat can't show (another machine's, or still in its CLI's queue), and an artifact on its way
+    else if (m.images) out.push(<div key={k} className={cx('ref', m.who === 'you' && 'mine')} data-msg={m.id}><I n="image" c="s16" /><span>{m.images === 1 ? '1 image' : `${m.images} images`}</span></div>)
+    else if (m.publishing) out.push(<div key={k} className="ref" role="status" data-msg={m.id}><I n="doc" c="s16" /><span>Publishing an artifact…</span></div>)
     else if (cmd) {
       lastRef = ''
       out.push(<CommandRow key={k} msg={m} state={cmd} failed={failed} gap={gap} />)
@@ -767,12 +818,50 @@ const loading = new Set<string>()
 /** how many earlier pages a chat read by itself when it opened (SHEP-445), so opening it again doesn't read more */
 const opened = new Map<string, number>()
 
+/** held for the agent's turn: a row each over the box, its words, Send now, Edit (back in the box) and Remove */
+function Held({ thread }: { thread: Thread }) {
+  const key = thread.chat
+  const chat = useChat(key)
+  const outbox = useStore((s) => s.outbox)
+  const rows = heldOf(outbox, key, chat)
+  if (!rows.length) return null
+  // taken back from Shepherdr's line first: one that went in meanwhile stays (it says so)
+  const take = (o: Outgoing, then?: () => void) =>
+    void act({ type: 'held-drop', cid: o.cid } as never).then(() => (dropOut(o.cid), then?.()), (e) => notice(e instanceof Error ? e.message : 'That did not work.'))
+  return (
+    <div className="held" role="list" aria-label="Waiting to send">
+      {rows.map((o) => (
+        <div key={o.cid} className="hrow" role="listitem">
+          <I n="clock" c="s16 c-mute" />
+          <span className="hw">
+            <span className="ht">{o.text || o.files.map((f) => f.name).join(', ')}</span>
+            <span className="hs">Queued</span>
+          </span>
+          <button type="button" className="fold" onClick={() => void tryAct({ type: 'held-now', cid: o.cid } as never)}>Send now</button>
+          <button type="button" className="fold" onClick={() => take(o, () => { setDraft(key, editedDraft(o.text, getDraft(key) ?? '')); focusBox(key) })}>Edit</button>
+          <IB icon="x" label="Remove" onClick={() => take(o)} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** a round ↓ above the box while the chat is scrolled away from its end, with how many messages came since; a tap
  *  goes back to the newest (#1504) */
 function ToEnd({ thread }: { thread: Thread }) {
   const off = useOffEnd(thread.chat)
   if (!off) return null
   const n = off.count
+  // questions wait below: the pill says so and goes to the first of them
+  if (off.asks)
+    return (
+      <button type="button" className="toend asks" onClick={() => {
+        if (!toAsk(thread.chat)) toEnd(thread.chat)
+      }}>
+        <span className="dot" aria-hidden="true" />
+        {questionsBelow(off.asks)}
+      </button>
+    )
   return (
     <button type="button" className="toend" aria-label={n ? `${n} new ${n === 1 ? 'message' : 'messages'}, go to the newest` : 'Go to the newest message'} onClick={() => toEnd(thread.chat)}>
       <I n="toend" />
@@ -944,12 +1033,28 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const reply = useUI((u) => u.reply[key])
   const phone = useUI((u) => u.phone)
   const ref = useRef<HTMLTextAreaElement>(null)
+  // #1538: what Send just sent, so the keyboard writing it back into the empty box is dropped
+  const sentRef = useRef<Sent | null>(null)
+  const composing = useRef(false)
   // a finger (a phone, a tablet): + opens a menu with Photos and Files
   const finger = useMemo(touch, [])
   const shared = useLanded() === key
   useGrow(ref, text)
   // fork: "@~/" or "@/" lists the folder typed so far on this chat's agent's machine (paths.tsx, SHEP-50)
   const paths = usePaths(key, text, setText, ref)
+  // #1550: on a desktop, a chat switched to takes the keyboard, its draft kept, unless you're typing somewhere else (a
+  // dialog, another box); never on a phone or tablet, where it would bring up the keyboard
+  useEffect(() => {
+    if (!fineOnly()) return
+    const a = document.activeElement
+    if (a && a !== document.body && (a.matches('input, textarea, select, [contenteditable]') || a.closest('[role="dialog"], dialog'))) return
+    const box = ref.current
+    if (!box) return
+    box.focus({ preventScroll: true })
+    box.setSelectionRange(box.value.length, box.value.length)
+  }, [key])
+  const ment = useMentions(key, thread.task?.place ?? thread.place, text, setText, ref)
+  const slash = useSlash(key, text, setText, ref)
   const sg = suggestionOf(chat, suggestionsOn(snap.settings))
   const busy = !!chat?.working && !chat.finished
   const call = useUI((u) => u.call)
@@ -958,12 +1063,17 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const sug = sg && !repliesHidden({ dictating, call, working: busy, sending, spent: spent.has(sg.id) }) ? sg : null
   const machine = snap.places.find((p) => p.id === thread.place)?.machine ?? snap.host
   const pick = pickOf(snap, chat, thread)
+  // a question of its agent's is open: what you type here answers it too (it closes the card, the agent gets your words)
+  const asked = !!ownAsk(chat)
+  const hint = asked ? 'Or type your own answer' : placeholder
   // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn.
   // The round button and Enter send only what is in the box, never a suggested reply (those are their own bubbles).
   // In a voice call the box takes no text (TEXT_IN_CALL).
   // a line starting with `!` runs as a command in the agent's own shell (Claude Code, Codex); another agent has none,
   // so its words don't go and the box offers your own terminal
   const mode = commandMode(text, pick.agent)
+  const openAgent = (typed?: string) =>
+    openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, typed, onChange: () => undefined, onClose: (now) => applyPick(key, pick, now, { agent: pickWords(now).agent }) })
   const go = (wait = false) => {
     if (getState().ui.call && !TEXT_IN_CALL) return
     // a long paste folded into a chip goes as text, exactly as pasted, after what was typed
@@ -975,12 +1085,19 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
       // the command alone, first in the box: a quoted reply, files or a folded paste would go with it and it would be
       // a message. Those stay in the box for the next message
       send(key, key, text.trim(), false, true, dictatedInto.delete(key) ? 'dictated' : 'typed')
-      sentFrom(key, text) // fork: echo.ts
       setText('')
       return
     }
-    send(key, key, t, wait && busy, false, dictatedInto.delete(key) ? 'dictated' : 'typed')
-    sentFrom(key, text) // fork: echo.ts
+    // /model never reaches the agent: it opens the agent picker, the model it names picked (3.1's, GitHub #1560)
+    const model = files?.length || pastes.length ? undefined : modelTyped(t)
+    if (model !== undefined) {
+      setText('')
+      openAgent(model)
+      return
+    }
+    if (composing.current) endComposition(ref.current)
+    sentRef.current = { text, at: Date.now() }
+    send(key, key, expandPicked(key, t), wait && busy, false, dictatedInto.delete(key) ? 'dictated' : 'typed')
     setText('')
     setPastes(key, () => [])
     if (shared) putAway()
@@ -1014,6 +1131,8 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   return (
     <>
     {paths.list /* fork: SHEP-50 (before the replies, which hide once the box has words) */}
+    <Jobs chat={chat} />
+    <Held thread={thread} />
     {sug && <Replies texts={sug.texts} onSend={sendSug} onEdit={editSug} />}
     <div
       className="cbox"
@@ -1066,20 +1185,29 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           )}
         </div>
       )}
+      {ment.list}
+      {slash.list}
       <div className="crow">
         <textarea
+          {...ment.box}
+          {...(slash.list ? slash.box : {})}
           ref={ref}
           className={cx('cin', mode && 'mono')}
           rows={1}
           name="message"
           data-box={key}
-          aria-label={placeholder}
-          placeholder={placeholder}
+          aria-label={hint}
+          placeholder={hint}
           enterKeyHint="send"
           autoComplete="off"
           value={text}
-          // fork: a phone keyboard writing back what was just sent is dropped (echo.ts)
-          onChange={(e) => !isEcho(key, text, e.target.value, (e.nativeEvent as InputEvent).data) && setText(e.target.value)}
+          onChange={(e) => {
+            const echo = isEcho(sentRef.current, text, e.target.value, Date.now())
+            sentRef.current = null
+            if (!echo) setText(e.target.value)
+          }}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
           onPaste={(e) => {
             const f = pasted(e.clipboardData)
             if (f.length) {
@@ -1096,6 +1224,10 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           onKeyDown={(e) => {
             // fork: the "@~/" list takes Tab, Up/Down, Escape and the Enter that would send (SHEP-50)
             if (paths.onKey(e, e.key === 'Enter' && !e.shiftKey && e.keyCode !== 229)) return
+            // the # or @ list takes its keys first: Up, Down, Enter or Tab to pick, Escape
+            if (ment.onKey(e)) return
+            // the / list the same way
+            if (slash.onKey(e)) return
             // Enter sends and Shift+Enter makes a new line, the same on phone and desktop
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault()
@@ -1109,12 +1241,13 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
         <AgentLine
           pick={pick}
           machine={machine}
-          onClick={() => openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, onChange: () => undefined, onClose: (now) => applyPick(key, pick, now, { agent: pickWords(now).agent }) })}
+          onClick={() => openAgent()}
         />
+        <UpdateHint chat={chat} />
         <span className="sp" />
         {registry.boxButtons.map((b, i) => <b.View key={i} thread={thread} setText={setText} />)}
         {BoxEnd ? (
-          <BoxEnd thread={thread} setText={setText} filled={filled} send={() => go()} />
+          <BoxEnd thread={thread} setText={setText} filled={filled} send={() => go()} later={busy && mode !== 'run' ? () => go(true) : undefined} />
         ) : stop ? (
           <button type="button" className="send" aria-label="Stop" onClick={() => void tryAct({ type: 'stop', chat: key }, undefined, 'Stopping…')}>
             <I n="square" c="s16" />
@@ -1192,6 +1325,12 @@ export default definePlugin({
     reg.views.box = Box
     reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign }, { order: 96, View: BackgroundNote })
     reg.aboveBox.push({ order: 5, View: ToEnd, pane: true }) // fork: in the side pane's task chat too
+    // Update <agent> (update.tsx): a row in the space's header menu and in a task's ⋯, while a newer version is out
+    reg.spaceMenu.push({ order: 7, rows: (p, head) => (head ? updateRows(p.chat) : []) })
+    reg.taskMenu.push({ order: 7, rows: (t, where) => (where === 'thread' ? updateRows(taskChat(t)) : []) })
+    // Restart and End (restart.tsx): a way out for a running, even stuck, agent, beside Update in the chat's menu
+    reg.spaceMenu.push({ order: 8, rows: (p, head) => (head ? [...restartRows(p.chat), ...endRows(p)] : []) })
+    reg.taskMenu.push({ order: 8, rows: (t, where) => (where === 'thread' ? restartRows(taskChat(t)) : []) })
   },
 })
 

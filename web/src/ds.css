@@ -216,6 +216,7 @@ button.b{cursor:pointer}
 .chat .scroll{overflow-x:hidden}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
 .chip{height:var(--chip);padding:0 12px;border-radius:999px;box-shadow:inset 0 0 0 1px var(--line2);font-size:14px;line-height:20px;font-weight:500}
+.oth{flex-basis:100%;display:grid;gap:8px}
 .chip:hover{background:var(--control)}
 .card{display:grid;gap:8px;width:min(82%,560px);padding:12px 16px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line2);font-size:var(--ui);line-height:var(--uil)}
 .pane .card,.pane .b{max-width:92%}.pane .card{width:92%}
@@ -230,7 +231,7 @@ button.b{cursor:pointer}
 .quietb .qw{margin:0}.quietb .qt{white-space:pre-wrap;overflow-wrap:anywhere}
 .quietb .qf{display:grid;gap:2px;margin:0;padding:0;color:var(--muted)}.quietb .qf li{display:flex;align-items:center;gap:4px;overflow-wrap:anywhere}.quietb .qf .i{flex:none}
 .files{display:grid;gap:2px;color:var(--sub);font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace}
-.files span{display:flex;justify-content:space-between;gap:12px}.files em{font-style:normal;color:var(--muted);white-space:nowrap}
+.files :is(span,button){display:flex;justify-content:space-between;gap:12px;text-align:start}.files button{color:inherit;font:inherit;border-radius:4px}.files button:hover{color:var(--fg)}.files em{font-style:normal;color:var(--muted);white-space:nowrap}
 .code{display:flex;align-items:center;gap:4px;max-width:100%;min-height:36px;padding:4px 4px 4px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line);font:13px/20px ui-monospace,SFMono-Regular,Menlo,monospace}
 .code code{flex:1;min-width:0;overflow-wrap:anywhere}.card .code{width:100%}
 .donerow{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:14px;line-height:20px;padding:2px 0}
@@ -251,6 +252,8 @@ button.b{cursor:pointer}
 /* short of room, the line drops its logo, then its chevron, then its permission mode before the effort is cut (picker.tsx) */
 .agent[data-drop~="logo"]>.logo,.agent[data-drop~="chev"]>.i:last-child,.agent[data-drop~="perm"]>.pm{display:none}
 .agent .i{color:var(--muted)}.agent .bolt{color:var(--fg);margin-left:-4px}.agent .bolt+.bolt{margin-left:-10px}
+/* Update <agent> (plugins/chat/update.tsx): a quiet button beside the agent line, a small blue dot on it */
+.agent-upd{position:relative}.agent-upd::after{content:"";position:absolute;top:calc(50% - 9px);right:calc(50% - 9px);width:6px;height:6px;border-radius:50%;background:var(--blue)}
 .send{display:grid;place-items:center;width:var(--send);height:var(--send);border-radius:50%;background:var(--fg);color:var(--canvas);flex:none}
 .chat>.foot,.pane>.foot{padding-bottom:12px}.pane>.foot{padding-inline:var(--gut)}
 .empty{display:grid;justify-items:center;gap:4px;padding:64px 24px;text-align:center;justify-self:stretch}
@@ -291,6 +294,7 @@ button.b{cursor:pointer}
 .dlg.wide{width:min(560px,calc(100% - 32px))}
 .dlg h2,.sheet h2{font-size:16px;line-height:24px;font-weight:600}.dlg p{color:var(--muted);font-size:14px;line-height:20px}
 .fld{display:grid;gap:4px;justify-items:start}.fld>span{color:var(--muted);font-size:var(--sec);line-height:var(--secl)}.fld>.inp{justify-self:stretch}
+.nsr{display:grid;margin:-4px -8px 0}
 .fake{display:flex;align-items:center;min-height:var(--field);padding:6px 12px;border-radius:8px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2);justify-self:stretch}
 .pk{display:grid;gap:4px}.pk .hd{height:var(--btn);padding:0;margin-bottom:4px}.pk .inp{margin-bottom:4px}
 .pk .list{display:grid;gap:1px;align-content:start;min-height:240px}
@@ -313,12 +317,14 @@ h3+.srow,.hint+.srow,.banner+.srow,.promise+.srow{border-top:0}
 .mcard{display:grid;gap:12px;margin-top:8px;padding:16px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line2)}
 .mcard .nm{font-weight:600;white-space:nowrap}
 .tri{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.tri>div{display:grid;gap:4px}
+.stp{display:flex;align-items:center;gap:4px}.stp .num{min-width:3.5em;text-align:center}.stp .tg{margin-left:8px}
 .um{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 12px;align-items:center}.um .num{font-size:18px;line-height:24px}
 /* toasts (toasts.ts): a stack at the top, newest last, clear of the message box at the bottom; the list itself lets
    clicks through, only a toast takes them */
 .toasts{position:fixed;left:50%;top:60px;transform:translateX(-50%);z-index:60;display:flex;flex-direction:column;gap:8px;width:max-content;max-width:min(480px,calc(100% - 32px));margin:0;padding:0;list-style:none;pointer-events:none}
 .toast{display:flex;align-items:flex-start;gap:8px;max-width:100%;padding:8px 6px 8px 12px;border-radius:8px;background:var(--overlay);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);font-size:14px;line-height:20px;pointer-events:auto;animation:toastin .18s ease-out}
 .toast>.i{margin-top:2px}.toast .tt{flex:1;min-width:0;overflow-wrap:anywhere}
+.toast .ts{display:block;color:var(--muted);user-select:text}.toast .ta{flex:none;height:20px;padding:0 6px;border-radius:6px;font-weight:600;color:var(--link)}.toast .ta:hover{background:var(--control)}
 .toast .tx{display:grid;place-items:center;width:20px;height:20px;margin-left:2px;border-radius:6px;color:var(--muted);flex:none}
 .toast .tx:hover{background:var(--control);color:var(--fg)}
 .toast.err{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--red) 40%,transparent),var(--shadow)}
@@ -365,6 +371,12 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
    It has its own space under the chat (the chat's scroll ends above it, nothing of the chat behind it), its first
    bubble at the box's left edge (its 4 px padding, pulled back out at the sides, only makes room for a focus ring, never over the chat), 8 px between bubbles and
    down to the box. Where more bubbles continue sideways, that edge fades softly (--fl, --fr: stick.ts rowEdges). */
+/* what the agent left running in the background (chat/jobs.tsx), over the replies and the box: quiet rows, one
+   line for two or more that opens to the list (it scrolls in place past a few), each opening to its output and Stop */
+.jobs{display:grid;justify-items:start;gap:2px;margin:0 0 6px}.jobs .fold.quiet{max-width:100%}
+.jobl{display:grid;justify-items:start;gap:2px;max-height:min(40svh,320px);overflow:auto;overscroll-behavior:contain;width:100%}
+.jobb{justify-items:start;justify-self:stretch;max-width:640px}.jobb .jobc{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;color:var(--muted)}
+.jobb .jobo{margin:0;max-height:180px;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px}.jobb .jobw{margin:0;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .sugs{--fl:0px;--fr:0px;display:flex;align-items:center;gap:8px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;margin:0 -4px 4px;padding:4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent);mask-image:linear-gradient(to right,transparent,#000 var(--fl),#000 calc(100% - var(--fr)),transparent)}
 /* the chat's bottom edge, above the box and the replies: what scrolls under it fades over 16 px (the list's own
    bottom gap, so at the end nothing is faded) instead of being sliced. Only over a chat with its box, never a terminal. A space's chat and
@@ -379,6 +391,11 @@ button.fake .n span,button.fake>.i{color:var(--muted)}
 .toend{position:absolute;right:4px;bottom:calc(100% + 12px);z-index:2;display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--overlay);color:var(--sub);box-shadow:inset 0 0 0 1px var(--line2),var(--shadow);animation:fade .15s ease-out}
 .toend::after{content:"";position:absolute;inset:-4px;border-radius:50%}
 .toend .cnt{position:absolute;top:-6px;right:-6px;min-width:18px;background:var(--fg);color:var(--canvas);box-shadow:0 0 0 2px var(--canvas)}
+.toend.asks{width:auto;gap:8px;grid-auto-flow:column;padding:0 14px;border-radius:999px;color:var(--fg);font-size:14px;font-weight:500}.toend.asks::after{border-radius:999px}.toend.asks .dot{width:8px;height:8px;border-radius:50%;background:var(--red)}
+.msgs>.ref.mine{justify-self:end}
+/* #1560: messages held for the agent's turn, a row each over the box: Send now, Edit, Remove */
+.held{display:grid;gap:4px;margin-bottom:8px}.hrow{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 4px 4px 12px;border-radius:12px;background:var(--well);box-shadow:inset 0 0 0 1px var(--line2)}
+.hw{display:grid;flex:1;min-width:0}.hw>span{overflow:hidden;overflow-wrap:anywhere}.ht{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;font-size:14px;line-height:20px}.hs{color:var(--muted);font-size:13px;line-height:18px}.hrow>.fold{flex:none;margin:0;padding:0 8px;min-height:36px;color:var(--fg);font-weight:500}
 @media(hover:hover){.toend:hover{color:var(--fg);background:var(--raised)}}
 .sug{--sugh:max(36px,var(--send));flex:none;max-width:min(280px,78%);min-width:var(--sugh);min-height:var(--sugh);padding:2px 14px;border-radius:calc(var(--sugh)/2);text-align:center;box-shadow:inset 0 0 0 1px var(--line2);background:var(--canvas);color:var(--sub);font-size:var(--sec);line-height:var(--secl);overflow-wrap:anywhere;text-wrap:balance;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:pan-x}
 @media (hover:hover) and (pointer:fine){.sug:hover{background:var(--control)}}
@@ -618,6 +635,7 @@ textarea.cin{overflow-y:auto}
    that second line ends too. Where it is still cut, a tap opens the thing that shows it whole. A space's name in the list
    stays one line, cut with an ellipsis like a machine's (its ⋯ menu shows it whole). */
 .row.tk .l1,.row.tk .l2:not(.rline),.tile>.l1,.banner .n:not(button),.hd .ttl>.t1:only-child{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;white-space:normal;overflow-wrap:anywhere}
+.row.tk .l2.alw{color:var(--fg)}
 .banner{padding-block:4px}.hd .ttl>.t1:only-child{line-height:20px}
 /* The chat's one rhythm and one left edge (SHEP-383). Rows (a turn's "Ran a command", a task's line, a settled card's
    "Done and merged", news, messages between agents) share one icon column (16 px at the chat's edge) and one text
@@ -689,8 +707,10 @@ textarea.cin{overflow-y:auto}
 .kwarn>.i{color:var(--amber)}.kwarn .n{flex:1;min-width:min(12rem,100%)}
 .pal button.row:hover:not([aria-selected="true"]){background:none}
 .dlg.wide:has(>.ksheet){width:min(760px,calc(100% - 32px))}
+/* Recaps: what happened while you were away, a quiet block of its own (never a bubble) */
+.msgs>.recap{justify-self:start;max-width:min(92%,640px);margin-block:8px;padding:10px 14px 12px;border-radius:14px;background:none;box-shadow:inset 0 0 0 1px var(--line2);color:var(--sub)}.recap .md{font-size:.9375em}.recap .rh{display:flex;align-items:center;gap:6px;margin-bottom:4px;color:var(--muted);font-size:12px;line-height:16px;font-weight:500}.recap .rh .qm{font-variant-numeric:tabular-nums}.recap .rh .qm::before{content:"·";margin-inline-end:6px}
 /* fork: No scroll bars on what scrolls up and down (the chat, a task's thread, panes, the list, menus, sheets); wheel,
    touch and keys still scroll, and upstream's round arrow goes back to the newest message. The terminal, code and wide
    tables, which also scroll sideways, keep theirs. */
-.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb{scrollbar-width:none}
-:is(.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb)::-webkit-scrollbar{display:none}
+.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.mlist,.jobl,.ksheet .kcols,.quietb{scrollbar-width:none}
+:is(.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.mlist,.jobl,.ksheet .kcols,.quietb)::-webkit-scrollbar{display:none}

@@ -15,12 +15,12 @@ export type SourceArgs = { task?: string; place?: string; chat?: string; artifac
 export const SOURCES: Record<string, { about: string; arg?: "task" | "task-or-space" | "space" | "chat" | "machine"; rest?: boolean; serves: string[] }> = {
   insights: { about: "Personal analytics: how the person has used Shepherdr over the last month (messages and how they were written, tasks, how long tasks waited on them, questions, errors), kept only on their machines; path day, week or month for that period", serves: ["action:analytics"] },
   evidence: { about: "a task's review card: what it says changed, files changed, checks, proof", arg: "task", serves: ["action:evidence"] },
-  changes: { about: "a task's or space's changed files: lines added and removed", arg: "task-or-space", serves: [] },
+  changes: { about: "a task's or space's changed files: lines added and removed", arg: "task-or-space", serves: ["api:worktree"] },
   patch: { about: "one changed file's diff (path: the file)", arg: "task-or-space", rest: true, serves: [] },
   pr: { about: "a task's pull request: state, checks, files", arg: "task", serves: [] },
   files: { about: "a task's or space's folder: its entries (path: the folder)", arg: "task-or-space", rest: true, serves: [] },
   file: { about: "a file's text in a task's or space's folder (path: the file)", arg: "task-or-space", rest: true, serves: [] },
-  activity: { about: "a chat's latest tool calls and background jobs", arg: "chat", serves: [] },
+  activity: { about: "a chat's latest tool calls and background jobs", arg: "chat", serves: ["api:activity"] },
   model: { about: "what a chat's agent runs on (agent, model, effort, speed) and its choices", arg: "chat", serves: ["action:restart-info", "action:model-menu"] },
   models: { about: "every agent's models, efforts, speeds and permission modes, as the picker lists them", serves: ["action:role-info"] },
   hosts: { about: "machines on the person's network that can be added", serves: ["action:machine-hosts"] },
@@ -34,8 +34,13 @@ export const NOT_DATA: Record<string, string> = {
   "api:action": "the actions themselves (act; their read ones are SOURCES)",
   "api:dictate": "dictation turns speech into text, nothing shown",
   "api:upload": "uploads a file to send",
+  "api:commands": "the agent's own commands, for the / list in the message box: voice says a command by itself",
+  "api:reach": "the spaces a chat's agent can reach, for the # and @ list in the message box: voice names a space or task by itself",
   "api:spaces": "makes a new space (a change: asked for in Everything, or done on the page with screen)",
+  "api:newspace": "New space's recent folders on a machine, to pick from in its dialog: not read out",
+  "api:folders": "whether New space's folder is in a git repo, for its Make it a git repo switch: not read out",
   "api:file": "a picture or file sent in a chat, as bytes",
+  "api:files": "Files (a plugin, off by default): a space's folder on disk, browsed and read on the page; not read out",
   "api:artifacts": "an artifact's own page (HTML made by an agent): opened, not read out; its title, versions and space are in the snapshot's artifacts",
   "api:terminal": "a live terminal's raw screen: its agent's chat is look chat, and screen reads what the page shows",
   "api:screen": "an agent's browser, live (its Screen): a picture, not data; what it shows and who drives is in the snapshot's screens",
@@ -51,8 +56,8 @@ export const NOT_DATA: Record<string, string> = {
 /** The web app's actions that change something (act, send or screen do them), not data to read: every one the page
  *  sends (web/src, web/plugins) or the Action type lists, and the service answers. */
 export const WRITES = [
-  // chats: a message, a reaction, an answer to a question or permission card, a secret given, Stop, Restart
-  "send", "react", "answer", "secret", "secret-saved", "stop", "steer", "stop-job", "restart", "read", "keys", "text", "model", "effort", "call",
+  // chats: a message, a reaction, an answer to a question or permission card, a secret given, Stop, Restart, Recap
+  "send", "held-now", "held-drop", "react", "answer", "secret", "secret-saved", "stop", "steer", "stop-job", "restart", "agent-update", "agent-restart", "assistant-close", "read", "keys", "text", "model", "effort", "call", "recap",
   // tasks: the review card (Mark as done [and merge]), Start task, the row's menu
   "accept", "close", "delete", "archive", "reopen", "task-start", "task-resume", "task-rename", "task-move", "schedule", "pause", "pin",
   // schedules: Run now, Pause, Resume, Edit

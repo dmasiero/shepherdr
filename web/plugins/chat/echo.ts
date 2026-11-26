@@ -1,30 +1,21 @@
-// fork: a phone keyboard's echo of a sent message. Gboard keeps what it is still writing (a word being typed, or a whole
-// phrase from its voice typing) as unfinished text; Send empties the box while that text is unfinished, and a moment later
-// the keyboard finishes it, writing it back into the emptied box: the sent words come back, cursor at their end, and stay
-// as the draft. Right after a send, the box takes no input that puts back (the end of) what was just sent in one go.
+// #1538: Android keyboards (Gboard) hold the word being typed, or a dictated phrase, as an unfinished composition.
+// Send empties the box while it is unfinished, and the keyboard then writes it back into the empty box. So Send first
+// ends the composition (the box loses and takes the keyboard again in one go), and for a moment after a send drops the
+// one change that puts the sent words, or their last few, back into the empty box. Any other change ends that watch.
 
-/** how long after a send the keyboard's echo is still expected */
-export const ECHO_MS = 2_000
+export interface Sent { text: string; at: number }
 
-const sent = new Map<string, { text: string; at: number }>()
-
-/** a box's words were just sent (key: the box's chat) */
-export function sentFrom(key: string, text: string, now = Date.now()) {
-  if (text.trim()) sent.set(key, { text: text.trimEnd(), at: now })
+/** let the keyboard finish what it is writing in the box, keeping the box focused */
+export function endComposition(box: HTMLTextAreaElement | null) {
+  if (!box || document.activeElement !== box) return
+  box.blur()
+  box.focus({ preventScroll: true })
 }
 
-/** whether a change to a box is the keyboard writing back what was just sent: the box was empty, and the whole new
- *  value came in one input (data: the input event's text) and is the sent text, or its last words. Typing anything else
- *  ends the watch. */
-export function isEcho(key: string, was: string, value: string, data: string | null | undefined, now = Date.now()): boolean {
-  const s = sent.get(key)
-  if (!s) return false
-  if (now - s.at > ECHO_MS) {
-    sent.delete(key)
-    return false
-  }
-  const v = value.trim()
-  const echo = !was && v.length > 1 && (data ?? '').trim() === v && (s.text === v || s.text.endsWith(` ${v}`) || s.text.endsWith(`\n${v}`))
-  if (!echo) sent.delete(key)
-  return echo
+/** the keyboard putting back what was just sent: the box was empty, and the change is the sent text or its last
+ *  whole words (a first letter typed that only ends the sent text is new typing) */
+export function isEcho(sent: Sent | null, was: string, value: string, now: number) {
+  if (!sent || was || now - sent.at > 2000) return false
+  const v = value.trim(), s = sent.text.trim()
+  return !!v && s.endsWith(v) && (s.length === v.length || /\s/.test(s[s.length - v.length - 1]))
 }

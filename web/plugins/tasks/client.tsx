@@ -11,11 +11,15 @@ import { AgentField, pickFor, type Pick } from '@client/picker.tsx'
 import { edge } from '@client/resize.ts'
 import { ActBtn, ActError, Btn, Cnt, cx, Empty, Hd, I, IB, MenuGroup, Row, useCardActs } from '@client/ui.tsx'
 import { waiting } from '@client/pending.ts'
+import { copyText } from '@client/copy.ts'
+import { alertWhat, taskAlerts, type Alert } from '@shared/needs-you.ts'
 import { focusBox, focusChat, focusTask } from '@client/commands.ts'
 import { SpaceIcon } from '@client/space-icon.tsx'
 import type { MergeEvidence, Message, Snapshot, Task } from '@shared/types.ts'
 import { askedWords, isEverything, machineLabel, nowGroups, onBranch, placeDown, reposOf, spaceLabel, spaceOnFolder, spacesOf, etaOf, headLine, leftWords, statusWord, taskChat, taskLine, taskWhen, tasksIn, tstate, workKey, workName, workWords, type Repo } from '@shared/view.ts'
 import { DoneRow } from '@plugins/chat/cards.tsx'
+import { Markdown } from '@plugins/chat/markdown.tsx'
+import { readable, words as saidWords } from '@core/accept.js'
 import { replyToTask, SlideHint, useSlide } from '@plugins/chat/slide.tsx'
 import { StatusIcon } from './icon.tsx'
 import { doneRows } from './done-rows.ts' // fork: Ready card after chat replies
@@ -140,6 +144,17 @@ export function open(t: Task) {
   openTask(t.id)
 }
 
+/** Mark as done from the menu asks first: a slip of the thumb has no one-tap undo (reopening a task loses its Ready
+ *  or its place in the queue), and it merges nothing */
+function markDone(t: Task) {
+  confirm({
+    title: `Mark “${t.name}” as done?`,
+    body: onBranch(t) ? 'Nothing is merged: its branch stays as it is.' : 'It moves to Done.',
+    ok: 'Mark as done',
+    run: () => tryAct({ type: 'close', chat: taskChat(t), force: true }, undefined, 'Marking as done…'),
+  })
+}
+
 function del(t: Task) {
   confirm({
     title: 'Delete this task?',
@@ -185,10 +200,11 @@ export function taskRows(t: Task, where: 'row' | 'thread'): MenuRow[] | null {
     ...(t.work ? [{ icon: 'folder' as const, label: `All tasks in ${workName(t)}`, run: () => showRepo(workKey(t)) }] : []),
     ...extra.filter((r) => r.label === 'Show screen'),
     ...(s === 'next' ? [{ icon: 'folder' as const, label: 'Move to', sub: spacesOf(snap).filter((p) => p.id !== t.place && !p.archived).map((p) => ({ label: spaceLabel(snap, p.id), run: () => void tryAct({ type: 'task-move', chat, place: p.id }, undefined, 'Moving…') })) }] : []),
-    // fork: one with its pull request open merges first (done-rows.ts); Done, not merged closes it as it is
+    // fork: one with its pull request open merges first (done-rows.ts); Done, not merged closes it as it is (upstream's
+    // markDone, its ask first)
     ...doneRows(t, s).map((r) => ({ icon: 'check' as const, label: r.label, run: () => void (r.how === 'accept'
       ? tryAct({ type: 'accept', task: t.id }, undefined, 'Merging…')
-      : tryAct({ type: 'close', chat, force: true }, undefined, 'Marking as done…')) })),
+      : markDone(t)) })),
     { icon: 'pen', label: 'Rename', cmd: 'tasks.rename', run: () => renameDialog(t.name, (name) => tryAct({ type: 'task-rename', chat, name })) },
     // Stop pauses the agent, like pressing Esc: it drops what it was doing and waits
     ...(s === 'working' ? [{ icon: 'stop' as const, label: 'Stop', cmd: 'tasks.stop', run: () => void tryAct({ type: 'stop', chat }, undefined, 'Stopping…') }] : []),
@@ -278,6 +294,7 @@ export function ReviewCard({ t, ctx }: { t: Task; ctx: 'chat' | 'thread' }) {
   const snap = useSnap()
   const ev = useEvidence(t)
   const [fold, setFold] = useState(false)
+  const [more, setMore] = useState(false)
   const [, bump] = useState(0)
   const Tile = registry.views.tile
   // its buttons answer at once and wait together (pending.ts): Mark as done holds until the server's state moves on
@@ -294,11 +311,21 @@ export function ReviewCard({ t, ctx }: { t: Task; ctx: 'chat' | 'thread' }) {
   const checks = ev?.checks && ev.checks.state !== 'none' && ev.checks.state !== 'unknown' ? (ev.checks.state === 'passed' ? ev.checks.text || 'checks passed' : ev.checks.state === 'failed' ? 'checks failed' : 'checks running') : ''
   const foldWords = files.length ? [`${files.length} ${files.length === 1 ? 'file' : 'files'} changed${branch ? '' : ' in the folder'}`, checks].filter(Boolean).join(' · ') : ''
   const proof = t.proof ?? (typeof ev?.proof === 'string' ? ev.proof : ev?.proof?.id)
+  // what its agent said with ready: the short summary up top, its details folded under it (an older, too long summary
+  // keeps its first sentence and folds the rest)
+  const said = saidWords({ summary: t.summary ?? ev?.summary, details: t.details ?? ev?.details }) as { summary: string; details: string }
   return (
     <div className="card" data-card={`review:${t.id}`}>
       {ctx === 'chat' && <span className="t tw"><StatusIcon t={t} time="none" />{t.name}</span>}
       <span className="s">{ctx === 'chat' && t.work && <><WorkTag snap={snap} t={t} /> · </>}{where}</span>
-      <span>{t.summary ?? ev?.summary ?? 'Ready for you to look at.'}</span>
+      <span>{said.summary || 'Ready for you to look at.'}</span>
+      {said.details && (
+        <button type="button" className="fold" aria-expanded={more} onClick={() => setMore(!more)}>
+          <I n={more ? 'down' : 'right'} c="s16" />
+          Details
+        </button>
+      )}
+      {more && said.details && <Markdown text={readable(said.details)} />}
       {proof && Tile && <div className="atile"><Tile id={proof} /></div>}
       {foldWords && (
         <button type="button" className="fold" aria-expanded={fold} onClick={() => setFold(!fold)}>
@@ -308,9 +335,11 @@ export function ReviewCard({ t, ctx }: { t: Task; ctx: 'chat' | 'thread' }) {
       )}
       {fold && (
         <div className="files">
-          {files.map((f) => (
-            <span key={f.path}>{f.path}<em>{[f.added ? `+${f.added}` : '', f.removed ? `−${f.removed}` : ''].filter(Boolean).join(' ')}</em></span>
-          ))}
+          {files.map((f) => {
+            const n = <>{f.path}<em>{[f.added ? `+${f.added}` : '', f.removed ? `−${f.removed}` : ''].filter(Boolean).join(' ')}</em></>
+            // with the Diff viewer on, a file opens its changes in the Changes pane
+            return has('diff') ? <button type="button" key={f.path} onClick={() => setUI({ pane: 'diff', task: null, art: null, artWide: false, diff: { src: `task:${t.id}`, file: f.path } })}>{n}</button> : <span key={f.path}>{n}</span>
+          })}
         </div>
       )}
       {t.mergeFailed && <span className="s c-red">{t.mergeFailed}</span>}
@@ -353,6 +382,21 @@ export function StoppedCard({ t }: { t: Task }) {
   )
 }
 
+/** its agent's alert while it stands (#1561): its words, say a guard's one-time approval code, and Copy */
+function AlertCard({ a }: { a: Alert }) {
+  return (
+    <div className="card" data-card={`alert:${a.id}`}>
+      <span className="t">{alertWhat(a)}</span>
+      {a.body && <span>{a.body}</span>}
+      {a.body && (
+        <div className="acts">
+          <Btn onClick={(e) => void copyText(a.body, e.currentTarget).then((ok) => ok && notice('Copied'))}>Copy</Btn>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** In a chat: the cards of the tasks that need the person there (a review, a stopped agent), each where it came up.
  *  The app puts them there from each task's status, not an agent. In a task: its own review or stopped card. */
 function taskCards(snap: Snapshot, thread: Thread): { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; node: ReactNode }[] {
@@ -361,9 +405,10 @@ function taskCards(snap: Snapshot, thread: Thread): { key: string; at?: number; 
   const halted = (t: Task) => tstate(t) === 'ask' && !!t.stopped && t.stopped.by !== 'you'
   if (thread.task) {
     const t = thread.task
+    const alert = taskAlerts(snap).get(t.id)
     // each where it came up among the messages, never held at the end (SHEP-419)
     // a Ready card still waiting goes below what was said after it (#1475)
-    return [...(reviewing(t) ? [{ key: `review:${t.id}`, at: t.needsAt ?? t.needsAtWas, past: tstate(t) === 'done', after: () => true, node: <ReviewCard t={t} ctx="thread" /> }] : []), ...(halted(t) ? [{ key: `stopped:${t.id}`, at: t.needsAt, node: <StoppedCard t={t} /> }] : [])]
+    return [...(reviewing(t) ? [{ key: `review:${t.id}`, at: t.needsAt ?? t.needsAtWas, past: tstate(t) === 'done', after: () => true, node: <ReviewCard t={t} ctx="thread" /> }] : []), ...(halted(t) ? [{ key: `stopped:${t.id}`, at: t.needsAt, node: <StoppedCard t={t} /> }] : []), ...(alert ? [{ key: `alert:${alert.id}`, at: alert.at, after: () => true, node: <AlertCard a={alert} /> }] : [])]
   }
   // cards stay in the chat that asked (SHEP-325): a space's Tasks also holds what works in its folder, its chat does not
   const mine = tasksIn(snap, thread.place).filter((t) => isEverything(snap, thread.place) || t.place === thread.place)
@@ -491,7 +536,7 @@ function TaskPane({ t }: { t: Task }) {
 
 /* ---------- the list ---------- */
 
-function TaskRow({ snap, t, tag }: { snap: Snapshot; t: Task; tag: boolean }) {
+function TaskRow({ snap, t, tag, alert }: { snap: Snapshot; t: Task; tag: boolean; alert?: Alert }) {
   const cur = useUI((u) => u.task === t.id)
   const down = placeDown(snap, t.place)
   const s = tstate(t)
@@ -506,7 +551,12 @@ function TaskRow({ snap, t, tag }: { snap: Snapshot; t: Task; tag: boolean }) {
         <StatusIcon t={t} dim={!!down} />
         <span className="n">
           <span className="l1">{t.name}</span>
-          {sub && <span className="l2">{sub}</span>}
+          {alert && !down ? (
+            <>
+              <span className="l2 alw">{alertWhat(alert)}</span>
+              {alert.body && <span className="l2">{alert.body}</span>}
+            </>
+          ) : sub && <span className="l2">{sub}</span>}
           {tag && t.work && <RepoLine snap={snap} t={t} />}
         </span>
         {when && <span className="v">{when}</span>}
@@ -544,7 +594,8 @@ function Now({ snap, place }: { snap: Snapshot; place: string }) {
   // one repo picked: its head on top (its space, or Make it a space), and the rows leave out its tag
   const repo = f.repo.length === 1 ? reposOf(snap).find((r) => r.key === f.repo[0]) : undefined
   const top = repo && <RepoHead snap={snap} r={repo} />
-  const groups = nowGroups(filterTasks(snap, f, place)).filter((g) => g.tasks.length)
+  const alerts = taskAlerts(snap)
+  const groups = nowGroups(filterTasks(snap, f, place), alerts).filter((g) => g.tasks.length)
   if (!groups.length)
     return snap.tasks.length ? (
       <>
@@ -569,7 +620,7 @@ function Now({ snap, place }: { snap: Snapshot; place: string }) {
               {g.name} · {g.tasks.length}
               <I n="down" c="s16" />
             </button>
-            {o && shown.map((t) => <TaskRow key={t.id} snap={snap} t={t} tag={!repo} />)}
+            {o && shown.map((t) => <TaskRow key={t.id} snap={snap} t={t} tag={!repo} alert={alerts.get(t.id)} />)}
             {o && shown.length < g.tasks.length && (
               <button type="button" className="grp" onClick={() => setUI({ doneShown: ui.doneShown + 20 })}>Show more</button>
             )}

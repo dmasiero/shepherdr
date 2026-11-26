@@ -24,7 +24,7 @@ export const tasks: Task[] = [
   // SHEP-348's six states on the repo line: own branch, no PR (SHOP-19); PR checks passed (SHOP-12), failed (SHOP-15),
   // running (GARDEN-3); merged (SHOP-11); in the folder itself (BLOG-10); research, no repo (NOTES-4)
   task('SHOP-12', 'Faster product search', P.shop, 'ready', { needsAt: NOW - 8 * hour, repo: 'branch', worktree: true, branch: 'task/faster-product-search', base: 'main', pr: { number: 212, url: 'https://github.com/example/shop/pull/212', checks: 'passed' }, summary: 'Results show in about 80 ms, down from 400.', proof: 'a-shop12' }),
-  task('BLOG-10', 'Fix typo on the About page', P.blog, 'ready', { needsAt: NOW - hour, repo: 'folder', summary: 'Fixed the typo and two more I found on the same page.' }),
+  task('BLOG-10', 'Fix typo on the About page', P.blog, 'ready', { needsAt: NOW - hour, repo: 'folder', summary: 'Fixed the typo and two more I found on the same page.', details: '- "Recieve" is now "Receive" in the About page heading\n- Also fixed "seperate" and "occured" further down\n- Checked: the site builds and the page reads right' }),
   task('NOTES-4', 'Compare supplier quotes', P.notes, 'ready', { needsAt: NOW - 3 * hour, summary: 'Brightpack is cheapest at your volume. Norbox ships fastest.', proof: 'a-quotes' }),
   task('SHOP-14', 'Switch payment provider', P.shop, 'need', { needsAt: NOW - 2 * hour, blocked: 'question', repo: 'branch', report: { msg: 'Which provider, Stripe or Adyen?', progress: 35, paused: true } }),
   task('vm:GARDEN-4', 'Photo upload', P.garden, 'need', { agent: { chat: 'vm:GARDEN-4/worker', role: 'worker', cli: 'claude', status: 'need', running: true, age: '', note: '' }, needsAt: NOW - 5 * min, blocked: 'permission', repo: 'branch', report: { msg: 'Wants to run a command', progress: 80, paused: true } }),
@@ -53,6 +53,8 @@ export const tasks: Task[] = [
   task('SHOP-11', 'Fix cart rounding', P.shop, 'done', { doneAt: NOW - 7 * day, merged: true, repo: 'branch', worktree: true, branch: 'task/fix-cart-rounding', base: 'main', pr: { number: 205, url: 'https://github.com/example/shop/pull/205' } }),
   task('BLOG-8', 'New post template', P.blog, 'done', { doneAt: NOW - 7 * day, merged: true }),
   task('BLOG-7', 'Faster image loading', P.blog, 'done', { doneAt: NOW - 7 * day, merged: true }),
+  // #1560: an archived task, found in the search box once something is typed
+  task('BLOG-5', 'Old comment widget', P.blog, 'done', { doneAt: NOW - 30 * day, archived: NOW - 20 * day }),
   // SHEP-331: more machines, spaces and states for the Tasks filter: a stopped one, a scheduled one, two on vm's shop and root
   task('vm:ACME-3', 'Sync stock from the warehouse', P.vmShop, 'need', { on: 'vm', stopped: { by: 'error', why: 'Its agent is no longer running.' }, needsAt: NOW - 25 * min, repo: 'branch' }),
   task('vm:ACME-4', 'Nightly price export', P.vmShop, 'scheduled', { on: 'vm', desc: 'Exports prices for the shop feed at 02:00', agent: undefined }),
@@ -136,6 +138,10 @@ const longDay = (s: Snapshot): Snapshot => ({
 })
 
 // ?case=one and ?case=five (SHEP-438): the sidebar with one machine only, and with a fifth one to fold and drag
+const pcts = (lo: number, hi: number, by: number) => Array.from({ length: (hi - lo) / by + 1 }, (_, i) => `${lo + i * by}%`)
+const LIMIT_DEMO: [string, string, string[]][] = [['start_memory', '80%', pcts(10, 100, 5)], ['start_load', '100%', pcts(25, 400, 25)], ['start_disk', '90%', pcts(10, 100, 5)]]
+/** a machine's start-limit rows as the service gives them (machine.<field>@<machine>); own: the ones it set itself */
+const limitRows = (at: string, own: Record<string, string>) => LIMIT_DEMO.map(([f, d, steps]) => ({ label: f, key: `machine.${f}@${at}`, value: own[f] ?? d, steps, stepFrom: d, group: at, ...(f in own ? { inherits: { value: d, from: 'all machines' } } : { from: 'all machines' }) }))
 const oneMachine = (s: Snapshot): Snapshot => ({ ...s, machines: s.machines.slice(0, 1), places: s.places.filter((p) => p.machine === s.host), warnings: [] })
 const fiveMachines = (s: Snapshot): Snapshot => ({
   ...s,
@@ -165,6 +171,9 @@ export function snapshot(mode: 'normal' | 'empty' | 'down' | 'more' | 'long' | '
       // SHEP-429: every other machine's home space, its first row as ~; pi has nothing else
       place('p:mac-mini:tilde', 'home', 'mac-mini', at('/Users/sam', '~', { home: true, unnamed: true })), place('p:vm:home', 'home', 'vm', at('/home/sam', '~', { home: true, unnamed: true })), place('p:studio:home', 'home', 'studio', at('/Users/sam', '~', { home: true, unnamed: true })), place('p:pi:home', 'home', 'pi', at('/home/sam', '~', { home: true, unnamed: true }))],
     sections: [{ id: 's:store', name: 'Store', machine: 'mac-mini', spaces: [P.shop, P.blog] }],
+    // #1560: blog's and garden-app's Assistants said something you haven't read: their rows are bold until opened
+    last: empty ? {} : { [P.blog]: 3, [P.garden]: 2, [P.shop]: 5 },
+    read: empty ? {} : { [P.blog]: 2, [P.garden]: 1, [P.shop]: 5 },
     machines: [
       { id: 'm:mac-mini', machine: 'mac-mini', name: 'mac-mini', status: 'idle', here: true, health: { meters: [{ name: 'CPU', pct: 34, detail: '', level: 'ok' }, { name: 'Memory', pct: 71, detail: '', level: 'ok' }, { name: 'Disk', pct: 58, detail: '', level: 'ok' }], herdr: true, working: 5, held: 0, at: '' } },
       { id: 'm:vm', machine: 'vm', name: 'vm', status: down ? 'off' : 'idle', ...(down ? { unreachableSince: '14:02' } : {}), health: { meters: [{ name: 'CPU', pct: 12, detail: '', level: 'ok' }, { name: 'Memory', pct: 40, detail: '', level: 'ok' }, { name: 'Disk', pct: empty ? 40 : 91, detail: '', level: 'over' }], herdr: true, working: 2, held: 0, at: '' } },
@@ -176,7 +185,14 @@ export function snapshot(mode: 'normal' | 'empty' | 'down' | 'more' | 'long' | '
     artifacts: empty ? [] : artifacts,
     asks: {},
     needs: [],
-    settings: [],
+    // #1547: each machine's start limits, as the service's Machines section keeps them
+    settings: [{ name: 'Machines', rows: limitRows('local', {}).concat(limitRows('vm', { start_memory: '70%', start_disk: 'Off' })) },
+      // Settings › Secrets: every kept secret by name and where, a machine's own too (#1560)
+      { name: 'Secrets', level: 'all', rows: [], vault: [
+        { name: 'GITHUB_TOKEN', at: NOW - 9 * day, scope: 'everywhere', machine: null, space: null, where: 'Everywhere' },
+        { name: 'DEPLOY_KEY', at: NOW - 3 * day, scope: 'machine', machine: 'vm', space: null, where: 'vm' },
+        { name: 'STRIPE_KEY', at: NOW - 2 * day, scope: 'space', machine: null, space: P.shop, where: 'Space shop' },
+      ] }],
     config,
     warnings: empty ? [] : down ? [{ id: 'm:vm', kind: 'machine', text: "Can't reach vm · last seen 14:02" }] : [{ id: 'u:claude', kind: 'usage', text: "You've used 76% of this week's Claude plan" }, { id: 'm:vm', kind: 'machine', text: 'vm: disk nearly full' }, ...(mode === 'more' ? [{ id: 'u:codex', kind: 'usage' as const, text: "You've used 81% of your Codex plan" }] : [])],
     screens: empty ? {} : {
@@ -225,7 +241,8 @@ const LONG_NOTE = 'The supplier quotes are in. Short version: the second supplie
 const chat = (key: string, messages: Message[], agent: Chat['agent'], x: Partial<Chat> = {}): Chat => ({ key, messages, cli: agent?.kind ?? 'claude', top: true, agent, ...x })
 const sonnet = { kind: 'claude', model: 'sonnet', modelLabel: 'Sonnet 5.5', effort: 'medium' }
 const opus = { kind: 'claude', model: 'opus', modelLabel: 'Opus 5.5', effort: 'high' }
-const gpt = { kind: 'codex', model: 'gpt-5.5-codex', modelLabel: 'GPT-5.5 Codex', effort: 'high' }
+// a newer Codex is out: the chat shows Update Codex (plugins/chat/update.tsx)
+const gpt = { kind: 'codex', model: 'gpt-5.5-codex', modelLabel: 'GPT-5.5 Codex', effort: 'high', update: '0.172.0' }
 const payQ = () => [a("Which provider should I switch to, Stripe or Adyen? I'd go with Stripe."), ask('q-pay', '', undefined, ['Stripe', 'Adyen'])]
 const permQ = (by?: typeof byPhoto) => [a('I need an image library to resize the photos.'), ask('q-pil', 'Run a command', by, ['Allow once', 'Decline'], { command: 'pip install pillow' })]
 
@@ -238,22 +255,28 @@ export const chats: Record<string, Chat> = Object.fromEntries(
       a('Added Bigger checkout button on phones to #shop and started it.', { at: today(9, 12), reactions: [{ emoji: '🎉', by: 'me' }] }),
       did(today(9, 12), [['run', 'herdr-task add', '"Bigger checkout button on phones"'], ['run', 'herdr-task start', '"Bigger checkout button on phones"']]),
       a("I'll tell you here when it's ready.", { at: today(9, 13), reactions: [{ emoji: '👍', by: 'me' }] }),
+      // a heads-up its CLI wrote, and a recap when you came back (Recaps)
+      { id: `m${++n}`, who: 'agent', at: today(9, 13), recap: 'heads', text: 'Compacted while idle, before the prompt cache expired' },
+      { id: `m${++n}`, who: 'agent', at: today(9, 13), recap: 'recap', text: 'The bigger checkout button is being built in #shop and the watering reminders are still in progress. Two tasks wait on you: pick Stripe or Adyen, and allow the photo library.' },
       relay('to', '#root on vm', 'Can you check the disk on the vm? A task there said it is nearly full.', today(9, 14), { how: 'assistant', state: 'delivered' }),
       relay('from', '#shop', LONG_NOTE, today(9, 20), { files: ['supplier-quotes-november.pdf'] }),
       relay('to', '#garden-app on vm', 'The photo task waits on a library. Pillow is fine to install.', today(9, 22), { how: 'assistant', state: 'waiting', why: 'the person is writing to it' }),
       relay('to', 'Assistant on studio', 'Is the site build green again?', today(9, 23), { how: 'assistant', state: 'failed', why: "studio can't be reached" }),
       { id: `m${++n}`, who: 'agent', news: { task: 'SHOP-14', ref: 'SHOP-14', mark: 'needs', what: '', text: "Which provider should I switch to, Stripe or Adyen? I'd go with Stripe." } },
-      ask('q-pay', '', byPay, ['Stripe', 'Adyen']),
+      ask('q-pay', '', byPay, ['Stripe', 'Adyen'], { other: true }),
       { id: `m${++n}`, who: 'agent', news: { task: 'vm:GARDEN-4', ref: 'GARDEN-4', mark: 'needs', what: '', text: 'I need an image library to resize the photos.' } },
       ask('q-pil', 'Run a command', byPhoto, ['Allow once', 'Decline'], { command: 'pip install pillow' }),
       // a working task's row with its time left, then how its asks closed: the same line twice shows once
       { id: `m${++n}`, who: 'agent', news: { task: 'SHOP-15', ref: 'SHOP-15', mark: 'other', what: 'blocked', text: 'Waiting at a prompt' } },
       { id: `m${++n}`, who: 'agent', ended: 'Bigger checkout button on phones · Run: npm test · Allowed in the chat' },
       { id: `m${++n}`, who: 'agent', ended: 'Bigger checkout button on phones · Run: npm test · Allowed in the chat' },
-      a('Dependency check started on its schedule in #shop. It found 3 packages behind and is updating them.'),
+      a('Dependency check started on its schedule in #shop. It found 3 packages behind and is updating them.', { id: 'm-dep' }),
       me('And the sale plan, APP/?artifact=a-plan, still good?'),
+      // #1560: pictures the chat can't show here, and an artifact on its way
+      a('', { images: 3 }),
+      a('', { publishing: true }),
       // a reply that quotes a long message, with a short answer: the quote truncates inside the bubble (SHEP-353)
-      me('Use /ui to fix', { reply: { text: 'Dependency check started on its schedule in #shop. It found 3 packages behind and is updating them. Supercalifragilisticexpialidociouslylongwordwithoutanybreaks', who: 'agent' }, reactions: [{ emoji: '👍', by: 'them' }] }),
+      me('Use /ui to fix', { reply: { id: 'm-dep', text: 'Dependency check started on its schedule in #shop. It found 3 packages behind and is updating them. Supercalifragilisticexpialidociouslylongwordwithoutanybreaks', who: 'agent' }, reactions: [{ emoji: '👍', by: 'them' }] }),
       me('Pinned to https://example.com/releases/2026/november/checkout-redesign-final-final-v2-with-the-bigger-button and Pneumonoultramicroscopicsilicovolcanoconiosis too', { reactions: [{ emoji: '🎉', by: 'both' }] }),
       a('Noted: https://example.com/releases/2026/november/checkout-redesign-final-final-v2-with-the-bigger-button is the one, and Pneumonoultramicroscopicsilicovolcanoconiosis stays.', { reactions: [{ emoji: '👍', by: 'me' }] }),
       // a wide table (#1442): readable columns that scroll sideways in their box on a phone, never one letter wide
@@ -265,7 +288,7 @@ export const chats: Record<string, Chat> = Object.fromEntries(
       relay('to', 'Bigger checkout button on phones', 'Keep the total above the fold on a 360 px screen too.', today(9, 25), { how: 'reply', state: 'delivered' }),
       relay('from', 'Bigger checkout button on phones', 'Done: the total stays above the fold at 360 px. Screenshot in my chat.', today(9, 40)),
       relay('to', 'Faster product search', 'Fix what keeps its pull request from merging.', today(9, 41), { how: 'fix', state: 'waiting', why: 'its agent stopped; it goes to its next one' }),
-      a('I made a mock-up of the new checkout. Have a look.'), { id: `m${++n}`, who: 'agent', artifact: { id: 'a-mock', v: 3 } }, a('Started SHOP-15, added from Everything.'), { id: `m${++n}`, who: 'agent', news: { task: 'SHOP-14', ref: 'SHOP-14', mark: 'needs', what: '', text: "Which provider should I switch to, Stripe or Adyen? I'd go with Stripe." } }, ask('q-pay', '', byPay, ['Stripe', 'Adyen']), a('SHOP-16 started on its schedule in #shop. It found 3 packages behind and is updating them.', { suggest: 'How is the checkout button going?' })], sonnet),
+      a('I made a mock-up of the new checkout. Have a look.'), { id: `m${++n}`, who: 'agent', artifact: { id: 'a-mock', v: 2 } }, a('Started SHOP-15, added from Everything.'), { id: `m${++n}`, who: 'agent', news: { task: 'SHOP-14', ref: 'SHOP-14', mark: 'needs', what: '', text: "Which provider should I switch to, Stripe or Adyen? I'd go with Stripe." } }, ask('q-pay', '', byPay, ['Stripe', 'Adyen']), a('SHOP-16 started on its schedule in #shop. It found 3 packages behind and is updating them.', { suggest: 'How is the checkout button going?' })], sonnet),
     // working, nothing written yet: the working sign alone (SHEP-313)
     chat(P.blog, [a('To see it yourself, run this in the blog folder:\n\n```\nbun run dev\n```'), me('!git status --short', { command: { state: 'done', out: ' M web/src/archive.ts\n?? drafts/november.md' } }), me('!bun test archive', { command: { state: 'failed', out: 'archive.test.ts:\n✗ links to every month [4.21ms]\n  Expected: "/archive/2026/11"\n  Received: "/archive/undefined"\n\n 0 pass\n 1 fail' } }), me('The link to the archive is broken too. Can you fix it?', { reactions: [{ emoji: '👍', by: 'both' }] })], sonnet, { working: true, doing: "Running python3 - <<'EOF' p='web/src/archive.ts'" }),
     chat(P.notes, [], sonnet),
@@ -279,7 +302,13 @@ export const chats: Record<string, Chat> = Object.fromEntries(
     chat('NOTES-4/worker', [a('I read the three quotes in your notes folder and wrote up a comparison.')], opus),
     chat('vm:GARDEN-4/worker', permQ().map((x, i) => (i ? x : { ...x, suggests: ['Allow it once'] })), opus),
     chat('SHOP-17/worker', [a("I'm downloading October's invoices. The billing portal sent a sign-in code to your phone, so I need you for this one step.")], opus),
-    chat('SHOP-15/worker', [brief('Bigger checkout button on phones', LONG_BRIEF, 'read', NOW - 10 * min), a('Started. Making the checkout button full width on phones.'), relay('from', 'Assistant', 'Keep the total above the fold on a 360 px screen too.', NOW - 9 * min), did(NOW - 8 * min, [['read', 'Read checkout.css', ''], ['edit', 'Edit checkout.css', '+6 −2'], ['run', 'Run bun test', 'passed'], ['edit', 'Edit checkout.test.ts', '+12']], 'Ran 4 commands · edited 2 files'), relay('to', 'Assistant', 'Done: the total stays above the fold at 360 px. Screenshot in my chat.', NOW - 2 * min, { how: 'hc', state: 'delivered' }), a('Changing the button now. About 10 minutes left.', { suggest: 'Show me a screenshot when it is done' })], opus, { working: true, doing: "Running python3 - <<'EOF' p='web/checkout.css'", live: { id: 'live', at: NOW, rows: [], steps: 0 } }),
+    chat('SHOP-15/worker', [brief('Bigger checkout button on phones', LONG_BRIEF, 'read', NOW - 10 * min), a('Started. Making the checkout button full width on phones.'), relay('from', 'Assistant', 'Keep the total above the fold on a 360 px screen too.', NOW - 9 * min), did(NOW - 8 * min, [['read', 'Read checkout.css', ''], ['edit', 'Edit checkout.css', '+6 −2'], ['run', 'Run bun test', 'passed'], ['edit', 'Edit checkout.test.ts', '+12']], 'Ran 4 commands · edited 2 files'), relay('to', 'Assistant', 'Done: the total stays above the fold at 360 px. Screenshot in my chat.', NOW - 2 * min, { how: 'hc', state: 'delivered' }), a('Changing the button now. About 10 minutes left.', { suggest: 'Show me a screenshot when it is done' })], opus, { working: true, doing: "Running python3 - <<'EOF' p='web/checkout.css'", live: { id: 'live', at: NOW, rows: [], steps: 0 },
+      // what it left running in the background, over its box (chat/jobs.tsx)
+      jobs: [
+        { id: 'b:dev', kind: 'shell', title: 'Dev server for the checkout page', at: NOW - 23 * min, command: 'bun run dev --port 5173', stop: true, more: 'output' },
+        { id: 'b:watch', kind: 'monitor', title: 'Watch the checkout tests', at: NOW - 6 * min, command: 'bun test --watch checkout', stop: true, more: 'output' },
+        { id: 'c:shop-15-review', kind: 'child', title: 'shop-15-review', at: NOW - 4 * min, chat: 'SHOP-16/worker', status: 'working', role: 'reviewer', cli: 'claude' },
+      ] }),
     // its agent just started: the brief sent, not taken in yet, and words for it starting
     chat('SHOP-19/worker', [brief('Product page reviews', 'Show the three newest reviews under each product, with their stars. A product with none says "No reviews yet."', 'sent', NOW - min)], opus),
     // queued: no agent yet, its brief waits to be sent

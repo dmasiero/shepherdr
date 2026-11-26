@@ -17,9 +17,35 @@ the rest. [`web/plugins.json`](../web/plugins.json) is the list, in order.
 | voice | yes | Voice over the whole app, dictation in the message box, and Settings › Voice (the ElevenLabs key) | No voice or mic button, no Voice page |
 | schedules | yes | Tasks › Scheduled | No Scheduled tab |
 | reactions | yes | Emoji reactions on messages | No emoji row in a message's menu |
+| recaps | yes | A short recap when you come back to a chat after 15 minutes away, Recap in a chat's menu, and Settings › Recaps | No recap asks (an agent's own recaps still show) |
+| files | yes, off until switched on | Files: the shown space's folder as a tree, on its machine ([below](#files)) | No Files button, pane or bar item |
+| diff | yes, off until switched on | Diff viewer: the Changes pane beside Tasks and Artifacts. What a task changed against its base, or what isn't committed in a space's folder, file by file; read only. A Ready card's files open there | No Changes button, pane or menu row |
 
 Settings › Plugins has the switches. They are kept as `everywhere.plugins_off` in `~/.config/shepherdr/settings.json`
-(`service/next.ts` `PLUGINS`). An open page starts again when a switch flips.
+(`service/next.ts` `PLUGINS`). A plugin marked `offByDefault` there stays off until switched on, kept as
+`everywhere.plugins_on`. An open page starts again when a switch flips.
+
+## Files
+
+- Off until you switch it on in Settings › Plugins. Then Files sits beside Artifacts and Tasks (the folder button in a
+  chat's header, Files in a phone's bottom bar, G F).
+- It shows the shown space's folder on the machine the space lives on, as a tree. Tap a file to read it (text, and
+  pictures). Drop files from your computer on a folder to put them there; drag a file or folder onto another folder to
+  move it (on a computer). A right click, or a long press on a phone, has Download: a file as it is, a folder as a zip.
+- Only inside the space's folder: a path never leaves it, and a link that leads out of it is shown greyed and never
+  followed. `.git` is left out of the tree and of a zip. Dropped folders aren't uploaded: zip them first.
+- Sizes: text shows its first 400 KB. On the machine that serves Shepherdr, an upload is at most 100 MB. On another
+  machine, a file or zip is at most 8 MB either way (what herdr-core carries in one call).
+- Each step runs a small Python program on the space's machine through herdr-core (`service/files.ts`); nothing is
+  public, the same private link as the rest of the app.
+
+## Diff viewer
+
+- Off until you switch it on in Settings › Plugins. Then Changes sits beside Artifacts and Tasks (the branch button in a
+  chat's header, Changes in a phone's bottom bar), and a task's menu has Changes.
+- Pick a task (what it changed against its base, committed or not) or a space's folder (what isn't committed). Tap a
+  file for its lines. A Ready card's changed files open here too. Read only: nothing is staged, committed or edited.
+- git runs on the task's or space's machine through herdr-core (`service/worktree.ts`, `GET /api/worktree`).
 
 ## Screens
 

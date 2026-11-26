@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Chat, Message, Snapshot, Task } from '../shared/types.ts'
 import { withLinks } from '../../service/artifact-links.ts'
+import { commandList } from '../../core/slash.js'
 import { artifacts, catalog, chats as seed, config, EV, snapshot } from './data.ts'
 
 // fork: what "@~/" lists in the demo's message box (SHEP-50): each folder under a fictional home
@@ -25,6 +26,9 @@ const socks = new Set<Sock>()
 const state = { normal: structuredClone(snapshot('normal')), empty: structuredClone(snapshot('empty')), down: structuredClone(snapshot('down')), more: structuredClone(snapshot('more')), long: structuredClone(snapshot('long')), one: structuredClone(snapshot('one')), five: structuredClone(snapshot('five')) }
 const chats: Record<string, Chat> = structuredClone(seed)
 let n = 1000
+/** the group a Remove group took, for its Undo */
+let gone: NonNullable<Snapshot['sections']>[number] | null = null
+const held = new Map<string, any>()
 function resetDemo() {
   for (const mode of ['normal', 'empty', 'down', 'more', 'long', 'one', 'five'] as const) state[mode] = structuredClone(snapshot(mode))
   for (const key of Object.keys(chats)) delete chats[key]
@@ -111,6 +115,18 @@ function action(a: Record<string, any>): unknown {
     if (a.do === 'delete') return { ok: true, deleted: { 'this machine': true, mini: true } }
     return { ok: true }
   }
+  // #1560: a message held for the agent's turn waits here until Send now (or goes with Remove)
+  if (a.type === 'send' && a.hold) {
+    held.set(a.cid, a)
+    return { ok: true, waiting: true, waitsFor: 'turn' }
+  }
+  if (a.type === 'held-now' || a.type === 'held-drop') {
+    const h = held.get(a.cid)
+    if (!h) return { ok: false, error: 'That message has gone in already.' }
+    held.delete(a.cid)
+    if (a.type === 'held-now') say(h.chat, { who: 'you', text: h.text, cid: h.cid })
+    return { ok: true }
+  }
   if (a.type === 'send') {
     // as the service gives your message back from the log: its words, then each file under them, a moment later
     const paths: string[] = Array.isArray(a.attachments) ? a.attachments.filter(Boolean) : []
@@ -153,7 +169,7 @@ function action(a: Record<string, any>): unknown {
     return { ok: true, at: Date.now() }
   }
   if (a.type === 'answer') {
-    for (const c of Object.values(chats)) for (const m of c.messages) if (m.question?.id === a.question) { m.question = { ...m.question, sent: a.choice ?? 0, said: m.question.choices[a.choice ?? 0]?.label, ...(a.byVoice ? { via: 'voice' as const } : {}) }; pushChat(c.key) }
+    for (const c of Object.values(chats)) for (const m of c.messages) if (m.question?.id === a.question) { m.question = a.talk ? { ...m.question, closed: 'Left to talk over in the chat' } : { ...m.question, sent: a.other ? -1 : a.choice ?? 0, said: a.other || m.question.choices[a.choice ?? 0]?.label, ...(a.byVoice ? { via: 'voice' as const } : {}) }; pushChat(c.key) }
     const t = a.question === 'q-pay' ? 'SHOP-14' : 'vm:GARDEN-4'
     patchTask(t, { status: 'work', blocked: undefined, report: { msg: 'Carrying on' } })
     if (a.byVoice && a.question === 'q-pay') setTimeout(() => say('SHOP-14/worker', { text: "Going with Stripe. I'll tell you when it's ready." }), 500)
@@ -177,6 +193,7 @@ function action(a: Record<string, any>): unknown {
   if (a.type === 'archive' && t) return patchTask(t.id, { archived: a.on ? Date.now() : undefined }), { ok: true }
   if (a.type === 'task-rename' && t) return patchTask(t.id, { name: a.name }), { ok: true }
   if (a.type === 'task-move' && t) return patchTask(t.id, { place: a.place }), { ok: true }
+  if (a.type === 'agent-update') return { ok: true, words: 'Codex is now 0.172.0. 1 other chat on this machine gets it when it restarts.' }
   if (a.type === 'task-start' && t) { patchTask(t.id, { status: 'work', started: Date.now() - 15 * 60_000, report: { msg: 'Just started', progress: 50 }, agent: { chat: `${t.id}/worker`, role: 'worker', cli: 'claude', status: 'work', running: true, age: '', note: '' } }); say(`${t.id}/worker`, { text: "Started. I'll tell you when it's ready for review." }); return { ok: true } }
   if (a.type === 'stop' && t) return patchTask(t.id, { status: 'need', stopped: { by: 'you' } }), { ok: true }
   if (a.type === 'rename') return each((snap) => { snap.places = snap.places.map((p) => (p.id === a.id ? { ...p, name: a.name } : p)); snap.sections = snap.sections?.map((s) => (s.id === a.id ? { ...s, name: a.name } : s)); snap.machines = snap.machines.map((m) => (m.id === a.id ? { ...m, name: a.name || (m.ownName ?? m.machine) } : m)) }), { ok: true }
@@ -184,7 +201,12 @@ function action(a: Record<string, any>): unknown {
   if (a.type === 'space-remove') return each((snap) => { snap.places = snap.places.filter((p) => p.id !== a.place) }), { ok: true }
   if (a.type === 'move') return each((snap) => { snap.sections = snap.sections?.map((s) => ({ ...s, spaces: [...s.spaces.filter((x) => x !== a.id), ...(s.id === a.to ? [a.id] : [])] })) }), { ok: true }
   if (a.type === 'section' && a.op === 'new') { const id = `s:g${++n}`; each((snap) => { snap.sections = [...(snap.sections ?? []), { id, name: a.name, machine: a.machine, spaces: [] }] }); return { ok: true, id } }
-  if (a.type === 'section' && a.op === 'delete') return each((snap) => { snap.sections = snap.sections?.filter((s) => s.id !== a.id) }), { ok: true }
+  if (a.type === 'section' && a.op === 'delete') return each((snap) => { gone = snap.sections?.find((s) => s.id === a.id) ?? null; snap.sections = snap.sections?.filter((s) => s.id !== a.id) }), { ok: true }
+  if (a.type === 'section' && a.op === 'restore') return gone ? (each((snap) => { snap.sections = [...(snap.sections ?? []), gone!] }), (gone = null), { ok: true }) : { ok: false, error: 'There is nothing to undo.' }
+  // #1560: a chat on screen is read
+  if (a.type === 'read') return each((snap) => { snap.read = { ...snap.read, ...a.chats } }), { ok: true }
+  // #1547: a machine's start limit (null: back to all machines')
+  if (a.type === 'setting' && /^machine\.start_/.test(a.key)) return each((snap) => { snap.settings = snap.settings.map((sec) => ({ ...sec, rows: sec.rows.map((r) => (r.key !== a.key ? r : a.value === null ? { ...r, value: r.stepFrom ?? r.value, inherits: undefined, from: 'all machines' } : { ...r, value: a.value, inherits: { value: r.stepFrom ?? '', from: 'all machines' }, from: undefined })) })) }), { ok: true }
   if (a.type === 'config') {
     each((snap) => {
       const c = snap.config!
@@ -263,7 +285,29 @@ Bun.serve<Sock['data'], never>({
       return server.upgrade(req, { data: { mode: c === 'empty' || c === 'down' || c === 'more' || c === 'long' || c === 'one' || c === 'five' ? c : 'normal', watch: [], app } }) ? undefined : new Response('no', { status: 400 })
     }
     if (path === '/api/screen/shot') return new Response(Bun.file(shotFile(url.searchParams.get('key') ?? '')), { headers: { 'content-type': 'image/jpeg', 'cache-control': 'no-store' } })
+    // a background shell's last lines (chat/jobs.tsx)
+    if (path === '/api/activity' && url.searchParams.get('what') === 'job') return Response.json({ output: `  VITE v6.0.0  ready in 412 ms\n\n  ➜  Local:   http://127.0.0.1:5173/\n  page reload src/checkout.css (${new Date().toLocaleTimeString()})` })
     if (path === '/api/me') return Response.json({ login: 'sam', off: [] })
+    // the # list's spaces (service/main.ts reachOf): every space but Everything, this machine's and the others'
+    // the / list's commands (service/main.ts, core/slash.js): Claude Code's, and one of the person's own
+    if (path === '/api/commands') return Response.json({ commands: commandList('claude', [{ name: 'ship', about: 'Commit, push and open a pull request' }]) })
+    if (path === '/api/reach') return Response.json({ from: state.normal.host, checked: Date.now(), spaces: state.normal.places.filter((p) => p.id !== EV).map((p) => { const id = p.id.split('/').pop()!, far = p.machine && p.machine !== state.normal.host; return { id, name: p.name, route: far ? p.machine : '', machine: p.machine ?? state.normal.host, target: far ? `${p.machine}/${id}` : id } }) })
+    // the Diff viewer's Changes pane: a task's changes against main, or a space's folder's not committed yet
+    if (path === '/api/worktree') {
+      const task = url.searchParams.get('task'), what = url.searchParams.get('what'), file = url.searchParams.get('path') ?? ''
+      const files: [string, number, number, string?][] = task === 'SHOP-12' ? [['src/search/index.ts', 42, 17], ['src/search/cache.ts', 58, 0, 'added'], ['test/search.test.ts', 31, 2], ['docs/old-search.md', 0, 24, 'deleted']]
+        : task ? [['src/checkout/Button.tsx', 6, 2]] : [['notes/todo.md', 2, 1]]
+      if (what === 'diff') return Response.json({ base: task ? 'main' : 'its last commit', against: task ? 'main' : null, files: files.map(([p, add, del, st]) => ({ path: p, status: st ?? 'modified', add, del })), add: 0, del: 0 })
+      if (what === 'patch') return Response.json({ path: file, text: `diff --git a/${file} b/${file}\nindex 1a2b3c4..5d6e7f8 100644\n--- a/${file}\n+++ b/${file}\n@@ -12,9 +12,14 @@ export function search(query: string) {\n   const words = query.trim().toLowerCase().split(/\\s+/)\n-  const all = products.filter((p) => words.every((w) => p.name.toLowerCase().includes(w)))\n-  return all.slice(0, 20)\n+  const hit = cache.get(query)\n+  if (hit) return hit\n+  // one pass over the index instead of every product's name\n+  const ids = words.map((w) => index.get(w) ?? new Set<number>())\n+  const found = [...ids[0]].filter((id) => ids.every((s) => s.has(id))).slice(0, 20)\n+  cache.set(query, found)\n+  return found\n }\n \n export function clear() {\n@@ -40,3 +45,4 @@ export function clear() {\n   products.length = 0\n+  cache.clear()\n }\n` })
+      return Response.json({ error: 'Ask for diff or patch.' })
+    }
+    // New space's recent folders and whether a folder is in a git repo (service/spaces.ts newSpaceInfo, folders)
+    if (path === '/api/newspace') return Response.json({ home: '/Users/sam', recent: ['/Users/sam/dev/shop', '/Users/sam/dev/recipes', '/Users/sam/dev/blog', '/Users/sam/dev/portfolio', '/Users/sam/notes'], start: '/Users/sam' })
+    if (path === '/api/folders') {
+      const p = url.searchParams.get('path') ?? '~'
+      const repo = /^~\/dev\/(shop|blog|garden|portfolio)(\/|$)/.exec(p)
+      return Response.json({ path: p, exists: !!repo || p === '~/notes', dir: true, repo: repo ? `~/dev/${repo[1]}` : null, entries: [] })
+    }
     // fork: the "@~/" list's folders (SHEP-50), a fictional home
     if (path === '/api/paths') return Response.json({ entries: DEMO_HOME[(url.searchParams.get('dir') ?? '~/').replace(/^~\//, '')] ?? [] })
     if (path === '/api/action') return Response.json(action((await req.json()) as Record<string, any>) ?? { ok: true })

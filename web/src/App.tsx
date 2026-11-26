@@ -16,6 +16,7 @@ import { columnsOf, swapSides, useSides } from './sides.ts'
 import { SettingsWindow } from './settings.tsx'
 import { cx, Empty, I, IB, useScrolled } from './ui.tsx'
 import { SpaceIcon } from './space-icon.tsx'
+import { MarkRead } from './read-marks.ts'
 
 /** the thread the middle column shows: the open task when it has the middle, else the space's chat */
 export function middleThread(snap: Snapshot, ui: { at: string; max: string | null }): Thread | null {
@@ -140,7 +141,7 @@ function Bar({ snap }: { snap: Snapshot }) {
   const at = useUI((u) => u.at)
   // the Tasks count follows the Tasks filter (SHEP-331): redraw when it changes
   useUI((u) => u.tf)
-  const on = pane === 'tasks' || pane === 'artifacts' ? pane : pane ? '' : 'chat'
+  const on = pane && registry.bar.some((b) => b.pane === pane) ? pane : pane ? '' : 'chat'
   return (
     <>
       <nav className="bar" aria-label="Views">
@@ -195,7 +196,8 @@ function Toasts() {
           onPointerLeave={() => hold('hover', false)}
         >
           {t.busy ? <I n="working" c="s16" /> : t.tone === 'error' ? <I n="warn" c="s16 c-red" /> : null}
-          <span className="tt">{t.text}</span>
+          <span className="tt">{t.text}{t.sub && <span className="ts">{t.sub}</span>}</span>
+          {t.act && <button type="button" className="ta" onClick={(e) => { t.act!.run(); close(t.id, e) }}>{t.act.label}</button>}
           <button type="button" className="tx" aria-label="Dismiss" onClick={(e) => close(t.id, e)}>
             <I n="x" c="s16" />
           </button>
@@ -288,6 +290,7 @@ export function App() {
           {registry.overlays.map((V, i) => <V key={i} />)}
         </div>
         <Toasts />
+        <MarkRead />
       </div>
     </div>
   )

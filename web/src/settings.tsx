@@ -9,9 +9,10 @@ import { everything, isEverything, machineLabel, machineWarn, placeOf, spaceLabe
 import { copyText } from './copy.ts'
 import type { IconName } from './icons.ts'
 import { newerServed, notice, openSettings, registry, setUI, tryAct, updateNow, useStore, useUI } from './kernel.ts'
-import { openDialog, openForm } from './overlay.tsx'
+import { confirm, openDialog, openForm } from './overlay.tsx'
 import { openPicker, PickerHead, pickFor, sayPick, useCatalog, type Role } from './picker.tsx'
 import { MOTIONS, setPref, THEMES, usePrefs, WIDTHS } from './prefs.ts'
+import { canKeepAwake, setAwake, useAwake } from './awake.ts'
 import { setChatSide, useSides, type Layout, type Side } from './sides.ts'
 import { OWN_VERSION } from './update.ts'
 import { IconButton } from './space-icon.tsx'
@@ -158,6 +159,7 @@ function SpaceRepos({ snap, place }: { snap: Snapshot; place: string }) {
 function General() {
   const p = usePrefs()
   const sides = useSides()
+  const awake = useAwake()
   const { now, read } = useDeviceAlerts()
   const run = async (f: () => Promise<string | void>) => {
     try {
@@ -176,6 +178,7 @@ function General() {
       <SRow label="Chat width" wrap><Seg label="Chat width" values={WIDTHS} value={p.width} onChange={(v) => setPref('width', v)} /></SRow>
       <SRow label="Motion"><Seg label="Motion" values={MOTIONS} value={p.motion} onChange={(v) => setPref('motion', v)} /></SRow>
       <SidesRow {...sides} />
+      {canKeepAwake() && <SRow label="Keep the screen on"><Tgl label="Keep the screen on" on={awake} onChange={setAwake} /></SRow>}
       <h3>Notifications</h3>
       {now && now.state !== 'on' && (
         <div className="banner" style={{ margin: '0 0 4px' }}>
@@ -259,7 +262,7 @@ export function secretDialog(snap: Snapshot, place: string, name?: string, scope
       return (
         <>
           <h2>{name ? `${opts.fresh ? 'Set' : 'Replace'} ${name}` : 'Add a secret'}</h2>
-          <p>{level === 'all' ? 'Every space can use it.' : `Only ${spaceLabel(snap, level)} can use it.`}</p>
+          <p>{level === 'all' ? 'Every space can use it.' : `Only ${secretWhere(snap, level)} can use it.`}</p>
           {!name && (
             <label className="fld">
               <span>Name</span>
@@ -281,15 +284,39 @@ export function secretDialog(snap: Snapshot, place: string, name?: string, scope
   )
 }
 
-function Secrets({ snap, place }: { snap: Snapshot; place: string }) {
+/** who may use a secret kept at a level, in words: "#shop", "agents on mini" */
+const secretWhere = (snap: Snapshot, level: string) => {
+  const m = /^m:(.*)$/.exec(level)
+  return m ? `agents on ${m[1] ? machineLabel(snap, m[1]) : snap.host}` : spaceLabel(snap, level)
+}
+
+/** Every kept secret, by name only, never its value: Everywhere's, each machine's and each space's (a space's own
+ *  page: its own), each with Replace and Remove, so a leaked key goes from a phone in two taps. */
+export function Secrets({ snap, place }: { snap: Snapshot; place: string }) {
   const all = place === 'all'
-  const list = snap.config!.secrets.filter((s) => all || s.scope === place)
+  const vault = snap.settings?.find((x) => x.name === 'Secrets')?.vault
+  // each with the level the service keeps it at: all, m:<machine> ('' this computer) or the space's id
+  const kept = vault
+    ? vault.map((e) => ({ name: e.name, level: e.scope === 'everywhere' ? 'all' : e.scope === 'machine' ? `m:${e.machine ?? ''}` : e.space ?? '' }))
+    : snap.config!.secrets.map((s) => ({ name: s.name, level: s.scope }))
+  const list = kept.filter((s) => s.level && (all || s.level === place))
+  const remove = (s: { name: string; level: string }) =>
+    confirm({
+      title: `Remove ${s.name}?`,
+      body: 'Agents can no longer use it. To use it again, add it again.',
+      ok: 'Remove',
+      danger: true,
+      run: () => tryAct({ type: 'secret', level: s.level, name: s.name, value: null }, `Removed ${s.name}`),
+    })
   return (
     <>
       <p className="hint">Agents use these by name and never see them.</p>
       {list.map((s) => (
-        <SRow key={`${s.scope}:${s.name}`} label={<>{s.name}<small>{s.scope === 'all' ? 'Every space' : `Only ${spaceLabel(snap, s.scope)}`}</small></>}>
-          <Btn small onClick={() => secretDialog(snap, place, s.name, s.scope)}>Replace</Btn>
+        <SRow key={`${s.level}:${s.name}`} label={<>{s.name}<small>{s.level === 'all' ? 'Every space' : `Only ${secretWhere(snap, s.level)}`}</small></>}>
+          <span className="acts">
+            <Btn small onClick={() => secretDialog(snap, place, s.name, s.level)}>Replace</Btn>
+            <Btn small onClick={() => remove(s)}>Remove</Btn>
+          </span>
         </SRow>
       ))}
       <div className="acts" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
@@ -320,6 +347,71 @@ function addMachineDialog(snap: Snapshot) {
 
 const meterOf = (m: Snapshot['machines'][number], re: RegExp) => m.health?.meters.find((x) => re.test(x.name))?.pct
 
+type Mach = Snapshot['machines'][number]
+/** #1548: the agents live on a machine now, as the Tasks list and the spaces show them: its tasks' agents and its
+ *  spaces' Assistants that are working or waiting on you */
+const agentsOn = (snap: Snapshot, m: Mach) =>
+  snap.tasks.filter((t) => (t.on || snap.host) === m.machine && (t.status === 'work' || t.status === 'need')).length +
+  snap.places.filter((p) => p.machine === m.machine && (p.status === 'work' || p.status === 'need')).length
+
+/* ---------- #1547: a machine's start limits (herdr-task holds new tasks while it is busier) ---------- */
+
+const LIMITS: [string, string][] = [['start_load', 'Processor'], ['start_memory', 'Memory'], ['start_disk', 'Disk']]
+/** its three limit rows as the service keeps them (machine.<field>@<machine>, "local" for the one serving the app) */
+function limitsOf(snap: Snapshot, m: Mach) {
+  const at = m.machine === snap.host ? 'local' : m.machine
+  const rows = snap.settings?.find((x) => x.name === 'Machines')?.rows ?? []
+  return LIMITS.flatMap(([f, name]) => {
+    const row = rows.find((r) => r.key === `machine.${f}@${at}`)
+    return row ? [{ name, row, off: /^off$/i.test(row.value), own: !!row.inherits }] : []
+  })
+}
+const setLimit = (key: string, value: string | null) => tryAct({ type: 'setting', key, value, place: 'all' })
+/** the next word up or down its stepper's list (a value off the list starts from the nearest) */
+function stepTo(steps: string[], value: string, by: number) {
+  const n = parseFloat(value)
+  let i = steps.indexOf(value)
+  if (i < 0) i = steps.reduce((b, s, j) => (Math.abs(parseFloat(s) - n) < Math.abs(parseFloat(steps[b]!) - n) ? j : b), 0)
+  return steps[Math.max(0, Math.min(steps.length - 1, i + by))]!
+}
+
+function limitsDialog(id: string) {
+  openForm(
+    function Form({ close }) {
+      const snap = useStore((s) => s.snap)
+      const m = snap?.machines.find((x) => x.id === id)
+      const lims = snap && m ? limitsOf(snap, m) : []
+      return (
+        <>
+          <h2>Start limits{m ? ` · ${m.name}` : ''}</h2>
+          <p>New tasks wait while {m?.name ?? 'this machine'} is busier than this.</p>
+          {lims.map(({ name, row, off, own }) => {
+            const steps = row.steps ?? []
+            const at = steps.indexOf(row.value)
+            return (
+              <SRow key={row.key} label={<>{name}<small>{own ? <>Set here · <span className="lk" role="button" tabIndex={0} onClick={() => void setLimit(row.key, null)} onKeyDown={(e) => e.key === 'Enter' && void setLimit(row.key, null)}>Reset</span></> : 'Default'}</small></>}>
+                <span className="stp">
+                  {!off && (
+                    <>
+                      <IB icon="minus" label={`Lower ${name}`} disabled={at === 0} onClick={() => void setLimit(row.key, stepTo(steps, row.value, -1))} />
+                      <span className="num">{row.value}</span>
+                      <IB icon="plus" label={`Raise ${name}`} disabled={at === steps.length - 1} onClick={() => void setLimit(row.key, stepTo(steps, row.value, 1))} />
+                    </>
+                  )}
+                  <Tgl label={`${name} limit`} on={!off} onChange={(on) => void setLimit(row.key, on ? row.stepFrom ?? steps[steps.length - 1] ?? null : 'Off')} />
+                </span>
+              </SRow>
+            )
+          })}
+          {!lims.length && <p className="hint">Its limits can't be read now.</p>}
+          <div className="acts"><Btn onClick={close}>Done</Btn></div>
+        </>
+      )
+    },
+    { label: 'Start limits' },
+  )
+}
+
 function Machines({ snap }: { snap: Snapshot }) {
   const warns = snap.machines.filter((m) => machineWarn(m))
   return (
@@ -332,8 +424,11 @@ function Machines({ snap }: { snap: Snapshot }) {
       ))}
       {snap.machines.map((m) => {
         const off = unreachable(m)
-        const agents = m.health?.working ?? 0
+        const agents = agentsOn(snap, m)
         const tri: [string, number | undefined][] = [['Processor', meterOf(m, /cpu|processor|load/i)], ['Memory', meterOf(m, /mem/i)], ['Disk', meterOf(m, /disk/i)]]
+        // #1547: each meter's start limit under it (new tasks wait above it), and Start limits to change them
+        const lims = limitsOf(snap, m)
+        const desk = !off && snap.config?.desktops?.includes(m.machine)
         return (
           <div className="mcard" key={m.id}>
             <div>
@@ -348,13 +443,15 @@ function Machines({ snap }: { snap: Snapshot }) {
                     <span className="hint">{name}</span>
                     <span className="num">{pct === undefined ? '–' : `${Math.round(pct)}%`}</span>
                     <Meter pct={pct ?? 0} />
+                    {((l) => l && <span className="hint">{l.off ? 'No limit' : `Limit ${l.row.value}`}</span>)(lims.find((x) => x.name === name))}
                   </div>
                 ))}
               </div>
             )}
-            {!off && snap.config?.desktops?.includes(m.machine) && (
+            {(desk || lims.length > 0) && (
               <div className="acts" style={{ justifyContent: 'flex-start' }}>
-                <Btn small onClick={() => setUI({ settings: null, pane: 'screen', scr: { key: `machine:${m.machine}`, src: 'd', drive: false }, task: null, art: null })}>Open desktop</Btn>
+                {lims.length > 0 && <Btn small onClick={() => limitsDialog(m.id)}>Start limits</Btn>}
+                {desk && <Btn small onClick={() => setUI({ settings: null, pane: 'screen', scr: { key: `machine:${m.machine}`, src: 'd', drive: false }, task: null, art: null })}>Open desktop</Btn>}
               </div>
             )}
           </div>

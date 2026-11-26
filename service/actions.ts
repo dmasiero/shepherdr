@@ -28,6 +28,8 @@ import * as MA from "../core/machine-add.js";
 import { exec } from "./model.ts";
 import { FIND } from "../core/chat-log.js";
 import { spawn } from "./spawn.ts";
+import { askRecap } from "./recap.ts";
+import { recapsAuto } from "./next.ts";
 
 const attachDir = () => join(appHome(), "data", "chat-attach");
 /** files in one message at most (the page says so before it sends: web/plugins/chat/client.tsx) */
@@ -304,6 +306,27 @@ const reviving = new Map<string, Promise<{ addr: string; mine?: symbol; result?:
 /** how long a restarted Assistant may take to come up before its message is given up on (the page's Retry) */
 export const REVIVE_WAIT = { ms: 120_000, every: 500 };
 
+/** #1545: an alert's Restart all: each Assistant a restart of its machine left stopped (herdr-task revive.py
+ *  cut_alert_pass lists them on the alert), started again on its own conversation as the Stopped card's Restart. One
+ *  started meanwhile (a message to it, its own Restart) is skipped; the alert goes at that machine's next tick. */
+export async function restartAll(hub: Hub, id: string, compat: Compat) {
+  const alertOf = (t: any) => { try { return JSON.parse(t?.labels?.["herdr.alert"] ?? "null"); } catch { return null; } };
+  const k: any = [...hub.terminals.values()].find((t: any) => alertOf(t)?.id === id);
+  const list = alertOf(k)?.restart;
+  if (!k || !Array.isArray(list)) throw new Error("That alert isn't here any more.");
+  if (!compat.agents?.revive) throw new Error("Restart isn't available here.");
+  const at = String(k.address).includes("/") ? String(k.address).slice(0, String(k.address).indexOf("/") + 1) : "";
+  let started = 0, failed = 0;
+  for (const x of list) {
+    const addr = at + String(x), t: any = hub.terminals.get(addr);
+    // still stopped: a plain shell, or ended at once (cut_alert_pass); restarted meanwhile, it is gone or runs
+    if (!t || (t.state === "live" && inFront(t) !== "shell")) continue;
+    try { await compat.agents.revive(addr, compat.reader?.(addr) ?? null); started++; } catch { failed++; }
+  }
+  if (failed) throw new Error(`${failed} didn't start again: open its chat and press Restart.`);
+  return { ok: true, started };
+}
+
 /** A message to a space whose Assistant ended: it starts again on its own conversation (Agents.revive, the Stopped
  *  card's Restart), and the message goes to the new one once it is up, held for its turn if it is busy. One that can't
  *  start again (its record gone, no log to resume) gives way to a fresh Assistant with the message as its task. */
@@ -524,6 +547,18 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     const next = await compat.agents.restart(a, reader, pick);
     return { ok: true, terminal: next };
   }
+  if (b?.type === "agent-update" && typeof b.chat === "string" && compat.updates) {
+    // Update <agent>: its CLI's own update on its machine, then the chat reopens on the same conversation
+    const a = chat(b.chat);
+    return { ok: true, ...(await compat.updates.update(a, compat.reader?.(a))) };
+  }
+  if (b?.type === "agent-restart" && typeof b.chat === "string" && compat.agents?.revive) {
+    // Restart in a chat's menu: a running agent, even a stuck or busy one, closes and opens again on the same CLI,
+    // model and conversation (Agents.revive, as Update <agent> and the Stopped card do)
+    const a = chat(b.chat), t: any = hub.terminals.get(a);
+    if (!t || t.state !== "live") throw new Error("That agent isn't running.");
+    return { ok: true, terminal: await compat.agents.revive(a, compat.reader?.(a) ?? null) };
+  }
   if (b?.type === "machine-hosts") {
     // Add machine, as the window's (mods/machine-add-chat, core/machine-add.js): the hosts in ~/.ssh/config, and the
     // machines added already (hc machine ls)
@@ -566,6 +601,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() || "It didn't stop.");
     return { ok: true };
   }
+  if (b?.type === "restart-all" && typeof b.alert === "string") return restartAll(hub, b.alert, compat);
   if ((b?.type === "held-now" || b?.type === "held-drop") && typeof b.cid === "string") {
     // a queued message (Send now and ×): sent at once, or taken back unsent
     const m = held.find((x) => x.cid === b.cid);
@@ -617,6 +653,13 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (current && reader?.start) await (compat as any).earlier?.(current);
     else if (history && prior?.start) await (compat as any).earlier?.(history);
     return { ok: true };
+  }
+  if (b?.type === "recap" && typeof b.chat === "string") {
+    // the Recap action, or the page's own when you come back to a chat (auto: never an error, off in Settings)
+    const auto = b.auto === true;
+    if (auto && !recapsAuto()) return { ok: true, asked: false };
+    const a = chat(b.chat);
+    return askRecap(hub, a, compat.reader?.(a)?.conv?.items ?? [], { auto });
   }
   if (b?.type === "keys" && typeof b.chat === "string" && Array.isArray(b.keys) && b.keys.length <= 32 && b.keys.every((k: unknown) => typeof k === "string" && k.length <= 40)) {
     const res = await hc(["keys", chat(b.chat), ...b.keys]);

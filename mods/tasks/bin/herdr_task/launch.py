@@ -708,8 +708,10 @@ def closing_line(s, task, parent=None, argv=None):
     on, rounds = review_limits(s, task)
     if on:
         text += (f" Review is on: after each review round, record it on the commit it reviewed with `{ht} reviewed {s.ref(task)} "
-                 f"--folder {shlex.quote(s.loc['folder'])} --report \"<its findings in a line>\"` (add `--commit <sha>` if you committed fixes since; at most {rounds} rounds); "
-                 f"ready refuses a final commit no round was recorded on.")
+                 f"--folder {shlex.quote(s.loc['folder'])} --report \"<its findings in a line>\"` (add `--commit <sha>` if you committed fixes since; at most {rounds} rounds, "
+                 f"the number the person asked for: never more); ready refuses a final commit no round was recorded on while "
+                 f"rounds are left. Once all {rounds} are used, fix the last round's must-fix findings and say ready without "
+                 f"another round, writing in --details that the last fix wasn't reviewed again.")
     text += (f" At the start, at each natural step and at least every 5 minutes while you work, say how it's going: `{ht} status {s.ref(task)} --folder {shlex.quote(s.loc['folder'])} "
              f"\"<what you're doing now, at most {ROW_MAX} characters, a few plain words>\" --done <% of the whole task> --left <your best guess of how long is left, like 20m>`: "
              f"always give `--left`, from your very first status on, from the clock, not a feeling: `date +%s` once at the start, again "
@@ -779,6 +781,10 @@ def handoff(s, task, prev, parent=None, argv=None):
     lines.append(closing_line(s, task, parent, argv))
     lines.append(settings_block(s, task, None, argv, live=True))
     return "\n\n".join(x for x in lines if x)
+
+
+DETACHED = ("{folder} is on a detached commit, so this task has no branch to start from and merge into. Check out a "
+            "branch there, or give the task one with --base <branch>.")
 
 
 def current_base(main):
@@ -946,6 +952,9 @@ def folder_for(s, task):
         start = task.get("start") or git(main, "merge-base", base, have.get("head") or br)[1] or have.get("head")
         task.update(worktree=path, branch=br, base=base, start=start)
         return path
+    if not own and not task.get("base") and not (task.get("pr") or {}).get("taken") \
+            and not git(main, "symbolic-ref", "--quiet", "HEAD")[0]:
+        raise Fail(DETACHED.format(folder=main))  # #1533: no branch to merge into
     exists = git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")[0]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     taken = (task.get("pr") or {}).get("branch") if (task.get("pr") or {}).get("taken") else None
