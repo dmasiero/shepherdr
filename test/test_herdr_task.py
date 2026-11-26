@@ -7454,6 +7454,68 @@ class GiteaTasks(unittest.TestCase):
         self.assertEqual(len(self.tea_state()["pulls"]), 1)
         self.assertEqual(self.tea_state()["comments"]["1"], ["Notes added."])
 
+    def patches(self):
+        """The PATCH calls the fake tea got for pull request 1: their bodies."""
+        out = []
+        for a in self.calls("tea"):
+            if a[:1] == ["api"] and a[a.index("-X") + 1] == "PATCH" and a[-1] == "repos/o/r/pulls/1":
+                out.append(a)
+        return out
+
+    def ready_with(self, **words):
+        a = self.args()
+        for k in ("pr_title", "pr_body"):
+            setattr(a, k, words.get(k))
+        self.commands.cmd_ready(a)
+
+    def test_gitea_ready_opens_its_pull_request_with_the_given_title_and_body(self):
+        """Fork (Gitea's #1087): ready --pr-title/--pr-body open the Gitea pull request with them, as written."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.ready_with(pr_title="Deploy the firewall", pr_body="## Deploy plan\n\n1. hmx2 first")
+        pr = self.tea_state()["pulls"][0]
+        self.assertEqual((pr["title"], pr["body"]), ("Deploy the firewall", "## Deploy plan\n\n1. hmx2 first"))
+        self.assertNotIn("pr_title_new", t)
+        self.assertNotIn("pr_body_new", t)
+        self.assertEqual(self.patches(), [])
+
+    def test_gitea_ready_again_with_pr_body_edits_the_open_one_once(self):
+        """2026-11-26 (infra): a second ready with --pr <n> --pr-body left Gitea's description as the first. It is
+        PATCHed there now, once per time it is given; a later ready without it changes nothing more."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.ready_with()
+        first = self.tea_state()["pulls"][0]
+        self.assertEqual(first["title"], "SHEP-1 Notes")
+        self.assertEqual(self.patches(), [], "no --pr-title/--pr-body: nothing PATCHed")
+        t["state"] = "running"
+        self.ready_with(pr_body="The deploy plan")
+        self.assertEqual(self.tea_state()["pulls"][0]["body"], "The deploy plan")
+        self.assertEqual(self.tea_state()["pulls"][0]["title"], "SHEP-1 Notes")
+        self.assertEqual(len(self.patches()), 1)
+        self.assertNotIn("pr_body_new", t)
+        t["state"] = "running"
+        self.ready_with()
+        self.assertEqual(len(self.patches()), 1, "given once, applied once")
+        self.assertEqual(self.tea_state()["pulls"][0]["body"], "The deploy plan")
+        t["state"] = "running"
+        self.ready_with(pr_title="WIP: Notes, retitled")
+        self.assertEqual(len(self.patches()), 3, "the title, then the WIP mark taken off it")
+        self.assertEqual(self.tea_state()["pulls"][0]["title"], "Notes, retitled")
+        self.assertEqual(len(self.tea_state()["pulls"]), 1)
+
+    def test_gitea_ready_with_pr_title_on_an_adopted_pull_request(self):
+        """A pull request opened by hand for the branch is adopted; --pr-title/--pr-body replace its own."""
+        self.remote("ssh://git@gitea.test:2222/o/r.git")
+        t = self.task()
+        self.git(self.wt, "push", "-q", "origin", "task/1")
+        n = self.open_pr("task/1")
+        self.ready_with(pr_title="Their work, named", pr_body="Said here")
+        self.assertEqual(t["pr"]["number"], n)
+        pr = self.tea_state()["pulls"][0]
+        self.assertEqual((pr["title"], pr["body"]), ("Their work, named", "Said here"))
+        self.assertEqual(len(self.patches()), 1)
+
     def test_ready_again_on_a_ready_task_with_no_pull_request_pushes_and_opens_one(self):
         """SHEP-35 (INF-19): a task already Ready with no pull request (its first ready ran on a herdr-task
         from before Gitea support: GitHub's "no repo" kept, no forge read, its branch with no upstream)

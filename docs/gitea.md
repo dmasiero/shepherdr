@@ -35,6 +35,9 @@ The answer is kept for an hour per repo (as upstream keeps GitHub's).
   and title, its prompt, summary and details as the body. A pull request already open for the branch (opened by hand or
   by the agent, from this repo, at the branch's tip) is adopted; ready again comments its new summary there. A
   `WIP:` title is taken off, since Gitea won't merge it. A branch that already had one merged is refused, as on GitHub.
+- **`--pr-title` / `--pr-body`** work as on GitHub: a new pull request opens with them, as written, and a later ready
+  that gives them again changes the open one's (its own, adopted or taken), once each time. Unlike GitHub, a ready
+  without them never rewrites the description: Gitea's default one is the prompt, with no Shepherdr part to refresh.
 - **`--pr <n>`** (ready, add, start, edit) takes a Gitea pull request that is already open, read through tea, as on
   GitHub: the task's commits go on its branch and ready comments there instead of opening its own. One that is closed,
   from a fork or not found is refused in words; one closed after it was taken is said at ready. A task started on an

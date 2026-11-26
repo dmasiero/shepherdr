@@ -297,6 +297,22 @@ def unwip(pr, title=None):
         call(pr, "PATCH", f"{root(pr)}/pulls/{pr['number']}", {"title": WIP.sub("", title, count=1)})
 
 
+def pr_given(pr, task, title=None):
+    """fork: as github.pr_describe's #1087 part: a title or description its agent gave (ready --pr-title/--pr-body)
+    replaces the open pull request's, once per time it is given (its _new flag, popped). The title it has now (title:
+    the one read, None when unread), for unwip. No #1004 refresh of a Herdr-written description, as GitHub's: Gitea's
+    own default body is the task's prompt, unmarked (no github.MARK_START), so github.described() would never find
+    Herdr's part in it to rewrite."""
+    edit = {}
+    if task.pop("pr_title_new", None) and task.get("pr_title"):
+        edit["title"] = task["pr_title"]
+    if task.pop("pr_body_new", None) and task.get("pr_body"):
+        edit["body"] = task["pr_body"]
+    if edit:
+        call(pr, "PATCH", f"{root(pr)}/pulls/{pr['number']}", edit)
+    return edit.get("title", title)
+
+
 def comment(pr, body):
     call(pr, "POST", f"{root(pr)}/issues/{pr['number']}/comments", {"body": body})
 
@@ -333,7 +349,8 @@ def pr_merged(task, t):
 
 def pr_open(s, task, t, summary=None):
     """After github.pr_open pushed the branch: keeps the task's open pull request (its summary as a
-    comment), else adopts the branch's open one, else opens one, as gh does on GitHub."""
+    comment), else adopts the branch's open one, else opens one, as gh does on GitHub. ready's
+    --pr-title/--pr-body go on as on GitHub (pr_given)."""
     usable(t)
     pr = task.get("pr") or {}
     if pr.get("number") and on(task):
@@ -342,7 +359,7 @@ def pr_open(s, task, t, summary=None):
         except Fail:
             p = {}
         if p.get("state") == "open" and not p.get("merged"):
-            unwip(pr, p.get("title") or "")
+            unwip(pr, pr_given(pr, task, p.get("title") or ""))
             if summary:
                 comment(pr, summary)
             return pr
@@ -351,7 +368,7 @@ def pr_open(s, task, t, summary=None):
             raise Fail(f"Pull request #{pr['number']}, which this task took, is {state_of(p).lower()}. Reopen it, take "
                        f"another (ready --pr <n>), or let it go (ready --pr \"\") for a pull request of its own.")
     if pr_adopt(task, t):
-        unwip(task["pr"])
+        unwip(task["pr"], pr_given(task["pr"], task))
         if summary:
             comment(task["pr"], summary)
         return task["pr"]
@@ -360,14 +377,21 @@ def pr_open(s, task, t, summary=None):
     if done:
         raise Fail(f"Pull request #{done['number']} for {task['branch']} is already merged, and {task['branch']} has commits "
                    "since. Put them on a new branch (a new task) rather than a second pull request.")
-    body = (task.get("prompt") or "").strip() or task["title"]
-    if summary:
-        body += "\n\n## Summary\n\n" + summary.strip()
-    if (task.get("details") or "").strip():
-        body += "\n\n## Details\n\n" + task["details"].strip()
+    # fork: its agent's own title and description (ready --pr-title/--pr-body, #1087) when given, as written, as
+    # github.pr_title/pr_body give them; else Gitea's own default (its ref and title; its prompt, summary and details).
+    title = task.get("pr_title") or f"{s.ref(task)} {task['title']}"
+    body = task.get("pr_body")
+    if not body:
+        body = (task.get("prompt") or "").strip() or task["title"]
+        if summary:
+            body += "\n\n## Summary\n\n" + summary.strip()
+        if (task.get("details") or "").strip():
+            body += "\n\n## Details\n\n" + task["details"].strip()
+    task.pop("pr_title_new", None)
+    task.pop("pr_body_new", None)
     try:
         p = call(t, "POST", f"{root(t)}/pulls", {"head": task["branch"], "base": task.get("base") or "main",
-                                               "title": f"{s.ref(task)} {task['title']}", "body": body}, timeout=120)
+                                               "title": title, "body": body}, timeout=120)
     except Fail as e:
         raise Fail(f"Couldn't open a pull request: {e}")
     if not isinstance(p, dict) or not isinstance(p.get("number"), int) or not p.get("html_url"):
