@@ -144,7 +144,8 @@ export interface Registry {
   /** takes a chat's place (the agent's own terminal) */
   chatBody: { when: (ui: UI, thread: Thread) => boolean; View: FC<{ thread: Thread }> }[]
   /** above the message box (the warnings line) */
-  aboveBox: { order: number; View: FC<{ thread: Thread }> }[]
+  // fork: `pane` also shows it above a task's box in the side pane (Jump arrow in side pane)
+  aboveBox: { order: number; View: FC<{ thread: Thread }>; pane?: boolean }[]
   /** in the message box's bar, before its right end (none today: the voice plugin fills views.boxEnd) */
   boxButtons: { order: number; View: FC<{ thread: Thread; setText: (value: string) => void }> }[]
   /** under a column, below its message box (your own terminal) */

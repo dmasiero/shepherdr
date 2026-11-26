@@ -2,8 +2,9 @@
 // with how many messages came since you left; End does the same. Back at the end, the chat follows again (stick.ts).
 import { useSyncExternalStore } from 'react'
 
-/** how far from its end a chat must be before the button shows: a little scroll never brings it up */
-export const OFF_PX = 240
+/** how far from its end a chat must be before the button shows. fork: 80, where the chat stops following its end
+ *  (stuck), not upstream's 240: a side pane's task chat is short, and a modest scroll up never reached 240 */
+export const OFF_PX = 80
 
 export interface OffEnd {
   /** messages from the agent (and the app's own rows) that came after you left the end */
