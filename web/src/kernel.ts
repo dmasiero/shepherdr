@@ -229,6 +229,8 @@ export interface UI {
   artV: number | null
   /** the open artifact has the middle column */
   artWide: boolean
+  /** fork: where the open artifact was opened from, which its ← goes back to (Artifact back to its task) */
+  artFrom: ArtFrom | null
   tab: 'Now' | 'Scheduled'
   /** the phone's list of spaces is out */
   drawer: boolean
@@ -339,6 +341,8 @@ let state: State = {
     art: params.get('artifact'),
     artV: null,
     artWide: false,
+    // fork: Artifact back to its task
+    artFrom: null,
     tab: 'Now',
     drawer: false,
     sideOff: false,
@@ -895,7 +899,29 @@ export function minimize() {
 }
 
 export function openArtifact(id: string, v: number | null = null) {
-  setUI({ art: id, artV: v, pane: 'artifacts', task: null, drawer: false, search: false, settings: null })
+  // fork: Artifact back to its task: it keeps what the pane showed, for its ←
+  setUI((ui) => ({ art: id, artV: v, pane: 'artifacts', task: null, drawer: false, search: false, settings: null, artFrom: ui.art ? (ui.artFrom && { ...ui.artFrom, art: id }) : { art: id, at: ui.at, pane: ui.pane, task: ui.task } }))
+}
+
+/** fork: Artifact back to its task. What the pane showed before an artifact opened in it: its ← goes back there,
+ *  like a browser's Back (a task's chat, the Tasks list, the space's chat with no pane, or the Artifacts list) */
+export interface ArtFrom {
+  art: string
+  at: string
+  pane: string | null
+  task: string | null
+}
+
+/** fork: Artifact back to its task. Where an open artifact's ← goes, and its label; the Artifacts list when it was
+ *  opened from nowhere known (a link, a reload, another space since) */
+export function artifactBack(ui: UI): { label: string; to: Partial<UI> } {
+  const f = ui.artFrom
+  const list = { label: 'Back to artifacts', to: { art: null, artFrom: null } }
+  if (!f || f.art !== ui.art || f.at !== ui.at) return list
+  if (f.task) return { label: 'Back to the task', to: { art: null, artFrom: null, pane: f.pane, task: f.task } }
+  if (f.pane === 'artifacts') return list
+  if (f.pane) return { label: f.pane === 'tasks' ? 'Back to tasks' : 'Back', to: { art: null, artFrom: null, pane: f.pane } }
+  return { label: 'Back to the chat', to: { art: null, artFrom: null, pane: null, artWide: false } }
 }
 
 /** open or close a pane from its button: pressed again on a desktop, it closes */

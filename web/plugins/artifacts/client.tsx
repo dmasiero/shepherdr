@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { PaneFrame } from '@client/App.tsx'
 import { renameDialog } from '@client/list.tsx'
-import { definePlugin, getState, notice, openArtifact, openLink, setUI, togglePane, tryAct, useSnap, useUI } from '@client/kernel.ts'
+import { artifactBack, definePlugin, getState, notice, openArtifact, openLink, setUI, togglePane, tryAct, useSnap, useUI } from '@client/kernel.ts'
 import { confirm, openDialog, openMenu } from '@client/overlay.tsx'
 import { Btn, cx, Empty, Hd, I, IB, Row } from '@client/ui.tsx'
 import { copyText } from '@client/copy.ts'
@@ -253,7 +253,9 @@ function Open({ a, where }: { a: Artifact; where: 'pane' | 'middle' }) {
     setNote('')
     setMarkup(false)
   }
-  const back = where === 'middle' ? { label: 'Back', run: () => setUI({ artWide: false }) } : { label: 'Back to artifacts', run: () => setUI({ art: null }) }
+  // fork: Artifact back to its task: the pane's ← goes back to where it was opened from
+  const from = artifactBack(ui)
+  const back = where === 'middle' ? { label: 'Back', run: () => setUI({ artWide: false }) } : { label: from.label, run: () => setUI(artifactBack(getState().ui).to) }
   return (
     <PaneFrame
       flush
