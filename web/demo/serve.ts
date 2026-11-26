@@ -317,7 +317,7 @@ Bun.serve<Sock['data'], never>({
         const say = (t: string) => ws.send(new TextEncoder().encode(t))
         const term = (ws.data as any).term as string
         // fork: each space's shell names its own machine and folder, so its tabs tell apart (Terminal stays across spaces)
-        const own = /^sh:p:([^:]+):(.+)$/.exec(term)
+        const own = /^sh:p:([^:]+):(.+?)(?:~\d+)?$/.exec(term)
         const prompt = own ? `sam@${own[1]} ${own[2]} % ` : 'sam@mac-mini shop % '
         if (m.type === 'open') {
           termPages.set(term, (termPages.get(term) ?? new Set()).add(ws))

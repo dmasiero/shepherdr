@@ -1,15 +1,16 @@
 // The Terminal row of a space's name menu and of an open task's ⋯ menu (the header has no Terminal button): it opens
 // your own shell (the drawer under the chat; the whole screen on a phone), checked while that is open, and a second
-// tap closes it again. Ctrl+` does the same for a space. Below a line, View as terminal / View as chat swaps this chat
+// tap closes it again. Ctrl+` does the same for a space. fork: a space's, tapped again while it shows, adds another
+// tab for the space instead (Terminal again adds a tab); a task's still closes. Below a line, View as terminal / View as chat swaps this chat
 // for its agent's own terminal.
 import { getState, setUI, subscribe, type MenuRow, type UI } from '@client/kernel.ts'
-import { activeOf, openIn } from './tabs.ts'
+import { activeOf, openIn, tabPlace } from './tabs.ts'
 
 /** your own space terminal (its tabs): showing now? */
 export const spaceTermShown = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term'>) => (ui.phone ? ui.pane === 'terminal' && !ui.termTask : ui.term)
 /** a space's own shell: open now? fork: and showing this space's tab (Terminal stays across spaces) */
 export const spaceTermOn = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term' | 'terms' | 'termAt' | 'at'>) =>
-  spaceTermShown(ui) && (!ui.terms?.length || !ui.at || activeOf(ui.terms, ui.termAt) === ui.at)
+  spaceTermShown(ui) && (!ui.terms?.length || !ui.at || tabPlace(activeOf(ui.terms, ui.termAt) ?? '').place === ui.at)
 /** fork: show or hide your own space terminal (Terminal stays across spaces) */
 export const showSpaceTerm = (ui: Pick<UI, 'phone'>, show: boolean): Partial<UI> => (ui.phone ? { pane: show ? 'terminal' : null, termTask: false } : { term: show })
 /** an open task's own shell: open now? (a phone shows it in place of the task, so the task's menu never sees it open) */
@@ -17,7 +18,8 @@ export const taskTermOn = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'tterm'>
 
 export function toggleSpaceTerm() {
   const { ui } = getState()
-  // fork: the tabs: another space's terminal stays, this space's is added beside it (Terminal stays across spaces)
+  // fork: the tabs: another space's terminal stays, this space's is added beside it (Terminal stays across spaces);
+  // while it shows, another tab for this space (Terminal again adds a tab)
   const { show, ...tabs } = openIn(ui, ui.at, spaceTermShown(ui))
   setUI({ ...tabs, ...showSpaceTerm(ui, show) })
 }
