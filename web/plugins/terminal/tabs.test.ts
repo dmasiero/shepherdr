@@ -1,7 +1,7 @@
 // fork: Terminal stays across spaces. Your own terminal is tabs, one per space, kept across a space switch.
 import { beforeEach, expect, test } from 'bun:test'
 import { getState, setUI } from '@client/kernel.ts'
-import { activeOf, addTab, closeTab, openIn, tabsOf } from './tabs.ts'
+import { activeOf, addTab, closeTab, nextTab, openIn, tabPlace, tabsOf } from './tabs.ts'
 import { followFold, spaceTermRow } from './menu.ts'
 
 const A = 'p:mac:a', B = 'p:vm:b'
@@ -18,23 +18,44 @@ test('opened in A, then B: A keeps showing; opened again in B, B is a second tab
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ term: true, terms: [A, B], termAt: B })
   expect(spaceTermRow(getState().ui).on).toBe(true)
-  // back in A: its tab is picked, not a new one
+  // fork: Terminal again adds a tab. Back in A, while it shows: another tab for A, its own shell
   setUI({ at: A })
   spaceTermRow(getState().ui).run!()
-  expect(getState().ui).toMatchObject({ term: true, terms: [A, B], termAt: A })
-  // the row again on A's showing tab hides the terminal, its tabs kept
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${A}~2`], termAt: `${A}~2` })
+  // the row again on A's showing tab adds a third, never hides
   spaceTermRow(getState().ui).run!()
-  expect(getState().ui).toMatchObject({ term: false, terms: [A, B], termAt: A })
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${A}~2`, `${A}~3`], termAt: `${A}~3` })
+  expect(spaceTermRow(getState().ui).on).toBe(true)
+  // hidden (the ⌄), then the row: back as it was, no new tab
+  setUI({ term: false, termAt: `${A}~2` })
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${A}~2`, `${A}~3`], termAt: `${A}~2` })
+})
+
+test("Terminal again adds a tab: a space's tabs are numbered, the lowest free first; each its own shell", () => {
+  expect(tabPlace(A)).toEqual({ place: A, n: 1 })
+  expect(tabPlace(`${A}~2`)).toEqual({ place: A, n: 2 })
+  expect(nextTab([], A)).toBe(A)
+  expect(nextTab([A], A)).toBe(`${A}~2`)
+  expect(nextTab([A, `${A}~3`], A)).toBe(`${A}~2`)
+  // the first closed, the next takes its place
+  expect(nextTab([`${A}~2`], A)).toBe(A)
+  expect(addTab({ terms: [A, B], termAt: B }, A)).toEqual({ terms: [A, B, `${A}~2`], termAt: `${A}~2` })
+  // hidden, shown from a space with two tabs: the one of its own last showing, else its newest
+  expect(openIn({ terms: [A, B, `${A}~2`], termAt: B }, A, false)).toEqual({ terms: [A, B, `${A}~2`], termAt: `${A}~2`, show: true })
+  expect(openIn({ terms: [A, B, `${A}~2`], termAt: A }, A, false)).toEqual({ terms: [A, B, `${A}~2`], termAt: A, show: true })
+  // a tab of a space gone goes with it
+  expect(tabsOf({ terms: [A, `${B}~2`], termAt: null }, (p) => p !== B, A)).toEqual([A])
 })
 
 test('hidden, then shown from a space with no tab: it comes back as it was, not with a new tab', () => {
   setUI({ terms: [A], termAt: A, at: B })
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ term: true, terms: [A], termAt: A })
-  // the bar's + starts B's
+  // the bar's + starts B's, and again a second B
   setUI(addTab(getState().ui, B))
   expect(getState().ui).toMatchObject({ terms: [A, B], termAt: B })
-  expect(addTab(getState().ui, B)).toEqual({ terms: [A, B], termAt: B })
+  expect(addTab(getState().ui, B)).toEqual({ terms: [A, B, `${B}~2`], termAt: `${B}~2` })
 })
 
 test("closing a tab leaves the others, the one next to it showing; the last closes the terminal", () => {
@@ -49,7 +70,8 @@ test("tabs of spaces gone are dropped; none kept (a terminal open from before ta
   expect(tabsOf({ terms: [], termAt: null }, () => true, B)).toEqual([B])
   expect(activeOf([A, B], 'p:gone')).toBe(B)
   expect(activeOf([A, B], A)).toBe(A)
-  expect(openIn({ terms: [], termAt: null }, A, true).show).toBe(false)
+  // fork: shown from before tabs (none kept, A's showing): the row adds A's second (Terminal again adds a tab)
+  expect(openIn({ terms: [], termAt: null }, A, true)).toEqual({ terms: [A, `${A}~2`], termAt: `${A}~2`, show: true })
 })
 
 test("a phone: the Terminal screen shows the tabs; going to B's chat and back to the terminal finds A's", () => {

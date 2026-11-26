@@ -421,7 +421,9 @@ function shellAt(key: string): ShellAt | null {
     const id = key.slice(8), r = (model.rows as any[]).find((x) => (x.machine ? `${x.machine}:${x.ref}` : x.ref) === id);
     return r ? { folder: r.worktree ?? r.folder, machine: r.machine ?? null } : null;
   }
-  const s = (model.spaces as any[]).find((x) => x.id === key.slice(3));
+  // fork: a space's second tab and on, "sh:<space id>~2", is another shell in the same folder (Terminal again adds a tab)
+  const id = key.slice(3).replace(/~\d+$/, "");
+  const s = (model.spaces as any[]).find((x) => x.id === id);
   return s?.folder ? { folder: s.folder, machine: s.machine ?? null } : null;
 }
 /** Screens (service/screens.ts): each chat's and task's browser tab and desktop, to watch and take over. A key names
