@@ -694,3 +694,12 @@ textarea.cin{overflow-y:auto}
    tables, which also scroll sideways, keep theirs. */
 .side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb{scrollbar-width:none}
 :is(.side,.scroll,.win .nav,.win .pg,.app.phone .win,.dlg,.sheet,.drawer,.pk .list,textarea.cin,.srch .list,.emolist,.ppick,.ksheet .kcols,.quietb)::-webkit-scrollbar{display:none}
+/* fork: your own terminals as tabs, one per space, kept across a space switch (Terminal stays across spaces,
+   web/plugins/terminal/tabs.ts): the space's name, the showing tab's folder, another machine's name; ✕ closes one */
+.tbar.ttabs{padding-left:4px;gap:2px}
+.ttabs .ttl2{flex:1;min-width:0;display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}.ttabs .ttl2::-webkit-scrollbar{display:none}
+.ttab{display:flex;align-items:center;flex:none;max-width:100%;min-width:0;border-radius:8px;color:#a3a3a3}
+.ttab.on{background:rgb(255 255 255/.1);color:#fafafa;flex:0 1 auto}
+.ttab>.tt{display:flex;align-items:center;gap:6px;min-width:0;height:var(--ib);padding:0 2px 0 10px;font:inherit;color:inherit;background:none;border:0;cursor:pointer;white-space:nowrap}
+.ttab .tn{flex:none}.ttab .td{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:#737373}.ttab.on .td{color:#a3a3a3}
+.ttab>.tt:focus-visible{outline:2px solid var(--focus,#3b82f6);outline-offset:-2px;border-radius:8px}

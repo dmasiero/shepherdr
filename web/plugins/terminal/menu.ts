@@ -3,16 +3,23 @@
 // tap closes it again. Ctrl+` does the same for a space. Below a line, View as terminal / View as chat swaps this chat
 // for its agent's own terminal.
 import { getState, setUI, subscribe, type MenuRow, type UI } from '@client/kernel.ts'
+import { activeOf, openIn } from './tabs.ts'
 
-/** a space's own shell: open now? */
-export const spaceTermOn = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term'>) => (ui.phone ? ui.pane === 'terminal' && !ui.termTask : ui.term)
+/** your own space terminal (its tabs): showing now? */
+export const spaceTermShown = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term'>) => (ui.phone ? ui.pane === 'terminal' && !ui.termTask : ui.term)
+/** a space's own shell: open now? fork: and showing this space's tab (Terminal stays across spaces) */
+export const spaceTermOn = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term' | 'terms' | 'termAt' | 'at'>) =>
+  spaceTermShown(ui) && (!ui.terms?.length || !ui.at || activeOf(ui.terms, ui.termAt) === ui.at)
+/** fork: show or hide your own space terminal (Terminal stays across spaces) */
+export const showSpaceTerm = (ui: Pick<UI, 'phone'>, show: boolean): Partial<UI> => (ui.phone ? { pane: show ? 'terminal' : null, termTask: false } : { term: show })
 /** an open task's own shell: open now? (a phone shows it in place of the task, so the task's menu never sees it open) */
 export const taskTermOn = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'tterm'>) => (ui.phone ? ui.pane === 'terminal' && ui.termTask : ui.tterm)
 
 export function toggleSpaceTerm() {
   const { ui } = getState()
-  if (ui.phone) setUI({ pane: spaceTermOn(ui) ? null : 'terminal', termTask: false })
-  else setUI({ term: !ui.term })
+  // fork: the tabs: another space's terminal stays, this space's is added beside it (Terminal stays across spaces)
+  const { show, ...tabs } = openIn(ui, ui.at, spaceTermShown(ui))
+  setUI({ ...tabs, ...showSpaceTerm(ui, show) })
 }
 
 export function toggleTaskTerm(task: string) {

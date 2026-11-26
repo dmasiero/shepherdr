@@ -239,6 +239,9 @@ export interface UI {
   /** your own terminal is open under the chat (desktop), under an open task */
   term: boolean
   tterm: boolean
+  /** fork: your own space terminals open as tabs, by space id, and the one showing (Terminal stays across spaces) */
+  terms: string[]
+  termAt: string | null
   /** a phone's terminal pane is a task's */
   termTask: boolean
   /** chats switched to their agent's own terminal */
@@ -309,7 +312,8 @@ function store(key: string, v: unknown) {
 }
 
 /** kept on this device across visits */
-const KEPT: (keyof UI)[] = ['sideOff', 'shown', 'shut', 'banner', 'term', 'tf']
+// fork: `terms` and `termAt` too, the terminal's tabs (Terminal stays across spaces)
+const KEPT: (keyof UI)[] = ['sideOff', 'shown', 'shut', 'banner', 'term', 'tf', 'terms', 'termAt']
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 export const launchHref = typeof location === 'undefined' ? '' : location.href
 
@@ -341,6 +345,9 @@ let state: State = {
     shown: {},
     term: false,
     tterm: false,
+    // fork: Terminal stays across spaces
+    terms: [],
+    termAt: null,
     termTask: false,
     aterm: {},
     scr: null,
