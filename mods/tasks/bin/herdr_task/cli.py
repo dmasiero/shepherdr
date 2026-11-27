@@ -451,7 +451,8 @@ def main():
     auto_cmd("show", "one automation: when, what, space, agent, next and last run, its last 50 runs and how each ended")
     auto_cmd("feed", "this folder's tasks as events read them, as JSON (asked by another machine's --from)", id=False)
     auto_cmd("pause", "stop it firing (--space <id> --all: every schedule of a space, as when the space is archived)", id="maybe")
-    auto_cmd("resume", "let it fire again (--space <id> --all: every schedule of a space)", id="maybe")
+    # fork: SHEP-120: a schedule's own resume clears its space's stop too, and --space with an id moves it
+    auto_cmd("resume", "let it fire again, also after its space stopped it (with an id, --space <id> moves it to that space; --space <id> --all: every schedule of a space)", id="maybe")
     c = sub.add_parser("flags", help="check extra flags for a task's agent (#1222) and print them as Shepherdr keeps them: "
                        "only real Claude Code or Codex flags, none Shepherdr sets itself")
     c.add_argument("--agent", default="claude", choices=["claude", "codex"], help="the CLI they're for (default: claude)")
