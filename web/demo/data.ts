@@ -185,6 +185,12 @@ export function snapshot(mode: 'normal' | 'empty' | 'down' | 'more' | 'long' | '
     artifacts: empty ? [] : artifacts,
     asks: {},
     needs: [],
+    // fork: (Alert card won't go away) ?case=more adds two agents' alerts: Dependency check's, which its agent wrote on
+    // after (its card goes), and Product page reviews', still waiting (its card stays, with Close)
+    ...(mode === 'more' ? { alerts: [
+      { id: 'al-dep', at: NOW - 4 * min, title: 'Dependency check · Registry sign-in needed', what: 'Registry sign-in needed', body: 'npm refused the saved token for the private registry. Sign in at registry.example.com, then the check carries on by itself within 15 minutes.', chat: 'SHOP-16/worker', task: 'SHOP-16', place: P.shop, notify: true },
+      { id: 'al-rev', at: NOW - min / 2, title: 'Product page reviews · Approval code', what: 'Approval code', body: 'The guard asks for code 482 913 to let the review import run. Approve it in the terminal.', chat: 'SHOP-19/worker', task: 'SHOP-19', place: P.shop, notify: true },
+    ] } : {}),
     // #1547: each machine's start limits, as the service's Machines section keeps them
     settings: [{ name: 'Machines', rows: limitRows('local', {}).concat(limitRows('vm', { start_memory: '70%', start_disk: 'Off' })) },
       // Settings › Secrets: every kept secret by name and where, a machine's own too (#1560)
@@ -313,7 +319,7 @@ export const chats: Record<string, Chat> = Object.fromEntries(
     chat('SHOP-19/worker', [brief('Product page reviews', 'Show the three newest reviews under each product, with their stars. A product with none says "No reviews yet."', 'sent', NOW - min)], opus),
     // queued: no agent yet, its brief waits to be sent
     chat('BLOG-9/worker', [brief('Dark mode for code blocks', 'Adds a dark theme to the code blocks on the blog. It follows the reader\'s system setting; no switch on the page.', 'waiting')], undefined),
-    chat('SHOP-16/worker', [a('Updating three packages. None are breaking changes.')], opus, { working: true, live: { id: 'live', at: NOW, rows: [], steps: 0 }, doing: 'Updating 3 packages' }),
+    chat('SHOP-16/worker', [a('Updating three packages. None are breaking changes.', { at: NOW - 2 * min })], opus, { working: true, live: { id: 'live', at: NOW, rows: [], steps: 0 }, doing: 'Updating 3 packages' }),
     chat('vm:GARDEN-3/worker', [a('Reminders are built. Writing the tests now, about 20 minutes left.')], gpt, { working: true, live: { id: 'live', at: NOW, rows: [], steps: 0 }, doing: 'Writing tests' }),
   ].map((c) => [c.key, c]),
 )

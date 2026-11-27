@@ -138,7 +138,7 @@ export interface Registry {
    *  messages of that time; one without a time goes after the last message. past: history (a task's Done line), which
    *  waits for its stretch of chat to load; any other card always shows once the chat's messages are in. after: a card
    *  still waiting on you goes below the newest later message this matches (hold.ts cardsAfter) */
-  chatCards: { order: number; cards: (snap: Snapshot, thread: Thread) => { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; node: ReactNode }[] }[]
+  chatCards: { order: number; cards: (snap: Snapshot, thread: Thread) => { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; /** fork: over once a later message says so (chat/hold.ts) */ until?: (m: Message) => boolean; node: ReactNode }[] }[]
   /** after a chat's messages (cards the app puts there from a task's status, the live picture, the working line) */
   chatTail: { order: number; View: FC<{ chat: Chat | undefined; thread: Thread }> }[]
   /** takes a chat's place (the agent's own terminal) */

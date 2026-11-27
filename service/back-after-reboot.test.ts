@@ -2,7 +2,7 @@
 // cut_alert_pass), its Restart all button, and the action it sends.
 import { expect, test } from "bun:test";
 import { agentAlerts, alertsOf } from "./push.ts";
-import { restartAll } from "./actions.ts";
+import { closeAlert, restartAll } from "./actions.ts";
 
 const shell = (address: string) => ({ address, state: "live", labels: { "herdr.role": "coordinator" }, foreground: { name: "bash", argv: ["/bin/bash"] } });
 const alert = { id: "a1", at: 1, title: "Not back after the restart", body: "The machine's restart stopped shop, docs. Restart all, or write to each to start it again.", about: true, task: "vm-a", restart: ["t1", "t2"] };
@@ -50,4 +50,18 @@ test("one that can't start says so", async () => {
   const hub: any = { terminals: new Map([sched(), shell("t1")].map((t) => [t.address, t])) };
   const compat: any = { agents: { revive: async () => { throw new Error("no"); } } };
   expect(restartAll(hub, "a1", compat)).rejects.toThrow("1 didn't start again");
+});
+
+// fork: an alert's Close takes its label off its agent's terminal, so it goes from every device
+test("Close takes the alert off its terminal, only while it still holds it", async () => {
+  const k = { address: "vmb/t5", state: "live", labels: { "herdr.alert": JSON.stringify({ id: "b", at: 1, title: "x", body: "y" }) } };
+  const hub: any = { terminals: new Map([[k.address, k]]) };
+  const calls: string[][] = [];
+  const label = async (args: string[]) => (calls.push(args), { code: 0, stdout: "", stderr: "" });
+  expect(await closeAlert(hub, "b", label)).toEqual({ ok: true });
+  expect(calls).toEqual([["label", "vmb/t5", "herdr.alert="]]);
+  // replaced by a newer one, or gone already: nothing to take off
+  expect(await closeAlert(hub, "a", label)).toEqual({ ok: true });
+  expect(calls).toHaveLength(1);
+  await expect(closeAlert(hub, "b", async () => ({ code: 1, stdout: "", stderr: "no such terminal" }))).rejects.toThrow("no such terminal");
 });

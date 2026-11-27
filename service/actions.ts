@@ -327,6 +327,18 @@ export async function restartAll(hub: Hub, id: string, compat: Compat) {
   return { ok: true, started };
 }
 
+/** fork: an alert's Close (its card in a task's chat): its herdr.alert label off its agent's terminal, so it goes from
+ *  every device at once and stays gone (the same label herdr-task's tick clears for its own). Only while that label
+ *  still holds this alert: a newer one the agent set meanwhile stays. One already gone is closed. */
+export async function closeAlert(hub: Hub, id: string, label = (args: string[]) => hc(args)) {
+  const alertOf = (t: any) => { try { return JSON.parse(t?.labels?.["herdr.alert"] ?? "null"); } catch { return null; } };
+  const k: any = [...hub.terminals.values()].find((t: any) => alertOf(t)?.id === id);
+  if (!k) return { ok: true };
+  const r = await label(["label", k.address, "herdr.alert="]);
+  if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() || "It didn't close.");
+  return { ok: true };
+}
+
 /** A message to a space whose Assistant ended: it starts again on its own conversation (Agents.revive, the Stopped
  *  card's Restart), and the message goes to the new one once it is up, held for its turn if it is busy. One that can't
  *  start again (its record gone, no log to resume) gives way to a fresh Assistant with the message as its task. */
@@ -602,6 +614,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     return { ok: true };
   }
   if (b?.type === "restart-all" && typeof b.alert === "string") return restartAll(hub, b.alert, compat);
+  if (b?.type === "alert-close" && typeof b.alert === "string") return closeAlert(hub, b.alert); // fork: an alert's Close
   if ((b?.type === "held-now" || b?.type === "held-drop") && typeof b.cid === "string") {
     // a queued message (Send now and ×): sent at once, or taken back unsent
     const m = held.find((x) => x.cid === b.cid);

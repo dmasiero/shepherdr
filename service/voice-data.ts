@@ -60,6 +60,8 @@ export const WRITES = [
   "send", "held-now", "held-drop", "react", "answer", "secret", "secret-saved", "stop", "steer", "stop-job", "restart", "agent-update", "agent-restart", "assistant-close", "read", "keys", "text", "model", "effort", "call", "recap",
   // tasks: the review card (Mark as done [and merge]), Start task, the row's menu
   "accept", "close", "delete", "archive", "reopen", "task-start", "task-resume", "task-rename", "task-move", "schedule", "pause", "pin",
+  // fork: an agent's alert card, Close (actions.ts closeAlert)
+  "alert-close",
   // schedules: Run now, Pause, Resume, Edit
   "automation",
   // screens: Take over, Hand back, Skip, a screenshot kept, Open on the desktop instead
