@@ -44,6 +44,7 @@ import { Asks } from "./asks.ts";
 import { Jobs } from "./jobs.ts";
 import { terminalBridge } from "./terminal.ts";
 import { worktree } from "./worktree.ts";
+import * as files from "./files.ts";
 import * as SPm from "../core/spaces.js";
 import { createScreens, SCREEN_PASSWORD } from "./screens.ts";
 import { voiceCall, callToResume, callsOn, handOff, type ChatView } from "./voice.ts";
@@ -55,6 +56,7 @@ import { TaskLogs } from "./task-logs.ts";
 import { Settings, onWritten, PUSH, pushBody, readSettings } from "./settings.ts";
 import { Secrets, SecretsHome, secretValue } from "./secrets.ts";
 import { Agents } from "./agents.ts";
+import { Updates } from "./agent-update.ts";
 import { Machines } from "./machines.ts";
 import { Push, alertsOf, agentAlerts } from "./push.ts";
 import { waiting } from "../web/shared/alerts.ts";
@@ -238,6 +240,8 @@ function alertNew(snap: any) {
 }
 compat.agents = new Agents(hub);
 (compat.agents as Agents).onOffer = () => live.refresh();
+compat.updates = new Updates(hub, (addr, reader) => (compat.agents as Agents).revive(addr, reader));
+(compat.updates as Updates).onChange = () => live.refresh();
 const machines = new Machines(hub, () => model.machineNames());
 machines.onChange = () => model.rebuild();
 compat.machineStats = (m) => machines.of(m);
@@ -640,6 +644,11 @@ const voiceIO: VoiceIO = {
     return result;
   },
   addrOf: (key) => compat.addrOf(key),
+  // #1509: the open artifact's page, as the app serves it (its own folder only; another machine's from there)
+  async page(id, v, machine) {
+    const r = await artifacts.file(id, v, ["index.html"], machine, null, {});
+    return r.ok ? await r.text() : null;
+  },
   taskWhere: (id) => { const t = compat.taskOf(id); return t ? { ref: t.ref, folder: t.folder, machine: t.machine } : null; },
   // SHEP-110: the web app's other reads (voice-data.ts SOURCES), each as the panel that shows it reads it
   async read(source, a) {
@@ -867,6 +876,9 @@ async function doAction(body: any): Promise<Response> {
         if (!there) return json({ ok: false, error: SC.BASE.missing(want) });
       }
       settings.set(body.key, value, level, sp ? { id: sp.id, name: sp.name, machine: sp.machine ?? null, folder, repo: spaceRepo(sp) } : null);
+      // a machine's start limits (#1547): its card and meters show the new ones now, not at the next read
+      if (body.key.startsWith("machine.")) machines.rehold();
+      model.rebuild();
       return json({ ok: true });
     } catch (err) { return json({ ok: false, error: (err as Error).message }); }
   }
@@ -1137,10 +1149,37 @@ const server = Bun.serve<{ who: string }>({
       if (path === "/api/push/test") return json(await push.test(endpoint));
     }
     if (path === "/api/worktree") {
+      // a task's worktree, or a space's own folder (space=<id>: only what isn't committed there)
       const t = compat.taskOf(url.searchParams.get("task") ?? "");
-      if (!t) return json({ error: "No such task." }, 404);
-      try { return json(await worktree(hub, t.where, url.searchParams.get("what") ?? "", url.searchParams.get("path") ?? undefined)); }
+      const sp = t ? null : compat.spaceOf(url.searchParams.get("space") ?? "");
+      const where = t?.where ?? (sp?.folder ? { folder: sp.folder, machine: sp.machine } : null);
+      if (!where) return json({ error: t || url.searchParams.get("task") ? "No such task." : "No such space." }, 404);
+      try { return json(await worktree(hub, where, url.searchParams.get("what") ?? "", url.searchParams.get("path") ?? undefined)); }
       catch (err) { return json({ error: (err as Error).message }, 400); }
+    }
+    if (path === "/api/files") {
+      // Files (the files plugin, off by default): a space's folder, on the machine it lives on (service/files.ts)
+      if (!pluginOn("files")) return json({ error: "Files is off in Settings › Plugins." }, 404);
+      const sp = compat.spaceOf(url.searchParams.get("space") ?? "");
+      if (!sp?.folder) return json({ error: "No such space." }, 404);
+      const at = { folder: sp.folder, machine: !sp.machine || sp.machine === me?.host ? null : sp.machine };
+      const what = url.searchParams.get("what") ?? "", rel = url.searchParams.get("path") ?? "";
+      try {
+        if (req.method === "GET" && what === "ls") return json(await files.list(hub, at, rel));
+        if (req.method === "GET" && what === "read") return json(await files.read(hub, at, rel));
+        if (req.method === "GET" && what === "file") return await files.file(hub, at, rel, url.searchParams.get("download") === "1");
+        if (req.method === "GET" && what === "zip") return await files.zip(hub, at, rel);
+        if (req.method === "POST" && what === "put") {
+          const form = await req.formData().catch(() => null), f = form?.get("file");
+          if (!(f instanceof File)) return json({ error: "No file came." }, 400);
+          return json(await files.put(hub, at, rel, f, form?.get("replace") === "1"));
+        }
+        if (req.method === "POST" && what === "mv") {
+          const b = await req.json().catch(() => null);
+          return json(await files.move(hub, at, b?.from ?? "", b?.to ?? ""));
+        }
+      } catch (err) { return json({ error: (err as Error).message }, 400); }
+      return json({ error: "Ask for ls, read, file, zip, put or mv." }, 400);
     }
     if (path === "/api/activity") {
       const addr = compat.addrOf(url.searchParams.get("chat") ?? "");

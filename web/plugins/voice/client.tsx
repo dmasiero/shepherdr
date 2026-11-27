@@ -21,7 +21,7 @@ import { NAME as VOICE_PAGE, needsKey, openVoiceSettings, VoiceSettings } from '
 /** what this page shows, told to the call as it changes: its "here" and "this task" */
 function whereNow() {
   const { ui } = getState()
-  return { device: ui.phone ? 'phone' : 'desktop', place: ui.at, task: ui.task, tab: ui.pane, artifact: ui.art, settings: !!ui.settings, full: false }
+  return { device: ui.phone ? 'phone' : 'desktop', place: ui.at, task: ui.task, tab: ui.pane, artifact: ui.art, version: ui.art ? ui.artV : null, settings: !!ui.settings, full: false }
 }
 
 function screenHead(): Head {
@@ -192,7 +192,7 @@ function demoSample(): Sample {
  *  empty, Send once it has words or files. The same two buttons serve a call (Mute, End call) and a dictation (Done,
  *  Cancel); the call's wave or the recording takes the place of + and the agent line, so the buttons never move. In a
  *  call the box takes no text (TEXT_IN_CALL), its draft kept for after. */
-function BoxEnd({ thread, setText, filled, send }: { thread: Thread; setText: (value: string) => void; filled: boolean; send: () => void }) {
+function BoxEnd({ thread, setText, filled, send, later }: { thread: Thread; setText: (value: string) => void; filled: boolean; send: () => void; later?: () => void }) {
   const el = useRef<HTMLSpanElement>(null)
   const d = useDictation(setText, thread.chat, () => el.current)
   const call = useUI((u) => u.call)
@@ -217,6 +217,7 @@ function BoxEnd({ thread, setText, filled, send }: { thread: Thread; setText: (v
           mic: dict ? (s.k === 'error' ? d.start : d.done) : call ? toggleMute : d.start,
           press: d.press,
           second: dict ? (s.k === 'error' ? d.dismiss : d.cancel) : call ? endCall : filled ? send : () => toggleCall(),
+          later: dict || call ? undefined : later,
         }}
       />
     </>

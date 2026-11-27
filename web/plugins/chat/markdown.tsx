@@ -3,7 +3,7 @@
 // button (the design system's code block), a tap on a bit of `code` copies it, and task names and #spaces are links
 // that open them.
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
+import { marked, type MarkedExtension } from 'marked'
 import { useMemo, type MouseEvent, type ReactNode } from 'react'
 import { copyText } from '@client/copy.ts'
 import { IC } from '@client/icons.ts'
@@ -11,8 +11,14 @@ import { go, notice, openTask, useSnap } from '@client/kernel.ts'
 import type { Message, Snapshot } from '@shared/types.ts'
 import { spacesOf, taskRef } from '@shared/view.ts'
 import { parseTask } from '@core/mentions.js'
+import { withMentions } from './mentions.tsx'
 
 marked.setOptions({ gfm: true, breaks: false })
+// #1549: an agent's raw HTML shows as typed: a placeholder like <code> or <id> stays words and styles nothing after it.
+// Only a line break (<br>, common in a table's cell) still breaks the line.
+const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+export const rawHtmlAsText: MarkedExtension = { renderer: { html: ({ text }) => (/^<br\s*\/?>$/i.test(text.trim()) ? '<br>' : esc(text)) } }
+marked.use(rawHtmlAsText)
 
 // a link goes to a new tab, never in place of the app; one to this app is caught by kernel.ts and opens in it.
 // Without a browser (bun test) DOMPurify has no hooks: the module still loads, so a test's mock can keep its real exports.
@@ -148,15 +154,18 @@ export function Markdown({ text, mentions, plain }: { text: string; mentions?: M
   return <div className="md" onClick={open} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
-/** your own words as you typed them, with their web addresses as links (one to this app opens in it) */
-export function withLinks(text: string): ReactNode[] {
+/** your own words as you typed them, with their web addresses as links (one to this app opens in it) and each space
+ *  or task you picked with # or @ as a link to it */
+export const withLinks = (text: string): ReactNode[] => withMentions(text, urls)
+
+function urls(text: string, pre: string): ReactNode[] {
   return text.split(/(https?:\/\/[^\s<>"]+)/).flatMap((part, i): ReactNode[] => {
     if (i % 2 === 0) return part ? [part] : []
     // a full stop, comma or bracket at the end is the sentence's
     const end = part.match(/[.,;:!?)\]'"]+$/)?.[0] ?? ''
     const url = end ? part.slice(0, -end.length) : part
     return [
-      <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+      <a key={pre + i} href={url} target="_blank" rel="noopener noreferrer">
         {url}
       </a>,
       ...(end ? [end] : []),

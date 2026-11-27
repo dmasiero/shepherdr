@@ -9,7 +9,8 @@ import { everything, folderOf, groupOf, isEverything, isHomeSpace, isTilde, list
 import { act, getState, go, notice, openSettings, registry, setUI, shownOn, tryAct, useUI, type Filter, type MenuRow } from './kernel.ts'
 import { confirm, openDialog, openForm, openMenu } from './overlay.tsx'
 import { AgentField, MachineField, pickFor, type Pick } from './picker.tsx'
-import { Btn, Cnt, I, IB, MenuGroup, Row } from './ui.tsx'
+import { Btn, Cnt, I, IB, MenuGroup, Row, Tgl } from './ui.tsx'
+import { offersRepo, suggestions, tilde, untilde } from '@core/newspace.js'
 import { attr } from './attr.ts'
 import { copyText } from './copy.ts'
 import { DictateButton } from './dictate.tsx'
@@ -17,6 +18,7 @@ import { press, pressing } from './drag.ts'
 import { buzz, IOS, still } from './motion.ts'
 import { swapRow } from './sides.ts'
 import { NameWithIcon, SpaceIcon } from './space-icon.tsx'
+import { markSpacesRead, spaceUnread } from './read-marks.ts'
 
 const FILTERS: Filter[] = ['Active', 'Archived', 'All']
 
@@ -182,6 +184,32 @@ export function newGroupDialog(machine?: string, then?: (id: string) => void) {
   )
 }
 
+const ask = (u: string) => fetch(u, { headers: { 'x-shepherdr': '1' } }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+
+/** New space's folder help (3.1's): the machine's recent folders to pick instead of typing a path, and whether the folder
+ *  is in a git repo yet (the service answers both; null while it hasn't) */
+function useFolderHelp(machine: string | null, path: string) {
+  const [info, setInfo] = useState<{ home: string; recent: string[] } | null>(null)
+  const [inRepo, setInRepo] = useState<boolean | null>(null)
+  useEffect(() => {
+    let on = true
+    setInfo(null)
+    void ask(`api/newspace${machine ? `?machine=${encodeURIComponent(machine)}` : ''}`).then((j) => on && j?.home && setInfo({ home: j.home, recent: Array.isArray(j.recent) ? j.recent : [] }))
+    return () => void (on = false)
+  }, [machine])
+  useEffect(() => {
+    let on = true
+    setInRepo(null)
+    if (!path) return
+    const t = setTimeout(() => void ask(`api/folders?${new URLSearchParams({ ...(machine ? { machine } : {}), path })}`).then((j) => on && j && !j.error && setInRepo(!!j.repo)), 300)
+    return () => {
+      on = false
+      clearTimeout(t)
+    }
+  }, [machine, path])
+  return { info, inRepo }
+}
+
 /** New space; from a repo's tasks (SHEP-325, "Make it a space") with its name and folder filled in */
 export function newSpaceDialog(machine?: string, pre?: { name: string; folder: string }) {
   openForm(
@@ -194,12 +222,19 @@ export function newSpaceDialog(machine?: string, pre?: { name: string; folder: s
       // it starts on Everything's choice for chats
       const [pick, setPick] = useState<Pick | null>(null)
       const [busy, setBusy] = useState(false)
+      const path = folder.trim() || (name.trim() ? `~/dev/${name.trim().replace(/^#\s*/, '')}` : '')
+      const { info, inRepo } = useFolderHelp(m === snap?.host ? null : m, path)
+      // a folder outside git (not home or /) is made a repo, so each task gets its own worktree; on unless turned off
+      const [repoOff, setRepoOff] = useState(false)
+      const offerRepo = !!info && offersRepo(untilde(path.replace(/\/+$/, ''), info.home), inRepo, info.home)
+      // a folder that has its space already only opens that one: not offered
+      const has = new Set((snap?.places ?? []).filter((p) => (p.machine ?? snap.host) === m).map((p) => p.folder))
+      const picks: string[] = info ? suggestions(info.recent.filter((f) => !has.has(f)), folder, info.home) : []
       const ok = async () => {
-        const path = folder.trim() || (name.trim() ? `~/dev/${name.trim().replace(/^#\s*/, '')}` : '')
         if (!path || busy) return
         setBusy(true)
         try {
-          const r = await fetch('api/spaces', { method: 'POST', headers: { 'content-type': 'application/json', 'x-shepherdr': '1' }, body: JSON.stringify({ machine: m === snap.host ? undefined : m, path, name: name.trim().replace(/^#\s*/, '') || undefined, ...(icon ? { icon } : {}), agent: pick ?? undefined, create: true }) })
+          const r = await fetch('api/spaces', { method: 'POST', headers: { 'content-type': 'application/json', 'x-shepherdr': '1' }, body: JSON.stringify({ machine: m === snap.host ? undefined : m, path, name: name.trim().replace(/^#\s*/, '') || undefined, ...(icon ? { icon } : {}), agent: pick ?? undefined, create: true, ...(offerRepo && !repoOff ? { makeRepo: true } : {}) }) })
           const j = (await r.json().catch(() => ({}))) as { place?: string; error?: string; warning?: string; existed?: boolean }
           if (!r.ok || !j.place) throw new Error(j.error || 'The space could not be made.')
           close()
@@ -226,6 +261,19 @@ export function newSpaceDialog(machine?: string, pre?: { name: string; folder: s
             <span>Folder</span>
             <input className="inp" name="folder" value={folder} placeholder={name.trim() ? `~/dev/${name.trim().replace(/^#\s*/, '')}` : '~/dev/docs'} autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={(e) => setFolder(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void ok()} />
           </label>
+          {info && picks.length > 0 && (
+            <div className="nsr" role="group" aria-label="Recent folders">
+              {picks.map((f) => (
+                <Row key={f} icon="folder" label={tilde(f, info.home)} onClick={() => setFolder(tilde(f, info.home))} />
+              ))}
+            </div>
+          )}
+          {offerRepo && (
+            <div className="srow">
+              <span className="n">Make it a git repo</span>
+              <Tgl label="Make it a git repo" on={!repoOff} onChange={(v) => setRepoOff(!v)} />
+            </div>
+          )}
           <AgentField title="The new space runs on" machine={m} pick={pick ?? pickFor(snap, 'all', 'Chats')} onChange={setPick} />
           <div className="acts">
             <Btn onClick={close}>Cancel</Btn>
@@ -367,16 +415,30 @@ function WholeName({ name, id }: { name: string; id: string }) {
   )
 }
 
-function groupMenu(anchor: Element, id: string, name: string) {
+/** Mark as read on a group's or a machine's menu, while one of its spaces has something new */
+function readRow(spaces: Space[]): MenuRow[] {
+  const snap = getState().snap
+  const fresh = snap ? spaces.filter((p) => spaceUnread(snap, p)) : []
+  return snap && fresh.length ? [{ icon: 'check', label: 'Mark as read', run: () => markSpacesRead(snap, fresh) }] : []
+}
+
+function groupMenu(anchor: Element, id: string, name: string, spaces: Space[]) {
   openMenu(
     anchor,
     [
+      ...readRow(spaces),
       { icon: 'pen', label: 'Rename', run: () => renameDialog(name, (n) => tryAct({ type: 'rename', id, name: n })) },
       // removing a group keeps its spaces, ungrouped
-      { icon: 'bin', label: 'Remove group', danger: true, line: true, run: () => void tryAct({ type: 'section', op: 'delete', id }) },
+      { icon: 'bin', label: 'Remove group', danger: true, line: true, run: () => void removeGroup(id, name) },
     ],
     { label: name },
   )
+}
+
+/** a group goes at once; the service keeps it for the toast's Undo (section restore) */
+async function removeGroup(id: string, name: string) {
+  if (!(await tryAct({ type: 'section', op: 'delete', id }))) return
+  notice(`Removed the group “${name}”`, { ms: 8000, sub: 'Its spaces stay, ungrouped.', act: { label: 'Undo', run: () => void tryAct({ type: 'section', op: 'restore' }) } })
 }
 
 /** Spaces are dragged into the order you want: among those beside them, or onto another group of the same machine
@@ -403,9 +465,10 @@ function SpaceRow({ snap, p, sub, under, siblings, section }: { snap: Snapshot; 
   const n = needsCount(snap, p.id)
   const dim = !!placeDown(snap, p.id) || p.archived
   const tilde = isTilde(snap, p)
+  const fresh = at !== p.id && spaceUnread(snap, p)
   return (
     <div className="rowx" data-project={p.id} data-section={section} data-machine={p.machine} data-drop={under} onPointerDown={dragSpace(snap, p, under, siblings)}>
-      <Row lead={<SpaceIcon snap={snap} id={p.id} />} label={tilde ? '~' : p.name} {...(tilde ? { 'aria-label': spaceLabel(snap, p.id) } : {})} className={[sub ? 'sub' : '', dim ? 'dim' : ''].join(' ')} current={at === p.id} end={<Cnt n={n} />} onClick={() => go(p.id)} />
+      <Row lead={<SpaceIcon snap={snap} id={p.id} />} label={tilde ? '~' : p.name} {...(tilde ? { 'aria-label': spaceLabel(snap, p.id) } : {})} className={[sub ? 'sub' : '', dim ? 'dim' : '', fresh ? 'unread' : ''].join(' ')} current={at === p.id} end={<Cnt n={n} />} onClick={() => go(p.id)} />
       <IB
         icon="dots"
         label={`More for ${tilde ? spaceLabel(snap, p.id) : p.name}`}
@@ -430,6 +493,7 @@ export function machineMenu(anchor: Element | null, key: string, snap = getState
   const renamed = m.name !== own
   const rename = (name: string) => tryAct({ type: 'rename', id: m.id, name })
   const rows: MenuRow[] = [
+    ...readRow(snap.places.filter((p) => p.machine === key && !isEverything(snap, p.id))),
     { icon: 'pen', label: 'Rename', run: () => renameDialog(m.name, rename) },
     ...(renamed ? [{ icon: 'reload' as const, label: `Use its own name (${own})`, run: () => void rename('') }] : []),
     { icon: 'gear', label: 'Machine settings', line: true, run: () => openSettings('all', 'Machines') },
@@ -661,9 +725,9 @@ export function List({ snap }: { snap: Snapshot }) {
               }}
             >
               <Row icon={ui.shut[g.id] ? 'right' : 'down'} label={g.name} expanded={!ui.shut[g.id]} onClick={() => setUI({ shut: { ...ui.shut, [g.id]: !ui.shut[g.id] } })} />
-              <IB icon="dots" label={`More for ${g.name}`} aria-haspopup="menu" onClick={(e) => groupMenu(e.currentTarget, g.id, g.name)} />
+              <IB icon="dots" label={`More for ${g.name}`} aria-haspopup="menu" onClick={(e) => groupMenu(e.currentTarget, g.id, g.name, g.spaces)} />
             </div>,
-            ...(ui.shut[g.id] ? [] : g.spaces.map((p) => <SpaceRow key={p.id} snap={snap} p={p} sub under={g.id} siblings={g.spaces.map((x) => x.id)} section={g.id} />)),
+            ...(ui.shut[g.id] ? g.spaces.filter((p) => p.id === ui.at || spaceUnread(snap, p)) : g.spaces).map((p) => <SpaceRow key={p.id} snap={snap} p={p} sub under={g.id} siblings={g.spaces.map((x) => x.id)} section={g.id} />),
           ]),
           ...spaces.map((p) => <SpaceRow key={p.id} snap={snap} p={p} under={`m:${key}`} siblings={spaces.map((x) => x.id)} />),
         ]

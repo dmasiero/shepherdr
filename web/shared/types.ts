@@ -659,6 +659,9 @@ export interface Message {
   news?: { task: string; ref: string; event?: string; mark: 'started' | 'needs' | 'ready' | 'done' | 'other'; what: string; text: string; live?: boolean; accept?: boolean }
   /** the agent's own question as the log has it (3.0's "Asked you" box): open, answered, or closed without one */
   asked?: 'open' | 'answered' | 'dismissed'
+  /** a short recap of what happened while you were away (the CLI's own, or its answer to the Recap ask), or a
+   *  heads-up note its CLI wrote: a quiet block of its own, never a bubble */
+  recap?: 'recap' | 'heads'
   /** an error the CLI wrote: red words, no bubble */
   error?: boolean
   /** images sent with it that the chat can't show, as 3.0's paperclip line ("1 image") */
@@ -961,7 +964,8 @@ export interface Chat {
 /** What a chat's agent runs on (SHEP-298: its terminal's arguments and log, never Settings), or, with planned, what its
  *  first message starts it on */
 export interface ChatAgent { kind: string; model?: string; modelLabel?: string; effort?: string; speed?: string; perm?: string; runtime?: AgentRuntime; planned?: PlannedAgent; /** the window's model button: "Opus 5.5 · High" */ words?: string
-    /** #1222: the extra flags it was started with, one word each ("--advisor=opus") */ flags?: string[] }
+    /** #1222: the extra flags it was started with, one word each ("--advisor=opus") */ flags?: string[]
+    /** a newer version of its CLI it can update to (Update <agent>: service/agent-update.ts) */ update?: string }
 
 /** no agent yet: what Settings will start it on, said as that and never as what runs (docs/runtime-state.md) */
 export interface PlannedAgent {
@@ -1326,7 +1330,7 @@ export interface Snapshot {
   read?: Record<string, number>
   /** the agents' own alerts (herdr-task alert), one per agent, as the window's toasts say them (service/push.ts
    *  agentAlerts): "HERD-4 · <title>" over its body, its chat, and whether it reaches the person (its space's Notify) */
-  alerts?: { id: string; at: number; title: string; body: string; chat?: string; /** the task it is about (SHEP-255): its row shows it; none: no task's, not in Tasks */ task?: string; place?: string; notify: boolean; ended?: true; machine?: string | null; memory?: true }[]
+  alerts?: { id: string; at: number; title: string; /** its own words, without who sent it (#1561) */ what?: string; body: string; chat?: string; /** the task it is about (SHEP-255): its row shows it; none: no task's, not in Tasks */ task?: string; place?: string; notify: boolean; ended?: true; machine?: string | null; memory?: true; /** #1545: Restart all (the restart-all action) */ restart?: true }[]
   /** the sidebar's sections, as Slack's, each with its spaces in the human's order: the top ones first (Pinned, id
    *  'pinned', among them), then each machine's, its machine in order (shared/order.ts) */
   sections?: Section[]
@@ -1366,6 +1370,8 @@ export type Action =
   | { type: 'model'; chat: string; model: string }
   | { type: 'effort'; chat: string; effort: string }
   | { type: 'keys'; chat: string; keys: string[] }
+  /** ask the chat's agent for a recap (auto: the page's own, when you come back to it; never an error) */
+  | { type: 'recap'; chat: string; auto?: boolean }
   | { type: 'text'; chat: string; text: string }
   | { type: 'call'; chat: string; on: boolean }
   /** place: the level it is set at, as a place id (all when none); a machine's or project's goes to that machine */
@@ -1384,6 +1390,8 @@ export type Action =
   | { type: 'stop-job'; chat: string; job: string }
   /** what the restart sheet shows for a coordinator (chat: its place id) or a task's agent (ID/Agent): RestartInfo */
   | { type: 'restart-info'; chat: string }
+  /** Update <agent>: its CLI's own update, then the chat reopens on the same conversation */
+  | { type: 'agent-update'; chat: string }
   /** start a coordinator or a task's agent again on this CLI, model and effort (none: the CLI's own; no kind: all as
       Settings say for its role); save: as its space's Settings for its role too */
   /** speed: normal, fast or ultrafast, '' for the CLI's own; left out keeps what it was started on. It lasts as long as this chat, and save leaves it out of Settings. */
@@ -1550,6 +1558,8 @@ export interface Config {
   /** Settings › Shortcuts: the shortcuts the person changed (a command's id to its keys; empty: none), and whether
    *  single-letter keys work; the same on every device */
   shortcuts?: { keys: Record<string, string[]>; letters: boolean }
+  /** Settings › Recaps: whether a chat recaps by itself when you come back to it after a while */
+  recaps?: { auto: boolean }
 }
 
 /* ---------- 3.2: screens, an agent's browser and desktop ---------- */
