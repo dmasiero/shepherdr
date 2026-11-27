@@ -1,16 +1,14 @@
 // The Terminal row of a space's name menu and of an open task's ⋯ menu (the header has no Terminal button): it opens
 // your own shell (the drawer under the chat; the whole screen on a phone), checked while that is open, and a second
 // tap closes it again. Ctrl+` does the same for a space. fork: a space's, tapped again while it shows, adds another
-// tab for the space instead (Terminal again adds a tab); a task's still closes. Below a line, View as terminal / View as chat swaps this chat
+// tab for the space instead (Terminal again adds a tab); a task's still closes. A space's row has no check mark: it
+// is no toggle any more (Terminal menu row fixes). Below a line, View as terminal / View as chat swaps this chat
 // for its agent's own terminal.
 import { getState, setUI, subscribe, type MenuRow, type UI } from '@client/kernel.ts'
-import { activeOf, openIn, tabPlace } from './tabs.ts'
+import { openIn } from './tabs.ts'
 
 /** your own space terminal (its tabs): showing now? */
 export const spaceTermShown = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term'>) => (ui.phone ? ui.pane === 'terminal' && !ui.termTask : ui.term)
-/** a space's own shell: open now? fork: and showing this space's tab (Terminal stays across spaces) */
-export const spaceTermOn = (ui: Pick<UI, 'phone' | 'pane' | 'termTask' | 'term' | 'terms' | 'termAt' | 'at'>) =>
-  spaceTermShown(ui) && (!ui.terms?.length || !ui.at || tabPlace(activeOf(ui.terms, ui.termAt) ?? '').place === ui.at)
 /** fork: show or hide your own space terminal (Terminal stays across spaces) */
 export const showSpaceTerm = (ui: Pick<UI, 'phone'>, show: boolean): Partial<UI> => (ui.phone ? { pane: show ? 'terminal' : null, termTask: false } : { term: show })
 /** an open task's own shell: open now? (a phone shows it in place of the task, so the task's menu never sees it open) */
@@ -32,7 +30,9 @@ export function toggleTaskTerm(task: string) {
 
 /** the keys that open your own terminal by default (its command, terminal.mine, may be given others) */
 export const TERM_KEYS = 'Ctrl+`'
-export const spaceTermRow = (ui: UI): MenuRow => ({ icon: 'prompt', label: 'Terminal', on: spaceTermOn(ui), cmd: 'terminal.mine', run: toggleSpaceTerm })
+// fork: no `on` (no check mark): choosing it always lands in a terminal for this space, adding a tab while it shows,
+// so a mark for "open" read as a toggle that it is not (Terminal menu row fixes)
+export const spaceTermRow = (_ui: UI): MenuRow => ({ icon: 'prompt', label: 'Terminal', cmd: 'terminal.mine', run: toggleSpaceTerm })
 export const taskTermRow = (ui: UI, task: string): MenuRow => ({ icon: 'prompt', label: 'Terminal', on: taskTermOn(ui), cmd: 'terminal.mine', run: () => toggleTaskTerm(task) })
 
 /** View as terminal / View as chat: this same chat shown as its agent's raw terminal, in the chat's place, and back. Not

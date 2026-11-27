@@ -3,7 +3,7 @@
 // Ctrl+`, while the terminal shows, adds a tab for the space you are in beside the others (Terminal again adds a tab:
 // a space's second is `<space id>~2`, its own shell, "name 2"); the bar's + does it too. Closing a tab (its ✕, or
 // Ctrl+D / exit in it) leaves the others; the last one closes the terminal. Hidden and shown again, the tabs are as
-// they were.
+// they were, on the space's own tab, which is added if it has none (Terminal menu row fixes).
 import type { UI } from '@client/kernel.ts'
 
 type Tabs = Pick<UI, 'terms' | 'termAt'>
@@ -34,7 +34,8 @@ export const activeOf = (tabs: string[], termAt: string | null) => (termAt && ta
 
 /** the Terminal row (or Ctrl+`) in space `at`: while the terminal shows, another tab for this space, beside the others
  *  and picked (fork: Terminal again adds a tab; it no longer hides: the ⌄ or the drawer's close does); hidden, it
- *  shows again as it was, on this space's tab if it has one, this space's first when there are none */
+ *  shows again as it was, on this space's tab if it has one, with this space's first added when it has none (fork:
+ *  Terminal menu row fixes) */
 export function openIn(ui: Tabs, at: string | null, shown: boolean): Tabs & { show: boolean } {
   const tabs = ui.terms ?? []
   const active = activeOf(tabs, ui.termAt)
@@ -43,7 +44,10 @@ export function openIn(ui: Tabs, at: string | null, shown: boolean): Tabs & { sh
   if (shown) return { ...addTab({ terms: tabs.length ? tabs : [at], termAt: ui.termAt }, at), show: true }
   if (!tabs.length) return { terms: [at], termAt: at, show: true }
   const mine = tabs.filter((t) => tabPlace(t).place === at)
-  return { terms: tabs, termAt: mine.length ? (active && mine.includes(active) ? active : mine[mine.length - 1]) : active, show: true }
+  // fork: hidden, with only other spaces' tabs: they show again and this space's is added beside them, so Terminal
+  // always lands in a terminal for the space it was chosen in (Terminal menu row fixes)
+  if (!mine.length) return { ...addTab({ terms: tabs, termAt: ui.termAt }, at), show: true }
+  return { terms: tabs, termAt: active && mine.includes(active) ? active : mine[mine.length - 1], show: true }
 }
 
 /** the + in the bar (and the row while showing): a new tab for this space, its own shell, beside the others, showing */
