@@ -423,6 +423,18 @@ export function scheduleOf(id: string): { machine: string | null; folder: string
   return folder?.startsWith("/") && own && /^[\w.-]{1,60}$/.test(own) && (!machine || /^[\w.-]{1,80}$/.test(machine)) ? { machine: machine || null, folder, id: own } : null;
 }
 
+// fork: SHEP-120: what a schedule's own Resume runs (herdr-task auto resume, which clears its space's stop too), or why
+// not: refused only while the space it's under is really archived. A schedule whose space is gone (removed, its folder
+// made a space again under a new id) moves to the space it shows under (schedulesOf: its folder's), so archiving that
+// one stops it later. a: the schedule as herdr-task lists it, with its folder and machine; archived: spaces-chat's.
+export function resumeOf(a: any, spaces: any[], archived: string[]): { args: string[] } | { error: string } {
+  const machine = a?.machine ?? null, own = String(a?.id ?? "");
+  const named = a?.space ? spaces.find((s) => (s.machine ?? null) === machine && String(s.id).split("/").pop() === String(a.space).split("/").pop()) : null;
+  const s = named ?? spaces.find((x) => (x.machine ?? null) === machine && x.folder === a?.folder);
+  if (s && archived.includes(s.id)) return { error: `Its space “${s.name ?? s.id}” is archived: bring the space back and its schedules run again.` };
+  return { args: ["resume", own, ...(!named && s ? ["--space", String(s.id).split("/").pop()!] : [])] };
+}
+
 /** Every schedule under its space: the one it was made for, else the one in its list's folder, else Everything. */
 export function schedulesOf(list: any[], spaces: any[], everything: string | undefined, taskOf: (ref: string, machine: string | null) => Task | undefined): Record<string, Automation[]> {
   const out: Record<string, Automation[]> = {};

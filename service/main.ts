@@ -32,7 +32,7 @@ import { webBuild } from "./webbuild.ts";
 import { Model } from "./model.ts";
 import { checkFlags } from "./flags.ts";
 import type { Snapshot } from "../web/shared/types.ts";
-import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
+import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, resumeOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
 import { ensureShell, type ShellAt } from "./shells.ts";
 import { Chats } from "./chats.ts";
 import { act, findMachines, hc as hcRun } from "./actions.ts";
@@ -425,7 +425,9 @@ function shellAt(key: string): ShellAt | null {
     const id = key.slice(8), r = (model.rows as any[]).find((x) => (x.machine ? `${x.machine}:${x.ref}` : x.ref) === id);
     return r ? { folder: r.worktree ?? r.folder, machine: r.machine ?? null } : null;
   }
-  const s = (model.spaces as any[]).find((x) => x.id === key.slice(3));
+  // fork: a space's second tab and on, "sh:<space id>~2", is another shell in the same folder (Terminal again adds a tab)
+  const id = key.slice(3).replace(/~\d+$/, "");
+  const s = (model.spaces as any[]).find((x) => x.id === id);
   return s?.folder ? { folder: s.folder, machine: s.machine ?? null } : null;
 }
 /** Screens (service/screens.ts): each chat's and task's browser tab and desktop, to watch and take over. A key names
@@ -765,11 +767,19 @@ async function doAction(body: any): Promise<Response> {
       let j: any = null;
       try { j = JSON.parse(out); } catch {}
       if ((await p.exited) !== 0 || j?.error) throw new Error(j?.error ?? (err.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "The schedule didn't change."));
+      return j;
     };
     try {
       if (body.op === "run") await tool(["run-now", at.id]);
       else if (body.op === "pause") await tool(["pause", at.id]);
-      else if (body.op === "resume") await tool(["resume", at.id]);
+      else if (body.op === "resume") {
+        // fork: SHEP-120: its own Resume runs it again after its space stopped it (next.ts resumeOf)
+        const a = await tool(["show", at.id]);
+        const bar = model.value("spaces-chat") as any;
+        const r = resumeOf({ ...a, machine: at.machine, folder: at.folder }, model.spaces as any[], Array.isArray(bar?.archived) ? bar.archived : []);
+        if ("error" in r) throw new Error(r.error);
+        await tool(r.args);
+      }
       else if (body.op === "edit") {
         const sp = (model.spaces as any[]).find((x) => x.id === body.place);
         if (!sp) throw new Error("Its space isn't here any more.");

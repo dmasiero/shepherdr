@@ -15,7 +15,10 @@ import { appTakes, focusChat, focusTask } from '@client/commands.ts'
 import type { Chat, Task } from '@shared/types.ts'
 import { machineLabel, placeOf, taskChat, taskOf, tasksIn, tstate } from '@shared/view.ts'
 import { fitGrid, following, footTop, LINE, linesFor, shrinkTo, showKeys, sizeTaken } from './fit.ts'
-import { followFold, spaceTermRow, switchView, taskTermRow, toggleSpaceTerm, toggleTaskTerm, viewRow } from './menu.ts'
+import { followFold, showSpaceTerm, spaceTermRow, switchView, taskTermRow, toggleSpaceTerm, toggleTaskTerm, viewRow } from './menu.ts'
+// fork: Terminal stays across spaces
+import { activeOf, addTab, closeTab, tabPlace, tabsOf } from './tabs.ts'
+import type { Snapshot } from '@shared/types.ts'
 import { connectTerminal, streamInput } from './stream.ts'
 import { linkLayer, type LinkLayer } from './linklayer.ts'
 import { mirrorFocus } from './focus.ts'
@@ -95,7 +98,9 @@ const useCoarse = () => useSyncExternalStore(onCoarse, () => typeof matchMedia =
  *  least the pane's): herdr sends only the screen, never older lines, so its tall screen is the history you scroll
  *  up through. It opens at the last line shown and follows new output, unless you scroll up; back down, it follows
  *  again. */
-function Term({ stream, fill, onEnd }: { stream: string; fill?: boolean; onEnd?: () => void }) {
+// fork: `hidden`, a tab not showing keeps its terminal (Terminal stays across spaces)
+// fork: `focus`, a tab just picked or added takes the keys, but no on-screen keyboard pops up (Terminal again adds a tab)
+function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: boolean; onEnd?: () => void; hidden?: boolean; focus?: boolean }) {
   const phone = useUI((u) => u.phone)
   const coarse = useCoarse()
   const own = stream.startsWith('sh:')
@@ -278,6 +283,10 @@ function Term({ stream, fill, onEnd }: { stream: string; fill?: boolean; onEnd?:
   }
   /** after a press of the key row: a mouse click gives the terminal the keys; a finger's tap leaves the on-screen
    *  keyboard as it was */
+  // fork: a tab just picked or added takes the keys; a touch screen's keyboard stays down (Terminal again adds a tab)
+  useEffect(() => {
+    if (focus && !hidden && !coarseRef.current) cap.current?.focus()
+  }, [focus, hidden])
   const afterKey = () => {
     if (focusAfterKey(pointer.current)) cap.current?.focus()
     pointer.current = ''
@@ -288,7 +297,7 @@ function Term({ stream, fill, onEnd }: { stream: string; fill?: boolean; onEnd?:
   }
   return (
     <>
-      <div className="tw" data-keys="own" style={fill ? { flex: 1, display: 'flex', flexDirection: 'column' } : undefined}>
+      <div className="tw" data-keys="own" style={hidden ? { display: 'none' } : fill ? { flex: 1, display: 'flex', flexDirection: 'column' } : undefined}>
         <div ref={box} className={fill ? 'termbox fill' : 'termbox'} data-term={stream}>
           <div ref={host} style={own ? { height: '100%' } : undefined} />
           {status && <div style={{ position: 'absolute', left: 16, top: 8, color: '#737373', font: `13px/20px ${MONO}` }}>{status}</div>}
@@ -395,7 +404,7 @@ function Term({ stream, fill, onEnd }: { stream: string; fill?: boolean; onEnd?:
           }}
         />
       </div>
-      {showKeys(phone, coarse) && (
+      {!hidden && showKeys(phone, coarse) && (
         <div className="keys" onPointerDown={(e) => { pointer.current = e.pointerType; claim.current() }} onMouseDown={(e) => e.preventDefault()}>
           {([['esc', 'esc'], ['tab', 'tab']] as const).map(([l, k]) => <button type="button" key={l} aria-label={`${l} key`} onClick={() => sendKey(k)}>{l}</button>)}
           <button type="button" aria-label="ctrl key" aria-pressed={ctrl} style={ctrl ? { background: 'rgb(255 255 255/.3)' } : undefined} onClick={() => { setCtrl(!ctrl); afterKey() }}>ctrl</button>
@@ -415,8 +424,70 @@ function whereOf(thread: Thread) {
   return `${dir} on ${machineLabel(snap, p?.machine ?? snap.host)}`
 }
 
+/** fork: a space terminal's tab, by its space: the space's name, its folder (the tab showing) and its machine when
+ *  it is another one (Terminal stays across spaces); a space's second tab and on say their number, "shop 2"
+ *  (Terminal again adds a tab) */
+export function tabLabel(snap: Snapshot, tab: string): { name: string; dir: string; machine: string | null } {
+  const { place, n } = tabPlace(tab)
+  const p = placeOf(snap, place) ?? snap.places.find((x) => x.id === place)
+  const m = p?.machine ?? snap.host
+  const name = p?.name ?? place
+  return { name: n > 1 ? `${name} ${n}` : name, dir: p?.cwd ?? p?.where ?? '~', machine: m && m !== snap.host ? machineLabel(snap, m) : null }
+}
+
+/** fork: your own terminals in their tabs, one per space, whichever space you look at; each keeps running and drawn
+ *  while another shows (Terminal stays across spaces) */
+function SpaceTerms({ fill }: { fill?: boolean }) {
+  const snap = useSnap()
+  return snap ? <SpaceTabs snap={snap} fill={fill} /> : null
+}
+
+function SpaceTabs({ snap, fill }: { snap: Snapshot; fill?: boolean }) {
+  const ui = useUI()
+  const exists = (id: string) => !!(placeOf(snap, id) ?? snap.places.find((x) => x.id === id))
+  const tabs = tabsOf(ui, exists, ui.at)
+  const active = activeOf(tabs, ui.termAt)
+  const close = (id: string) => {
+    const { show, ...next } = closeTab(getState().ui, tabs, id)
+    setUI({ ...next, ...(show ? {} : showSpaceTerm(getState().ui, false)) })
+  }
+  // fork: the + always starts another, a second shell of a space that has one (Terminal again adds a tab)
+  const here = ui.at && exists(ui.at) ? ui.at : null
+  // fork: a tab picked or added takes the keys (Terminal again adds a tab); not the one showing as the page loads
+  const was = useRef(active)
+  const focus = was.current !== active
+  useEffect(() => { was.current = active }, [active])
+  return (
+    <>
+      <div className="tbar ttabs" role="tablist" aria-label="Your terminals">
+        <div className="ttl2">
+          {tabs.map((id) => {
+            const l = tabLabel(snap, id)
+            const on = id === active
+            return (
+              <div key={id} className={on ? 'ttab on' : 'ttab'}>
+                <button type="button" className="tt" role="tab" aria-selected={on} onClick={() => setUI({ termAt: id })}>
+                  <span className="tn">{l.name}</span>
+                  {on && <span className="td">{l.dir}</span>}
+                  {l.machine && <span className="td">on {l.machine}</span>}
+                </button>
+                <IB icon="x" label={`Close the terminal in ${l.name}`} onClick={() => close(id)} />
+              </div>
+            )
+          })}
+        </div>
+        {here && <IB icon="plus" label={`New terminal in ${tabLabel(snap, here).name}`} onClick={() => setUI(addTab({ terms: tabs, termAt: active }, here))} />}
+        {!ui.phone && <IB icon="down" label="Hide the terminal" onClick={() => setUI({ term: false })} />}
+      </div>
+      {tabs.map((id) => <Term key={id} stream={`sh:${id}`} fill={fill} hidden={id !== active} focus={focus && id === active} onEnd={() => close(id)} />)}
+    </>
+  )
+}
+
 /** your own terminal, in the drawer under a chat or a task */
 function Drawer({ thread }: { thread: Thread }) {
+  // fork: a space's are tabs (Terminal stays across spaces)
+  if (!thread.task) return <SpaceTerms />
   const close = () => setUI(thread.task ? { tterm: false } : { term: false })
   return (
     <>
@@ -435,6 +506,15 @@ function TerminalPane() {
   const ui = useUI()
   if (!snap) return null
   const t = ui.termTask ? taskOf(snap, ui.task) : undefined
+  // fork: a space's are tabs, whichever space you are in (Terminal stays across spaces)
+  if (!t)
+    return (
+      <PaneFrame flush head={() => <Hd title="Terminal" pad={12} />}>
+        <div className="tdr" style={{ border: 0 }}>
+          <SpaceTerms fill />
+        </div>
+      </PaneFrame>
+    )
   const p = placeOf(snap, ui.at)
   if (!p) return null
   const thread: Thread = t ? { chat: taskChat(t), place: t.place, task: t, where: 'pane' } : { chat: p.chat, place: p.id, where: 'pane' }
@@ -506,7 +586,7 @@ export default definePlugin({
     // Ctrl+` (VS Code's, Claude's) opens your own terminal, and works from inside one; Ctrl+Shift+` swaps the chat in
     // focus for its agent's terminal
     reg.commands.push(
-      { id: 'terminal.mine', title: 'Open your terminal', area: 'Terminal', icon: 'prompt', keys: ['Ctrl+`'], terminal: true, words: 'shell console toggle close', run: () => { const t = focusTask(); if (t && !getState().ui.phone && getState().ui.pane === 'tasks') toggleTaskTerm(t.id); else toggleSpaceTerm() } },
+      { id: 'terminal.mine', title: 'Open your terminal', area: 'Terminal', icon: 'prompt', keys: ['Ctrl+`'], terminal: true, words: 'shell console toggle close new tab another', run: () => { const t = focusTask(); if (t && !getState().ui.phone && getState().ui.pane === 'tasks') toggleTaskTerm(t.id); else toggleSpaceTerm() } },
       { id: 'terminal.view', title: 'View as terminal', area: 'Terminal', icon: 'viewswap', keys: ['Ctrl+Shift+`'], terminal: true, words: 'view as chat agent raw switch', run: () => { const c = focusChat(); if (c) switchView(c, !getState().ui.aterm[c]) } },
     )
   },

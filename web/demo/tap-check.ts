@@ -85,11 +85,15 @@ async function measure(page: Page, allow: string[]) {
         const t = document.elementFromPoint(x, y)
         return !!t && (t === el || el.contains(t))
       }
+      // fork: the edge of what scrolls it counts as open too, like the screen's: a pad clipped there is a scroll away
+      // from whole, so where a chat happens to sit (still settling on a slow runner) can't fail the check
+      const sv = sc?.getBoundingClientRect()
       const span = (dx: number, dy: number) => {
         let n = 0
         for (; n < 40; n++) {
           const x = cx + dx * (n + 1), y = cy + dy * (n + 1)
           if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return 40
+          if (sv && (y < sv.top + 1 || y > sv.bottom - 1)) return 40 // its last pixel too (hit tests round)
           if (!mine(x, y)) break
         }
         return n

@@ -11587,6 +11587,23 @@ class Schedules32(unittest.TestCase):
         with self.assertRaises(self.Fail):
             self.auto("pause")  # neither an id nor a space
 
+    def test_a_schedules_own_resume_runs_it_after_its_space_stopped_it(self):
+        # fork: SHEP-120: a space removed (the web's Remove stops its schedules) and its folder made a space again
+        # under a new id: nothing resumed the space's old id, and the schedule's own Resume left it stopped
+        a = self.auto("add", title="Daily check", prompt="Go.", when="every 30 minutes", space="sp-old")
+        with self.mock.patch.object(self.au, "store_files", lambda folder=None: self.store_mod.store_files(folder)):
+            self.auto("pause", space="sp-old", all=True)
+        self.assertEqual(self.round(a["next_run"] + 1000), [])
+        out = self.auto("resume", id="1", space="sp-new")
+        self.assertEqual((out["space_paused"], out["paused"], out["active"], out["space"]), (False, False, True, "sp-new"))
+        self.assertEqual(len(self.round(out["next_run"] + 1000)), 1)
+        # without --space it keeps its space; a pause by hand and a space's stop both end with it
+        self.auto("pause", id="1")
+        with self.mock.patch.object(self.au, "store_files", lambda folder=None: self.store_mod.store_files(folder)):
+            self.auto("pause", space="sp-new", all=True)
+        out = self.auto("resume", id="1")
+        self.assertEqual((out["space_paused"], out["paused"], out["active"], out["space"]), (False, False, True, "sp-new"))
+
     def test_done_and_checks_fail_are_events(self):
         d = self.au.diff_events
         seen = {}

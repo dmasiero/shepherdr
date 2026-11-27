@@ -2,31 +2,33 @@
 // while its view is open, and the same row takes you back to the chat.
 import { beforeEach, expect, test } from 'bun:test'
 import { getState, setUI } from '@client/kernel.ts'
-import { followFold, spaceTermRow, taskTermRow, viewRow } from './menu.ts'
+import { followFold, spaceTermRow, spaceTermShown, taskTermRow, viewRow } from './menu.ts'
 import { screenKey, screenRow } from '../screens/menu.ts'
 
 beforeEach(() => setUI({ phone: false, term: false, tterm: false, pane: null, termTask: false, scr: null, task: null }))
 
-test("a space's Terminal row: unchecked, opens the drawer, checked, then closes it", () => {
+// fork: a space's row again, while its terminal shows, adds a tab rather than closing it (Terminal again adds a tab)
+// fork: no check mark on a space's row: it is no toggle (Terminal menu row fixes)
+test("a space's Terminal row: no check mark, opens the drawer, then adds another tab", () => {
+  setUI({ at: 'p:mac:a', terms: [], termAt: null })
   const row = spaceTermRow(getState().ui)
   expect(row.label).toBe('Terminal')
   expect(row.icon).toBe('prompt')
-  expect(row.on).toBe(false)
+  expect(row.on).toBeUndefined()
   row.run!()
   expect(getState().ui.term).toBe(true)
   const back = spaceTermRow(getState().ui)
-  expect(back.on).toBe(true)
+  expect(back.on).toBeUndefined()
   back.run!()
-  expect(getState().ui.term).toBe(false)
+  expect(getState().ui).toMatchObject({ term: true, terms: ['p:mac:a', 'p:mac:a~2'], termAt: 'p:mac:a~2' })
 })
 
-test("a phone's Terminal row opens the whole-screen terminal and closes it back to the chat", () => {
-  setUI({ phone: true })
+test("a phone's Terminal row opens the whole-screen terminal, and again another tab in it", () => {
+  setUI({ phone: true, at: 'p:mac:a', terms: [], termAt: null })
   spaceTermRow(getState().ui).run!()
   expect(getState().ui.pane).toBe('terminal')
-  expect(spaceTermRow(getState().ui).on).toBe(true)
   spaceTermRow(getState().ui).run!()
-  expect(getState().ui.pane).toBe(null)
+  expect(getState().ui).toMatchObject({ pane: 'terminal', terms: ['p:mac:a', 'p:mac:a~2'] })
 })
 
 test("a task's Terminal row: its own drawer on a desktop, the task's terminal on a phone, back to the task", () => {
@@ -38,8 +40,8 @@ test("a task's Terminal row: its own drawer on a desktop, the task's terminal on
   setUI({ phone: true, tterm: false })
   taskTermRow(getState().ui, 't1').run!()
   expect(getState().ui).toMatchObject({ pane: 'terminal', termTask: true, task: 't1' })
-  // a space's terminal row does not count the task's as its own
-  expect(spaceTermRow(getState().ui).on).toBe(false)
+  // a space's terminal does not count the task's as its own
+  expect(spaceTermShown(getState().ui)).toBe(false)
   taskTermRow(getState().ui, 't1').run!()
   expect(getState().ui.pane).toBe('tasks')
 })
@@ -94,7 +96,7 @@ test("folding moves the open drawer to the phone's Terminal screen, and unfoldin
     expect(getState().ui).toMatchObject({ pane: null, term: true })
     // the issue's steps: open wide, narrow (one shows), reopen is a toggle off, widen: none twice
     setUI({ phone: true })
-    expect(spaceTermRow(getState().ui).on).toBe(true)
+    expect(spaceTermShown(getState().ui)).toBe(true)
   } finally { stop() }
 })
 
@@ -120,8 +122,8 @@ test('a terminal closed on the folded screen stays closed when you unfold', () =
   try {
     setUI({ term: true })
     setUI({ phone: true })
-    spaceTermRow(getState().ui).run!()
-    expect(getState().ui.pane).toBe(null)
+    // fork: back to the chat closes it (the row now adds a tab: Terminal again adds a tab)
+    setUI({ pane: null })
     setUI({ phone: false })
     expect(getState().ui).toMatchObject({ pane: null, term: false })
   } finally { stop() }

@@ -360,10 +360,13 @@ Bun.serve<Sock['data'], never>({
         const m = JSON.parse(String(raw)) as { type: string; id: number; text?: string; keys?: string[] }
         const say = (t: string) => ws.send(new TextEncoder().encode(t))
         const term = (ws.data as any).term as string
+        // fork: each space's shell names its own machine and folder, so its tabs tell apart (Terminal stays across spaces)
+        const own = /^sh:p:([^:]+):(.+?)(?:~\d+)?$/.exec(term)
+        const prompt = own ? `sam@${own[1]} ${own[2]} % ` : 'sam@mac-mini shop % '
         if (m.type === 'open') {
           termPages.set(term, (termPages.get(term) ?? new Set()).add(ws))
           const at = termSizes.get(term) ?? { cols: 100, rows: 12 }
-          ws.send(JSON.stringify({ type: 'size', ...at })); say(TERM_LINKS + 'sam@mac-mini shop % ')
+          ws.send(JSON.stringify({ type: 'size', ...at })); say(TERM_LINKS + prompt)
         }
         // a page asks for its pane's size: the terminal takes it, and every page showing it is told, as herdr-core does
         else if (m.type === 'resize' && m.cols && m.rows) {
@@ -373,8 +376,8 @@ Bun.serve<Sock['data'], never>({
         }
         // fork: keys come as their bytes (SHEP-20): Enter's byte gets a fresh prompt, as a real shell's
         else if (m.type === 'text' && m.text?.includes('\x04')) { ws.send(JSON.stringify({ type: 'ended' })); return } // fork: Ctrl+D's byte
-        else if (m.type === 'text') say((m.text ?? '').replace(/\r/g, '\r\nsam@mac-mini shop % '))
-        else if (m.type === 'keys' && m.keys?.includes('enter')) say("\r\n(this demo doesn't run commands)\r\nsam@mac-mini shop % ")
+        else if (m.type === 'text') say((m.text ?? '').replace(/\r/g, '\r\n' + prompt))
+        else if (m.type === 'keys' && m.keys?.includes('enter')) say("\r\n(this demo doesn't run commands)\r\n" + prompt)
         // Ctrl+D ends the shell: the page closes the terminal, as the service tells it for a real one
         else if (m.type === 'keys' && m.keys?.includes('ctrl+d')) { ws.send(JSON.stringify({ type: 'ended' })); return }
         ws.send(JSON.stringify({ type: 'ack', id: m.id }))

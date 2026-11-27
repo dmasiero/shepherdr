@@ -15,16 +15,24 @@ writeFileSync(join(BIN, "hc"), `#!/bin/sh\necho "$*" >> "${HC_CALLS}"\ncase "$1"
 
 let act: typeof import("./actions.ts").act, stillStarting: typeof import("./actions.ts").stillStarting;
 let newSpace: typeof import("./spaces.ts").newSpace;
-const was = process.env.HERDR_APP_HOME;
+const was = process.env.HERDR_APP_HOME, wasData = process.env.SHEPHERDR_DATA;
+// its sends' ids (c1) in a record of its own, as send-once.test.ts does: earlier test files' sends with the same id are
+// kept in the run's sent.json, and one of them answered this file's first send as already gone in (Fix main: web push tests)
+let forgetAll: typeof import("./send-once.ts").forgetAll;
 beforeAll(async () => {
   process.env.HERDR_APP_HOME = APP;
   process.env.SHEPHERDR_HC = join(BIN, "hc");
+  process.env.SHEPHERDR_DATA = mkdtempSync(join(tmpdir(), "shep-28-data-"));
+  ({ forgetAll } = await import("./send-once.ts"));
+  forgetAll();
   ({ act, stillStarting } = await import("./actions.ts"));
   ({ newSpace } = await import("./spaces.ts"));
 });
 afterAll(() => {
   delete process.env.SHEPHERDR_HC;
   if (was === undefined) delete process.env.HERDR_APP_HOME; else process.env.HERDR_APP_HOME = was;
+  if (wasData === undefined) delete process.env.SHEPHERDR_DATA; else process.env.SHEPHERDR_DATA = wasData;
+  forgetAll();
 });
 
 // t7z as it was: Claude Code (Nix's wrapper) on its start screen, live, no status yet, no turn
