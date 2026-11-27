@@ -32,7 +32,7 @@ import { webBuild } from "./webbuild.ts";
 import { Model } from "./model.ts";
 import { checkFlags } from "./flags.ts";
 import type { Snapshot } from "../web/shared/types.ts";
-import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
+import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, resumeOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
 import { ensureShell, type ShellAt } from "./shells.ts";
 import { Chats } from "./chats.ts";
 import { act, findMachines, hc as hcRun } from "./actions.ts";
@@ -472,7 +472,10 @@ const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live
 // a task that moved on (accepted, done) changes its news lines in its Assistant's chat, whose conversation may not move:
 // open chats are told again (compat.chat reads the rows the snapshot just took)
 let newsWas: string | null = null;
+// fork: SHEP-120: the last build's schedules as herdr-task lists them, for a schedule's Resume
+let built: Parameters<NonNullable<typeof model.onBuild>>[0] | null = null;
 model.onBuild = (b) => {
+  built = b;
   snapshotOf(b);
   const now = newsKey(b.rows);
   if (newsWas !== null && now !== newsWas) live.chats?.refreshAll();
@@ -762,7 +765,14 @@ async function doAction(body: any): Promise<Response> {
     try {
       if (body.op === "run") await tool(["run-now", at.id]);
       else if (body.op === "pause") await tool(["pause", at.id]);
-      else if (body.op === "resume") await tool(["resume", at.id]);
+      else if (body.op === "resume") {
+        // fork: SHEP-120: its own Resume runs it again after its space stopped it (next.ts resumeOf)
+        const a = (built?.automations ?? []).find((x: any) => (x.machine ?? null) === at.machine && x.folder === at.folder && String(x.id) === at.id);
+        const bar = model.value("spaces-chat") as any;
+        const r = a ? resumeOf(a, model.spaces as any[], Array.isArray(bar?.archived) ? bar.archived : []) : { args: ["resume", at.id] };
+        if ("error" in r) throw new Error(r.error);
+        await tool(r.args);
+      }
       else if (body.op === "edit") {
         const sp = (model.spaces as any[]).find((x) => x.id === body.place);
         if (!sp) throw new Error("Its space isn't here any more.");

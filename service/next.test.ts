@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { lastWords, nextWords, scheduleId, scheduleOf, schedulesOf, warningsOf, whenWords, catalogOf } from "./next.ts";
+import { lastWords, nextWords, resumeOf, scheduleId, scheduleOf, schedulesOf, warningsOf, whenWords, catalogOf } from "./next.ts";
 
 test("a schedule says when it runs in words", () => {
   expect(whenWords({ every: { kind: "every", text: "mondays 9:00" } })).toBe("Mondays 9:00");
@@ -96,4 +96,23 @@ test("Up next: it waits for the tasks not done yet, the first by title and the r
   // everything it waited for is done: its title still says which, nothing counted
   expect(by("APP-11")).toMatchObject({ afterTitle: "Old one" });
   expect(by("APP-11").afterMore).toBeUndefined();
+});
+
+// fork: SHEP-120: a schedule's own Resume after its space stopped it
+test("Resume: refused only while its space is archived; one whose space is gone moves to its folder's", () => {
+  const spaces = [
+    { id: "sp-new", name: "personal", folder: "/w/personal", machine: null },
+    { id: "vm/sp2", name: "shop", folder: "/w/shop", machine: "vm" },
+  ];
+  // its space removed, the folder a space again under a new id (nextgate's daily flight check)
+  expect(resumeOf({ id: 1, space: "sp-old", folder: "/w/personal", machine: null, space_paused: true }, spaces, [])).toEqual({ args: ["resume", "1", "--space", "sp-new"] });
+  // its own space, there and not archived: as it was
+  expect(resumeOf({ id: 2, space: "sp-new", folder: "/w/personal", machine: null }, spaces, [])).toEqual({ args: ["resume", "2"] });
+  expect(resumeOf({ id: 3, space: "sp2", folder: "/w/shop", machine: "vm" }, spaces, [])).toEqual({ args: ["resume", "3"] });
+  // archived for real: said, nothing changes
+  expect(resumeOf({ id: 2, space: "sp-new", folder: "/w/personal", machine: null }, spaces, ["sp-new"])).toEqual({ error: "Its space “personal” is archived: bring the space back and its schedules run again." });
+  expect(resumeOf({ id: 3, space: "sp2", folder: "/w/shop", machine: "vm" }, spaces, ["vm/sp2"])).toHaveProperty("error");
+  expect(resumeOf({ id: 1, space: "sp-old", folder: "/w/personal", machine: null }, spaces, ["sp-new"])).toHaveProperty("error");
+  // no space for it at all: resumed where it is
+  expect(resumeOf({ id: 4, space: "sp-x", folder: "/w/none", machine: null }, spaces, [])).toEqual({ args: ["resume", "4"] });
 });

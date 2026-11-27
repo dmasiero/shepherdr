@@ -346,7 +346,7 @@ def heard_words(a):
 
 
 def auto_line(v):
-    state = "paused" if v["paused"] else "its space is archived" if v.get("space_paused") else ("off in Settings" if not v["enabled"] else
+    state = "paused" if v["paused"] else "stopped with its space (archived or removed; resume runs it again)" if v.get("space_paused") else ("off in Settings" if not v["enabled"] else
                                           (f"next {datetime.datetime.fromtimestamp(v['next_run'] / 1000):%a %H:%M}" if v.get("next_run") else "on events"))
     err = (f"  ! {v['last_error']['message']}" if v.get("last_error") else
            f"  ~ {v['from_error']['message']} ({v['from_error']['misses']} round(s) so far)" if v.get("from_error") else "")
@@ -509,6 +509,12 @@ def cmd_auto(args):
                 msg = f"{quoted(a['title'])} paused."
             elif sub == "resume":
                 a["paused"] = False
+                # fork: SHEP-120: a schedule's own Resume runs it again whatever stopped it, its space's stop too
+                # (space_paused): a space removed and its folder made a space again under a new id was never resumed
+                # by id, and only its Resume was left to the person. --space moves it to the space it's under now.
+                a.pop("space_paused", None)
+                if getattr(args, "space", None):
+                    a["space"] = bare(args.space)
                 a["next_run"] = next_run(a.get("every"), now())
                 msg = f"{quoted(a['title'])} resumed: {trigger_words(a)}."
             elif sub == "rm":
