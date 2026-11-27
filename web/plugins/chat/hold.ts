@@ -4,13 +4,16 @@
 // together in their order. A card from before the stretch of chat loaded so far waits for that stretch.
 import type { Chat, Message } from '@shared/types.ts'
 
-export type ChatCard = { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean }
+// fork: until, a card that is over once a later message says so (an agent's alert, once it or the person wrote on)
+export type ChatCard = { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; until?: (m: Message) => boolean }
 
 /** #1475: a card still waiting on you (a Ready card) goes below the newest later message it says it follows (`after`:
  *  any message in the task's own chat, the task's own rows in a space's), so the next step stays at the bottom. Its
  *  time moves just past that message's; a card without `after`, or a past one (a Done line), keeps its place. */
 export function cardsAfter<C extends ChatCard>(cards: C[], messages: Pick<Message, 'at'>[]): C[] {
-  return cards.map((c) => {
+  // fork: a card with until goes once a message after it says so
+  const over = (c: C) => !!c.until && c.at !== undefined && messages.some((m) => m.at !== undefined && m.at > c.at! && c.until!(m as Message))
+  return cards.filter((c) => !over(c)).map((c) => {
     if (!c.after || c.past || c.at === undefined) return c
     let at = c.at
     for (const m of messages) if (m.at !== undefined && m.at > c.at && m.at >= at && c.after(m as Message)) at = m.at + 1

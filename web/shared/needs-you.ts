@@ -64,6 +64,9 @@ export function alertStands(a: Alert | undefined | null, snap: Pick<NeedsSnap, '
   const at = Number(a.at) || 0
   const task = taskOfAlert(snap, a)
   if (task && (task.archived || task.status === 'done')) return false
+  // fork: handed in for review after it, it is over: the agent no longer waits on what it asked (its Ready card says
+  // the rest)
+  if (task?.status === 'ready' && (task.needsAt ?? 0) >= at) return false
   // past its 15 minutes, it stands while its task still waits on you, a wait that began while it was fresh
   const waits = !!task && task.status === 'need' && !(task.needsAt && task.needsAt - at > ALERT_FRESH_MS)
   if (!(now - at < ALERT_FRESH_MS) && !waits) return false

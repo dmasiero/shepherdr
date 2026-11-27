@@ -40,3 +40,12 @@ test('a working task with a standing alert is under Needs you, and counts', () =
   // without it, the same as before
   expect(nowGroups(fresh.tasks).find((g) => g.name === 'Needs you')!.tasks).toEqual([])
 })
+
+// fork: an alert from before the task was handed in is over (Alert card won't go away)
+test('an alert goes once its task is Ready after it', () => {
+  const a = alert('a')
+  expect(alertStands(a, snapOf([task('SHOP-1', { status: 'ready', needsAt: T0 + 60_000 })], [a]), T0 + 2 * 60_000)).toBe(false)
+  // one it sent after it was handed in stands its 15 minutes
+  const b = alert('b', { at: T0 + 2 * 60_000 })
+  expect(alertStands(b, snapOf([task('SHOP-1', { status: 'ready', needsAt: T0 + 60_000 })], [b]), T0 + 3 * 60_000)).toBe(true)
+})

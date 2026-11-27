@@ -58,3 +58,13 @@ test('a waiting card goes below the newest later message it follows; a done line
   // nothing later: unchanged
   expect(cardsAfter([{ key: 'r', at: 500, after: any }], msgs)[0]!.at).toBe(500)
 })
+
+// fork: an agent's alert card is over once someone wrote on after it (Alert card won't go away)
+test('a card with until goes once a later message says so', () => {
+  const msgs = [{ at: 100, who: 'agent', text: 'before' }, { at: 300, who: 'agent', text: 'after' }] as Message[]
+  const wrote = (m: Message) => !!m.text
+  expect(cardsAfter([{ key: 'a', at: 200, after: () => true, until: wrote }], msgs)).toEqual([])
+  // nothing said after it: it stays, below the newest message
+  expect(cardsAfter([{ key: 'a', at: 200, after: () => true, until: wrote }], msgs.slice(0, 1))[0]!.key).toBe('a')
+  expect(cardsAfter([{ key: 'a', at: 200, until: () => false }], msgs)[0]!.key).toBe('a')
+})

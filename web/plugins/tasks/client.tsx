@@ -21,6 +21,7 @@ import { DoneRow } from '@plugins/chat/cards.tsx'
 import { Markdown } from '@plugins/chat/markdown.tsx'
 import { readable, words as saidWords } from '@core/accept.js'
 import { replyToTask, SlideHint, useSlide } from '@plugins/chat/slide.tsx'
+import { said } from '@plugins/chat/hold.ts' // fork: an alert's card is over once someone wrote on
 import { StatusIcon } from './icon.tsx'
 import { doneRows } from './done-rows.ts' // fork: Ready card after chat replies
 import { chipsOf, choices, clean, filterCount, filterOn, filterTasks, hereOn, NO_FILTER, toggle, type GroupKey, type TaskFilter } from '@shared/task-filter.ts'
@@ -382,24 +383,38 @@ export function StoppedCard({ t }: { t: Task }) {
   )
 }
 
-/** its agent's alert while it stands (#1561): its words, say a guard's one-time approval code, and Copy */
+/** fork: the alerts closed on this screen, gone at once while the service takes them off every device */
+const closedAlerts = new Set<string>()
+
+/** its agent's alert while it stands (#1561): its words, say a guard's one-time approval code, and Copy; fork: and
+ *  Close, which takes it off every device (service/actions.ts closeAlert) */
 function AlertCard({ a }: { a: Alert }) {
+  const [closed, setClosed] = useState(closedAlerts.has(a.id))
+  if (closed) return null
+  const close = () => {
+    closedAlerts.add(a.id)
+    setClosed(true)
+    void tryAct({ type: 'alert-close', alert: a.id }).then((ok) => { if (!ok) { closedAlerts.delete(a.id); setClosed(false) } })
+  }
   return (
     <div className="card" data-card={`alert:${a.id}`}>
       <span className="t">{alertWhat(a)}</span>
       {a.body && <span>{a.body}</span>}
-      {a.body && (
-        <div className="acts">
-          <Btn onClick={(e) => void copyText(a.body, e.currentTarget).then((ok) => ok && notice('Copied'))}>Copy</Btn>
-        </div>
-      )}
+      <div className="acts">
+        {a.body && <Btn onClick={(e) => void copyText(a.body, e.currentTarget).then((ok) => ok && notice('Copied'))}>Copy</Btn>}
+        <Btn onClick={close}>Close</Btn>
+      </div>
     </div>
   )
 }
 
+/** fork: an alert's card is over once the agent or the person wrote on after it, unless its task now waits on you
+ *  (it asked, then waited: the code stays in sight while it waits, as alertStands keeps it) */
+const alertOver = (snap: Snapshot, t: Task) => (m: Message) => said(m) && (snap.tasks.find((x) => x.id === t.id) ?? t).status !== 'need'
+
 /** In a chat: the cards of the tasks that need the person there (a review, a stopped agent), each where it came up.
  *  The app puts them there from each task's status, not an agent. In a task: its own review or stopped card. */
-function taskCards(snap: Snapshot, thread: Thread): { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; node: ReactNode }[] {
+function taskCards(snap: Snapshot, thread: Thread): { key: string; at?: number; past?: boolean; after?: (m: Message) => boolean; until?: (m: Message) => boolean; node: ReactNode }[] {
   // a task handed in: its card while it waits, and where the card was, one quiet line once it is done
   const reviewing = (t: Task) => tstate(t) === 'ready' || t.status === 'merging' || !!t.accepting || (tstate(t) === 'done' && !t.quiet && !!t.needsAtWas)
   const halted = (t: Task) => tstate(t) === 'ask' && !!t.stopped && t.stopped.by !== 'you'
@@ -408,7 +423,7 @@ function taskCards(snap: Snapshot, thread: Thread): { key: string; at?: number; 
     const alert = taskAlerts(snap).get(t.id)
     // each where it came up among the messages, never held at the end (SHEP-419)
     // a Ready card still waiting goes below what was said after it (#1475)
-    return [...(reviewing(t) ? [{ key: `review:${t.id}`, at: t.needsAt ?? t.needsAtWas, past: tstate(t) === 'done', after: () => true, node: <ReviewCard t={t} ctx="thread" /> }] : []), ...(halted(t) ? [{ key: `stopped:${t.id}`, at: t.needsAt, node: <StoppedCard t={t} /> }] : []), ...(alert ? [{ key: `alert:${alert.id}`, at: alert.at, after: () => true, node: <AlertCard a={alert} /> }] : [])]
+    return [...(reviewing(t) ? [{ key: `review:${t.id}`, at: t.needsAt ?? t.needsAtWas, past: tstate(t) === 'done', after: () => true, node: <ReviewCard t={t} ctx="thread" /> }] : []), ...(halted(t) ? [{ key: `stopped:${t.id}`, at: t.needsAt, node: <StoppedCard t={t} /> }] : []), ...(alert ? [{ key: `alert:${alert.id}`, at: alert.at, after: () => true, until: alertOver(snap, t), node: <AlertCard a={alert} /> }] : [])]
   }
   // cards stay in the chat that asked (SHEP-325): a space's Tasks also holds what works in its folder, its chat does not
   const mine = tasksIn(snap, thread.place).filter((t) => isEverything(snap, thread.place) || t.place === thread.place)

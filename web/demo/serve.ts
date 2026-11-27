@@ -1,7 +1,7 @@
 // The demo: `bun web/demo/serve.ts [port]` serves the built app (web/dist) with a fictional day instead of the service,
 // on 127.0.0.1 only. For looking at every screen and comparing it with the design; nothing is wired to a real agent.
 // `?case=empty` and `?case=down` in the page's address show "Nothing yet" and "Can't reach vm"; `?case=more` adds a
-// third warning (the warnings line coming back after it was closed); `?case=long` gives spaces, tasks and pages long names;
+// third warning (the warnings line coming back after it was closed) and two agents' alerts (fork: Alert card won't go away); `?case=long` gives spaces, tasks and pages long names;
 // `?case=one` and `?case=five` show one machine only and five.
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -88,6 +88,8 @@ function demoEvents() {
 }
 
 function action(a: Record<string, any>): unknown {
+  // fork: an alert's Close (service/actions.ts closeAlert)
+  if (a.type === 'alert-close') return each((snap) => { snap.alerts = snap.alerts?.filter((x) => x.id !== a.alert) }), { ok: true }
   if (a.type === 'screen') {
     if (a.op === 'handback' || a.op === 'skip') each((snap) => { const screen = snap.screens?.[a.key]; if (screen?.hands) screen.hands.settled = a.op === 'skip' ? 'skip' : 'done' })
     return { ok: true }
