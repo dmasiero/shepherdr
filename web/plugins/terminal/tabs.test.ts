@@ -12,12 +12,11 @@ test('opened in A, then B: A keeps showing; opened again in B, B is a second tab
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ term: true, terms: [A], termAt: A })
   setUI({ at: B })
-  // the switch leaves it open on A's tab, and the row in B is not checked (B has no terminal showing)
+  // the switch leaves it open on A's tab; the row has no check mark (Terminal menu row fixes)
   expect(getState().ui).toMatchObject({ term: true, terms: [A], termAt: A })
-  expect(spaceTermRow(getState().ui).on).toBe(false)
+  expect(spaceTermRow(getState().ui).on).toBeUndefined()
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ term: true, terms: [A, B], termAt: B })
-  expect(spaceTermRow(getState().ui).on).toBe(true)
   // fork: Terminal again adds a tab. Back in A, while it shows: another tab for A, its own shell
   setUI({ at: A })
   spaceTermRow(getState().ui).run!()
@@ -25,7 +24,6 @@ test('opened in A, then B: A keeps showing; opened again in B, B is a second tab
   // the row again on A's showing tab adds a third, never hides
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${A}~2`, `${A}~3`], termAt: `${A}~3` })
-  expect(spaceTermRow(getState().ui).on).toBe(true)
   // hidden (the ⌄), then the row: back as it was, no new tab
   setUI({ term: false, termAt: `${A}~2` })
   spaceTermRow(getState().ui).run!()
@@ -48,10 +46,12 @@ test("Terminal again adds a tab: a space's tabs are numbered, the lowest free fi
   expect(tabsOf({ terms: [A, `${B}~2`], termAt: null }, (p) => p !== B, A)).toEqual([A])
 })
 
-test('hidden, then shown from a space with no tab: it comes back as it was, not with a new tab', () => {
+// fork: Terminal menu row fixes. Doug, in shepherdr with renix's and dotfiles' tabs hidden: Terminal showed only those.
+test('hidden, then shown from a space with no tab: the others come back and its own is added beside them', () => {
   setUI({ terms: [A], termAt: A, at: B })
   spaceTermRow(getState().ui).run!()
-  expect(getState().ui).toMatchObject({ term: true, terms: [A], termAt: A })
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B], termAt: B })
+  setUI({ terms: [A], termAt: A })
   // the bar's + starts B's, and again a second B
   setUI(addTab(getState().ui, B))
   expect(getState().ui).toMatchObject({ terms: [A, B], termAt: B })
@@ -79,11 +79,12 @@ test("a phone: the Terminal screen shows the tabs; going to B's chat and back to
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ pane: 'terminal', terms: [A], termAt: A })
   setUI({ pane: null, at: B })
-  spaceTermRow(getState().ui).run!()
-  expect(getState().ui).toMatchObject({ pane: 'terminal', terms: [A], termAt: A })
-  // in it, the row again (Ctrl+`) adds B's
+  // fork: B has none: B's is added beside A's (Terminal menu row fixes)
   spaceTermRow(getState().ui).run!()
   expect(getState().ui).toMatchObject({ pane: 'terminal', terms: [A, B], termAt: B })
+  // in it, the row again (Ctrl+`) adds B's second
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ pane: 'terminal', terms: [A, B, `${B}~2`], termAt: `${B}~2` })
 })
 
 test('fold and unfold carry the tabs along: one terminal, the same tabs', () => {
@@ -95,4 +96,42 @@ test('fold and unfold carry the tabs along: one terminal, the same tabs', () => 
     setUI({ phone: false })
     expect(getState().ui).toMatchObject({ pane: null, term: true, terms: [A, B], termAt: A })
   } finally { stop() }
+})
+
+// fork: Terminal menu row fixes, each case of Doug's recording
+const C = 'p:mac:c'
+test('hidden with other spaces\' tabs, Terminal in a space with none: they show and its tab is added, picked', () => {
+  setUI({ terms: [A, B, `${B}~2`], termAt: `${B}~2`, at: C })
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${B}~2`, C], termAt: C })
+})
+
+test('hidden, Terminal in a space with a tab: they show on its tab, none added', () => {
+  setUI({ terms: [A, B], termAt: A, at: B })
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B], termAt: B })
+})
+
+test('added twice, hidden with the ⌄, chosen again: every tab is back, none closed', () => {
+  setUI({ terms: [A, B], termAt: B, at: B, term: true })
+  spaceTermRow(getState().ui).run!()
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ terms: [A, B, `${B}~2`, `${B}~3`], termAt: `${B}~3` })
+  setUI({ term: false })
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${B}~2`, `${B}~3`], termAt: `${B}~3` })
+  // and a fold and unfold while hidden or shown keeps all four
+  const stop = followFold()
+  try {
+    setUI({ phone: true })
+    expect(getState().ui).toMatchObject({ pane: 'terminal', terms: [A, B, `${B}~2`, `${B}~3`], termAt: `${B}~3` })
+    setUI({ phone: false })
+    expect(getState().ui).toMatchObject({ term: true, terms: [A, B, `${B}~2`, `${B}~3`], termAt: `${B}~3` })
+  } finally { stop() }
+})
+
+test('showing other spaces\' tabs, Terminal in a space with none adds its first', () => {
+  setUI({ terms: [A, B], termAt: B, at: C, term: true })
+  spaceTermRow(getState().ui).run!()
+  expect(getState().ui).toMatchObject({ term: true, terms: [A, B, C], termAt: C })
 })
