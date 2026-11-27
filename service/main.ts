@@ -472,10 +472,7 @@ const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live
 // a task that moved on (accepted, done) changes its news lines in its Assistant's chat, whose conversation may not move:
 // open chats are told again (compat.chat reads the rows the snapshot just took)
 let newsWas: string | null = null;
-// fork: SHEP-120: the last build's schedules as herdr-task lists them, for a schedule's Resume
-let built: Parameters<NonNullable<typeof model.onBuild>>[0] | null = null;
 model.onBuild = (b) => {
-  built = b;
   snapshotOf(b);
   const now = newsKey(b.rows);
   if (newsWas !== null && now !== newsWas) live.chats?.refreshAll();
@@ -761,15 +758,16 @@ async function doAction(body: any): Promise<Response> {
       let j: any = null;
       try { j = JSON.parse(out); } catch {}
       if ((await p.exited) !== 0 || j?.error) throw new Error(j?.error ?? (err.trim().split("\n").pop()?.replace(/^herdr-task: /, "") || "The schedule didn't change."));
+      return j;
     };
     try {
       if (body.op === "run") await tool(["run-now", at.id]);
       else if (body.op === "pause") await tool(["pause", at.id]);
       else if (body.op === "resume") {
         // fork: SHEP-120: its own Resume runs it again after its space stopped it (next.ts resumeOf)
-        const a = (built?.automations ?? []).find((x: any) => (x.machine ?? null) === at.machine && x.folder === at.folder && String(x.id) === at.id);
+        const a = await tool(["show", at.id]);
         const bar = model.value("spaces-chat") as any;
-        const r = a ? resumeOf(a, model.spaces as any[], Array.isArray(bar?.archived) ? bar.archived : []) : { args: ["resume", at.id] };
+        const r = resumeOf({ ...a, machine: at.machine, folder: at.folder }, model.spaces as any[], Array.isArray(bar?.archived) ? bar.archived : []);
         if ("error" in r) throw new Error(r.error);
         await tool(r.args);
       }
