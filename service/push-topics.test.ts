@@ -7,8 +7,11 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+// fork: Fix main: web push tests. The subscriptions' files go in a folder of this file's own, which it removes after;
+// the service's data folder (paths.ts DATA, vapid.json) stays the run's throwaway one from test/preload.ts. DATA is read
+// once per bun test process, so a file that ran first and set it to this folder left every later Push writing vapid.json
+// into a folder gone (the first alert of each new Push lost: glance.test.ts's two web push tests failed on main).
 const dir = mkdtempSync(join(tmpdir(), "push-topics-"));
-process.env.SHEPHERDR_DATA = dir;
 const { Push, alertsOf, wants } = await import("./push.ts");
 
 // a real P-256 key per fake device, so each alert really encrypts
