@@ -4,7 +4,6 @@ The launch allow-list ("an agent's own herdr-task commands never ask": OWN, own_
 cmd_allow) is the one place an agent's launch is given commands it may run without asking; allow
 another command (herdr-secret's, say) there."""
 
-import hashlib
 import json
 import os
 import re
@@ -16,7 +15,7 @@ import sys
 import time
 
 from .base import ASK_HOME, ENTRY, Fail, git, hc_json, HOME, now, run, SHARE, WORKTREES
-from .settings import agent_key, ASSISTANT_TEMPLATES, cli_env, CLAUDE_PROFILE, REVIEW_TOOLS, codex_too_old, codex_update_words, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for, TEMPLATES
+from .settings import agent_key, ASSISTANT_TEMPLATES, cli_env, CLAUDE_PROFILE, REVIEW_TOOLS, codex_too_old, codex_update_words, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for, TEMPLATES
 from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, ROW_MAX, SUMMARY_MAX
 from .github import finish, remote_of
@@ -95,13 +94,20 @@ def own_rules(path):
     return rules
 
 
-def ask_command(path, sandboxed=False, auto_review=False):
-    """The PermissionRequest hook every task worker gets at launch (`herdr-task _allow`): its own
-    commands allowed, anything else (a permission, its question tool, a plan) on the chat's card.
-    sandboxed (Codex's): its proof and commits also run escalated, so they're its own too (#866).
-    auto_review (Codex's Approve for me, #1464): no card, Codex's own review answers the rest."""
-    return (f"{shlex.quote(sys.executable)} {shlex.quote(ENTRY)} _allow --command {shlex.quote(path)}"
-            + (" --sandboxed" if sandboxed else "") + (" --auto-review" if auto_review else ""))
+def ask_command(path):
+    """Claude's PermissionRequest hook: allow its own commands, ask on the card for the rest."""
+    return f"{shlex.quote(sys.executable)} {shlex.quote(ENTRY)} _allow --command {shlex.quote(path)}"
+
+
+def codex_ask_command():
+    """Keep the Codex declaration stable across upgrades and permission modes. Codex hashes
+    this command and its timeout. The installed executable's shebang chooses the interpreter."""
+    executable = shlex.quote(ENTRY)
+    return f"{executable} _allow --command {executable} --sandboxed"
+
+
+def codex_auto_review(argv):
+    return any(a in ("--approve-for-me", "--not-so-yolo") for a in argv)
 
 
 def artifact_path():
@@ -155,67 +161,9 @@ def own_argv(argv, folder=None):
             return out
         return out[:1] + ["--settings", json.dumps(merged)] + out[1:]
     if k == "codex":
-        # #1464: Approve for me. Codex runs this hook before its own review: a card here would wait on the person
-        # for what the review answers by itself, so the hook then only allows the worker's own commands.
-        hook = ask_command(path, sandboxed=True, auto_review=any(a in ("--approve-for-me", "--not-so-yolo") for a in out))
-        # Codex runs a new hook only once trusted. This one hook's trust comes with it, for this
-        # launch only: Codex's own key and hash for a -c hook (codex-rs/hooks discovery.rs
-        # hook_hash, config fingerprint.rs version_for_toml), so no other hook is trusted by it.
-        ident = {"event_name": "permission_request", "hooks": [{"async": False, "command": hook, "timeout": ASK_TIMEOUT, "type": "command"}]}
-        state = {"/<session-flags>/config.toml:permission_request:0:0": codex_hook_hash(ident)}
-        # #977: Shepherdr's own hooks in ~/.codex/hooks.json (the chat's question card) trusted for
-        # this launch too, else a new or updated one stops the worker at "Hooks need review" with
-        # nobody at its keys. Only ours, exactly as written there: the person's own stay theirs.
-        state.update(own_codex_hooks())
-        # Its folder trusted for this run (#866: "Trust this folder?" would stop it before the brief, nobody at the
-        # keys), its repository's root too: Codex asks for that one in a worktree. Skipped when argv says already.
-        roots = [] if any(str(a).startswith("projects") for a in out) else trust_roots(folder)
-        trust = ["-c", "projects={" + ",".join(f'{json.dumps(r)}={{trust_level="trusted"}}' for r in roots) + "}"] if roots else []
-        return out[:1] + ["-c", f"hooks.PermissionRequest=[{{hooks=[{{type=\"command\",command={json.dumps(hook)},timeout={ASK_TIMEOUT}}}]}}]",
-                          "-c", "hooks.state={" + ",".join(f'{json.dumps(k)}={{trusted_hash="sha256:{v}"}}' for k, v in state.items()) + "}",
-                          *trust] + out[1:]
-    return out
-
-
-def codex_hook_hash(ident):
-    """Codex's trusted_hash for one hook group (codex-rs/hooks discovery.rs hook_hash)."""
-    return hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-
-
-# Shepherdr's own chat hooks as the installer writes them in Codex's hooks.json (bin/shepherdr).
-OWN_HOOK = re.compile(r"sh '[^'\n]*/(?:hooks|mods/chat)/(session-note|ask-hook)\.sh'")
-# Codex's event names in hooks.state keys, from hooks.json's.
-CODEX_EVENTS = {"SessionStart": "session_start", "PermissionRequest": "permission_request"}
-
-
-def own_codex_hooks():
-    """{hooks.state key: hash} for Shepherdr's own hooks in Codex's hooks.json (the installer's
-    session-note.sh and ask-hook.sh), as Codex keys and hashes them; {} when there are none or
-    one has a shape whose hash we can't be sure of (it then asks, as before)."""
-    path = os.path.join(os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex"), "hooks.json")
-    try:
-        with open(path) as f:
-            hooks = json.load(f).get("hooks") or {}
-    except (OSError, ValueError, AttributeError):
-        return {}
-    out = {}
-    for event, name in CODEX_EVENTS.items():
-        groups = hooks.get(event) if isinstance(hooks, dict) else None
-        for g, group in enumerate(groups if isinstance(groups, list) else []):
-            entries = group.get("hooks") if isinstance(group, dict) else None
-            if not isinstance(entries, list) or len(entries) != 1 or set(group) - {"hooks", "matcher"}:
-                continue
-            h = entries[0]
-            cmd = h.get("command") if isinstance(h, dict) else None
-            # exactly the installer's `sh '<app>/mods/chat/<hook>.sh'` (#1108): never a longer command that ends so
-            if (not isinstance(cmd, str) or not OWN_HOOK.fullmatch(cmd)
-                    or set(h) - {"type", "command", "timeout", "async"} or not isinstance(h.get("timeout"), int)):
-                continue
-            ident = {"event_name": name, "hooks": [{"async": bool(h.get("async", False)), "command": cmd,
-                                                    "timeout": h["timeout"], "type": h.get("type", "command")}]}
-            if group.get("matcher") is not None:
-                ident["matcher"] = group["matcher"]
-            out[f"{path}:{name}:{g}:0"] = codex_hook_hash(ident)
+        hook = codex_ask_command()
+        # Codex gives the person the choice of trusting the folder and this hook.
+        return out[:1] + ["-c", f"hooks.PermissionRequest=[{{hooks=[{{type=\"command\",command={json.dumps(hook)},timeout={ASK_TIMEOUT}}}]}}]"] + out[1:]
     return out
 
 
@@ -293,7 +241,7 @@ def tool_name(word, path):
 # and only its own helpers (<task>-review, -helper) to wait on, read or end.
 REVIEWERS = {"codex": (["codex", "--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never"],
                        {"--disable": re.compile(r"hooks"), "-m": re.compile(r"[\w.:-]+"),
-                        "-c": re.compile(r'projects=\{.*\}|model_reasoning_effort="?\w+"?', re.S)}),
+                        "-c": re.compile(r'model_reasoning_effort="?\w+"?')}),
              "claude": (["claude", "--permission-mode", "dontAsk", "--tools=" + REVIEW_TOOLS, "--strict-mcp-config"],
                         {"--model": re.compile(r"[\w.:\[\]-]+"), "--effort": re.compile(r"\w+"),
                          # #1458: its templates folder, one word (a brief from before it has none)
@@ -302,12 +250,10 @@ HELPER = re.compile(r"[\w.-]+-(?:review|helper)(?:-[\w.-]+)?")
 
 
 def helper_hc(words):
-    """Whether `hc ...` is a worker's own reviewer: run as the brief says, or waited on, read, looked up (#1136), ended."""
+    """Whether `hc ...` is a worker's own reviewer: run as the brief says, or waited on, read, looked up (#1136), ended.
+    Never `hc keys` on it: its trust or sign-in screen is the person's to answer (AGENTS.md "Nothing that risks a ban")."""
     if len(words) >= 3 and words[1] in ("wait", "read", "kill", "get"):
         return bool(HELPER.fullmatch(words[2])) and all(w.startswith("--") or re.fullmatch(r"\d+", w) for w in words[3:])
-    if len(words) >= 4 and words[1] == "keys":
-        # #1191: answering its startup dialog (enter, down enter, 1): plain key names only, never typed text
-        return bool(HELPER.fullmatch(words[2])) and all(re.fullmatch(r"[a-z0-9]{1,9}", w) for w in words[3:])
     if len(words) < 4 or words[1] != "run" or "--" not in words:
         return False
     i = words.index("--")
@@ -399,8 +345,8 @@ def ask_card(raw):
 def cmd_allow(args):
     """The PermissionRequest hook of a task worker (Claude Code and Codex, own_argv): allows this
     launch's own herdr-task commands; anything else goes to the chat's card (ask_card), and without
-    one's answer the agent asks the person in its terminal as usual. --auto-review (Codex's Approve
-    for me): no card, Codex's own review answers."""
+    one's answer the agent asks in its terminal. Approve for me is passed in the worker's
+    environment, with the old --auto-review flag still accepted for workers already running."""
     raw = sys.stdin.buffer.read(1 << 20)
     try:
         data = json.loads(raw or b"{}")
@@ -416,7 +362,8 @@ def cmd_allow(args):
     if own_command(args.command, cmd, getattr(args, "sandboxed", False)):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}))
         return
-    if getattr(args, "auto_review", False):
+    if getattr(args, "auto_review", False) or (
+            getattr(args, "sandboxed", False) and os.environ.get("HERDR_TASK_CODEX_AUTO_REVIEW") == "1"):
         # #1464: Codex's Approve for me. No decision: its automatic review answers (a safe step runs, a risky one is
         # refused and the worker is told to ask the person), never a card waiting on the person first.
         return
@@ -966,7 +913,9 @@ def folder_for(s, task):
         ok, _, err = git(main, "fetch", "--quiet", "--no-tags", remote, f"+refs/heads/{taken}:refs/remotes/{remote}/{taken}")
         if not ok:
             raise Fail(f"Couldn't fetch {taken}, pull request #{task['pr']['number']}'s branch: {err}")
-        add = ["worktree", "add", "--no-track", "-b", branch, path, f"refs/remotes/{remote}/{taken}"]
+        ref = f"refs/remotes/{remote}/{taken}"
+        task["pr"]["lease"] = git(main, "rev-parse", ref)[1]
+        add = ["worktree", "add", "--no-track", "-b", branch, path, ref]
     else:
         # From the base's latest (fetched first); a detached folder (base is a commit) from HEAD.
         branchy = git(main, "show-ref", "--verify", "--quiet", f"refs/heads/{base}")[0]
@@ -1145,6 +1094,7 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     apart from the task's agents. Returns its record."""
     key = s.key(task)
     cmd = list(resume or argv)
+    auto_review = agent_key(argv) == "codex" and codex_auto_review(cmd)
     if agent_key(argv) == "codex" and "--no-daemon" in cmd:
         # #1190: an old Codex exits 2 on --no-daemon in a shell nobody watches: say so here instead
         old = codex_too_old()
@@ -1170,8 +1120,9 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     # HERDR_BROWSER_TASK and HERDR_BROWSER_SPACE: whose tab herdr-browser drives in which space's browser, and whose
     # desktop herdr-desktop uses (3.2; HERD-57), for it and its children. guard_argv: nothing it runs can take down
     # the live session it runs in (SHEP-323).
+    env = [*browser_env(key, bare(space)), f"HERDR_TASK_CODEX_AUTO_REVIEW={int(auto_review)}"]
     r = run(["hc", "run", "--bg", "--json", "--keep", "--cwd", folder_for(s, task), "--name", name,
-             *labels, *rel, "--", *low_priority(clean_env(["env", *browser_env(key, bare(space)), *in_shell(guard_argv(cmd))]), name)])
+             *labels, *rel, "--", *low_priority(clean_env(["env", *env, *in_shell(guard_argv(cmd))]), name)])
     try:
         out = json.loads(r.stdout)
     except ValueError:

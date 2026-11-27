@@ -28,8 +28,6 @@ export function offPlugins(): string[] {
   return PLUGINS.filter((p) => !p.always && (off.includes(p.id) || (p.offByDefault && !on.includes(p.id)))).map((p) => p.id);
 }
 export const pluginOn = (id: string) => !offPlugins().includes(id);
-/** Settings › Plugins › Recaps: a recap on its own when you come back to a chat (everywhere.recaps_auto_off) */
-export const recapsAuto = (f: any = file()) => pluginOn("recaps") && f?.everywhere?.recaps_auto_off !== true;
 
 /* ---------- Settings › Shortcuts: the person's own keys, kept for every device ---------- */
 
@@ -153,7 +151,6 @@ export function configOf(input: { defaults: Defaults; spaces: string[]; secrets:
     plugins: PLUGINS.map((p) => ({ id: p.id, name: p.name, on: !off.includes(p.id), ...(p.always ? { always: true } : {}) })),
     plans: input.plans,
     shortcuts: shortcutsOf(f),
-    recaps: { auto: f?.everywhere?.recaps_auto_off !== true },
     ...(input.addMachine ? { addMachine: input.addMachine } : {}),
     ...(input.desktops?.length ? { desktops: input.desktops } : {}),
   };
@@ -178,11 +175,6 @@ export function setConfig(place: string, key: string, value: unknown, scope?: { 
   }
   if (key.startsWith("shortcut.") || key === "shortcuts.reset" || key === "shortcuts.letters") {
     setShortcut(next, key, value);
-    return writeSettings(next);
-  }
-  if (key === "recaps.auto") {
-    const e = (next.everywhere ??= {});
-    if (value === false) e.recaps_auto_off = true; else delete e.recaps_auto_off;
     return writeSettings(next);
   }
   if (key === "analytics.on" || key === "analytics.noted") {
@@ -234,7 +226,7 @@ export function setConfig(place: string, key: string, value: unknown, scope?: { 
 
 const PERM_ABOUT: Record<string, Record<string, string>> = {
   claude: { manual: "Asks before edits and commands", default: "Asks before edits and commands", acceptEdits: "Edits files without asking", plan: "Plans first and changes nothing", auto: "Decides by itself what is safe to run", bypassPermissions: "Never asks" },
-  codex: { "read-only": "Reads, and asks before anything else", auto: "Works in the folder, asks before leaving it", approve: "Its own review allows safe steps, asks you about risky ones", full: "Never asks" },
+  codex: { "read-only": "Reads, and asks before anything else", auto: "Can edit the workspace. Uses Shepherdr’s setting to ask when it needs more access.", approve: "Its own review allows safe steps, asks you about risky ones", full: "Runs outside the sandbox without asking. Matches danger-full-access with approvals off." },
 };
 const PERM_LABEL: Record<string, string> = { manual: "Default", bypassPermissions: "Bypass" };
 
@@ -242,17 +234,17 @@ const PERM_LABEL: Record<string, string> = { manual: "Default", bypassPermission
  *  { kind, name, models, speeds, perms, permDefault }); `known`: the other agents herdr-core can run there. */
 export function catalogOf(machine: string, choices: any[], installed: Record<string, boolean>, known: { key: string; name: string; installed?: boolean }[] = []): Catalog {
   const agents: CatalogAgent[] = choices.map((c) => {
-    // a model's own speeds (its service tiers): Speed shows only where a model has more than one
+    // a model's own service tiers
     const speeds = (m: any) => ["regular", ...(m.fast ? ["fast"] : []), ...(m.ultrafast ? ["ultrafast"] : [])];
     const efforts = [...new Set<string>((c.models ?? []).flatMap((m: any) => m.efforts ?? []))];
     return {
       id: c.kind, name: c.name, installed: installed[c.kind] !== false,
       ...(installed[c.kind] === false ? { why: "Not installed" } : {}),
-      models: (c.models ?? []).map((m: any) => ({ id: m.id, name: m.label ?? m.name ?? m.id, speeds: speeds(m), ...(m.efforts?.length ? { efforts: m.efforts } : {}), ...(m.defaultEffort ? { defaultEffort: m.defaultEffort } : {}) })),
+      models: (c.models ?? []).map((m: any) => ({ id: m.id, name: m.label ?? m.name ?? m.id, speeds: speeds(m), ...(m.aliases ? { aliases: m.aliases } : {}), ...(m.efforts ? { efforts: m.efforts } : {}), ...(m.defaultEffort ? { defaultEffort: m.defaultEffort } : {}) })),
       efforts,
       perms: (c.perms ?? []).map((p: any) => ({ id: p.id, label: PERM_LABEL[p.id] ?? p.label, about: PERM_ABOUT[c.kind]?.[p.id] ?? "" })),
       permDefault: c.permDefault,
-      defaultModel: c.models?.[0]?.id,
+      defaultModel: c.defaultModel ?? c.models?.[0]?.id,
     };
   });
   // the agents herdr-core can run that Shepherdr can't hold a chat with yet: listed, greyed, with why
@@ -314,6 +306,22 @@ export interface Facts {
   schedules?: any[];
 }
 
+function taskPick(task: any, defaults: AgentPick): AgentPick {
+  const agent = task.agent || defaults.agent;
+  const same = agent === defaults.agent;
+  const speed = typeof task.speed === "string" ? task.speed.trim().toLowerCase().replace(/[- ]/g, "") : "";
+  return {
+    agent,
+    model: task.model ?? (same ? defaults.model : null),
+    effort: task.effort ?? (same ? defaults.effort : null),
+    fast: speed ? (speed === "ultrafast" ? "ultrafast" : speed === "fast" || speed === "on") : same && defaults.fast,
+    perm: task.perm ?? task.permission ?? (same ? defaults.perm : null),
+  };
+}
+
+const defaultsForTask = (config: Config, folder: string, machine: string | null) =>
+  config.repos?.find((repo) => repo.folder === folder && (repo.machine ?? null) === machine)?.agents.Tasks ?? config.all.agents.Tasks;
+
 /** Adds what 3.2 shows to the snapshot the model made: Everything, home and archived spaces, each task's facts. */
 export function enrich(snap: Snapshot, f: Facts): Snapshot {
   const spaceOf = new Map(f.spaces.map((s) => [s.id, s]));
@@ -332,6 +340,7 @@ export function enrich(snap: Snapshot, f: Facts): Snapshot {
     const open = all.filter((x: any) => x.section !== "done");
     return open.length ? open : all.slice(0, 1);
   };
+  let needs = snap.needs;
   const tasks: Task[] = snap.tasks.map((t0) => {
     let t = t0;
     const r = rowOf.get(t.id);
@@ -342,14 +351,23 @@ export function enrich(snap: Snapshot, f: Facts): Snapshot {
     const card = f.asked(chat);
     const rep = f.reportOf(r.worker);
     // stuck on a step only a person can do, asked through its browser or desktop tools: Needs you · Needs your hands
-    const hands = !!f.screens?.[`task:${t.id}`]?.hands && !f.screens[`task:${t.id}`]!.hands!.settled && t.status === "work";
-    if (hands) t = { ...t, status: "need" };
-    const blocked = t.status !== "need" ? undefined : hands ? "auth" : card ?? (rep?.kind === "auth" ? "auth" : rep?.kind === "permission" || rep?.kind === "question" ? rep.kind : rep?.state === "blocked" ? "prompt" : undefined);
+    const hands = f.screens?.[`task:${t.id}`]?.hands;
+    const handsOpen = hands && !hands.settled && !t.archived && (t.status === "work" || t.status === "need");
+    if (handsOpen) {
+      t = { ...t, status: "need" };
+      if (!needs.some((n) => n.task === t.id && !n.assistantFirst && !n.question?.queued)) {
+        needs = [...needs.filter((n) => n.task !== t.id || !n.assistantFirst),
+          { id: "hands", hands: true, chat, task: t.id, place: t.place, at: t.needsAt ?? t.at ?? 0, text: hands.what }];
+      }
+    }
+    const blocked = t.status !== "need" ? undefined : handsOpen ? "auth" : card ?? (rep?.kind === "auth" ? "auth" : rep?.kind === "permission" || rep?.kind === "question" ? rep.kind : rep?.state === "blocked" ? "prompt" : undefined);
     const stopped = x.stopped_by && t.status !== "done" && t.status !== "work" ? { by: x.stopped_by as "you" | "error" | "limit", ...(x.stopped_why ? { why: String(x.stopped_why).slice(0, 200) } : {}) } : undefined;
     const waits = waitsFor(r, x.after);
     const after = waits[0]?.title as string | undefined;
+    const defaults = defaultsForTask(f.config, r.folder, r.machine ?? null);
     return {
       ...t,
+      plannedAgent: taskPick(x.pick ?? {}, defaults),
       // on its own branch or worktree (also one set to, not started yet), changed in the folder itself, or not a repo
       repo: r.branch || r.pr || (r.worktree && r.worktree !== r.folder) || (x.mode === "worktree" && s?.git) ? "branch" : s?.git ? "folder" : undefined,
       ...(stopped ? { stopped, status: "need" as const } : {}),
@@ -365,11 +383,13 @@ export function enrich(snap: Snapshot, f: Facts): Snapshot {
       ...(f.waiting?.includes(`task:${t.id}`) ? { waitsDesktop: true } : {}),
     };
   });
-  const automations = f.schedules ? schedulesOf(f.schedules, f.spaces, everything, (ref, machine) => snap.tasks.find((t) => t.id === (machine ? `${machine}:${ref}` : ref))) : {};
+  const automations = f.schedules ? schedulesOf(f.schedules, f.spaces, everything,
+    (ref, machine) => snap.tasks.find((t) => t.id === (machine ? `${machine}:${ref}` : ref)),
+    (folder, machine) => defaultsForTask(f.config, folder, machine)) : {};
   const plans = f.config.plans;
   // a machine is named by its own name, this one too (never "This computer": the app is opened from other devices)
   const machines = snap.machines.map((m) => (m.here && (m.name === "This computer" || !m.name) ? { ...m, name: f.hostName || m.machine } : m));
-  return { ...snap, machines, places, tasks, automations, ...(f.screens && Object.keys(f.screens).length ? { screens: f.screens } : {}), ...(everything ? { everything } : {}), config: f.config, warnings: warningsOf(snap, plans), off: offPlugins() };
+  return { ...snap, machines, places, tasks, needs, automations, ...(f.screens && Object.keys(f.screens).length ? { screens: f.screens } : {}), ...(everything ? { everything } : {}), config: f.config, warnings: warningsOf(snap, plans), off: offPlugins() };
 }
 
 /* ---------- schedules ---------- */
@@ -435,8 +455,17 @@ export function resumeOf(a: any, spaces: any[], archived: string[]): { args: str
   return { args: ["resume", own, ...(!named && s ? ["--space", String(s.id).split("/").pop()!] : [])] };
 }
 
+/** The agent settings each run copies into its task, using the same keys as auto edit --set. */
+export function scheduleAgentArgs(value: any): string[] {
+  if (!["claude", "codex"].includes(value?.agent) || [value.model, value.effort, value.perm].some((x) => x != null && (typeof x !== "string" || !/^[\w.\[\]:/-]{1,80}$/.test(x)))) throw new Error("Pick a valid agent, model, effort and permissions.");
+  const speed = value.fast === "ultrafast" && value.agent === "codex" ? "ultrafast" : value.fast === true ? "fast" : "regular";
+  return Object.entries({ agent: value.agent, model: value.model ?? "", effort: value.effort ?? "", speed, permission: value.perm ?? "" })
+    .flatMap(([key, v]) => ["--set", `${key}=${v}`]);
+}
+
 /** Every schedule under its space: the one it was made for, else the one in its list's folder, else Everything. */
-export function schedulesOf(list: any[], spaces: any[], everything: string | undefined, taskOf: (ref: string, machine: string | null) => Task | undefined): Record<string, Automation[]> {
+export function schedulesOf(list: any[], spaces: any[], everything: string | undefined, taskOf: (ref: string, machine: string | null) => Task | undefined,
+  defaults?: (folder: string, machine: string | null) => AgentPick): Record<string, Automation[]> {
   const out: Record<string, Automation[]> = {};
   for (const a of list) {
     const machine = a.machine ?? null;
@@ -445,7 +474,11 @@ export function schedulesOf(list: any[], spaces: any[], everything: string | und
     const place = s?.id ?? everything ?? "";
     const once = a.every?.kind === "once";
     const runs = (Array.isArray(a.runs) ? a.runs : []).map((r: any) => ({ at: Number(r.at) || 0, ...(r.task ? { task: machine ? `${machine}:${r.task}` : String(r.task) } : {}), ...(r.error ? { error: String(r.error).slice(0, 200) } : {}) }));
-    const agent = a.agent && typeof a.agent === "object" && a.agent.agent ? a.agent : typeof a.agent === "string" ? { agent: a.agent } : undefined;
+    const overrides = a.set ?? {};
+    const base = defaults?.(a.folder, machine);
+    const agent = a.agent && typeof a.agent === "object" && a.agent.agent ? a.agent
+      : base || typeof (overrides.agent ?? a.agent) === "string"
+        ? taskPick({ ...overrides, agent: overrides.agent ?? a.agent }, base ?? { agent: "" }) : undefined;
     (out[place] ??= []).push({
       id: scheduleId(a), place, name: String(a.title ?? a.id), when: whenWords(a), what: String(a.prompt ?? ""), on: !a.paused && !a.space_paused, next: [],
       ...(a.next_run && !a.paused ? { nextAt: a.next_run, nextWords: nextWords(a.next_run) } : {}),

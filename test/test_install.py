@@ -155,7 +155,7 @@ class Install(unittest.TestCase):
         out = run("install", "--root", self.root, "--yes").stdout
         self.assertRegex(out, r"files: \d+ new\n")
         rec = json.load(open(self.p(RECORD)))
-        self.assertEqual(rec["version"], "3.2.20")
+        self.assertEqual(rec["version"], "3.2.22")
         self.assertFalse(os.path.exists(self.p(OLD_RECORD)), "no record in the Herdr app any more")
         self.assertTrue(os.path.isfile(self.p(SHARE, "mods/tasks/bin/herdr-task")))
         self.assertEqual(os.path.realpath(self.p(".local/bin/herdr-task")), os.path.realpath(self.p(SHARE, "mods/tasks/bin/herdr-task")))
@@ -758,6 +758,61 @@ class Install(unittest.TestCase):
                 s.shutdown()
                 s.server_close()
 
+    def test_doctor_signs_in_to_local_health(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        sh = installer()
+
+        class Health(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/api/health":
+                    self.send_error(404)
+                elif self.headers.get("Authorization") != "Bearer test-token":
+                    self.send_error(401)
+                else:
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"ok": true, "id": "test-service"}')
+
+            def log_message(self, *args):
+                pass
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), Health) as server:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                with mock.patch.object(sh, "real_home", return_value=self.root), \
+                        mock.patch.object(sh, "check_tools", return_value=([], [])), \
+                        mock.patch.object(sh, "data_check", return_value=([], [])), \
+                        mock.patch.object(sh, "unit_session_problem", return_value=None), \
+                        mock.patch.object(sh, "codex_sandbox_state", return_value=None):
+                    for path in (self.p(RECORD), self.p(UNIT), sh.service_file(self.root, "service.json")):
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                    sh.save_record(self.root, {"version": sh.VERSION})
+                    open(self.p(UNIT), "w").close()
+                    with open(sh.service_file(self.root, "service.json"), "w") as f:
+                        json.dump({"port": server.server_port, "id": "test-service"}, f)
+
+                    token_file = sh.service_file(self.root, "token")
+                    for token in ("test-token", "wrong-token", None):
+                        with self.subTest(has_token=token is not None, valid=token == "test-token"):
+                            if token is None:
+                                os.unlink(token_file)
+                            else:
+                                with open(token_file, "w") as f:
+                                    f.write(token + "\n")
+                            output = io.StringIO()
+                            with contextlib.redirect_stdout(output):
+                                result = sh.cmd_doctor(types.SimpleNamespace(root=self.root))
+                            self.assertEqual(result, 0, output.getvalue())
+                            self.assertNotIn("✗", output.getvalue())
+                            sign_in_note = "the service is up, but Doctor couldn't sign in"
+                            if token == "test-token":
+                                self.assertNotIn(sign_in_note, output.getvalue())
+                            else:
+                                self.assertIn(sign_in_note, output.getvalue())
+            finally:
+                server.shutdown()
+
     def test_pack_installs_another_machine(self):
         """Serve from: what `shepherdr web install-on` sends (pack) installs from itself, the installed folder is a
         whole source to send on again (the Herdr button and the hooks with it), and uninstall puts back the helper it
@@ -1222,7 +1277,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         # the task finished: the same update switches
         self.set_tasks("done")
         out = run("update", "--root", self.root, "--yes", "--source", ROOT).stdout
-        self.assertIn("Shepherdr 3.2.20 update", out)
+        self.assertIn("Shepherdr 3.2.22 update", out)
         self.assertIn("switching from Shepherdr 3.1.46 (the Herdr-window install)", out)
         self.assertIn("removed what 3.1 put in the Herdr app: 28 mods, 1 artifact mod (kept in the backup)", out)
         self.assertIn("3 files you changed are in the backup", out)
@@ -1271,7 +1326,7 @@ class SwitchFromTheWindow(unittest.TestCase):
         self.assertNotIn("3.1.46", open(self.p(SHARE, "bin/shepherdr")).read()[:200])
         # (e) the new record is written, the old one gone; nothing of the window is in it
         rec = json.load(open(self.p(RECORD)))
-        self.assertEqual(rec["version"], "3.2.20")
+        self.assertEqual(rec["version"], "3.2.22")
         self.assertFalse(os.path.exists(self.p(OLD_RECORD)))
         self.assertFalse([f for f in rec["files"] if f.startswith(APP) and "/mods/open-shepherdr/" not in f])
         self.assertNotIn("mods", rec)
@@ -1303,7 +1358,7 @@ class SwitchFromTheWindow(unittest.TestCase):
     def test_force_switches_while_tasks_work(self):
         out = run("install", "--root", self.root, "--yes", "--source", ROOT, "--force").stdout
         self.assertIn("switched while these tasks were working (--force): SHOP-3 Fix the cart", out)
-        self.assertEqual(json.load(open(self.p(RECORD)))["version"], "3.2.20")
+        self.assertEqual(json.load(open(self.p(RECORD)))["version"], "3.2.22")
         self.assertFalse(os.path.exists(self.p(APP, "mods/tasks/live.js")), "3.1's code is gone")
         assert_notices(self, self.root, ["tasks"])
 
@@ -1384,7 +1439,7 @@ class SwitchFromTheWindow(unittest.TestCase):
             for gone in ("lib", "mods/coordinator", "mods/artifacts/recipe-view.js"):
                 self.assertFalse(os.path.exists(P(SHARE, gone)), gone)
             rec = json.load(open(P(RECORD)))
-            self.assertEqual(rec["version"], "3.2.20")
+            self.assertEqual(rec["version"], "3.2.22")
             self.assertNotIn("web", rec)
             self.assertNotIn("backups", rec)
             self.assertFalse(os.path.exists(P(APP, "mods")), "no Herdr app here: no button")

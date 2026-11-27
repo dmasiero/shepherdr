@@ -2,6 +2,21 @@
 
 What you can type in a chat's box besides a message, and the keys that help.
 
+## Sign in
+
+When Claude Code, Codex or a connector needs you to sign in, its chat shows a card that says what to run, and a
+waiting task also appears under **Needs you**. Tap **Open terminal** and sign in there yourself: Shepherdr never
+types a sign-in command, pastes a code or keeps a key for you.
+
+- Claude Code: run `/login` (a connector: `/mcp`).
+- Codex: run `codex login`, or `codex login --device-auth` on a machine without a browser (a connector:
+  `codex mcp login <name>`).
+
+[Claude Code authentication](https://code.claude.com/docs/en/authentication) ·
+[Claude Code connectors](https://code.claude.com/docs/en/mcp) ·
+[Codex authentication](https://learn.chatgpt.com/docs/auth) ·
+[Codex connector login](https://github.com/openai/codex/blob/main/codex-rs/cli/src/mcp_cmd.rs)
+
 ## Commands with `!`
 
 A line that starts with `!` runs as a shell command in the agent's own folder, the way Claude Code's and Codex's own

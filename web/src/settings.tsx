@@ -10,7 +10,7 @@ import { copyText } from './copy.ts'
 import type { IconName } from './icons.ts'
 import { newerServed, notice, openSettings, registry, setUI, tryAct, updateNow, useStore, useUI } from './kernel.ts'
 import { confirm, openDialog, openForm } from './overlay.tsx'
-import { openPicker, PickerHead, pickFor, sayPick, useCatalog, type Role } from './picker.tsx'
+import { openPicker, PickerHead, pickFor, PickSummary, useCatalog, type Role } from './picker.tsx'
 import { MOTIONS, setPref, THEMES, usePrefs, WIDTHS } from './prefs.ts'
 import { canKeepAwake, setAwake, useAwake } from './awake.ts'
 import { setChatSide, useSides, type Layout, type Side } from './sides.ts'
@@ -207,7 +207,7 @@ function Agents({ snap, place, only }: { snap: Snapshot; place: string; only?: R
     // the small print under the name, as Review, Merge and Proof have it (beside the value it ran into the value)
     return (
       <SRow key={role} label={<>{name(role)}<Own place={place} own={own(`agents.${role}`)} k={`agents.${role}`} /></>} wrap>
-        <span className="val">{sayPick(pick, cat)}</span>
+        <span className="val"><PickSummary pick={pick} cat={cat} full /></span>
         <Btn small onClick={() => openPicker({ title, machine, pick, onChange: () => undefined, onClose: (now) => JSON.stringify(now) !== JSON.stringify(pick) && void set(place, `agents.${role}`, now) })}>Change</Btn>
       </SRow>
     )
@@ -429,6 +429,7 @@ function Machines({ snap }: { snap: Snapshot }) {
         // #1547: each meter's start limit under it (new tasks wait above it), and Start limits to change them
         const lims = limitsOf(snap, m)
         const desk = !off && snap.config?.desktops?.includes(m.machine)
+        const noUsage = noUsageOf(m.limits)
         return (
           <div className="mcard" key={m.id}>
             <div>
@@ -448,6 +449,7 @@ function Machines({ snap }: { snap: Snapshot }) {
                 ))}
               </div>
             )}
+            {!off && noUsage.map(([name, why]) => <div className="hint" key={name}>{name}. {why}</div>)}
             {(desk || lims.length > 0) && (
               <div className="acts" style={{ justifyContent: 'flex-start' }}>
                 {lims.length > 0 && <Btn small onClick={() => limitsDialog(m.id)}>Start limits</Btn>}
@@ -464,8 +466,15 @@ function Machines({ snap }: { snap: Snapshot }) {
   )
 }
 
+/** The agents whose plan usage Shepherdr doesn't read, with where to see it ("Open Codex and run /status"). */
+const USAGE_NAMES: Record<string, string> = { claude: 'Claude Code', codex: 'Codex' }
+function noUsageOf(limits: Snapshot['machines'][number]['limits']): [string, string][] {
+  return Object.entries(limits ?? {}).filter(([, l]) => l?.state === 'no-access').map(([k, l]) => [USAGE_NAMES[k] ?? k, l.why ?? ''])
+}
+
 function Usage({ snap }: { snap: Snapshot }) {
   const plans = snap.config?.plans ?? []
+  const noUsage = noUsageOf((snap.machines.find((m) => m.here) ?? snap.machines[0])?.limits)
   return (
     <>
       <p className="hint">How much of each plan your agents have used.</p>
@@ -485,7 +494,8 @@ function Usage({ snap }: { snap: Snapshot }) {
           ))}
         </div>
       ))}
-      {!plans.length && <div className="empty"><span>No plan to show yet.</span></div>}
+      {noUsage.map(([name, why]) => <div className="mcard" key={name}><div className="nm">{name}</div><p className="hint">{why}</p></div>)}
+      {!plans.length && !noUsage.length && <div className="empty"><span>No plan to show yet.</span></div>}
     </>
   )
 }

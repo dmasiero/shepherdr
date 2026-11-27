@@ -177,7 +177,7 @@ export interface LimitWindow {
 }
 
 /** ok: read. no-plan: an API key or the like, with no plan to run out of. unknown: never a guess; why says what happened */
-export type CliLimits = { state: 'ok'; windows: LimitWindow[]; plan?: string } | { state: 'signed-out' | 'no-plan' } | { state: 'unknown'; why: string }
+export type CliLimits = { state: 'ok'; windows: LimitWindow[]; plan?: string } | { state: 'signed-out' | 'no-plan' } | { state: 'unknown' | 'no-access'; why: string }
 
 /** at: when this was read (ms). failed: a later read didn't work, so what is here is that old */
 export type CliLimitsRead = CliLimits & { at: number; failed?: string }
@@ -273,6 +273,8 @@ export const GROUPS: [TaskStatus, string][] = [
 export interface TaskAgent {
   /** chat key */
   chat: string
+  /** What the worker runs on, available before its chat is opened. */
+  settings?: ChatAgent
   role: string
   cli: string
   /** Task status, or off when core cannot confirm the agent's machine; workflow remains separate. */
@@ -291,6 +293,8 @@ export interface Task {
   blocked?: 'permission' | 'question' | 'auth' | 'prompt'
   /** it waits for a Mac's one desktop, which another agent is using */
   waitsDesktop?: boolean
+  /** Questions the person can answer while the agent keeps working. */
+  queuedQuestions?: number
   /** done: its work was merged into the base branch */
   merged?: boolean
   /** done: a schedule's run that had nothing to do, or that only had something to say (posted in its space's chat) */
@@ -347,6 +351,8 @@ export interface Task {
   plan?: string[]
   /** none until the task's agent starts */
   agent?: TaskAgent
+  /** Its saved launch choices, including any overrides on the task. */
+  plannedAgent?: AgentPick
   /** the ids of the artifacts its agent and its helpers made or updated (SHEP-60): its proof first, then newest first */
   artifacts?: string[]
   /** its proof artifact's id (herdr-task ready --proof) */
@@ -354,6 +360,7 @@ export interface Task {
   /** its last recorded review round: passed (or the agent's own round on its final commit), or changes asked; none: no
    *  round (Review off) */
   review?: 'passed' | 'changes'
+  reviewerNotice?: string
   /** its worker's own helper agents (SHEP-54: a reviewer it started), newest last */
   subagents?: { chat: string; title: string; status: 'working' | 'needs' | 'done'; at: number; ended?: number }[]
   desc?: string
@@ -448,7 +455,17 @@ export interface Choice {
   preview?: string
 }
 
+/** An agent needs signing in: the person runs `how` in its own terminal (Shepherdr never signs in for them). */
+export interface SignIn {
+  cli: string
+  connector?: string
+  how: string
+  terminal?: string
+}
+
 export interface Question {
+  /** Answer from its card while the rest of the chat carries on. */
+  queued?: boolean
   /** 3.2: a permission request: the command (or what it wants to do) in the agent's own words; choice 0 allows once */
   command?: string
   id: string
@@ -461,8 +478,11 @@ export interface Question {
   plan?: string
   /** CLI prompt context, read from its visible screen. */
   screen?: string
+  login?: SignIn
   terminal?: boolean
-  /** A CLI's own menu: a tap presses that choice at once. */
+  /** The helper's terminal when its menu is shown in another agent's chat. */
+  terminalChat?: string
+  /** A CLI's own menu, answered in the terminal. */
   press?: boolean
   /** #1441: a CLI's folder-trust screen, as its own card: choice 0 trusts the folder and starts, 1 says no. cli: who
    *  asks; folder: the folder it names; waits and allows: its two plain lines */
@@ -876,6 +896,10 @@ export interface Need {
   at: number
   question?: Question
   secret?: SecretAsk
+  /** An inferred task wait the space's Assistant handles first. It stays visible in the app. */
+  assistantFirst?: true
+  /** A step the person needs to take in the agent's browser or desktop. */
+  hands?: true
   /** no card: what the agent last said, or why it waits, answered with a reply */
   text?: string
   /** no card: the message that text is, for the reply to quote */
@@ -917,6 +941,8 @@ export interface TaskBrief {
 
 export interface Chat {
   key: string
+  /** A change to a running chat's settings, while the agent applies it. */
+  settingsUpdate?: string
   /** the agent's and yours, and Shepherdr's update cards among them */
   messages: Message[]
   /** herdr says the agent works: the CLI takes what you send at its next step */
@@ -1371,7 +1397,7 @@ export type Action =
   | { type: 'effort'; chat: string; effort: string }
   | { type: 'keys'; chat: string; keys: string[] }
   /** ask the chat's agent for a recap (auto: the page's own, when you come back to it; never an error) */
-  | { type: 'recap'; chat: string; auto?: boolean }
+  | { type: 'recap'; chat: string }
   | { type: 'text'; chat: string; text: string }
   | { type: 'call'; chat: string; on: boolean }
   /** place: the level it is set at, as a place id (all when none); a machine's or project's goes to that machine */
@@ -1384,8 +1410,6 @@ export type Action =
   | { type: 'pause'; chat: string }
   /** its agent goes and the task is To do; its work stays */
   | { type: 'stop'; chat: string }
-  /** Send now on a message in its CLI's own queue (waitsFor 'queue'): Claude Code takes it at once, mid-turn */
-  | { type: 'steer'; chat: string }
   /** Stop on a background shell or watcher over the box (Job.id) */
   | { type: 'stop-job'; chat: string; job: string }
   /** what the restart sheet shows for a coordinator (chat: its place id) or a task's agent (ID/Agent): RestartInfo */
@@ -1479,6 +1503,7 @@ export interface UpdateStatus {
 export interface CatalogModel {
   id: string
   name: string
+  aliases?: string[]
   group?: string
   /** 'regular' first; also 'fast', 'ultrafast' */
   speeds?: string[]
@@ -1558,8 +1583,6 @@ export interface Config {
   /** Settings › Shortcuts: the shortcuts the person changed (a command's id to its keys; empty: none), and whether
    *  single-letter keys work; the same on every device */
   shortcuts?: { keys: Record<string, string[]>; letters: boolean }
-  /** Settings › Recaps: whether a chat recaps by itself when you come back to it after a while */
-  recaps?: { auto: boolean }
 }
 
 /* ---------- 3.2: screens, an agent's browser and desktop ---------- */

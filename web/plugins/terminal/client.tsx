@@ -5,16 +5,17 @@
 // a chat for the same session's live terminal, with a bar on top to switch back. Every terminal is a real one you
 // type straight into, sized to its pane; on a phone or any touch screen a row of keys sits under it: esc, tab, ctrl
 // and the arrows.
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { PaneFrame } from '@client/App.tsx'
 import { definePlugin, getState, notice, openTask, setUI, useSnap, useUI, type Thread } from '@client/kernel.ts'
 import { Btn, Hd, I, IB } from '@client/ui.tsx'
 import { openMenu } from '@client/overlay.tsx'
 import { copyText } from '@client/copy.ts'
 import { appTakes, focusChat, focusTask } from '@client/commands.ts'
+import { onPageReturn } from '@client/viewport.ts'
 import type { Chat, Task } from '@shared/types.ts'
 import { machineLabel, placeOf, taskChat, taskOf, tasksIn, tstate } from '@shared/view.ts'
-import { fitGrid, following, footTop, LINE, linesFor, shrinkTo, showKeys, sizeTaken } from './fit.ts'
+import { fitGrid, following, footTop, lastPaintedRow, LINE, linesFor, shrinkTo, showKeys, sizeTaken } from './fit.ts'
 import { followFold, showSpaceTerm, spaceTermRow, switchView, taskTermRow, toggleSpaceTerm, toggleTaskTerm, viewRow } from './menu.ts'
 // fork: Terminal stays across spaces
 import { activeOf, addTab, closeTab, tabPlace, tabsOf } from './tabs.ts'
@@ -100,7 +101,7 @@ const useCoarse = () => useSyncExternalStore(onCoarse, () => typeof matchMedia =
  *  again. */
 // fork: `hidden`, a tab not showing keeps its terminal (Terminal stays across spaces)
 // fork: `focus`, a tab just picked or added takes the keys, but no on-screen keyboard pops up (Terminal again adds a tab)
-function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: boolean; onEnd?: () => void; hidden?: boolean; focus?: boolean }) {
+export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: boolean; onEnd?: () => void; hidden?: boolean; focus?: boolean }) {
   const phone = useUI((u) => u.phone)
   const coarse = useCoarse()
   const own = stream.startsWith('sh:')
@@ -123,18 +124,21 @@ function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: b
   /** what pressed the key row last: 'touch', 'pen', 'mouse', or '' for a key press on its button */
   const pointer = useRef('')
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let gone = false
     let term: import('@xterm/xterm').Terminal | null = null
+    let cursorVisible = true
     let link: { close(): void } | null = null
     let cols = 80, rows = 24, natural = 0
-    let asked = '', wanted = '', opened = false, follow = true, moving = 0, frame = 0
+    let asked = '', wanted = '', opened = false, follow = true, lastFoot = 0
     // this page sets the terminal's size only while it is the one you used last (opened it here, typed, tapped or
     // clicked in it); another page's size, once it arrives, makes this one only shrink to fit, so two pages never trade
     // sizes back and forth. A hidden tab never takes it.
     let owner = typeof document === 'undefined' || !document.hidden, sizes = 0
     let later: ReturnType<typeof setTimeout> | undefined
     const el = box.current
+    let visible = !!el?.clientHeight
+    setStatus('Opening the terminal…')
     /** a character's width and a row's height per px of font, as xterm really draws them (it rounds to the screen's
      *  pixels); a guess from the font until it has drawn */
     const metrics = () => {
@@ -146,33 +150,33 @@ function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: b
     const foot = () => {
       if (!term || !el) return 0
       const b = term.buffer.active
-      let last = b.cursorY
-      for (let y = term.rows - 1; y > last; y--) {
-        if (b.getLine(b.viewportY + y)?.translateToString(true).trim()) { last = y; break }
-      }
+      const last = lastPaintedRow(term.rows, b.cursorY, cursorVisible, (row) => b.getLine(b.baseY + row)?.translateToString(true))
       const { line, at } = metrics()
       return footTop(last, line * at, el.clientHeight, el.scrollHeight - el.clientHeight)
     }
     const land = () => {
-      if (!follow || !el) return
-      const to = foot()
-      if (Math.abs(el.scrollTop - to) < 1) return
-      moving++
-      el.scrollTop = to
-      requestAnimationFrame(() => moving--)
+      if (!el?.clientHeight) return
+      lastFoot = foot()
+      if (follow && Math.abs(el.scrollTop - lastFoot) >= 1) el.scrollTo({ top: lastFoot, behavior: 'instant' })
     }
-    const landSoon = () => {
-      if (frame) return
-      frame = requestAnimationFrame(() => { frame = 0; land() })
+    const reopen = () => {
+      follow = true
+      term?.scrollToBottom()
+      land()
     }
     // you scrolled: away from the foot it stops following; back at it (or below), it follows again
     const scrolled = () => {
-      if (moving || !term || !el) return
+      if (!term || !el?.clientHeight) return
+      const to = foot()
+      if (follow && to !== lastFoot) return land()
       const { line, at } = metrics()
-      follow = following(el.scrollTop, foot(), line * at)
+      follow = following(el.scrollTop, to, line * at)
     }
     el?.addEventListener('scroll', scrolled, { passive: true })
+    const stopReturning = onPageReturn(reopen)
     const fit = () => {
+      const wasVisible = visible
+      visible = !!el?.clientHeight
       if (!term || !el) return
       // the box less its padding (16 left, 8 top and bottom) and room for the scrollbar
       const w = el.clientWidth - 16 - 12
@@ -192,17 +196,28 @@ function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: b
         }, asked ? 150 : 0)
       }
       term.options.fontSize = shrinkTo(w, own ? h : Infinity, cols, rows, cell, line)
-      if (follow) term.scrollToBottom()
-      landSoon()
+      if (!wasVisible) reopen()
+      else land()
     }
     void Promise.all([import('@xterm/xterm'), import('@xterm/addon-unicode11')]).then(([{ Terminal }, { Unicode11Addon }]) => {
       if (gone || !host.current) return
       term = xt.current = new Terminal({ cols: 80, rows: 24, scrollback: 2000, disableStdin: true, cursorBlink: true, fontFamily: MONO, fontSize: 13, lineHeight: LINE, allowProposedApi: true, theme: { background: '#0a0a0a', foreground: '#d4d4d4', cursor: '#d4d4d4', selectionBackground: 'rgb(255 255 255 / 0.25)' } })
+      for (const final of ['h', 'l']) {
+        term.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
+          if (params.includes(25)) cursorVisible = final === 'h'
+          return false
+        })
+      }
+      const resetCursor = () => { cursorVisible = true; return false }
+      term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, resetCursor)
+      term.parser.registerEscHandler({ final: 'c' }, resetCursor)
       term.loadAddon(new Unicode11Addon())
       term.unicode.activeVersion = '11'
       // keys go to the terminal on its machine through the box over it; xterm only draws
       term.attachCustomKeyEventHandler(() => false)
       term.open(host.current)
+      // The drawn grid can change after fit or a write. Position the outer box in that same render.
+      term.onRender(land)
       links.current = linkLayer(term, () => coarseRef.current)
       if (term.textarea) {
         term.textarea.readOnly = true
@@ -212,10 +227,11 @@ function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: b
       if (cap.current && document.activeElement === cap.current) mirrorFocus(term.textarea, true)
       link = connectTerminal(
         stream,
-        (bytes, done) => term!.write(bytes, () => { done(); landSoon() }),
+        (bytes, done) => term!.write(bytes, () => { done(); land() }),
         () => {
+          cursorVisible = true
           term!.reset()
-          follow = true
+          reopen()
           asked = wanted = ''
           sizes = 0
           natural = 0
@@ -252,7 +268,7 @@ function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; fill?: b
     return () => {
       gone = true
       clearTimeout(later)
-      cancelAnimationFrame(frame)
+      stopReturning()
       el?.removeEventListener('scroll', scrolled)
       ro.disconnect()
       link?.close()

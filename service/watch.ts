@@ -1,16 +1,16 @@
 // What a chat watches on an agent besides its log, for the chats web pages have open (and an open Assistant chat's
 // task workers):
-// - a CLI stopped on its own start screen (trust, theme, sign in): a card with its choices (core/screens.js), pressed
-//   only on the screen it was drawn from.
+// - a CLI stopped on its own start screen (trust, theme, sign in): a card with its choices (core/screens.js).
 // - any agent still before its session (a task's, an Assistant, a reviewer) whose chat nobody has open too, so a
-//   folder-trust screen reaches Needs you, the phone and the watch (#1441: an agent sat 80 minutes at one).
+//   start screen reaches Needs you, the phone and the watch.
 // - a session that is gone ("No conversation found"): show a note and wait for the person to restart it.
+import { SignInWatch } from "./sign-in.ts";
 import type { Hub } from "./hub.ts";
 import * as SC from "../core/screens.js";
 import * as CV from "../core/chat-view.js";
 import * as AG from "../core/agents.js";
 
-const { ScreenWatch, starting, cliOf, readScreen, screenText, pressKeys, SCREEN, trustOf } = SC as any;
+const { ScreenWatch, starting, mayHaveDialog, cliOf, SCREEN } = SC as any;
 const { LOST } = CV as any;
 const { freshArgv } = AG as any;
 type Run = (args: string[]) => Promise<{ code: number; stdout: string; stderr?: string }>;
@@ -21,12 +21,17 @@ export class AgentWatch {
   /** the service's own start-screen cards, by agent */
   private own = new Map<string, any[]>();
   screens: any;
+  login: SignInWatch;
+  private logins = new Set<string>();
   /** a note under an agent's chat ("Earlier session was gone, starting a new one…"), by agent */
   notes = new Map<string, { text: string; at: number }>();
   private tried = new Set<string>();
   private busy = false;
 
-  constructor(private hub: Hub, private hc: Run, private o: { watched: () => Watched[]; changed: () => void }) {
+  constructor(private hub: Hub, private hc: Run, private o: { watched: () => Watched[]; changed: () => void;
+    loginWatches?: () => string[]; alreadyCarded?: (addr: string) => boolean;
+    log?: (addr: string) => { id: string; kind: string; text?: string }[]; }) {
+    this.login = new SignInWatch(hub, o.changed, o.log);
     this.screens = new ScreenWatch({ hc: (a: string[]) => this.hc(a), cards: (a: string) => this.own.get(a) ?? [], save: (a: string, list: any[]) => { this.own.set(a, list); this.o.changed(); } }, () => this.o.changed());
   }
 
@@ -43,40 +48,42 @@ export class AgentWatch {
     this.busy = true;
     try {
       const watched = this.o.watched(), seen = new Set(watched.map((w) => w.addr));
-      for (const w of watched) {
-        const k: any = this.hub.terminals.get(w.addr);
-        if (!k) continue;
-        if (starting(k) || this.screens.open(w.addr)) await this.screens.tick(w.addr, k).catch(() => undefined);
-        if (this.lostCandidate(k)) await this.checkLost(w).catch(() => undefined);
+      const now = new Set([...seen, ...(this.o.loginWatches?.() ?? []), ...[...this.hub.terminals].filter(([, k]) => starting(k)).map(([addr]) => addr)]);
+      const inspecting = new Set([...this.logins, ...now]);
+      const login = new Set<string>();
+      const addrs = [...inspecting];
+      for (let i = 0; i < addrs.length; i += 8) {
+        await Promise.all(addrs.slice(i, i + 8).map(async (addr) => {
+          const k = now.has(addr) ? this.hub.terminals.get(addr) : undefined;
+          if (await this.login.tick(addr, k).catch(() => false)) {
+            login.add(addr);
+            const open = this.screens.open(addr);
+            if (open) this.screens.close(open, SCREEN.changed);
+          }
+        }));
       }
-      // the rest: only their start screens, while they are starting (or a card of theirs is still open)
-      for (const [addr, k] of this.hub.terminals as Map<string, any>) {
-        if (seen.has(addr) || !(starting(k) || this.screens.open(addr))) continue;
-        await this.screens.tick(addr, k).catch(() => undefined);
+      this.logins = now;
+      const screens = [...this.hub.terminals].filter(([addr, k]) => !login.has(addr) &&
+        (starting(k) || this.screens.open(addr) || (now.has(addr) && mayHaveDialog(k))));
+      for (let i = 0; i < screens.length; i += 8) {
+        await Promise.all(screens.slice(i, i + 8).map(([addr, k]) =>
+          this.screens.tick(addr, k, Date.now(), this.o.alreadyCarded?.(addr)).catch(() => undefined)));
+      }
+      for (const w of watched) {
+        if (this.lostCandidate(this.hub.terminals.get(w.addr))) await this.checkLost(w).catch(() => undefined);
+      }
+      for (const card of this.openCards()) {
+        if (!this.hub.terminals.has(card.addr)) await this.screens.tick(card.addr, undefined);
       }
     } finally { this.busy = false; }
   }
 
-  /** A press on a start screen's choice, through the shared watch (only on the screen its card was drawn from). */
-  async press(id: string, choice: number): Promise<string | null> {
-    const addr = [...this.own.keys()].find((a) => this.cardsOf(a).some((c) => c.id === id));
-    const card = addr ? this.cardsOf(addr).find((c) => c.id === id) : null;
-    if (!card || card.state !== "open") return SCREEN.gone;
-    // a folder-trust card shows two buttons of its own (0: trust, 1: no): each presses the screen's own choice
-    const t = trustOf(card);
-    if (t) {
-      if (choice !== 0 && choice !== 1) return SCREEN.gone;
-      return this.screens.press(card, choice === 0 ? t.yes : t.no);
-    }
-    return this.screens.press(card, choice);
-  }
-
-  /** The open folder-trust card of each agent waiting on one: [{ card, trust }]. */
-  trustCards(): { card: any; trust: { yes: number; no: number; folder: string | null } }[] {
-    const out: any[] = [];
+  /** The open start-screen card of each agent waiting on one. */
+  openCards(): any[] {
+    const out = [];
     for (const addr of this.own.keys()) {
-      const card = this.openCard(addr), trust = card ? trustOf(card) : null;
-      if (card && trust) out.push({ card, trust });
+      const card = this.openCard(addr);
+      if (card) out.push(card);
     }
     return out;
   }

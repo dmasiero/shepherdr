@@ -7,13 +7,26 @@ export const NAMES = { claude: "Claude Code", codex: "Codex" };
 // Claude Code's current models, as its /model menu offers them. `id` is what --model gets;
 // `match` the names a running agent may report for it.
 const CLAUDE_MODELS = [
-  { id: "opus", name: "Opus 5.5", match: ["opus", "claude-opus-5-5"] },
-  { id: "opus[1m]", name: "Opus 5.5 · 1M", match: ["opus[1m]", "claude-opus-5-5[1m]"] },
-  { id: "claude-fable-5-2", name: "Fable 5.2", match: ["fable", "claude-fable-5-2"] },
+  { id: "opus", fast: true, name: "Opus 5.5", match: ["opus", "claude-opus-5-5"] },
+  { id: "opus[1m]", fast: true, name: "Opus 5.5 · 1M", match: ["opus[1m]", "claude-opus-5-5[1m]"] },
+  { id: "claude-fable-5-2", fast: true, name: "Fable 5.2", match: ["fable", "claude-fable-5-2"] },
   { id: "sonnet", name: "Sonnet 5.5", match: ["sonnet", "claude-sonnet-5-5"] },
   { id: "haiku", name: "Haiku 5.5", match: ["haiku", "claude-haiku-5-5"] },
 ];
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+// Codex's models as OpenAI publishes them (https://learn.chatgpt.com/docs/models and /docs/agent-configuration/speed,
+// read 2026-11-27). Shepherdr no longer asks Codex's App Server for its list: OpenAI says App Server sign-in was never
+// meant for commercial or hosted services. Codex itself decides what the account can use (its own /model).
+const CODEX_EFFORTS = ["low", "medium", "high", "xhigh"];
+const CODEX_MODELS = [
+  { id: "gpt-6.2-sol", label: "GPT-6.2 Sol", efforts: [...CODEX_EFFORTS, "max", "ultra"], fast: true, ultrafast: true },
+  { id: "gpt-6.2-astra", label: "GPT-6.2 Astra", efforts: [...CODEX_EFFORTS, "max", "ultra"], fast: true, ultrafast: true },
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", efforts: CODEX_EFFORTS, fast: true, ultrafast: true },
+  { id: "gpt-6.1-terra", label: "GPT-6.1 Terra", efforts: CODEX_EFFORTS, fast: true },
+  { id: "gpt-6-astra", label: "GPT-6 Astra", efforts: CODEX_EFFORTS, fast: true, ultrafast: true },
+  { id: "gpt-6-sol", label: "GPT-6 Sol", efforts: CODEX_EFFORTS, fast: true },
+  { id: "gpt-6-luna", label: "GPT-6 Luna", efforts: [...CODEX_EFFORTS, "max"], fast: true },
+];
 // Permission modes as each CLI has them (Claude: --permission-mode, or
 // --dangerously-skip-permissions for full access; Codex: its sandbox and approvals, and Approve for me: its own
 // automatic review answers what it would ask, #1464).
@@ -65,19 +78,19 @@ function overrides(argv) {
   return out;
 }
 
-// The agent's own settings on its machine: Claude's settings.json, Codex's config.toml and
-// model list. Read once per agent process.
+// The agent's own settings on its machine: Claude's settings.json and Codex's config.toml. Read once per agent
+// process.
 export const DEFAULTS = `
 if [ "$1" = claude ]; then
   f="$HOME/.claude/settings.json"
   command -v jq >/dev/null && [ -f "$f" ] && jq -r '"model\\t\\(.model // "")", "effort\\t\\(.effortLevel // "")", "fast\\t\\(if .fastMode == true then "on" else "" end)", "per\\t\\(.modelSettings // {} | with_entries(.value |= (.effortLevel // null)) | tojson)", "mode\\t\\(.permissions.defaultMode // "")"' "$f" 2>/dev/null
 else
-  f="$HOME/.codex/config.toml"
+  d="$CODEX_HOME"
+  [ -n "$d" ] || d="$HOME/.codex"
+  f="$d/config.toml"
   for k in model model_reasoning_effort service_tier sandbox_mode approval_policy; do
     printf '%s\\t%s\\n' "$k" "$(sed -n "s/^$k[[:space:]]*=[[:space:]]*\\"\\{0,1\\}\\([^\\"]*\\)\\"\\{0,1\\}.*/\\1/p" "$f" 2>/dev/null | head -1)"
   done
-  c="$HOME/.codex/models_cache.json"
-  [ -f "$c" ] && { printf 'models\\t'; tr -d '\\n' < "$c"; echo; }
 fi
 true`;
 
@@ -92,18 +105,7 @@ export function parseDefaults(kind, stdout) {
     const t = line.indexOf("\t");
     if (t > 0) out[line.slice(0, t)] = line.slice(t + 1);
   }
-  let models = null;
-  if (out.models) {
-    try {
-      models = (JSON.parse(out.models).models ?? []).filter((m) => m.visibility !== "hide").map((m) => ({
-        id: m.slug, label: m.display_name || m.slug,
-        efforts: (m.supported_reasoning_levels ?? []).map((l) => l.effort).filter(Boolean),
-        fast: (m.service_tiers ?? []).length > 0,
-        ultrafast: (m.service_tiers ?? []).some((t) => t?.id === "ultrafast"),
-        defaultEffort: m.default_reasoning_level ?? null,
-      }));
-    } catch {}
-  }
+  const models = kind === "codex" ? CODEX_MODELS.map((m) => ({ ...m, ultrafast: Boolean(m.ultrafast), defaultEffort: null })) : null;
   return kind === "claude"
     ? { model: out.model || null, effort: out.effort || null, fast: Boolean(out.fast), per: parsePer(out.per), mode: out.mode || null }
     : { model: out.model || null, effort: out.model_reasoning_effort || null, fast: speedOf(out.service_tier),
@@ -125,7 +127,7 @@ export function current(kind, argv, meta, dflt) {
     const big = /\[1m\]/.test(alias ?? "") || (meta.used ?? 0) > 200000;
     // Claude keeps an effort per model (modelSettings), known once the log names the model.
     const per = meta.model ? dflt.per?.[meta.model] ?? dflt.per?.[meta.model.replace(/-\d+$/, "")] : null;
-    const perm = argv.includes("--dangerously-skip-permissions") ? "bypassPermissions" : flag(argv, "--permission-mode") ?? dflt.mode ?? "manual";
+    const perm = meta.perm ?? (argv.includes("--dangerously-skip-permissions") ? "bypassPermissions" : flag(argv, "--permission-mode") ?? dflt.mode ?? "manual");
     return { agent: "claude", model: meta.model ?? alias, alias, effort: meta.effort ?? flag(argv, "--effort") ?? per ?? dflt.effort,
       fast: Boolean(fast), perm: perm === "default" ? "manual" : perm, used: meta.used ?? null, window: meta.window ?? (big ? 1000000 : 200000) };
   }
@@ -135,7 +137,7 @@ export function current(kind, argv, meta, dflt) {
   const sandbox = flag(argv, "-s", "--sandbox") ?? o.sandbox_mode ?? dflt.sandbox;
   const perm = argv.includes("--dangerously-bypass-approvals-and-sandbox") || sandbox === "danger-full-access" ? "full"
     : argv.includes("--approve-for-me") || argv.includes("--not-so-yolo") ? "approve" : sandbox === "read-only" ? "read-only" : "auto";
-  return { agent: "codex", model, label: dflt.models?.find((m) => m.id === model)?.label ?? null, perm,
+  return { agent: "codex", model, label: dflt.models?.find((m) => m.id === model)?.label ?? null, perm: meta.perm ?? perm,
     effort: meta.effort ?? o.model_reasoning_effort ?? dflt.effort,
     fast: meta.speed ? speedOf(meta.speed) : tier ? speedOf(tier) : dflt.fast === "ultrafast" ? "ultrafast" : Boolean(dflt.fast), used: meta.used ?? null, window: meta.window ?? null };
 }
@@ -176,8 +178,8 @@ export function withChoice(all, space, sel, now = Date.now()) {
   return Object.fromEntries((c ? [[space, { ...c, at: now }], ...rest] : rest).sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0)).slice(0, 40));
 }
 
-// An effort level as the person reads it: "xhigh" -> "Extra high". The CLIs still get the raw value.
-const LEVELS = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra", none: "None" };
+// An effort level as the person reads it. The CLIs still get the raw value.
+const LEVELS = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Xhigh", max: "Max", ultra: "Ultra", none: "None" };
 export function levelName(e) {
   return e ? LEVELS[e] ?? e[0].toUpperCase() + e.slice(1) : null;
 }
@@ -195,15 +197,22 @@ export function contextWords(c) {
 }
 
 // What the model picker (mods/chat-models, the web's restart.tsx) shows for one agent, as plain data:
-// { name, models: [{ id, name, efforts, defaultEffort, fast, ultrafast }], perms }: every model the CLI
-// offers (Codex: its own models_cache.json; Claude Code: its /model menu), the picker searches them.
+// { name, models: [{ id, name, efforts, defaultEffort, fast, ultrafast }], perms }: every model Anthropic
+// and OpenAI publish (CLAUDE_MODELS, CODEX_MODELS), the picker searches them.
 // `dflt` is that agent's settings (defaults()); `current` its running model, kept in the list.
 export function menuFor(agent, dflt, current = null) {
   if (agent === "claude") {
-    const models = CLAUDE_MODELS.map((m) => ({ id: m.id, name: m.name, efforts: CLAUDE_EFFORTS,
-      defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null, fast: m.id.startsWith("opus") }));
+    // https://code.claude.com/docs/en/model-config and /en/fast-mode. Claude enforces account availability.
+    const models = CLAUDE_MODELS.map((m) => ({
+      id: m.id, name: m.name, aliases: m.match, efforts: CLAUDE_EFFORTS,
+      defaultEffort: dflt?.per?.[m.match[1].replace(/\[1m\]$/, "")] ?? dflt?.effort ?? null,
+      fast: m.fast ?? false,
+    }));
     // a model typed by id (an older one it still takes) stays in the list while it runs
-    if (current && !models.some((m) => m.id === current)) models.unshift({ id: current, name: modelName(current), efforts: CLAUDE_EFFORTS, defaultEffort: dflt?.effort ?? null, fast: false });
+    if (current && !models.some((m) => m.id === current)) {
+      const m = models.find((m) => m.aliases.includes(current));
+      models.unshift({ id: current, name: m?.name ?? modelName(current), aliases: [current], efforts: m?.efforts ?? CLAUDE_EFFORTS, defaultEffort: m?.defaultEffort ?? dflt?.effort ?? null, fast: m?.fast ?? false });
+    }
     return { name: NAMES.claude, perms: PERMS.claude, models };
   }
   const all = (dflt?.models ?? []).map((m) => ({ id: m.id, name: m.label, efforts: m.efforts?.length ? m.efforts : ["low", "medium", "high", "xhigh"],

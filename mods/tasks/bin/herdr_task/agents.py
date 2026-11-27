@@ -185,8 +185,9 @@ def task_status(task, live):
         return "needs", "stopped", error_words(live)
     if "blocked" in states:
         return "needs", "asks", REASONS["question"]
-    if trust_asked(live):
-        return "needs", "asks", REASONS["trust"]
+    startup = startup_asked(live)
+    if startup:
+        return "needs", "asks", startup[1]
     # Out of review rounds (ready refused, review_out): its agent was told to end its turn and wait for its
     # Assistant's review-more, so once it's quiet that is the Assistant's at once (#784). #1040: a problem it had
     # been on (a conflict it fixed by merging the base) kept it Working while its status line was fresh, and only
@@ -445,26 +446,40 @@ SUMMARY_MAX = 160
 REASONS = {"plan": "Plan to approve", "permission": "Asks permission", "question": "Question for you",
            "reply": "Waits for your reply", "signed_out": "Signed out", "trust": "Asks to trust this folder"}
 
-# Claude Code's folder-trust dialog (#755): shown before it reports any status, so to Herdr the
-# agent looked like it was starting, then Working, until it stalled. Read off its screen.
-TRUST = re.compile(r"Quick safety check|Do you trust the files in this folder|Yes, I trust this folder", re.I)
-_trust_seen = {}
+# These startup prompts are visible before the agent reports a status.
+CLAUDE_TRUST = re.compile(r"Quick safety check|Do you trust the files in this folder|Yes, I trust this folder", re.I)
+CODEX_TRUST = re.compile(r"Do you trust the contents of this directory|allow Codex to work in this folder", re.I)
+_startup_seen = {}
 
 
-def trust_asked(live):
-    """The address of a live agent showing Claude Code's folder-trust dialog, else None. Only an
-    agent that never reported a status nor took a turn: its screen is read at most every 5 s."""
+def startup_reason(cli, screen):
+    words = " ".join(screen.split())
+    if (CODEX_TRUST if cli == "codex" else CLAUDE_TRUST).search(words):
+        return REASONS["trust"]
+    if cli == "codex" and re.search(r"^\s*Hooks need review\s*$", screen, re.M) and "Review hooks" in words:
+        return "Hooks need review"
+    if cli == "codex" and "Choose how you want to use Codex" in words and "Sign in with ChatGPT" in words:
+        return "Codex needs you to sign in"
+    if cli == "claude" and re.search(r"select (?:a )?login method", words, re.I) and ("Claude account" in words or "Anthropic Console" in words):
+        return "Claude Code needs you to sign in"
+    return None
+
+
+def startup_asked(live):
+    """An agent's address and startup prompt, if it hasn't reported status or taken a turn.
+    Read its screen at most every 5 seconds."""
     from .base import run
     for k in live:
-        if status_word(k) or k.get("turn") or (k.get("labels") or {}).get("herdr.agent", "claude") != "claude":
+        cli = (k.get("labels") or {}).get("herdr.agent", "claude")
+        if status_word(k) or k.get("turn") or cli not in ("claude", "codex"):
             continue
         address = k.get("address")
-        seen = _trust_seen.get(address)
+        seen = _startup_seen.get(address)
         if not seen or now() - seen[0] > 5000:
-            screen = run(["hc", "read", address, "--lines", "40"]).stdout or ""
-            seen = _trust_seen[address] = (now(), bool(TRUST.search(screen)))
+            screen = run(["hc", "read", address]).stdout or ""
+            seen = _startup_seen[address] = (now(), startup_reason(cli, screen))
         if seen[1]:
-            return address
+            return address, seen[1]
     return None
 
 
@@ -525,17 +540,26 @@ def said(d):
     return "\n".join(x for x in parts if x).strip()
 
 
-def from_person(d):
-    """A line that is someone writing to the agent (not a tool's result): its words, else None."""
+def claude_user_words(d):
+    """Text carried by a Claude Code user record, including background task notices."""
     if d.get("type") == "user" and not d.get("isSidechain"):
         c = (d.get("message") or {}).get("content")
         if isinstance(c, str):
             return c
         if isinstance(c, list) and not any(isinstance(x, dict) and x.get("type") == "tool_result" for x in c):
             return "\n".join(x.get("text") or "" for x in c if isinstance(x, dict) and x.get("type") == "text")
+
+
+def from_person(d):
+    """A line that is someone writing to the agent: its words, else None."""
     if d.get("type") == "event_msg" and (d.get("payload") or {}).get("type") == "user_message":
         return str(d["payload"].get("message") or "")
-    return None
+    words = claude_user_words(d)
+    origin = d.get("origin")
+    if (isinstance(origin, dict) and origin.get("kind") == "task-notification") or (
+            words and words.lstrip().startswith("<task-notification>")):
+        return None
+    return words
 
 
 SHORT_ASK = 25
@@ -987,7 +1011,7 @@ def _bg_scan(lines, seen):
                 continue
             at = _ms(d.get("timestamp")) or now()
             # Claude Code: ended by its notice (in the queue, an attachment or a user line), or stopped.
-            if "<task-notification>" in raw and (d.get("type") in ("queue-operation", "attachment") or from_person(d) is not None):
+            if "<task-notification>" in raw and (d.get("type") in ("queue-operation", "attachment") or claude_user_words(d) is not None):
                 for m in [*BG_ENDED.finditer(raw), *BG_EXPIRED.finditer(raw)]:
                     running.pop(m.group(1), None)
                     ended = max(ended, at)
@@ -1278,25 +1302,28 @@ def codex_working(k):
     return False
 
 
-def own_work(task, live, ready=False):
+def own_work(task, live, ready=False, background_only=False):
     """Its quiet agent is on its own work (above). What really runs (a background job, a command
     open in the foreground, a helper of its own at work: SHEP-54) counts whatever its last message
     says: a plain question with work still running is no ask yet (SHEP-148; asking for real is its
     question tool or a permission: blocked). Its status line alone counts only when its last message
-    asks nothing, and never for a Ready task (ready: not_at_rest())."""
+    asks nothing, and never for a Ready task (ready: not_at_rest()). While the agent is in a turn,
+    background_only keeps just the jobs that can still be running when that turn ends."""
     for k in live:
         if (k.get("labels") or {}).get("herdr.role") == "reviewer" or status_word(k) == "blocked":
             continue
         address = k.get("address")
         key = (k.get("labels") or {}).get("herdr.task")
-        if key and any(parent_of(h) == address and status_word(h) in ("working", "blocked") for h in live_helpers(key)):
+        if not background_only and key and any(parent_of(h) == address and status_word(h) in ("working", "blocked") for h in live_helpers(key)):
             return True
         # Codex's jobs are only what its process tree shows (SHEP-207): a session the log says is
         # still open, with no process of the agent running, is over.
         jobs, log = own_jobs(task, k)
-        ended = background_jobs(log)[1] if log else 0
         if jobs:
             return True
+        if background_only:
+            continue
+        ended = background_jobs(log)[1] if log else 0
         if not ready and waits_on_own(task, address, ended) and not last_question(task, address):
             return True
         # Mid-turn, a long command of its own still running in the foreground: Herdr can read

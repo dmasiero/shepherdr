@@ -107,6 +107,21 @@ function action(a: Record<string, any>): unknown {
       : { ok: true, state: 'works', from: 'here', says: 'Works: ElevenLabs accepts this key.' }
   }
   if (a.type === 'catalog') return { ok: true, catalog: catalog(a.machine) }
+  if (a.type === 'restart' && (a.kind === 'claude' || a.kind === 'codex')) {
+    const chat = (chats[a.chat] ??= { key: a.chat, messages: [], cli: a.kind, top: true })
+    const previous = chat.agent
+    const model = catalog(state.normal.host).agents.find((agent) => agent.id === a.kind)?.models.find((m) => m.id === a.model)
+    chat.cli = a.kind
+    chat.agent = { kind: a.kind, model: a.model, modelLabel: model?.name, effort: a.effort, speed: a.speed ?? 'normal', perm: a.perm }
+    if (a.live && previous) {
+      const speed = a.speed === 'ultrafast' ? 'Ultra-fast' : a.speed === 'fast' ? 'Fast' : 'Standard'
+      const text = (previous.speed ?? 'normal') !== chat.agent.speed ? 'Switched to ' + speed :
+        previous.model !== a.model ? 'Model: ' + (model?.name ?? a.model) : 'Updated chat settings'
+      say(a.chat, { recap: 'heads', text })
+    }
+    pushChat(a.chat)
+    return { ok: true }
+  }
   // Settings › Personal analytics: a fictional week (web/plugins/analytics)
   if (a.type === 'analytics') {
     if (a.do === 'state') return { ok: true, on: analytics.on, noted: analytics.noted }
@@ -293,7 +308,7 @@ Bun.serve<Sock['data'], never>({
     // the # list's spaces (service/main.ts reachOf): every space but Everything, this machine's and the others'
     // the / list's commands (service/main.ts, core/slash.js): Claude Code's, and one of the person's own
     if (path === '/api/commands') return Response.json({ commands: commandList('claude', [{ name: 'ship', about: 'Commit, push and open a pull request' }]) })
-    if (path === '/api/reach') return Response.json({ from: state.normal.host, checked: Date.now(), spaces: state.normal.places.filter((p) => p.id !== EV).map((p) => { const id = p.id.split('/').pop()!, far = p.machine && p.machine !== state.normal.host; return { id, name: p.name, route: far ? p.machine : '', machine: p.machine ?? state.normal.host, target: far ? `${p.machine}/${id}` : id } }) })
+    if (path === '/api/reach') return Response.json({ from: state.normal.host, checked: Date.now(), spaces: state.normal.places.map((p) => { const id = p.id.split('/').pop()!, far = p.machine && p.machine !== state.normal.host; return { id, name: p.id === EV ? "Everything" : p.name, route: far ? p.machine : '', machine: p.machine ?? state.normal.host, target: far ? `${p.machine}/${id}` : id } }) })
     // the Diff viewer's Changes pane: a task's changes against main, or a space's folder's not committed yet
     if (path === '/api/worktree') {
       const task = url.searchParams.get('task'), what = url.searchParams.get('what'), file = url.searchParams.get('path') ?? ''

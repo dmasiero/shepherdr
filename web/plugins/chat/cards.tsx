@@ -1,14 +1,18 @@
 // The cards a chat shows when an agent needs the person, in one style: a permission (the command, Decline, Allow
 // once), a question with its quick answers, a plan, a secret asked for by name. Their words come from the agent's own
-// request; Shepherdr never builds a card by reading an agent's screen. One answer settles it wherever it shows.
+// request or its terminal. One answer settles it wherever it shows.
 import { useState } from 'react'
 import { copyText } from '@client/copy.ts'
 import { focusBox } from '@client/commands.ts'
-import { attempt, notice, openTask, useSnap } from '@client/kernel.ts'
+import { attempt, has, notice, openTask, useSnap } from '@client/kernel.ts'
+import { switchView } from '../terminal/menu.ts'
+import { Term } from '../terminal/client.tsx'
 import { press, waiting } from '@client/pending.ts'
 import { ActBtn, ActError, Btn, I, IB, Seg, useCardActs } from '@client/ui.tsx'
 import type { Question, SecretAsk, Snapshot } from '@shared/types.ts'
+import { terminalQuestion } from '@shared/alerts.ts'
 import { machineLabel, placeDown, placeOf, spaceLabel } from '@shared/view.ts'
+import { SignInCard } from './sign-in.tsx'
 import { Markdown } from './markdown.tsx'
 
 /** a quiet line where a card was, once it is settled */
@@ -39,6 +43,34 @@ function downLine(snap: Snapshot | null, place: string | undefined) {
   return m ? <DoneRow icon="warn">Can't reach {m.name}: this waits until the link is back</DoneRow> : null
 }
 
+/** A question only the agent's own screen can take: Codex's questions, a CLI's start or folder-trust screen. Shepherdr
+ *  never presses keys in an agent's menus (Nothing that risks a ban, docs/agents-and-terms.md): the card says what it
+ *  asks and opens the terminal for you to answer there. Hook asks (Claude Code's documented hooks) keep their buttons. */
+function TerminalCard({ q, chat }: { q: Question; chat: string }) {
+  const [showTerminal, setShowTerminal] = useState(false)
+  const terminal = q.terminalChat ?? q.by?.chat ?? chat
+  const context = q.screen?.startsWith(q.title + '\n') ? q.screen.slice(q.title.length).trimStart() : q.screen
+  return (
+    <div className="card" data-card={q.id} data-ask="">
+      <span className="t">{q.title || 'It asks you something'}</span>
+      {q.trust ? <><span>{q.trust.waits}</span><span>{q.trust.allows}</span></>
+        : context ? <span style={{ whiteSpace: 'pre-line' }}>{context}</span>
+        : q.parts?.map((p) => <span key={p.title}>{p.title}</span>)}
+      {q.choices.map((c, i) => <span className="s" key={i}>{c.label}{c.description ? ` ${c.description}` : ''}</span>)}
+      {has('terminal') ? (
+        <div className="acts">
+          <Btn kind="pri" onClick={() => {
+            if (q.terminalChat) { setShowTerminal(!showTerminal); return }
+            if (q.by) openTask(q.by.chat.slice(0, -7))
+            switchView(terminal, true)
+          }}>{showTerminal ? 'Close terminal' : 'Answer in the terminal'}</Btn>
+        </div>
+      ) : <span className="s">Answer in the terminal.</span>}
+      {showTerminal && <Term stream={terminal} />}
+    </div>
+  )
+}
+
 /** A question, a permission or a plan from an agent. `place`: the space its task is in (for "On vm, in garden-app"). */
 export function QuestionCard({ q, chat, place }: { q: Question; chat: string; place?: string }) {
   const snap = useSnap()
@@ -51,11 +83,14 @@ export function QuestionCard({ q, chat, place }: { q: Question; chat: string; pl
   // "Other…" opened: a box on the card for your own answer
   const [other, setOther] = useState<string | null>(null)
   const down = downLine(snap, place)
+  if (q.login) return down || <SignInCard key={q.id} question={q} login={q.login} />
   if (q.sent !== undefined && q.command !== undefined) return <DoneRow>{q.sent === 0 ? 'You allowed this' : 'You declined this'}</DoneRow>
   // an answered question: the answer shows as your message (the agent's reply follows it in the chat)
   if (q.sent !== undefined) return <p className="b mine gap">{q.said || q.choices[q.sent]?.label || 'Answered'}</p>
   if (q.closed) return <DoneRow>{q.closed}</DoneRow>
   if (down) return down
+  if (terminalQuestion(q)) return <TerminalCard q={q} chat={chat} />
+
   /** a button of this card that sends its answer */
   const say = (id: string, body: Record<string, unknown>, label: React.ReactNode, o: { kind?: 'pri'; chip?: boolean; off?: boolean; busy?: string; then?: () => void } = {}) => (
     <ActBtn key={id} acts={acts} id={id} kind={o.kind} chip={o.chip} disabled={o.off} busy={o.busy ?? 'Sending…'} run={async () => { const why = await answer(chat, q, body); if (!why) o.then?.(); return why }}>{label}</ActBtn>
@@ -72,8 +107,8 @@ export function QuestionCard({ q, chat, place }: { q: Question; chat: string; pl
   const ways = (body: ((o: string) => Record<string, unknown>) | null, onward?: (o: string) => void) =>
     !q.other ? null : other === null ? (
       <>
-        <button type="button" className="chip" disabled={busy} onClick={() => setOther('')}>Other…</button>
-        {say('talk', { talk: true }, 'Chat about this', { chip: true, then: talk })}
+        <button type="button" className="chip" disabled={busy} onClick={() => setOther('')}>{q.queued && !q.choices.length ? 'Type an answer' : 'Other…'}</button>
+        {!q.queued && say('talk', { talk: true }, 'Chat about this', { chip: true, then: talk })}
       </>
     ) : (
       <OtherBox
@@ -96,21 +131,6 @@ export function QuestionCard({ q, chat, place }: { q: Question; chat: string; pl
         <div className="acts">
           {say('decline', { choice: 1 }, 'Decline', { busy: 'Declining…' })}
           {say('allow', { choice: 0 }, 'Allow once', { kind: 'pri', busy: 'Allowing…' })}
-        </div>
-        <ActError acts={acts} />
-      </div>
-    )
-  }
-  // #1441: a CLI's folder-trust screen: what waits and what trusting allows, No, Trust this folder and start
-  if (q.trust) {
-    return (
-      <div className="card" data-card={q.id} data-ask="">
-        <span className="t">{q.title}</span>
-        <span>{q.trust.waits}</span>
-        <span className="s">{q.trust.allows}</span>
-        <div className="acts">
-          {say('no', { choice: 1 }, q.choices[1]?.label ?? 'No', { busy: 'Stopping…' })}
-          {say('yes', { choice: 0 }, q.choices[0]?.label ?? 'Trust this folder and start', { kind: 'pri', busy: 'Starting…' })}
         </div>
         <ActError acts={acts} />
       </div>

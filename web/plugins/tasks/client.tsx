@@ -5,9 +5,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { PaneFrame, placeholderOf, showList } from '@client/App.tsx'
 import { newSpaceDialog, renameDialog } from '@client/list.tsx'
-import { definePlugin, getState, go, has, type Command, maximize, sideHidden, minimize, notice, openTask, registry, setUI, togglePane, tryAct, act, attempt, useSnap, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
+import { definePlugin, getState, go, has, type Command, maximize, sideHidden, minimize, notice, openTask, registry, setUI, togglePane, tryAct, act, attempt, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
 import { confirm, openDialog, openForm, openMenu } from '@client/overlay.tsx'
-import { AgentField, pickFor, type Pick } from '@client/picker.tsx'
+import { AgentField, pickFor, PickSummary, reportedPick, useCatalog, type Pick } from '@client/picker.tsx'
 import { edge } from '@client/resize.ts'
 import { ActBtn, ActError, Btn, Cnt, cx, Empty, Hd, I, IB, MenuGroup, Row, useCardActs } from '@client/ui.tsx'
 import { waiting } from '@client/pending.ts'
@@ -218,19 +218,28 @@ export function taskRows(t: Task, where: 'row' | 'thread'): MenuRow[] | null {
 
 /* ---------- a task not started yet ---------- */
 
+function TaskAgentSummary({ t, className }: { t: Task; className?: string }) {
+  const agent = useStore((s) => s.chats[taskChat(t)]?.agent)
+  const cat = useCatalog(t.on)
+  const pick = reportedPick(agent ?? t.agent?.settings) ?? t.plannedAgent
+  if (!pick) return null
+  return <span className={className}><PickSummary pick={pick} cat={cat} /></span>
+}
+
 function startDialog(t: Task) {
   openForm(
     function Form({ close }) {
       const snap = getState().snap!
       const every = isEverything(snap, t.place)
       const machine = snap.places.find((p) => p.id === t.place)?.machine ?? t.on
-      const [pick, setPick] = useState<Pick>(pickFor(snap, every ? 'all' : t.place, 'Tasks'))
+      const initial = t.plannedAgent ?? pickFor(snap, every ? 'all' : t.place, 'Tasks')
+      const [pick, setPick] = useState<Pick>(initial)
       const [busy, setBusy] = useState(false)
       const start = async () => {
         if (busy) return
         setBusy(true)
         // Start task starts it and opens its thread
-        if (await tryAct({ type: 'task-start', chat: taskChat(t), agent: pick })) {
+        if (await tryAct({ type: 'task-start', chat: taskChat(t), ...(pick === initial ? {} : { agent: pick }) })) {
           close()
           openTask(t.id)
         } else setBusy(false)
@@ -319,7 +328,9 @@ export function ReviewCard({ t, ctx }: { t: Task; ctx: 'chat' | 'thread' }) {
     <div className="card" data-card={`review:${t.id}`}>
       {ctx === 'chat' && <span className="t tw"><StatusIcon t={t} time="none" />{t.name}</span>}
       <span className="s">{ctx === 'chat' && t.work && <><WorkTag snap={snap} t={t} /> · </>}{where}</span>
+      {ctx === 'chat' && <TaskAgentSummary t={t} className="s" />}
       <span>{said.summary || 'Ready for you to look at.'}</span>
+      {t.reviewerNotice && <span className="s">{t.reviewerNotice}</span>}
       {said.details && (
         <button type="button" className="fold" aria-expanded={more} onClick={() => setMore(!more)}>
           <I n={more ? 'down' : 'right'} c="s16" />
@@ -374,6 +385,7 @@ export function StoppedCard({ t }: { t: Task }) {
   return (
     <div className="card" data-card={`stopped:${t.id}`}>
       <span className="t c-red">Stopped</span>
+      <TaskAgentSummary t={t} className="s" />
       <span>{t.stopped.why || (t.stopped.by === 'limit' ? "It hit its plan's limit." : 'Its agent is no longer running.')}</span>
       <div className="acts">
         <ActBtn acts={acts} id="restart" kind="pri" busy="Restarting…" run={() => attempt({ type: 'task-resume', chat: taskChat(t) })}>Restart</ActBtn>
@@ -465,6 +477,7 @@ function TaskHead({ task: t, where, scrolled }: { task: Task; where: 'chat' | 'p
         <span className="hline">
           <StatusIcon t={live} time="none" />
           <span>{big && snap ? `${line} · in ${spaceLabel(snap, t.place)}` : line}</span>
+          <TaskAgentSummary t={live} className="head-agent" />
         </span>
       }
       scrolled={scrolled}
@@ -517,10 +530,9 @@ function TaskPane({ t }: { t: Task }) {
     <PaneFrame
       head={(sc) => <TaskHead task={t} where="pane" scrolled={sc} />}
       scrollKey={thread.chat}
-      // fork: the above-box views meant for the pane (the jump to the newest message) go over its box, as in the middle
       foot={!down && !Body && Box ? (
         <>
-          {registry.aboveBox.filter((a) => a.pane).map((a, i) => <a.View key={i} thread={thread} />)}
+          {registry.aboveBox.filter((a) => a.inPane).map((a, i) => <a.View key={i} thread={thread} />)}
           <Box thread={thread} placeholder={placeholderOf(snap, thread)} />
         </>
       ) : undefined}
@@ -572,6 +584,7 @@ function TaskRow({ snap, t, tag, alert }: { snap: Snapshot; t: Task; tag: boolea
               {alert.body && <span className="l2">{alert.body}</span>}
             </>
           ) : sub && <span className="l2">{sub}</span>}
+          <TaskAgentSummary t={t} className="l2" />
           {tag && t.work && <RepoLine snap={snap} t={t} />}
         </span>
         {when && <span className="v">{when}</span>}
@@ -610,7 +623,13 @@ function Now({ snap, place }: { snap: Snapshot; place: string }) {
   const repo = f.repo.length === 1 ? reposOf(snap).find((r) => r.key === f.repo[0]) : undefined
   const top = repo && <RepoHead snap={snap} r={repo} />
   const alerts = taskAlerts(snap)
-  const groups = nowGroups(filterTasks(snap, f, place), alerts).filter((g) => g.tasks.length)
+  const filtered = filterTasks(snap, f, place)
+  const byId = new Map(filtered.filter((t) => !t.archived).map((t) => [t.id, t]))
+  const queued = snap.needs.flatMap((n) => {
+    const task = n.task ? byId.get(n.task) : undefined
+    return n.question?.queued && task ? [{ task, question: n.question }] : []
+  })
+  const groups = nowGroups(filtered, alerts).filter((g) => g.tasks.length || (g.name === 'Needs you' && queued.length))
   if (!groups.length)
     return snap.tasks.length ? (
       <>
@@ -629,13 +648,16 @@ function Now({ snap, place }: { snap: Snapshot; place: string }) {
         // Done and Archived start folded; the others open
         const o = ui.open[g.name] ?? !['Done', 'Archived'].includes(g.name)
         const shown = g.name === 'Done' ? g.tasks.slice(0, ui.doneShown) : g.tasks
+        const questions = g.name === 'Needs you' ? queued : []
         return (
           <div key={g.name} style={{ display: 'contents' }}>
             <button type="button" className="grp" aria-expanded={o} onClick={() => setUI({ open: { ...ui.open, [g.name]: !o } })}>
-              {g.name} · {g.tasks.length}
+              {g.name} · {g.tasks.length + questions.length}
               <I n="down" c="s16" />
             </button>
             {o && shown.map((t) => <TaskRow key={t.id} snap={snap} t={t} tag={!repo} alert={alerts.get(t.id)} />)}
+            {o && questions.map(({ task, question }) => <Row key={question.id} icon="chat"
+              label={question.title} sub={task.name} onClick={() => { openTask(task.id); setUI({ jump: question.id }) }} />)}
             {o && shown.length < g.tasks.length && (
               <button type="button" className="grp" onClick={() => setUI({ doneShown: ui.doneShown + 20 })}>Show more</button>
             )}
