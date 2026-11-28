@@ -77,6 +77,12 @@ class RemoteRestart(unittest.TestCase):
         # nothing ran on this machine's core
         self.assertTrue(all(c.startswith("exec ") for c in read(os.path.join(d, "calls")).splitlines()))
 
+    def test_asks_goes_over_to_its_machine(self):
+        # fork: question cards for Assistants on other machines: the hook's label is that machine's restart's to add
+        r, d = self.run_script("connected", {"HERDR_RESTART_ASKS": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("HERDR_RESTART_ASKS=1", read(os.path.join(d, "exec-args")).split("\n"))
+
     def test_no_env_without_a_chat(self):
         r, d = self.run_script("connected")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -160,6 +166,17 @@ class NoTab(unittest.TestCase):
         for label in ("herdr.space=sp1", "herdr.coordinator.space=sp1", "herdr.role=coordinator"):
             self.assertIn(label, args)
         self.assertFalse(any(a.startswith("herdr.tab=") for a in args), "no empty tab label")
+
+    def test_its_own_hook_keeps_its_label(self):
+        # fork: question cards for Assistants on other machines: argv carries the hook, and the new one says so, so a
+        # global copy of the hook there steps aside (ask-hook.sh); without HERDR_RESTART_ASKS, no label
+        labels = {"herdr.space": "sp1", "herdr.coordinator.space": "sp1", "herdr.role": "coordinator"}
+        r, args = self.restart(labels, {"HERDR_RESTART_ASKS": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("herdr.asks=chained", args)
+        r, args = self.restart(labels)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("herdr.asks=chained", args)
 
     def test_chat_picker_does_not_restart_a_busy_assistant(self):
         r, args = self.restart({"herdr.space": "sp1"}, {"HERDR_RESTART_WHEN_IDLE": "1"}, state="working")

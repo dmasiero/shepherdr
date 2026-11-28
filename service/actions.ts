@@ -281,7 +281,7 @@ async function startFresh(hub: Hub, b: any, compat: Compat): Promise<any> {
   const tpl = await execTemplate(hub, "assistant", sp.machine ?? null, compat.assistantPick?.(sp.id) ?? null);
   // when it began to go in, by this clock: the page knows its message again in the chat by it, as any send's
   const at = Date.now();
-  const r = await hc(["run", "--bg", "--json", "--no-parent", "--keep", ...(sp.machine ? ["--on", sp.machine] : []), ...(sp.folder ? ["--cwd", sp.folder] : []), ...labels, tpl.name, task]);
+  const r = await hc(["run", "--bg", "--json", "--no-parent", "--keep", ...(sp.machine ? ["--on", sp.machine] : []), ...(sp.folder ? ["--cwd", sp.folder] : []), ...labels, ...tpl.labels, tpl.name, task]);
   tpl.done();
   let out: any = {};
   try { out = JSON.parse(r.stdout || "{}"); } catch {}

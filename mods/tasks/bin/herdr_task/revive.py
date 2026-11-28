@@ -331,7 +331,10 @@ def restart_assistant(k, message):
         base = ["hc", "run", "--bg", "--json", "--no-parent", "--cwd", cwd, *keep, *place, "--label", "herdr.role=coordinator"]
         if rec.get("kind") in ("claude", "codex") and rec.get("session") and rec.get("argv"):
             argv = resume_argv(rec["kind"], list(rec["argv"]), rec["session"], message)
-            r = run([*base, "--label", f"herdr.agent={rec['kind']}", "--", *clean_env(argv)])
+            # fork: its own question-card hook stays in its --settings (base_argv keeps it), so its label does too: a
+            # global copy of the hook on this machine steps aside for it (question cards for Assistants on other machines)
+            asks = ["--label", "herdr.asks=chained"] if labels.get("herdr.asks") == "chained" else []
+            r = run([*base, *asks, "--label", f"herdr.agent={rec['kind']}", "--", *clean_env(argv)])
         elif message:
             r = run([*base, "assistant", message])
         else:
