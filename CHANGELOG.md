@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.2.24
+
+### What you will notice first
+
+- MCP tool views now also show for agents on your other machines (your VMs). Add the server with `herdr-mcp` in
+  front there the same way, and its views show in the chat like any other.
+- `herdr-mcp` is now installed on every machine with the other tools, so the same `claude mcp add ...` or
+  `codex mcp add ...` command works everywhere. [MCP Apps](https://github.com/eliasstravik/shepherdr/blob/v3.2.24/docs/mcp-apps.md)
+  says more, including `--scope user` to add a server to every folder in Claude Code.
+
+### Also
+
+- Saying **Always** to a view's tool calls now counts per server and machine: the same server on another machine
+  asks again.
+
+### Updating
+
+Run `shepherdr update`.
+
+## 3.2.23
+
+### What you will notice first
+
+- MCP tool views now show inside the chat. When an agent calls an MCP tool that has its own view (like
+  Flowbound's), you see that view under the call, on a computer and on a phone. Open it full screen, and say yes
+  or no when a view wants to run a tool.
+- To turn it on, put `herdr-mcp` in front of the MCP server when you add it to your agent, for example
+  `claude mcp add flowbound -- herdr-mcp flowbound -- npx -y flowbound mcp` (or `codex mcp add ...`), then
+  restart the agent. [MCP Apps](https://github.com/eliasstravik/shepherdr/blob/v3.2.23/docs/mcp-apps.md) says
+  more. You can switch it off in Settings › Plugins › MCP Apps.
+
+### Fixes
+
+- `shepherdr doctor` signs in to the service when it checks it, so it no longer calls a running service broken.
+
+### Updating
+
+Run `shepherdr update`.
+
 ## 3.2.22
 
 ### What you will notice first
