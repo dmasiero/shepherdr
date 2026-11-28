@@ -12205,6 +12205,25 @@ class NeverTypedIntoAShell(unittest.TestCase):
         self.assertIn(["hc", "kill", "t3"], self.calls)
         self.assertIn(["hc", "rm", "t3"], self.calls)
 
+    def test_an_assistant_with_its_own_ask_hook_keeps_its_label(self):
+        # fork: question cards for Assistants on other machines: its --settings (with the hook) comes back from its
+        # record, and herdr.asks=chained with it, so a global copy of the hook on its machine steps aside
+        self.assistant()
+        self.terms["t3"]["labels"]["herdr.asks"] = "chained"
+        self.assertEqual(self.revive.restart_assistant(self.terms["t3"], "hi"), "t9")
+        self.assertIn("herdr.asks=chained", [c for c in self.calls if c[:2] == ["hc", "run"]][0])
+
+    def test_an_assistant_without_its_own_hook_gets_no_asks_label(self):
+        self.assistant()
+        self.assertEqual(self.revive.restart_assistant(self.terms["t3"], "hi"), "t9")
+        self.assertNotIn("herdr.asks=chained", [c for c in self.calls if c[:2] == ["hc", "run"]][0])
+
+    def test_the_asks_label_is_the_services(self):
+        # core/assistant-asks.js names the same label launch.py gives a worker
+        with open(os.path.join(ROOT, "core", "assistant-asks.js")) as f:
+            from herdr_task import launch
+            self.assertIn(f'export const ASKS_LABEL = "{launch.ASKS_LABEL}";', f.read())
+
     def test_an_assistant_without_a_record_starts_fresh_with_the_message_as_its_task(self):
         self.assistant(record=False)
         self.assertEqual(self.revive.restart_assistant(self.terms["t3"], "hello"), "t9")

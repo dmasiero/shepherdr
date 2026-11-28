@@ -30,6 +30,7 @@ if [[ "$old" == */* ]]; then
   [ -n "${HERDR_RESTART_CHAT:-}" ] && envs+=(--env "HERDR_RESTART_CHAT=$HERDR_RESTART_CHAT")
   [ -n "${HERDR_RESTART_RESUME:-}" ] && envs+=(--env "HERDR_RESTART_RESUME=1")
   [ -n "${HERDR_RESTART_WHEN_IDLE:-}" ] && envs+=(--env "HERDR_RESTART_WHEN_IDLE=1")
+  [ -n "${HERDR_RESTART_ASKS:-}" ] && envs+=(--env "HERDR_RESTART_ASKS=1")
   # its own say on why it didn't (#980: a silent exit there read only as "It didn't restart"), kept apart from hc's
   errf=$(mktemp "${TMPDIR:-/tmp}/herdr-restart.XXXXXX")
   out=$(hc exec --on "$on" --stdin --timeout 300 ${envs[@]+"${envs[@]}"} -- bash -s "$here" "$argv" <"$0" 2>"$errf")
@@ -129,6 +130,9 @@ if [ -n "$chat" ]; then
   done
   [ "$role" = coordinator ] && labels+=(--label herdr.role=coordinator)
 fi
+# fork: HERDR_RESTART_ASKS=1: argv carries the chat's question-card hook in its --settings (service/agents.ts, a Claude
+# Assistant on another machine): labelled as a task worker with its own hook is, so a global copy there steps aside.
+[ -n "${HERDR_RESTART_ASKS:-}" ] && labels+=(--label herdr.asks=chained)
 # The new agent never inherits a parent Claude Code session's markers the holder may carry (SHEP-86):
 # the same line as core/clean-env.js CLEAN_ENV (test_repo keeps them equal).
 clean='for v in $(env | sed -nE '"'"'s/^(CLAUDECODE|CLAUDE_PID|CLAUDE_CODE_[A-Za-z0-9_]+)=.*/\1/p'"'"' | grep -vE '"'"'^CLAUDE_CODE_(USE|SKIP|DISABLE|ENABLE|MAX|OAUTH|CLIENT|API)_'"'"'); do unset "$v"; done;'

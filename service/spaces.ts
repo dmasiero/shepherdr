@@ -14,6 +14,7 @@ import { TEMPLATES_SH } from "../core/paths.js";
 import { argvFor, NAMES, CHOICE_KEY, choiceOf, withChoice } from "../core/agents.js";
 import { spawn } from "./spawn.ts";
 import { trustArgv } from "../core/claude-trust.js"; // fork: SHEP-28
+import { ASK_HOOK_SH, ASKS_LABEL, withAskHook } from "../core/assistant-asks.js"; // fork: question cards on other machines
 
 /** A space's id as the app names it: another machine's is "<machine>/<id>". */
 export const ownId = (x: { id: string; machine?: string | null }) => (x.machine ? `${x.machine}/${x.id}` : x.id);
@@ -87,26 +88,41 @@ export async function newSpaceInfo(hub: Hub, machine: string | null, at: string 
  *  isn't installed there (then the template's own, as the window). Neither installed: refused in plain words, never a
  *  start that ends at once ("exec: claude: not found") and leaves the chat on Starting.
  *  words: the template's own words (its first message), when read. Unreadable: the template itself. */
-export async function execTemplate(hub: Hub, name: string, machine: string | null, pick: any = null): Promise<{ name: string; words: string; done: () => void }> {
-  const plain = { name, words: "", done: () => {} };
+export async function execTemplate(hub: Hub, name: string, machine: string | null, pick: any = null): Promise<{ name: string; words: string; done: () => void; labels: string[] }> {
+  const plain = { name, words: "", done: () => {}, labels: [] as string[] };
   const DIR = TEMPLATES_SH + 'dir="$SHEP_TEMPLATES"; ';   // where herdr-core reads them there (#1182)
   const src = (await exec(hub, ["sh", "-c", DIR + 'cat "$dir/$1.md"', "x", name], machine).catch(() => null))?.stdout ?? "";
   const head = /^---\n([\s\S]*?)\n---\n?/.exec(src);
   const own = /^command:[ \t]*(.+)$/m.exec(head?.[1] ?? "")?.[1]?.trim();
   if (!head || !own) return plain;
   const has = async (prog: string) => (await exec(hub, ["sh", "-c", `${AGENT_PATH} command -v "$1" >/dev/null 2>&1`, "x", prog], machine).catch(() => null))?.code === 0;
-  let cmd = own;
+  let cmd = own, argv: string[] | null = /^[\w@%+=:,./-]+( +[\w@%+=:,./-]+)*$/.test(own) ? own.split(/ +/) : null;
   if (pick?.agent === "claude" || pick?.agent === "codex") {
-    if (await has(pick.agent)) cmd = argvFor(pick, { agent: null, argv: [] }).argv.map(shellWord).join(" ");
+    if (await has(pick.agent)) cmd = (argv = argvFor(pick, { agent: null, argv: [] }).argv).map(shellWord).join(" ");
     else if (!(await has(own.split(/\s+/)[0]))) {
       throw new Error(`${(NAMES as Record<string, string>)[pick.agent] ?? pick.agent} isn't installed on ${machine ?? "this computer"}. Install it, or pick another agent for the Assistant in Settings › Agents.`);
     }
   }
+  // fork: a Claude Assistant on another machine gets the chat's question card through its own --settings, labelled so
+  // that machine's global hook, if it has one, steps aside (core/assistant-asks.js)
+  const asks = await askArgv(hub, machine, argv);
+  if (asks) cmd = asks.map(shellWord).join(" ");
+  const labels = asks ? ["--label", ASKS_LABEL] : [];
   const one = `herdr-${name}-${Date.now().toString(36)}`;
   const file = `---\nname: ${one}\ndescription: A one-off ${name} start that execs its command (Shepherdr's service), removed after use.\ncommand: ${cleanCommand(cmd)}\n---\n${src.slice(head[0].length)}`;
   const w = await exec(hub, ["sh", "-c", DIR + 'printf "%s" "$2" > "$dir/$1.md"', "x", one, file], machine).catch(() => null);
   if (w?.code !== 0) return plain;
-  return { name: one, words: src.slice(head[0].length).trim(), done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null) };
+  return { name: one, words: src.slice(head[0].length).trim(), labels, done: () => void exec(hub, ["sh", "-c", DIR + 'rm -f "$dir/$1.md"', "x", one], machine).catch(() => null) };
+}
+
+/** fork: a Claude start (argv) on another machine with the chat's question-card hook in its --settings, when a sync
+ *  left the hook there (core/assistant-asks.js); null for this computer (its install's global hook asks), Codex, a
+ *  machine without the hook, or a --settings file. */
+export async function askArgv(hub: Hub, machine: string | null, argv: string[] | null) {
+  if (!machine || !argv || !withAskHook(argv, "x")) return null;
+  const r = await exec(hub, ["sh", "-c", ASK_HOOK_SH], machine).catch(() => null);
+  const hook = r?.code === 0 ? r.stdout.trim() : "";
+  return hook.startsWith("/") ? withAskHook(argv, hook) : null;
 }
 
 /** fork: Claude Code trusts the folder picked for a space, on its machine (core/claude-trust.js), so the space's
@@ -171,7 +187,7 @@ export async function newSpace(hub: Hub, opts: { machine: string | null; path: s
   let t: Awaited<ReturnType<typeof execTemplate>>;
   try { t = await execTemplate(hub, "assistant", machine, chosen); } catch (e) { await keep(); throw e; }
   const r = await run(["hc", "run", "--bg", "--keep", "--no-parent", ...(machine ? ["--on", machine] : []), "--cwd", abs,
-    "--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${id}`, "--label", `herdr.space=${id}`, t.name]).catch((e) => ({ code: 127, out: "", err: String(e) }));
+    "--label", "herdr.role=coordinator", "--label", `herdr.coordinator.space=${id}`, "--label", `herdr.space=${id}`, ...t.labels, t.name]).catch((e) => ({ code: 127, out: "", err: String(e) }));
   t.done();
   // its Assistant didn't start (SHEP-294): the space stays, and its chat starts one with its first message (actions.ts)
   if (r.code !== 0) await keep();

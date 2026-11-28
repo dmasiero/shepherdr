@@ -14,6 +14,7 @@ import { inFront } from "../core/send.js";
 import { settle } from "../core/pending.js";
 import * as SC from "../core/settings.js";
 import { spawn } from "./spawn.ts";
+import { askArgv } from "./spaces.ts"; // fork: question cards for Assistants on other machines
 
 const { DEFAULTS, parseDefaults, current, menuFor, rowFor, argvOf, argvFor, sessionOf, NAMES, line, PICKS_FILE, parsePicks, pickKey, withPin, withRecent, speedOf, speedWordOf } = AG as any;
 /** a chat's speed as kept: false, true (Fast) or "ultrafast" */
@@ -336,8 +337,11 @@ export class Agents {
       this.used(pick);
       return out.terminal as string;
     }
-    const p = spawn(["bash", RESTART, addr, JSON.stringify(built.argv)], { stdout: "pipe", stderr: "pipe", stdin: "ignore",
-      env: { ...process.env, HERDR_RESTART_CHAT: pane, ...(built.resume ? { HERDR_RESTART_RESUME: "1" } : {}),
+    // fork: a Claude Assistant on another machine starts again with the chat's question-card hook (spaces.ts askArgv),
+    // and restart.sh labels it so that machine's global hook steps aside
+    const asks = t.labels?.["herdr.role"] === "coordinator" ? await askArgv(this.hub, addr.includes("/") ? addr.split("/")[0] : null, built.argv) : null;
+    const p = spawn(["bash", RESTART, addr, JSON.stringify(asks ?? built.argv)], { stdout: "pipe", stderr: "pipe", stdin: "ignore",
+      env: { ...process.env, HERDR_RESTART_CHAT: pane, ...(built.resume ? { HERDR_RESTART_RESUME: "1" } : {}), ...(asks ? { HERDR_RESTART_ASKS: "1" } : {}),
         ...(whenIdle ? { HERDR_RESTART_WHEN_IDLE: "1" } : {}) } });
     const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
     const next = out.trim().split("\n").pop();
