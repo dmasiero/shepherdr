@@ -1,6 +1,6 @@
 // fork: Select text in phone terminal
 import { describe, expect, test } from 'bun:test'
-import { before, cellAt, dragEnd, edgeAt, menuAt, pointOf, shownEnd, span, stretch, toSelect, wordAt, type Grid } from './select.ts'
+import { before, cellAt, dragEnd, edgeAt, menuAt, pointOf, seen, shownEnd, span, stretch, toSelect, wordAt, type Grid } from './select.ts'
 
 const g: Grid = { left: 16, top: 8, width: 10, height: 20, cols: 40, rows: 10, viewportY: 100 }
 const cells = (s: string) => [...s]
@@ -31,6 +31,11 @@ describe('the word under a long press', () => {
   test('an address stays whole', () => {
     const line = cells('see https://example.com/x?y=1#z now')
     expect(wordAt(line, 10)).toEqual({ from: 4, to: 31 })
+  })
+  test("an apostrophe inside a word stays in it; quotes around one don't", () => {
+    const line = cells("it didn't 'x'")
+    expect(wordAt(line, 5)).toEqual({ from: 3, to: 9 })
+    expect(wordAt(line, 11)).toEqual({ from: 11, to: 12 })
   })
   test('a space or a separator is one cell', () => {
     const line = cells('a  b|c')
@@ -78,6 +83,12 @@ describe('the handles and the menu', () => {
     expect(pointOf({ row: 101, col: 3 }, g)).toEqual({ x: 46, y: 48 })
     expect(pointOf({ row: 99, col: 3 }, g)).toBeNull()
     expect(pointOf({ row: 110, col: 3 }, g)).toBeNull()
+  })
+  test('a selection out of sight is not seen; one through the screen is', () => {
+    expect(seen({ start: { row: 90, col: 0 }, end: { row: 99, col: 5 } }, g)).toBe(false)
+    expect(seen({ start: { row: 90, col: 0 }, end: { row: 100, col: 0 } }, g)).toBe(false)
+    expect(seen({ start: { row: 0, col: 0 }, end: { row: 200, col: 0 } }, g)).toBe(true)
+    expect(seen({ start: { row: 110, col: 0 }, end: { row: 111, col: 0 } }, g)).toBe(false)
   })
   test('the menu goes above a selection, centred on a one-row one, kept inside', () => {
     const box = { width: 400, height: 216 }, menu = { width: 160, height: 40 }

@@ -4,7 +4,7 @@
 // handles and the menu go. xterm never sees a pointer here (the box over it takes them all), so its own mouse
 // selection never runs.
 import type { Terminal } from '@xterm/xterm'
-import { cellAt, dragEnd, edgeAt, menuAt, pointOf, shownEnd, span, stretch, toSelect, wordAt, type Grid, type Span } from './select.ts'
+import { cellAt, dragEnd, edgeAt, menuAt, pointOf, seen, shownEnd, span, stretch, toSelect, wordAt, type Grid, type Span } from './select.ts'
 
 type Core = { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } }
 
@@ -77,7 +77,8 @@ export function selectLayer(term: Terminal, wrap: HTMLElement, box: HTMLElement,
     const v: SelView = {
       start: inBox(pointOf(s.start, g)),
       end: inBox(pointOf(shownEnd(s.end, g.cols), g)),
-      menu: busy ? null : menuAt(s, g, { width: w.width, height: b.bottom - w.top }, menuSize()),
+      // scrolled out of sight, its menu waits until it is back
+      menu: busy || !seen(s, g) ? null : menuAt(s, g, { width: w.width, height: b.bottom - w.top }, menuSize()),
     }
     const key = JSON.stringify(v)
     if (key === last) return

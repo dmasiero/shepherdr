@@ -59,13 +59,15 @@ export function toSelect(s: Span, cols: number): [number, number, number] {
   return [s.start.col, s.start.row, Math.max(1, (s.end.row - s.start.row) * cols + s.end.col - s.start.col)]
 }
 
-/** what ends a word: spaces, brackets, quotes and a box's sides. Paths and addresses (/ . - _ : ~ @ = + #) stay whole. */
+/** what ends a word: spaces, brackets, quotes and a box's sides. Paths and addresses (/ . - _ : ~ @ = + #) stay whole,
+ *  and so does an apostrophe between two letters (didn't). */
 const SEP = /[\s()[\]{}<>'"`,;|│┃─━]/
+const LETTER = /[\p{L}\p{N}]/u
 
 /** the word under a cell, as columns from..to (not with). `cells` holds each cell's character: '' for the second half
  *  of a wide one, ' ' for an empty cell. A space or a separator is a word of one cell. */
 export function wordAt(cells: string[], col: number): { from: number; to: number } {
-  const sep = (i: number) => cells[i] !== '' && SEP.test(cells[i] || ' ')
+  const sep = (i: number) => cells[i] !== '' && SEP.test(cells[i] || ' ') && !(cells[i] === "'" && LETTER.test(cells[i - 1] ?? '') && LETTER.test(cells[i + 1] ?? ''))
   let c = col
   // the second half of a wide character belongs to its first
   while (c > 0 && cells[c] === '') c--
@@ -100,6 +102,9 @@ export function pointOf(at: Spot, g: Grid): { x: number; y: number } | null {
   if (r < 0 || r >= g.rows) return null
   return { x: g.left + at.col * g.width, y: g.top + (r + 1) * g.height }
 }
+
+/** some of the selection is on the screen's rows */
+export const seen = (s: Span, g: Grid) => s.start.row < g.viewportY + g.rows && shownEnd(s.end, g.cols).row >= g.viewportY
 
 /** where the menu goes, in a box `w` by `h` (the terminal's own): above the selection's first row where it fits,
  *  else below its last (under the handles, `below` px), else over the middle of the box; kept inside sideways */
