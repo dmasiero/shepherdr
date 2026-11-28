@@ -240,7 +240,10 @@ async function runChecks() {
         await sc.locator(newest).waitFor()
         await bottom(page, 'switch back to first chat')
         await page.getByRole('region', { name: 'Chat' }).getByRole('button', { name: 'Everything', exact: true }).click()
-        await page.getByRole('menuitemcheckbox', { name: /^Terminal\b/ }).click()
+        // fork: a space's Terminal row has no check mark, so it is a plain menuitem (Terminal menu row fixes); find it
+        // whatever its role. The terminal had no tab for this space yet, so it opens on that space's own tab.
+        const row = { name: /^Terminal\b/ }
+        await page.getByRole('menuitem', row).or(page.getByRole('menuitemcheckbox', row)).click()
         await checkTerminal(`sh:${EV}`)
         await page.getByRole('button', { name: 'Close the terminal' }).click()
         console.log(`${width}px ${colorScheme}: chats and terminal open at the bottom`)
