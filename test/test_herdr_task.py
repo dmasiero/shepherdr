@@ -3432,6 +3432,7 @@ class ReviewerLine(unittest.TestCase):
         from unittest import mock
         from herdr_task import settings, takeover
         self.settings = settings
+        self.real_which = shutil.which
         d = tempfile.mkdtemp()
         self.checks = os.path.join(d, "cli-check.json")
         with open(os.path.join(d, "settings.json"), "w") as f:
@@ -3521,12 +3522,15 @@ class ReviewerLine(unittest.TestCase):
             with open(codex, "w") as f:
                 f.write("#!/bin/sh\n[ \"$*\" = 'login status' ] && echo 'API key configured - example' >&2\n")
             os.chmod(codex, 0o755)
-            # fork: NixOS (nextgate) has no grep, head or timeout in /usr/bin:/bin (envfs shows them only to a caller whose
-            # PATH has them): linked into the fake bin (AGENTS.md)
+            # fork: Use the real resolver here. The class mock points at /usr/bin, which on
+            # NixOS can make the fixture's tool symlinks resolve back into envfs.
             for tool in ("grep", "head", "timeout"):
-                if shutil.which(tool):
-                    os.symlink(shutil.which(tool), os.path.join(path, tool))
-            out = subprocess.check_output(["sh", "-c", takeover.CHECK], text=True, env={**os.environ, "PATH": path + ":/usr/bin:/bin"})
+                if executable := self.real_which(tool):
+                    os.symlink(executable, os.path.join(path, tool))
+            out = subprocess.check_output(
+                [self.real_which("sh"), "-c", takeover.CHECK],
+                text=True, env={**os.environ, "PATH": path}, timeout=15,
+            )
         self.assertIn("codex=API key configured\n", out.replace(" \n", "\n"))
         self.assertNotIn("example", out)
         self.assertEqual(takeover.cli_state("API key configured"), "ready")

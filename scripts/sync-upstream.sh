@@ -26,7 +26,9 @@ run_checks() {
   python3 scripts/fork_layer.py check
   bun install --frozen-lockfile --no-progress
   bun web/build-plugins.ts
-  bun run typecheck
+  # package.json's typecheck (tsc --noEmit), run by the dev shell's node: tsc's `#!/usr/bin/env node` goes through
+  # NixOS's envfs, which can abort the exec ("bad interpreter: Software caused connection abort")
+  node node_modules/typescript/bin/tsc --noEmit
   python3 bin/sync-shared --check
   python3 -m unittest discover -s test
   # one process per file: Bun's mock.module is process-wide, and the layer's tests each mock "herdr" their own way
