@@ -8,6 +8,7 @@ import { attr } from '@client/attr.ts'
 import { boxPart, focusBox, focusChat } from '@client/commands.ts'
 import { act, attempt, definePlugin, getDraft, getState, has, notice, openTask, registry, setDraft, setUI, tryAct, useChat, useDraft, useSnap, useStore, useUI, type MenuRow, type Thread } from '@client/kernel.ts'
 import { endComposition, isEcho, type Sent } from './echo.ts'
+import { boxHint, boxSends, enterLines, hasEnterSwitch, useEnterSends } from '@client/phone-enter.ts' // fork: Enter sends on phone (SHEP-123)
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
 import { AgentLine, openPicker, pickFor, pickWords, reportedPick, type Pick } from '@client/picker.tsx'
@@ -1090,6 +1091,8 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const composing = useRef(false)
   // a finger (a phone, a tablet): + opens a menu with Photos and Files
   const finger = useMemo(touch, [])
+  // fork: Enter sends on phone (SHEP-123): off, a touch-only device's Enter adds a new line
+  const lines = enterLines(useEnterSends(), useMemo(hasEnterSwitch, []))
   const shared = useLanded() === key
   useGrow(ref, text)
   // fork: "@~/" or "@/" lists the folder typed so far on this chat's agent's machine (paths.tsx, SHEP-50)
@@ -1259,7 +1262,7 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
           data-box={key}
           aria-label={hint}
           placeholder={hint}
-          enterKeyHint="send"
+          enterKeyHint={boxHint(lines) /* fork: Enter sends on phone (SHEP-123) */}
           autoComplete="off"
           value={text}
           onChange={(e) => {
@@ -1289,8 +1292,9 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
             if (ment.onKey(e)) return
             // the / list the same way
             if (slash.onKey(e)) return
-            // Enter sends and Shift+Enter makes a new line, the same on phone and desktop
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+            // Enter sends and Shift+Enter makes a new line; fork: with Enter sends on phone off, a touch-only device's
+            // Enter makes a new line too and only Send (or Ctrl/Cmd+Enter) sends (SHEP-123)
+            if (boxSends({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode }, lines)) {
               e.preventDefault()
               go(e.ctrlKey || e.metaKey)
             }
