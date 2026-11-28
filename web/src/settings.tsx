@@ -13,6 +13,7 @@ import { confirm, openDialog, openForm } from './overlay.tsx'
 import { openPicker, PickerHead, pickFor, PickSummary, useCatalog, type Role } from './picker.tsx'
 import { MOTIONS, setPref, THEMES, usePrefs, WIDTHS } from './prefs.ts'
 import { canKeepAwake, setAwake, useAwake } from './awake.ts'
+import { hasEnterSwitch, setEnterSends, useEnterSends } from './phone-enter.ts' // fork: Enter sends on phone (SHEP-123)
 import { setChatSide, useSides, type Layout, type Side } from './sides.ts'
 import { OWN_VERSION } from './update.ts'
 import { IconButton } from './space-icon.tsx'
@@ -160,6 +161,7 @@ function General() {
   const p = usePrefs()
   const sides = useSides()
   const awake = useAwake()
+  const enterSends = useEnterSends() // fork: SHEP-123
   const { now, read } = useDeviceAlerts()
   const run = async (f: () => Promise<string | void>) => {
     try {
@@ -179,6 +181,15 @@ function General() {
       <SRow label="Motion"><Seg label="Motion" values={MOTIONS} value={p.motion} onChange={(v) => setPref('motion', v)} /></SRow>
       <SidesRow {...sides} />
       {canKeepAwake() && <SRow label="Keep the screen on"><Tgl label="Keep the screen on" on={awake} onChange={setAwake} /></SRow>}
+      {/* fork: Enter sends on phone (SHEP-123), on a touch-only device: a computer always sends on Enter */}
+      {hasEnterSwitch() && (
+        <>
+          <h3>Message box</h3>
+          <SRow label={<>Enter sends on this device<small>Off: Enter adds a new line, and the Send button sends</small></>}>
+            <Tgl label="Enter sends on this device" on={enterSends} onChange={setEnterSends} />
+          </SRow>
+        </>
+      )}
       <h3>Notifications</h3>
       {now && now.state !== 'on' && (
         <div className="banner" style={{ margin: '0 0 4px' }}>
