@@ -742,3 +742,12 @@ textarea.cin{overflow-y:auto}
 .ttab>.tt{display:flex;align-items:center;gap:6px;min-width:0;height:var(--ib);padding:0 2px 0 10px;font:inherit;color:inherit;background:none;border:0;cursor:pointer;white-space:nowrap}
 .ttab .tn{flex:none}.ttab .td{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:#737373}.ttab.on .td{color:#a3a3a3}
 .ttab>.tt:focus-visible{outline:2px solid var(--focus,#3b82f6);outline-offset:-2px;border-radius:8px}
+/* fork: Select text in phone terminal. A finger's selection on a terminal: two handles at its ends, the phone's
+   teardrops in the terminal's link blue, and its menu (Copy, Select all) above it, over xterm's own layers (z-index 5 and on) */
+.tselh{position:absolute;z-index:20;width:20px;height:20px;background:#8ab4f8;touch-action:none;-webkit-touch-callout:none;user-select:none}
+.tselh::before{content:"";position:absolute;inset:-12px}
+.tselh.s{transform:translateX(-100%);border-radius:50% 0 50% 50%}
+.tselh.e{border-radius:0 50% 50% 50%}
+.pop.tselm{z-index:21;display:flex;gap:4px;min-width:0;max-width:none;width:max-content;border-radius:999px}
+.pop.tselm .btn{border-radius:999px}
+.tcap{-webkit-touch-callout:none}

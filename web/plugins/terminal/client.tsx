@@ -25,6 +25,9 @@ import { linkLayer, type LinkLayer } from './linklayer.ts'
 import { mirrorFocus } from './focus.ts'
 import { focusAfterKey } from './keyrow.ts'
 import { opens, type Link } from './links.ts'
+// fork: Select text in phone terminal
+import { selectLayer, type SelectLayer, type SelView } from './selectlayer.ts'
+import { SLOP } from './select.ts'
 
 /** a web page opens the way a chat's link does: a new tab (the outside browser in the Android app), or in the app
  *  when it is this app's own (kernel.ts catches it) */
@@ -114,6 +117,13 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
   coarseRef.current = coarse
   const press = useRef<{ link: Link; x: number; y: number; held: boolean; timer: ReturnType<typeof setTimeout> } | null>(null)
   const scrolling = useRef({ carry: 0, x: 0, y: 0 })
+  // fork: Select text in phone terminal: a finger's selection, its long press, and whether this touch moved
+  const wrap = useRef<HTMLDivElement>(null)
+  const bar = useRef<HTMLDivElement>(null)
+  const sel = useRef<SelectLayer | null>(null)
+  const [selView, setSelView] = useState<SelView | null>(null)
+  const holding = useRef<{ on: boolean; timer: ReturnType<typeof setTimeout> } | null>(null)
+  const touch = useRef({ x: 0, y: 0, moved: false })
   const [status, setStatus] = useState('Opening the terminal…')
   const [ctrl, setCtrl] = useState(false)
   const ctrlRef = useRef(false)
@@ -201,7 +211,7 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
     }
     void Promise.all([import('@xterm/xterm'), import('@xterm/addon-unicode11')]).then(([{ Terminal }, { Unicode11Addon }]) => {
       if (gone || !host.current) return
-      term = xt.current = new Terminal({ cols: 80, rows: 24, scrollback: 2000, disableStdin: true, cursorBlink: true, fontFamily: MONO, fontSize: 13, lineHeight: LINE, allowProposedApi: true, theme: { background: '#0a0a0a', foreground: '#d4d4d4', cursor: '#d4d4d4', selectionBackground: 'rgb(255 255 255 / 0.25)' } })
+      term = xt.current = new Terminal({ cols: 80, rows: 24, scrollback: 2000, disableStdin: true, cursorBlink: true, fontFamily: MONO, fontSize: 13, lineHeight: LINE, allowProposedApi: true, theme: { background: '#0a0a0a', foreground: '#d4d4d4', cursor: '#d4d4d4', selectionBackground: 'rgb(255 255 255 / 0.25)', selectionInactiveBackground: 'rgb(255 255 255 / 0.25)' } })
       for (const final of ['h', 'l']) {
         term.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
           if (params.includes(25)) cursorVisible = final === 'h'
@@ -219,6 +229,8 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
       // The drawn grid can change after fit or a write. Position the outer box in that same render.
       term.onRender(land)
       links.current = linkLayer(term, () => coarseRef.current)
+      // fork: Select text in phone terminal (xterm thinks itself unfocused: the selection keeps the one colour above)
+      if (wrap.current && el) sel.current = selectLayer(term, wrap.current, el, setSelView, () => ({ width: bar.current?.offsetWidth || 180, height: bar.current?.offsetHeight || 44 }))
       if (term.textarea) {
         term.textarea.readOnly = true
         term.textarea.tabIndex = -1
@@ -274,6 +286,10 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
       link?.close()
       links.current?.dispose()
       links.current = null
+      // fork: Select text in phone terminal
+      sel.current?.dispose()
+      sel.current = null
+      setSelView(null)
       term?.dispose()
       xt.current = null
       claim.current = () => {}
@@ -297,6 +313,51 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
     if (press.current) clearTimeout(press.current.timer)
     press.current = null
   }
+  // fork: Select text in phone terminal. A finger held still on text selects its word; moved, it stretches the
+  // selection instead of scrolling; up, the menu shows. A tap while something is selected only clears it.
+  const unhold = () => {
+    if (holding.current) clearTimeout(holding.current.timer)
+    holding.current = null
+  }
+  const hold = (x: number, y: number) => {
+    unhold()
+    const h = { on: false, timer: setTimeout(() => { if (holding.current === h && sel.current?.hold(x, y)) h.on = true }, HOLD) }
+    holding.current = h
+  }
+  const selEnd = (e: { preventDefault(): void }) => {
+    const h = holding.current
+    unhold()
+    if (h?.on) {
+      e.preventDefault()
+      sel.current?.release()
+      return true
+    }
+    if (!touch.current.moved && sel.current?.active()) {
+      sel.current.clear()
+      // a link's tap still opens it; anywhere else the tap only clears: no keys, no keyboard
+      if (press.current) return false
+      e.preventDefault()
+      return true
+    }
+    return false
+  }
+  useLayoutEffect(() => sel.current?.refresh(), [!!selView?.menu])
+  const handle = (which: 'start' | 'end', at: { x: number; y: number } | null) =>
+    at && (
+      <span
+        className={which === 'start' ? 'tselh s' : 'tselh e'}
+        aria-hidden="true"
+        style={{ left: at.x, top: at.y }}
+        onPointerDown={(e) => {
+          e.preventDefault()
+          e.currentTarget.setPointerCapture?.(e.pointerId)
+          sel.current?.grab(which, e.clientX, e.clientY)
+        }}
+        onPointerMove={(e) => { if (e.buttons || e.pointerType === 'touch') sel.current?.drag(e.clientX, e.clientY) }}
+        onPointerUp={() => sel.current?.release()}
+        onPointerCancel={() => sel.current?.release()}
+      />
+    )
   /** after a press of the key row: a mouse click gives the terminal the keys; a finger's tap leaves the on-screen
    *  keyboard as it was */
   // fork: a tab just picked or added takes the keys; a touch screen's keyboard stays down (Terminal again adds a tab)
@@ -313,7 +374,7 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
   }
   return (
     <>
-      <div className="tw" data-keys="own" style={hidden ? { display: 'none' } : fill ? { flex: 1, display: 'flex', flexDirection: 'column' } : undefined}>
+      <div ref={wrap} className="tw" data-keys="own" style={hidden ? { display: 'none' } : fill ? { flex: 1, display: 'flex', flexDirection: 'column' } : undefined}>
         <div ref={box} className={fill ? 'termbox fill' : 'termbox'} data-term={stream}>
           <div ref={host} style={own ? { height: '100%' } : undefined} />
           {status && <div style={{ position: 'absolute', left: 16, top: 8, color: '#737373', font: `13px/20px ${MONO}` }}>{status}</div>}
@@ -350,6 +411,8 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
             follow(l, links.current?.rect(l) ?? null)
           }}
           onContextMenu={(e) => {
+            // fork: Select text in phone terminal: a held finger selects, never the phone's own menu
+            if (holding.current || sel.current?.active()) return e.preventDefault()
             const l = press.current?.link ?? linkAt(e)
             if (!l) return
             e.preventDefault()
@@ -363,6 +426,10 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
             scrolling.current = { carry: 0, x: t.clientX, y: t.clientY }
             unpress()
             const l = e.touches.length === 1 ? linkAt(t) : null
+            // fork: Select text in phone terminal
+            touch.current = { x: t.clientX, y: t.clientY, moved: e.touches.length > 1 }
+            if (!l && e.touches.length === 1) hold(t.clientX, t.clientY)
+            else unhold()
             if (l)
               press.current = {
                 link: l,
@@ -377,6 +444,8 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
               }
           }}
           onTouchEnd={(e) => {
+            // fork: Select text in phone terminal
+            if (selEnd(e)) return
             const p = press.current
             if (!p) return
             unpress()
@@ -384,9 +453,12 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
             e.preventDefault()
             if (!p.held) follow(p.link, links.current?.rect(p.link) ?? null)
           }}
-          onTouchCancel={unpress}
+          onTouchCancel={() => { unpress(); if (holding.current?.on) sel.current?.release(); unhold() }}
           onTouchMove={(e) => {
             const { clientX: x, clientY: y } = e.touches[0]
+            // fork: Select text in phone terminal: the held finger stretches the selection; a swipe is no hold
+            if (holding.current?.on) return sel.current?.stretch(x, y)
+            if (Math.hypot(x - touch.current.x, y - touch.current.y) > SLOP) { touch.current.moved = true; unhold() }
             if (press.current && Math.hypot(x - press.current.x, y - press.current.y) > 10) unpress()
             scrollBy(scrolling.current.x - x, scrolling.current.y - y)
             scrolling.current.x = x
@@ -400,6 +472,8 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
             const k = toKey(e, ctrlRef.current)
             if (!k) return
             e.preventDefault()
+            // fork: Select text in phone terminal: typing ends a selection, as in any terminal
+            sel.current?.clear()
             if (ctrlRef.current) setCtrl(false)
             streamInput(stream, k.keys ? { type: 'keys', keys: k.keys } : { type: 'text', text: k.text! })
           }}
@@ -408,6 +482,8 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
             const t = e.target.value
             e.target.value = ''
             if (!t) return
+            // fork: Select text in phone terminal
+            sel.current?.clear()
             if (ctrlRef.current && t.length === 1) {
               setCtrl(false)
               streamInput(stream, { type: 'keys', keys: [`ctrl+${t.toLowerCase()}`] })
@@ -419,6 +495,19 @@ export function Term({ stream, fill, onEnd, hidden, focus }: { stream: string; f
             if (t) streamInput(stream, { type: 'text', text: t })
           }}
         />
+        {/* fork: Select text in phone terminal: the handles and the menu at the selection */}
+        {selView && handle('start', selView.start)}
+        {selView && handle('end', selView.end)}
+        {selView?.menu && (
+          <div ref={bar} className="pop tselm" role="menu" aria-label="Selected text" style={{ left: selView.menu.left, top: selView.menu.top }}>
+            <Btn small role="menuitem" onMouseDown={(e) => e.preventDefault()} onClick={() => {
+              const t = sel.current?.text() ?? ''
+              sel.current?.clear()
+              if (t) void copyText(t).then((ok) => ok && notice('Copied'))
+            }}>Copy</Btn>
+            <Btn small role="menuitem" onMouseDown={(e) => e.preventDefault()} onClick={() => sel.current?.all()}>Select all</Btn>
+          </div>
+        )}
       </div>
       {!hidden && showKeys(phone, coarse) && (
         <div className="keys" onPointerDown={(e) => { pointer.current = e.pointerType; claim.current() }} onMouseDown={(e) => e.preventDefault()}>
