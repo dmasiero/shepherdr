@@ -255,7 +255,7 @@ def shaped(p):
 
 
 def viewed(p):
-    """A Gitea pull request in gh pr view's fields (commands.PR_FIELDS: take_pr, base_pr)."""
+    """A Gitea pull request in gh pr view's fields (commands.PR_FIELDS: take_pr)."""
     head, base = p.get("head") or {}, p.get("base") or {}
     cross = head.get("repo_id") is not None and base.get("repo_id") is not None and head["repo_id"] != base["repo_id"]
     return {**shaped(p), "state": state_of(p), "isCrossRepository": cross, "headRefName": head.get("ref") or ""}

@@ -6,10 +6,10 @@
 // the file's old name, so a start could run on stale settings: Fast where Settings said Ultrafast), and a CLI held on
 // its own start screen (Codex's "Update available", "Hooks need review") is an empty chat with that screen's card,
 // not "Can't find this conversation".
-// A hub whose machine.exec runs here with HOME a throwaway: its ~/.codex names the models, its templates folder
+// A hub whose machine.exec runs here with HOME a throwaway: its Codex stand-in names the models, its templates folder
 // holds the Assistant's, and PATH has stand-in CLIs. hc is a script that records what it was asked to run.
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, utimesSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agents } from "./agents.ts";
@@ -24,11 +24,11 @@ const home = mkdtempSync(join(tmpdir(), "shep-fresh-")), bin = join(home, "bin")
 mkdirSync(bin); mkdirSync(tpl, { recursive: true }); mkdirSync(join(home, ".codex"));
 writeFileSync(join(tpl, "assistant.md"), "---\nname: assistant\ndescription: The Assistant\ncommand: claude\n---\nYou are the Assistant.\n");
 for (const c of ["claude", "codex"]) { writeFileSync(join(bin, c), "#!/bin/sh\n"); chmodSync(join(bin, c), 0o755); }
-// Codex's own model list, as its models_cache.json has it: Sol takes Fast and Ultrafast, Luna only Fast
-writeFileSync(join(home, ".codex", "models_cache.json"), JSON.stringify({ models: [
-  { slug: "gpt-6.2-sol", display_name: "GPT-6.2 Sol", supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "high" }], default_reasoning_level: "medium", service_tiers: [{ id: "fast" }, { id: "ultrafast" }] },
-  { slug: "gpt-6-luna", display_name: "GPT-6 Luna", supported_reasoning_levels: [{ effort: "low" }], default_reasoning_level: "low", service_tiers: [{ id: "fast" }] },
-] }));
+// Codex's models come from OpenAI's published list (core/agents.js): Shepherdr never asks Codex's App Server.
+const appServer = join(home, "app-server-called");
+writeFileSync(join(bin, "codex"), `#!/bin/sh\n[ "$1" = app-server ] && touch "${appServer}"\nexit 1\n`, { mode: 0o755 });
+afterAll(() => expect(existsSync(appServer)).toBe(false));
+writeFileSync(join(home, ".codex", "config.toml"), 'model_reasoning_effort = "medium"\n');
 // hc: `run` answers as herdr-core does and keeps its arguments and the one-off template it was given
 const ran = join(home, "ran.json"), hcFile = join(bin, "hc");
 writeFileSync(hcFile, `#!/bin/sh
@@ -143,7 +143,7 @@ test("a page with the chat open is sent the fresh chat, again only when it chang
   expect(got.length).toBe(1);
   doc[CHOICE_KEY] = { sp1: { agent: "codex", model: "gpt-6-luna", effort: null, fast: false, perm: "auto", at: 9 } };
   live.refresh();
-  expect(got.map((c) => c.agent.words)).toEqual(["GPT-6.2 Sol · Medium · Ultrafast", "GPT-6 Luna · Low"]);
+  expect(got.map((c) => c.agent.words)).toEqual(["GPT-6.2 Sol · Medium · Ultrafast", "GPT-6 Luna · Medium"]);
   // its Assistant runs: the real chat's turn, no fresh one
   compat.chats = new Map([["p:sp1", "t1"]]);
   compat.spaceList = [{ id: "sp1", machine: null, folder: home, assistant: "t1" }];

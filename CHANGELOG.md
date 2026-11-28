@@ -1,5 +1,75 @@
 # Changelog
 
+## 3.2.22
+
+### What you will notice first
+
+- Needs you alerts are for questions only you can answer. Routine task waits go to the space's Assistant, and
+  old alerts clear when the task can move on.
+- New Codex tasks use a permission hook that stays the same across updates and permission modes. That keeps
+  changes to the hook from stopping new tasks.
+- Codex and Claude Code start screens show up as cards under Needs you. The card shows your choices and opens
+  the terminal so you can answer there. Startup menus stay visible on narrow screens, too.
+- Effort levels use capitals, and Fast and Ultra-fast have lightning bolts. The labels fit on narrow screens.
+
+### Fixes from GitHub triage
+
+- Find Everything by name and tag it in chat. Kept artifacts stay in their space, and Back from an artifact
+  takes you to the chat, task or list you came from. The task pane opens at the newest reply.
+- Task names in messages open the right task on the right machine. You can send a reply to a task's own chat.
+- Codex keeps its reviewer when signed in with an API key. If Shepherdr needs to change the reviewer, the
+  review card says why. The Codex permission choices explain what each one lets the agent do.
+- Secret requests show which vault will keep the secret. The terminal warns you if it and the app use different
+  vaults.
+- A scheduled task keeps its start time when started again unless you ask to run it now. Deleting a task
+  also clears its branch and checkout when the checkout is clean and the branch belongs to that task.
+- Tasks and artifacts follow a moved or renamed repo. Marking work ready keeps the pull request on the task's
+  branch unless you pick another one. Accept uses a merge method the repo allows.
+- On macOS 27, a background service account can block the web app from letting you in. If you hit that problem,
+  see [macOS service accounts](https://github.com/eliasstravik/shepherdr/blob/v3.2.22/docs/settings.md#macos-service-accounts)
+  for how to let a trusted service account through and what access that gives it.
+
+### Updating
+
+Run `shepherdr update`. Codex may ask you to review Shepherdr's permission hook once after this update. If it does,
+review it in the Codex terminal before starting work.
+
+## 3.2.21
+
+### What you will notice first
+
+- Pick Standard, Fast or Ultra-fast under Speed wherever the agent and model offer them. Set defaults for chats,
+  tasks and reviews, or pick a speed for one chat, task or schedule. A chat keeps its own speed, including when
+  you reopen it. Faster tiers can use more of your plan.
+- When you change a running chat's settings, the button says Update in place of Done. With the agent idle,
+  Update reopens the same conversation with your choices and shows what changed in the chat.
+- Chats and terminals open at the bottom so you see the newest line first. Chat reactions and reply quotes are
+  easier to tap.
+- Codex questions show up in the chat. The card opens the agent's terminal so you can answer there.
+- When Claude Code or Codex needs you to sign in again or connect a tool, the app shows which command to run and
+  opens the agent's terminal for you to sign in.
+
+### Changes that protect your agent account
+
+- Shepherdr no longer reads Claude Code or Codex login files, asks private services for usage or model lists, or
+  shows their plan meters and limit alerts. For plan usage, run `/usage` in Claude Code or `/status` in Codex.
+  Model menus use the providers' published lists. ElevenLabs usage still uses its official API with your own key.
+- Shepherdr leaves the agent's settings files and menus alone. Update applies your choices when the agent
+  reopens, through its own supported options. For sign-in, enter any codes or keys in the agent's own sign-in
+  flow. Shepherdr does not run the sign-in or keep the key.
+- The app no longer presses keys to answer Codex questions or accept an agent's start or folder-trust prompt.
+  Answer those in the terminal, including for reviewers. Claude Code's question and permission cards still take
+  answers in chat. For Rewind, use the agent's own command in its terminal where available.
+- Send now for queued messages and automatic key presses after sending are gone. Claude Code can queue a message
+  during a turn. If a send gets stuck, you can tap Retry yourself. Answer any open terminal question before sending
+  a new message. Automatic recaps are gone, and Recap is still in the chat menu.
+- A recurring task pauses when its agent reports a limit, needs to sign in, or gets a provider refusal. Check
+  the agent on its own machine before resuming the schedule.
+
+### Updating
+
+Run `shepherdr update`. There is no one-time setup.
+
 ## 3.2.20
 
 Recaps in the chat, an Update button for any agent, alerts that show their words, two new plug-ins you can switch on

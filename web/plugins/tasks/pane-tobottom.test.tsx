@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { snapshot } from '../../demo/data.ts'
 
 // fork: Jump arrow in side pane. A task's chat in the side pane showed no round ↓ (upstream #1504's jump to the newest
-// message): its pane drew only the box at its foot, never the above-box views. The ones meant for the pane (`pane`)
+// message): its pane drew only the box at its foot, never the above-box views. The ones meant for the pane (`inPane`, upstream's since 3.2.22)
 // now go over its box as in the middle column; the rest (the warnings line) stay the middle column's.
 
 mock.module('@plugins/chat/markdown.tsx', () => ({ Markdown: ({ text }: { text: string }) => <div className="md">{text}</div>, toHtml: (t: string) => t, linked: (t: string) => t, withLinks: (t: string) => [t] }))
@@ -23,7 +23,7 @@ afterAll(() => {
 test("a task's chat in the side pane has the jump to the newest message above its box, and not the warnings line", () => {
   tasks.setup(registry)
   registry.views.box = () => <div className="cbox">BOX</div>
-  registry.aboveBox.push({ order: 5, View: () => <button type="button" className="toend">JUMP</button>, pane: true }, { order: 10, View: () => <div>WARNINGS</div> })
+  registry.aboveBox.push({ order: 5, View: () => <button type="button" className="toend">JUMP</button>, inPane: true }, { order: 10, View: () => <div>WARNINGS</div> })
   Object.assign(getState(), { snap: snapshot() })
   setUI({ pane: 'tasks', task: 'SHOP-15' })
   const P = registry.panes.find((p) => p.id === 'tasks')!.View

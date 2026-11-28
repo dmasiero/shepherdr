@@ -143,9 +143,8 @@ export interface Registry {
   chatTail: { order: number; View: FC<{ chat: Chat | undefined; thread: Thread }> }[]
   /** takes a chat's place (the agent's own terminal) */
   chatBody: { when: (ui: UI, thread: Thread) => boolean; View: FC<{ thread: Thread }> }[]
-  /** above the message box (the warnings line) */
-  // fork: `pane` also shows it above a task's box in the side pane (Jump arrow in side pane)
-  aboveBox: { order: number; View: FC<{ thread: Thread }>; pane?: boolean }[]
+  /** above the message box, in the middle by default */
+  aboveBox: { order: number; inPane?: boolean; View: FC<{ thread: Thread }> }[]
   /** in the message box's bar, before its right end (none today: the voice plugin fills views.boxEnd) */
   boxButtons: { order: number; View: FC<{ thread: Thread; setText: (value: string) => void }> }[]
   /** under a column, below its message box (your own terminal) */
@@ -227,10 +226,9 @@ export interface UI {
   /** the open artifact, at a version picked or its latest */
   art: string | null
   artV: number | null
+  artBack: ArtifactBack | null
   /** the open artifact has the middle column */
   artWide: boolean
-  /** fork: where the open artifact was opened from, which its ← goes back to (Artifact back to its task) */
-  artFrom: ArtFrom | null
   tab: 'Now' | 'Scheduled'
   /** the phone's list of spaces is out */
   drawer: boolean
@@ -276,6 +274,8 @@ export interface UI {
   offline: number | null
   /** a message or card to bring into view once its chat shows it (an alert's link) */
   jump: string | null
+  /** A link opens its chat again even when that chat is already on screen. */
+  chatLink: { place: string; task: string | null; focus: string | null } | null
   /** the artifacts grid's search box: null is closed */
   artq: string | null
   /** the warnings line was closed: the ids of the warnings it held ("a|b"), until one that isn't among them shows */
@@ -342,9 +342,8 @@ let state: State = {
     max: MQ?.matches ? null : params.get('max'),
     art: params.get('artifact'),
     artV: null,
+    artBack: null,
     artWide: false,
-    // fork: Artifact back to its task
-    artFrom: null,
     tab: 'Now',
     drawer: false,
     sideOff: false,
@@ -371,6 +370,7 @@ let state: State = {
     keyboard: false,
     offline: null,
     jump: params.get('focus'),
+    chatLink: params.has('focus') ? { place: params.get('place') ?? '', task: params.get('task') ?? params.get('max'), focus: params.get('focus') } : null,
     artq: null,
     banner: null,
     ...stored<Partial<UI>>('shepherdr.ui', {}),
@@ -389,10 +389,14 @@ export const subscribe = (l: () => void) => {
 export const getState = () => state
 
 /** what makes a step in the browser's history: Back closes a task, a pane, the settings */
+const ART_ROUTE = ['at', 'pane', 'task', 'art', 'max'] as const
 const STEPS: (keyof UI)[] = ['at', 'pane', 'task', 'art', 'max', 'artWide', 'scrFull', 'settings', 'drawer', 'search']
 
 export function setUI(patch: Partial<UI> | ((ui: UI) => Partial<UI>)) {
-  const p = typeof patch === 'function' ? patch(state.ui) : patch
+  const ui = state.ui
+  const change = typeof patch === 'function' ? patch(ui) : patch
+  const leftArtifact = ui.artBack && !('artBack' in change) && ART_ROUTE.some((k) => k in change && change[k] !== ui[k])
+  const p = leftArtifact ? { ...change, artBack: null } : change
   const keys = Object.keys(p) as (keyof UI)[]
   if (keys.every((k) => Object.is(p[k], state.ui[k]))) return
   state = { ...state, ui: { ...state.ui, ...p } }
@@ -494,11 +498,13 @@ function writeUrl(replace: boolean) {
 const depth = (s: Step) => (s.drawer || s.search ? 1 : 0) + (s.settings ? 1 + (s.settings.sec ? 1 : 0) : 0) + (s.pane ? 1 : 0) + (s.task || s.art ? 1 : 0) + (s.max ? 1 : 0) + (s.artWide ? 1 : 0) + (s.scrFull && s.pane === 'screen' ? 1 : 0)
 
 if (typeof window !== 'undefined') {
+  // The chat and terminal position themselves when a history entry comes back.
+  history.scrollRestoration = 'manual'
   addEventListener('popstate', (e) => {
     const st = (e as PopStateEvent).state as { shep?: number; step?: Step } | null
     const q = new URLSearchParams(location.search)
     const step: Partial<Step> = st?.shep === 2 && st.step ? st.step : { at: q.get('place') ?? state.ui.at, task: taskOfUrl(q), art: q.get('artifact'), pane: paneOfUrl(q), max: MQ?.matches ? null : q.get('max'), artWide: false, scrFull: false, settings: null, drawer: false, search: false }
-    state = { ...state, ui: { ...state.ui, ...step } }
+    state = { ...state, ui: { ...state.ui, ...step, artBack: null, jump: q.get('focus'), chatLink: null } }
     written = JSON.stringify(stepOf(state.ui))
     stayOnShown()
     watchVisible()
@@ -519,6 +525,13 @@ export function openLink(href: string, step = false) {
   const task = q.get('task')
   const art = q.get('artifact')
   const pane = q.get('pane')
+  const max = q.get('max')
+  const focus = q.get('focus')
+  const chatLink = !art && (task || max || !pane) ? { place: place ?? state.ui.at, task: task ?? max, focus } : null
+  const targetTask = state.snap && chatLink?.task ? taskOf(state.snap, chatLink.task) : undefined
+  const targetPlace = state.snap && chatLink && !chatLink.task ? placeOf(state.snap, chatLink.place) : undefined
+  const chat = targetTask ? taskChat(targetTask) : targetPlace?.chat
+  const clearMax = (task && task === state.ui.max) || (place && (place !== state.ui.at || (chatLink && !chatLink.task)))
   stepNext = step
   try {
     setUI({
@@ -526,15 +539,17 @@ export function openLink(href: string, step = false) {
       drawer: false,
       search: false,
       ...(place ? { at: place } : {}),
-      task: task ?? (state.ui.phone ? q.get('max') : null),
+      task: task ?? (state.ui.phone ? max : null),
       art,
-      ...(art ? { artV: null } : {}),
-      pane: art ? 'artifacts' : task ? 'tasks' : pane && pane !== 'screen' ? pane : state.ui.phone ? null : state.ui.pane,
-      // a link that names a maximized task lands in it; another space's leaves it; else it stays
-      max: q.has('max') && !state.ui.phone ? q.get('max') : place && place !== state.ui.at ? null : state.ui.max,
+      ...(art ? { artV: null, artBack: step && (!place || place === state.ui.at) ? artifactBackFrom(state.ui, art) : null } : {}),
+      pane: art ? 'artifacts' : task || (max && state.ui.phone) ? 'tasks' : pane && pane !== 'screen' ? pane : state.ui.phone ? null : state.ui.pane,
+      // A space link gives the middle back to the space. A task link must show the task only once.
+      max: max && !state.ui.phone ? max : clearMax ? null : state.ui.max,
       artWide: false,
       scrFull: false,
-      jump: q.get('focus'),
+      jump: focus,
+      chatLink,
+      ...(chat && state.ui.aterm[chat] ? { aterm: { ...state.ui.aterm, [chat]: false } } : {}),
     })
   } finally {
     stepNext = false
@@ -645,7 +660,7 @@ export function connect() {
       if (!chat) return sock.send(JSON.stringify({ type: 'resync' }))
       msg = { type: 'chat', chat }
     }
-    if (msg.type === 'show') return setUI({ art: msg.artifact, artV: null, pane: 'artifacts', task: null })
+    if (msg.type === 'show') return setUI({ art: msg.artifact, artV: null, artBack: null, pane: 'artifacts', task: null })
     if (msg.type === 'voice') return registry.voiceWake?.()
     if (msg.type === 'go') return openLink(msg.url)
     if (msg.type === 'snapshot') {
@@ -761,13 +776,15 @@ export function watchAlso(key: string) {
   }
 }
 
-/** the chats on screen: the space's, and the open task's (one with no agent yet too: its brief, SHEP-330) */
+/** The space and every open task, including one opened directly into the middle column. */
 export function visibleChats(ui: UI, snap: Snapshot): string[] {
   const keys = new Set<string>(extra)
   const p = placeOf(snap, ui.at)
   if (p) keys.add(p.chat)
-  const t = taskOf(snap, ui.task)
-  if (t) keys.add(taskChat(t))
+  for (const id of [ui.task, ui.max]) {
+    const task = taskOf(snap, id)
+    if (task) keys.add(taskChat(task))
+  }
   return [...keys]
 }
 
@@ -791,7 +808,7 @@ function stayOnShown() {
   const task = gone(ui.task) ? null : ui.task
   const max = gone(ui.max) ? null : ui.max
   if (at === ui.at && task === ui.task && max === ui.max) return
-  state = { ...state, ui: { ...ui, at, task, max } }
+  state = { ...state, ui: { ...ui, at, task, max, artBack: at === ui.at ? ui.artBack : null } }
   writeUrl(true)
 }
 
@@ -875,6 +892,8 @@ export function go(place: string) {
     max: null,
     artWide: false,
     search: false,
+    jump: null,
+    chatLink: null,
     // another space: the open task goes with the one it was opened in
     ...(ui.phone ? { pane: null, task: null, art: null } : { task: null }),
     ...(ui.pane === 'screen' && ui.scr ? (ui.scr.key.startsWith('chat:') ? { scr: { key: `chat:${place}`, src: 'b' as const, drive: false } } : { pane: null }) : {}),
@@ -884,7 +903,7 @@ export function go(place: string) {
 /** open a task in the pane (one not started yet opens its Start dialog instead: the tasks plugin decides); a task
  *  maximized in the middle stays there */
 export function openTask(id: string) {
-  const shut = { artWide: false, drawer: false, search: false, settings: null }
+  const shut = { artWide: false, drawer: false, search: false, settings: null, jump: null, chatLink: null }
   // the one already in the middle stays there, not shown twice
   if (getState().ui.max === id) return setUI(shut)
   setUI({ ...shut, task: id, pane: 'tasks', art: null })
@@ -900,30 +919,24 @@ export function minimize() {
   setUI((ui) => (ui.max ? { max: null, task: ui.max, pane: 'tasks', art: null, artWide: false } : {}))
 }
 
+type ArtifactBack = Pick<UI, 'pane' | 'task' | 'art' | 'artV' | 'artWide' | 'drawer' | 'search' | 'artBack'>
+
+function artifactBackFrom(ui: UI, id: string): ArtifactBack | null {
+  const { pane, task, art, artV, artWide, drawer, search, artBack } = ui
+  return art === id ? artBack : { pane, task, art, artV, artWide, drawer, search, artBack }
+}
+
 export function openArtifact(id: string, v: number | null = null) {
-  // fork: Artifact back to its task: it keeps what the pane showed, for its ←
-  setUI((ui) => ({ art: id, artV: v, pane: 'artifacts', task: null, drawer: false, search: false, settings: null, artFrom: ui.art ? (ui.artFrom && { ...ui.artFrom, art: id }) : { art: id, at: ui.at, pane: ui.pane, task: ui.task } }))
+  setUI((ui) => ({ art: id, artV: v, artBack: artifactBackFrom(ui, id), pane: 'artifacts', task: null, artWide: false, drawer: false, search: false, settings: null }))
 }
 
-/** fork: Artifact back to its task. What the pane showed before an artifact opened in it: its ← goes back there,
- *  like a browser's Back (a task's chat, the Tasks list, the space's chat with no pane, or the Artifacts list) */
-export interface ArtFrom {
-  art: string
-  at: string
-  pane: string | null
-  task: string | null
-}
-
-/** fork: Artifact back to its task. Where an open artifact's ← goes, and its label; the Artifacts list when it was
- *  opened from nowhere known (a link, a reload, another space since) */
-export function artifactBack(ui: UI): { label: string; to: Partial<UI> } {
-  const f = ui.artFrom
-  const list = { label: 'Back to artifacts', to: { art: null, artFrom: null } }
-  if (!f || f.art !== ui.art || f.at !== ui.at) return list
-  if (f.task) return { label: 'Back to the task', to: { art: null, artFrom: null, pane: f.pane, task: f.task } }
-  if (f.pane === 'artifacts') return list
-  if (f.pane) return { label: f.pane === 'tasks' ? 'Back to tasks' : 'Back', to: { art: null, artFrom: null, pane: f.pane } }
-  return { label: 'Back to the chat', to: { art: null, artFrom: null, pane: null, artWide: false } }
+export function backFromArtifact() {
+  setUI((ui) => {
+    const back = ui.artBack
+    if (!back) return { art: null, artV: null }
+    if (back.task && state.snap && !taskOf(state.snap, back.task)) return { ...back, task: null }
+    return back
+  })
 }
 
 /** open or close a pane from its button: pressed again on a desktop, it closes */

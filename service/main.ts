@@ -32,7 +32,7 @@ import { webBuild } from "./webbuild.ts";
 import { Model } from "./model.ts";
 import { checkFlags } from "./flags.ts";
 import type { Snapshot } from "../web/shared/types.ts";
-import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, resumeOf, scheduleOf, setConfig, spaceRepo } from "./next.ts";
+import { catalogOf, configOf, enrich, offPlugins, pluginOn, plansOf, reposOf, resumeOf, scheduleAgentArgs, scheduleOf, setConfig, spaceRepo } from "./next.ts";
 import { ensureShell, type ShellAt } from "./shells.ts";
 import { Chats } from "./chats.ts";
 import { act, findMachines, hc as hcRun } from "./actions.ts";
@@ -58,7 +58,7 @@ import { Secrets, SecretsHome, secretValue } from "./secrets.ts";
 import { Agents } from "./agents.ts";
 import { Updates } from "./agent-update.ts";
 import { Machines } from "./machines.ts";
-import { Push, alertsOf, agentAlerts } from "./push.ts";
+import { Push, alertsOf, agentAlerts, pushChanges, waitingTags } from "./push.ts";
 import { waiting } from "../web/shared/alerts.ts";
 import { GlanceFeed, MAX_CHATS, glanceOf, openUrlOk, saidToPerson } from "./glance.ts";
 import { chatPage } from "./native-chat.ts";
@@ -89,7 +89,7 @@ const reaches = new Map<string, { at: number; got: Promise<{ from: string | null
 function knownSpaces() {
   return compat.allSpaces().map((s) => {
     const p = compat.last?.places.find((x) => x.id === s.id);
-    return { id: s.id.split("/").pop()!, name: p?.name ?? "", folder: s.folder, machine: s.machine ?? null, ...(p?.emoji && !isPicture(p.emoji) ? { emoji: p.emoji } : {}), assistant: !!(p && compat.addrOf(p.chat)) };
+    return { id: s.id.split("/").pop()!, name: p?.name ?? "", folder: s.folder, machine: s.machine ?? null, everything: s.id === compat.last?.everything, ...(p?.emoji && !isPicture(p.emoji) ? { emoji: p.emoji } : {}), assistant: !!(p && compat.addrOf(p.chat)) };
   });
 }
 function reachOf(machine: string | null) {
@@ -103,7 +103,7 @@ function reachOf(machine: string | null) {
     from: machine, checked: null,
     spaces: compat.allSpaces().filter((s) => (s.machine ?? null) === machine).map((s) => {
       const id = s.id.split("/").pop()!, p = compat.last?.places.find((x) => x.id === s.id);
-      return { id, name: p?.name ?? id, route: "", machine: machine ?? me?.host ?? "", target: id, ...(p?.emoji && !isPicture(p.emoji) ? { emoji: p.emoji } : {}), assistant: !!(p && compat.addrOf(p.chat)) };
+      return { id, name: s.id === compat.last?.everything ? "Everything" : p?.name ?? id, route: "", machine: machine ?? me?.host ?? "", target: id, ...(p?.emoji && !isPicture(p.emoji) ? { emoji: p.emoji } : {}), assistant: !!(p && compat.addrOf(p.chat)) };
     }),
   });
   reaches.set(k, { at: Date.now(), got });
@@ -159,6 +159,10 @@ const model = new Model(hub, live);
 live.chats = new Chats(hub);
 live.compat = compat;
 compat.reader = (a) => live.chats?.reader(a) ?? null;
+compat.queued = (a) => live.chats?.queued(a) ?? [];
+compat.refreshQuestions = async (a) => { await live.chats?.refresh(a); };
+compat.questionScreen = async (a) => (await live.chats?.screen(a)) ?? null;
+live.chats.onQuestions = () => model.rebuild();
 // the chat scrolled to its top: the page before
 (compat as any).earlier = (a: string) => live.chats?.earlier(a);
 const push = new Push(() => (proxy ? proxy.origins[0] : me ? webOrigin(me.dns, hp) : "https://herdr.dev")); // fork: or the proxy's
@@ -181,7 +185,7 @@ hub.on((e) => {
   for (const a of shows.take(hub.terminals.values())) if (host.serving()) live.show(a.artifact);
 });
 // what was already waiting or ready when the service started: no alert for it
-let alerted: Set<string> | null = null;
+let alerted: ReturnType<typeof alertsOf> | null = null;
 // the agents' own alerts ride on the snapshot (the web app's toasts: web/plugins/alerts/toasts.tsx), then push
 const chatOfAddress = (a: string) => { for (const [k, v] of ((compat as any).chats ?? new Map()) as Map<string, string>) if (v === a) return k; return null; };
 const alertNewAnd = (snap: any) => { try { snap.alerts = agentAlerts(hub.terminals.values(), snap, chatOfAddress, HOME); alertNew(snap); } catch {} return snap; };
@@ -234,12 +238,16 @@ function alertNew(snap: any) {
   const now = alertsOf(snap, lastSaid);
   // the phone's and watch's glance, with these same words (service/glance.ts)
   try { readNews(snap); glance.set(glanceOf(snap, now, Date.now(), newsOf)); } catch (err) { console.error(`glance: ${(err as Error).message}`); }
-  waitingNow = { count: waiting(snap).count, tags: [...new Set([...now.values()].filter((x) => x.waits).map((x) => x.tag))] };
-  if (alerted) for (const [k, a] of now) if (!alerted.has(k)) void push.send({ ...a, badge: waitingNow.count, open: waitingNow.tags });
-  alerted = new Set(now.keys());
+  waitingNow = { count: waiting(snap).count, tags: waitingTags(now) };
+  if (alerted) for (const a of pushChanges(alerted, now, waitingNow.count, waitingNow.tags)) void push.send(a);
+  alerted = now;
 }
 compat.agents = new Agents(hub);
 (compat.agents as Agents).onOffer = () => live.refresh();
+(compat.agents as Agents).onSettings = () => {
+  live.refresh();
+  live.chats?.refreshAll();
+};
 compat.updates = new Updates(hub, (addr, reader) => (compat.agents as Agents).revive(addr, reader));
 (compat.updates as Updates).onChange = () => live.refresh();
 const machines = new Machines(hub, () => model.machineNames());
@@ -380,6 +388,9 @@ const watch = new AgentWatch(hub, hcRun, {
     }
     return out;
   },
+  loginWatches: () => [...hub.terminals].filter(([addr]) => !!compat.trustWho(addr)).map(([addr]) => addr),
+  alreadyCarded: (addr) => !!asks.of(addr).length || !!compat.queued?.(addr).length,
+  log: (addr) => compat.reader?.(addr)?.conv?.items ?? [],
   changed: () => { live.chats?.refreshAll(); model.rebuild(); },
 });
 (compat as any).watch = watch;
@@ -477,6 +488,7 @@ const snapshotOf = (b: Parameters<NonNullable<typeof model.onBuild>>[0]) => live
 // open chats are told again (compat.chat reads the rows the snapshot just took)
 let newsWas: string | null = null;
 model.onBuild = (b) => {
+  live.chats?.trackCodex([...b.spaces.map((s) => s.assistant), ...b.rows.filter((r) => !r.archived).map((r) => r.worker)].filter(Boolean));
   snapshotOf(b);
   const now = newsKey(b.rows);
   if (newsWas !== null && now !== newsWas) live.chats?.refreshAll();
@@ -781,12 +793,18 @@ async function doAction(body: any): Promise<Response> {
         await tool(r.args);
       }
       else if (body.op === "edit") {
+        const agentArgs = body.agent ? scheduleAgentArgs(body.agent) : [];
+        if (agentArgs.length && !body.when && !body.what && !body.to) {
+          await tool(["edit", at.id, ...agentArgs]);
+          void model.refresh();
+          return json({ ok: true });
+        }
         const sp = (model.spaces as any[]).find((x) => x.id === body.place);
         if (!sp) throw new Error("Its space isn't here any more.");
         const to = typeof body.to === "string" ? (model.spaces as any[]).find((x) => x.id === body.to) : null;
         const word = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 2000) : "");
         const lines = [word(body.when) && `- when it runs: ${word(body.when)}`, word(body.what) && `- what to do: ${word(body.what)}`, to && `- its space: ${to.name}${to.machine ? ` on ${to.machine}` : ""} (${to.folder})`,
-          body.agent?.agent && `- the agent its tasks run on: ${[body.agent.agent, body.agent.model, body.agent.effort, body.agent.fast === "ultrafast" ? "ultrafast" : body.agent.fast ? "fast" : "", body.agent.perm].filter(Boolean).join(", ")}`].filter(Boolean);
+          agentArgs.length && `- its agent choices: include these exact arguments in the same auto edit command: ${agentArgs.map((arg) => arg.startsWith("--") ? arg : JSON.stringify(arg)).join(" ")}`].filter(Boolean);
         if (!lines.length) return json({ ok: true });
         const text = `Change the schedule “${word(body.name)}” (herdr-task auto id ${at.id}, in ${at.folder}):\n${lines.join("\n")}\nSet it with herdr-task auto edit. If you can't make sense of the words, say so here and leave the schedule as it is.`;
         return json(await act(hub, { type: "send", chat: placeKey(sp.id), text, human: true, cid: `sched-${Date.now().toString(36)}` }, compat));
@@ -967,8 +985,9 @@ const server = Bun.serve<{ who: string }>({
     // the glance feed (SHEP-246) is read by the phone's own app: checked as a write (its origin, x-shepherdr: 1)
     const native = path === "/api/glance" && url.searchParams.get("native") === "1";
     // fork: proxy mode: only connections the proxy's user opened count (SHEPHERDR_PROXY_USER)
-    const pass = gate(req, g, socket, viaTailnet ? trustedPeer(peer, PORT)
-      : viaWeb && (proxy!.uid === null || (!!peer && peerUid(peer, PORT) === proxy!.uid)), path === "/api/glance" || path === "/api/chat");
+    const trusted = viaTailnet ? trustedPeer(peer, PORT, () => settings.webIgnoreAccounts())
+      : viaWeb && (proxy!.uid === null || (!!peer && peerUid(peer, PORT) === proxy!.uid));
+    const pass = gate(req, g, socket, trusted, path === "/api/glance" || path === "/api/chat");
     if (!pass.ok) {
       const why = refusedWhy(pass.why);
       if (why !== pass.why && why !== saidPeer) console.error(`web: ${(saidPeer = why)}`);

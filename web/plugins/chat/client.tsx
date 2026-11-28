@@ -10,7 +10,7 @@ import { act, attempt, definePlugin, getDraft, getState, has, notice, openTask, 
 import { endComposition, isEcho, type Sent } from './echo.ts'
 import { partsOf, placeOutgoing, placesOf, keyOf, readNow, showsAs, type Outgoing } from '@client/outbox.ts'
 import { confirm, openMenu } from '@client/overlay.tsx'
-import { AgentLine, openPicker, pickFor, pickWords, type Pick } from '@client/picker.tsx'
+import { AgentLine, openPicker, pickFor, pickWords, reportedPick, type Pick } from '@client/picker.tsx'
 import { attach, detach, dropOut, retry, reupload, send } from '@client/send.ts'
 import { still } from '@client/motion.ts'
 import { ActBtn, ActError, Btn, cx, Empty, I, IB, useCardActs, useGrow } from '@client/ui.tsx'
@@ -44,6 +44,7 @@ import { Jobs } from './jobs.tsx'
 import { newsRow, type NewsRow } from './news.ts'
 import { usePaths } from './paths.tsx' // fork: SHEP-50's "@~/" path list
 import { cardsAfter, cardsNow, stillLoading, TRIES, wantsEarlier } from './hold.ts'
+import { onPageReturn } from '@client/viewport.ts'
 import { keepAtEnd, rowEdges } from './stick.ts'
 import { OFF_PX, asksBelow, isOffEnd, newSince, onAsk, onEnd, questionsBelow, setOffEnd, toAsk, toEnd, useOffEnd } from './newest.ts'
 import { editedDraft, heldOf, isHeld, ownAsk } from './queued.ts'
@@ -124,7 +125,7 @@ function QuietRow({ icon, label, meta = [], body, startOpen = false, kind }: { i
 }
 
 /** a recap of what happened while you were away: a quiet block of its own, its words in the chat's size, labelled */
-function RecapNote({ text, at }: { text: string; at?: number }) {
+function RecapNote({ text, at, place }: { text: string; at?: number; place: string }) {
   return (
     <section className="recap" aria-label="Recap">
       <div className="rh">
@@ -132,7 +133,7 @@ function RecapNote({ text, at }: { text: string; at?: number }) {
         <span>Recap</span>
         {at ? <span className="qm">{clock(at)}</span> : null}
       </div>
-      <Markdown text={text} />
+      <Markdown text={text} place={place} />
     </section>
   )
 }
@@ -215,7 +216,7 @@ function Quote({ q }: { q: NonNullable<Message['reply']> }) {
       className="quote"
       onClick={(e) => {
         e.stopPropagation()
-        setUI({ jump: q.id! })
+        setUI({ jump: q.id!, chatLink: null })
       }}
     >
       {q.text}
@@ -400,7 +401,7 @@ function Bubble({ msg, chat, thread, gap, pending, failed, mark, onReply }: { ms
           >
             {msg.reply?.task ? <TaskQuote id={msg.reply.task} title={msg.reply.text} /> : msg.reply && <Quote q={msg.reply} />}
             <Folded text={msg.text ?? ''}>
-              {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '')}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} />}
+              {mine ? <div className="md" style={{ whiteSpace: 'pre-wrap' }}>{withLinks(msg.text ?? '', thread.place)}</div> : <Markdown text={msg.text ?? ''} mentions={msg.mentions} place={thread.place} />}
             </Folded>
           </div>
           {registry.messageEdge.map((x, i) => <x.View key={i} msg={msg} chat={chat} />)}
@@ -576,14 +577,14 @@ interface Shown {
 
 /** the chat's messages with what you sent that it does not show yet, in the order things were sent */
 function shownOf(chat: Chat | undefined, key: string, outbox: Outgoing[]): Shown[] {
-  const rows: Shown[] = (chat?.messages ?? [])
+  let rows: Shown[] = (chat?.messages ?? [])
     .filter((m) => !(m.waiting && m.waitsFor === 'turn' && m.cid && outbox.some((o) => o.cid === m.cid)))
     .map((msg) => (msg.waiting && msg.waitsFor === 'queue' ? { msg, mark: 'sent' } : { msg, pending: !!msg.waiting }))
   // held for the agent's turn (Ctrl+Enter, a long press on Send): a row over the box (Held), not in the chat yet
   const mine = outbox.filter((o) => o.chat === key && !isHeld(o))
   if (mine.length) {
     const at = placesOf(rows.map((r) => ({ id: r.msg.id, cid: r.msg.cid })), mine)
-    rows.splice(0, rows.length, ...placeOutgoing(rows, mine.map((o) => ({ at: at.get(o.cid) ?? rows.length, rows: partsOf(o, chat).map((msg) => ({ msg, ...showsAs(o) })) }))))
+    rows = placeOutgoing(rows, mine.map((o) => ({ at: at.get(o.cid) ?? rows.length, rows: partsOf(o, chat).map((msg) => ({ msg, ...showsAs(o) })) })))
   }
   // your latest message, taken in and not answered yet: read
   const last = rows[rows.length - 1]
@@ -598,7 +599,19 @@ function Messages({ thread }: { thread: Thread }) {
   const rows = useMemo(() => shownOf(chat, thread.chat, outbox), [chat, thread.chat, outbox])
   const end = useRef<HTMLDivElement>(null)
   const stuck = useRef(true)
-  const jump = useUI((u) => u.jump)
+  const link = useUI((u) => {
+    const to = u.chatLink
+    return to && (to.task ? to.task === thread.task?.id : !thread.task && (!to.place || to.place === thread.place)) ? to : null
+  })
+  const covered = useUI((u) => u.phone && (!!u.drawer || !!u.settings || (thread.where === 'chat' && !!u.pane)))
+  const jump = useUI((u) => u.jump === u.chatLink?.focus && !link ? null : u.jump)
+  const view = useRef({ covered, link })
+  const focused = useRef<string | null>(null)
+  const edge = useRef(0)
+  const first = chat?.messages[0]?.id
+  const earlierAnchor = useRef<{ first: string | undefined; row: HTMLElement; top: number } | null>(null)
+  const looked = useRef<{ link: typeof link; first: string | undefined } | null>(null)
+  const highlight = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // #1504: the rows as the jump button counts them, and the row that was last when you scrolled away from the end
   const seen = useRef<{ id: string; mine: boolean }[]>([])
   seen.current = rows.map((r) => ({ id: keyOf(r.msg), mine: r.msg.who === 'you' }))
@@ -607,100 +620,136 @@ function Messages({ thread }: { thread: Thread }) {
   const [, bump] = useState(0)
   const tried = opened.get(thread.chat) ?? 0
   useEffect(() => {
-    if (!wantsEarlier(chat, tried) || loading.has(thread.chat)) return
+    if (covered || loading.has(thread.chat)) return
+    // A linked message can be in an older page. Ask once per oldest message while the link is unresolved.
+    const seek = !!jump && link?.focus === jump && focused.current !== jump && chat?.earlier &&
+      (looked.current?.link !== link || looked.current.first !== first)
+    const load = wantsEarlier(chat, tried)
+    if (!seek && !load) return
     const key = thread.chat
+    if (seek) looked.current = { link, first }
     loading.add(key)
     void act({ type: 'earlier', chat: key })
       .catch(() => undefined)
       .finally(() => {
         loading.delete(key)
-        opened.set(key, (opened.get(key) ?? 0) + 1)
+        if (load) opened.set(key, (opened.get(key) ?? 0) + 1)
         bump((n) => n + 1)
       })
-  }, [chat, tried, thread.chat])
-
-  // it opens at the newest message and stays there as new ones come, unless you scrolled up; scrolling up to the top
-  // loads earlier ones
-  useLayoutEffect(() => {
-    const sc = end.current?.closest<HTMLElement>('.scroll')
-    if (!sc) return
-    stuck.current = true
-    sc.scrollTop = sc.scrollHeight
-    let height = sc.scrollHeight
-    const on = () => {
-      // the chat grew (a picture loaded, a card came): that is not the person scrolling up
-      if (sc.scrollHeight !== height) {
-        height = sc.scrollHeight
-        if (stuck.current) return void (sc.scrollTop = sc.scrollHeight)
-      }
-      const off = sc.scrollHeight - sc.scrollTop - sc.clientHeight
-      stuck.current = off < 80
-      // well away from the end: the jump button shows, counting what comes from now; back at the end it goes
-      if (off > OFF_PX) {
-        if (left.current == null) left.current = seen.current.at(-1)?.id ?? ''
-        setOffEnd(thread.chat, { count: newSince(seen.current, left.current), asks: asksBelow(sc).length })
-      } else if (stuck.current) {
-        left.current = null
-        setOffEnd(thread.chat, null)
-      }
-      const c = getState().chats[thread.chat]
-      if (sc.scrollTop < 40 && c?.earlier && !loading.has(thread.chat)) {
-        loading.add(thread.chat)
-        const was = sc.scrollHeight
-        void act({ type: 'earlier', chat: thread.chat })
-          .catch(() => undefined)
-          .finally(() => setTimeout(() => {
-            loading.delete(thread.chat)
-            sc.scrollTop += sc.scrollHeight - was
-          }, 300))
-      }
-    }
-    sc.addEventListener('scroll', on, { passive: true })
-    // the jump button and End: glide back to the newest message (at once with reduced motion); it follows again there
-    const off = onEnd(thread.chat, () => {
-      const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-      sc.scrollTo({ top: sc.scrollHeight, behavior: still ? 'auto' : 'smooth' })
-    })
-    // the "1 question below" pill: the first question under the view, in its middle
-    const offAsk = onAsk(thread.chat, () => {
-      const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
-      asksBelow(sc)[0]?.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' })
-    })
-    left.current = null
-    setOffEnd(thread.chat, null)
-    return () => {
-      sc.removeEventListener('scroll', on)
-      offAsk()
-      off()
-      setOffEnd(thread.chat, null)
-    }
-  }, [thread.chat])
-  useLayoutEffect(() => {
-    const sc = end.current?.closest<HTMLElement>('.scroll')
-    if (sc && stuck.current) sc.scrollTop = sc.scrollHeight
   })
-  // new messages while you're away from the end: the button's count goes up
-  useEffect(() => {
-    const sc = end.current?.closest<HTMLElement>('.scroll')
-    if (left.current != null) setOffEnd(thread.chat, { count: newSince(seen.current, left.current), asks: sc ? asksBelow(sc).length : 0 })
-  }, [rows, thread.chat])
-  // a picture that loads later (a card's, a tile's) grows the chat: it stays at the newest message
-  useEffect(() => {
+
+  // Reset on entry and on return. Geometry changes while following (history, media or keyboard) keep the foot in view.
+  useLayoutEffect(() => {
     const sc = end.current?.closest<HTMLElement>('.scroll')
     const box = end.current?.parentElement
     if (!sc || !box) return
-    // the box or the suggested replies above it grew: the chat's window got shorter, its bottom stays in view
-    return keepAtEnd(sc, box, () => stuck.current)
+    const reopen = () => {
+      stuck.current = true
+      left.current = null
+      earlierAnchor.current = null
+      setOffEnd(thread.chat, null)
+      sc.scrollTo({ top: sc.scrollHeight, behavior: 'instant' })
+      edge.current = sc.scrollHeight - sc.clientHeight
+    }
+    reopen()
+    focused.current = null
+
+    const on = () => {
+      if (!sc.clientHeight) return
+      const max = sc.scrollHeight - sc.clientHeight
+      if (stuck.current && max !== edge.current) {
+        reopen()
+        return
+      }
+      edge.current = max
+      const off = max - sc.scrollTop
+      stuck.current = off <= 2
+      if (stuck.current) {
+        left.current = null
+        setOffEnd(thread.chat, null)
+      } else {
+        left.current ??= seen.current.at(-1)?.id ?? ''
+        if (off > OFF_PX) setOffEnd(thread.chat, { count: newSince(seen.current, left.current), asks: asksBelow(sc).length })
+      }
+
+      const key = thread.chat
+      // A short chat is already at its newest. Only a scroll into older history asks for an earlier page.
+      if (!stuck.current && sc.scrollTop < 40 && getState().chats[key]?.earlier && !loading.has(key)) {
+        // Browsers with scroll anchoring keep the reader's row in place when the page is prepended.
+        if (!CSS.supports('overflow-anchor', 'auto')) {
+          const top = sc.getBoundingClientRect().top
+          const row = [...box.querySelectorAll<HTMLElement>('[data-msg], [data-card]')].find((row) => row.getBoundingClientRect().bottom > top)
+          if (row) earlierAnchor.current = { first: getState().chats[key]?.messages[0]?.id, row, top: row.getBoundingClientRect().top - top + sc.scrollTop }
+        }
+        loading.add(key)
+        void act({ type: 'earlier', chat: key })
+          .catch(() => undefined)
+          .finally(() => loading.delete(key))
+      }
+    }
+    sc.addEventListener('scroll', on, { passive: true })
+    const stopKeeping = keepAtEnd(sc, box, () => stuck.current, () => { edge.current = sc.scrollHeight - sc.clientHeight })
+    const stopReturning = onPageReturn(reopen)
+    const off = onEnd(thread.chat, reopen)
+    const offAsk = onAsk(thread.chat, () => {
+      const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+      asksBelow(sc)[0]?.scrollIntoView({ block: 'center', behavior: still ? 'instant' : 'smooth' })
+    })
+    return () => {
+      sc.removeEventListener('scroll', on)
+      stopKeeping()
+      stopReturning()
+      offAsk()
+      off()
+      clearTimeout(highlight.current)
+      setOffEnd(thread.chat, null)
+    }
   }, [thread.chat])
-  useEffect(() => {
-    if (!jump) return
-    const el = document.querySelector(`[data-msg="${attr(jump)}"], [data-card="${attr(jump)}"]`)
-    if (!el) return
-    stuck.current = false
-    el.scrollIntoView({ block: 'center' })
-    const t = setTimeout(() => setUI({ jump: null }), 2500)
-    return () => clearTimeout(t)
-  }, [jump, rows.length])
+
+  useLayoutEffect(() => {
+    const sc = end.current?.closest<HTMLElement>('.scroll')
+    const reopened = (view.current.covered && !covered) || (link && view.current.link !== link)
+    view.current = { covered, link }
+    if (!sc || covered) return
+    if (reopened) {
+      stuck.current = true
+      left.current = null
+      earlierAnchor.current = null
+      focused.current = null
+      setOffEnd(thread.chat, null)
+    }
+    if (!jump) focused.current = null
+    if (jump && focused.current !== jump) {
+      const el = sc.querySelector<HTMLElement>(`[data-msg="${attr(jump)}"], [data-card="${attr(jump)}"]`)
+      if (el && el.getClientRects().length) {
+        focused.current = jump
+        stuck.current = false
+        edge.current = sc.scrollHeight - sc.clientHeight
+        const target = el.getBoundingClientRect()
+        const viewport = sc.getBoundingClientRect()
+        sc.scrollBy({ top: target.top - viewport.top + (target.height - viewport.height) / 2, behavior: 'instant' })
+        // Only the highlight expires. The position is set in this same layout, before it is drawn.
+        clearTimeout(highlight.current)
+        highlight.current = setTimeout(() => {
+          if (getState().ui.jump === jump) setUI({ jump: null })
+        }, 2500)
+        return
+      }
+    }
+    edge.current = sc.scrollHeight - sc.clientHeight
+    const anchor = earlierAnchor.current
+    if (anchor && anchor.first !== first) {
+      earlierAnchor.current = null
+      if (!stuck.current && sc.contains(anchor.row)) {
+        const moved = anchor.row.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - anchor.top
+        sc.scrollBy({ top: moved, behavior: 'instant' })
+      }
+    }
+    if (stuck.current) sc.scrollTo({ top: sc.scrollHeight, behavior: 'instant' })
+    else if (left.current != null && edge.current - sc.scrollTop > OFF_PX) {
+      setOffEnd(thread.chat, { count: newSince(seen.current, left.current), asks: asksBelow(sc).length })
+    }
+  })
 
   if (!snap) return null
   const out: ReactNode[] = []
@@ -746,7 +795,7 @@ function Messages({ thread }: { thread: Thread }) {
       if (from && from !== lastRef) out.push(<TaskRef key={`r:${k}`} id={from} title={m.question.by!.title ?? m.question.by!.ref} t={taskOf(snap, from)} />)
       if (from) lastRef = from
       const place = (from && taskOf(snap, from)?.place) || thread.place
-      if (m.question.title && !m.question.trust && !m.question.command && !m.question.plan && !m.question.parts?.length && m.question.sent === undefined && !m.question.closed) out.push(<div key={`q:${k}`} className={cx('b', gap && 'gap')}>{m.question.title}</div>)
+      if (m.question.title && !m.question.login && !m.question.trust && !m.question.command && !m.question.plan && !m.question.parts?.length && m.question.sent === undefined && !m.question.closed) out.push(<div key={`q:${k}`} className={cx('b', gap && 'gap')}>{m.question.title}</div>)
       out.push(<QuestionCard key={k} q={m.question} chat={m.question.by?.chat ?? thread.chat} place={place} />)
     } else if (m.secret) out.push(<SecretCard key={k} ask={m.secret} chat={thread.chat} />)
     else if (m.news) {
@@ -778,7 +827,7 @@ function Messages({ thread }: { thread: Thread }) {
     }
     // a recap of what happened (the agent's own, or its answer to Recap), and a heads-up its CLI wrote: never bubbles
     else if (m.recap === 'heads') out.push(<QuietRow key={k} kind="heads" icon="info" label={m.text ?? ''} meta={m.at ? [{ word: clock(m.at) }] : []} />)
-    else if (m.recap) out.push(<RecapNote key={k} text={m.text ?? ''} at={m.at} />)
+    else if (m.recap) out.push(<RecapNote key={k} text={m.text ?? ''} at={m.at} place={thread.place} />)
     else if (m.error) out.push(<div key={k} className="ref c-red"><I n="warn" c="s16" /><span>{m.text}</span></div>)
     else if (m.file) out.push(<FileRow key={k} msg={m} chat={stub} gap={gap} />)
     // pictures the chat can't show (another machine's, or still in its CLI's queue), and an artifact on its way
@@ -922,6 +971,7 @@ export function WorkingSign({ chat, thread }: { chat: Chat | undefined; thread?:
  *  last message, "1 background command running". No dots, no Stop: nobody is writing. Once that work wakes it, the
  *  working sign takes over as usual. */
 export function BackgroundNote({ chat }: { chat: Chat | undefined }) {
+  if (chat?.settingsUpdate) return <p className="bgnote" role="status">{chat.settingsUpdate}</p>
   if (!chat?.bgNote || chat.working || signOf(chat)) return null
   return <p className="bgnote" role="status">{chat.bgNote}</p>
 }
@@ -941,7 +991,7 @@ function StoppedChat({ chat, thread }: { chat: Chat | undefined; thread: Thread 
       <span className="t c-red">Stopped</span>
       <span>{chat.note || 'Its agent is no longer running.'}</span>
       <div className="acts">
-        <ActBtn acts={acts} id="restart" kind="pri" busy="Restarting…" run={() => attempt({ type: 'restart', chat: chat.key, kind: pick.agent, model: pick.model ?? undefined, effort: pick.effort ?? undefined })}>Restart</ActBtn>
+        <ActBtn acts={acts} id="restart" kind="pri" busy="Restarting…" run={() => attempt({ type: 'restart', chat: chat.key, kind: pick.agent, model: pick.model ?? undefined, effort: pick.effort ?? undefined, speed: speedForAction(pick) })}>Restart</ActBtn>
       </div>
       <ActError acts={acts} />
     </div>
@@ -1008,19 +1058,21 @@ function Reply({ text, onSend, onEdit }: { text: string; onSend: (t: string) => 
 /** what a chat runs on now: its agent's own report; before its chat came, its space's (an Assistant's chat: what its
  *  Assistant runs, else what its first message starts it on, SHEP-298); else what is set for its kind */
 export function pickOf(snap: Snapshot, chat: Chat | undefined, thread: Thread): Pick {
-  const a = chat?.agent ?? (!thread.task ? snap.places.find((p) => p.id === thread.place && p.chat === thread.chat)?.agent : undefined)
-  if (a?.kind) return { agent: a.kind, label: a.modelLabel ?? a.planned?.modelLabel ?? null, model: a.model ?? a.planned?.model ?? null, effort: a.effort ?? a.planned?.effort ?? null, fast: a.speed === 'ultrafast' ? 'ultrafast' : a.speed === 'fast', perm: a.perm ?? null }
-  return pickFor(snap, isEverything(snap, thread.place) ? 'all' : thread.place, thread.task ? 'Tasks' : 'Chats')
+  const a = thread.task ? thread.task.agent?.settings : snap.places.find((p) => p.id === thread.place && p.chat === thread.chat)?.agent
+  return reportedPick(chat?.agent ?? a) ?? thread.task?.plannedAgent
+    ?? pickFor(snap, isEverything(snap, thread.place) ? 'all' : thread.place, thread.task ? 'Tasks' : 'Chats')
 }
+
+const speedForAction = (pick: Pick) => pick.fast === 'ultrafast' ? 'ultrafast' : pick.fast ? 'fast' : 'normal'
 
 /** A new model, effort or permission mode applies from your next message. A different agent restarts that chat, after
  *  you confirm; earlier messages stay. */
 export function applyPick(chat: string, was: Pick, now: Pick, names: { agent: string }) {
   const same = (a: Pick, b: Pick) => a.agent === b.agent && (a.model ?? null) === (b.model ?? null) && (a.effort ?? null) === (b.effort ?? null) && (a.fast ?? false) === (b.fast ?? false) && (a.perm ?? null) === (b.perm ?? null)
   if (same(was, now)) return
-  const run = (live: boolean) => void tryAct({ type: 'restart', chat, kind: now.agent, model: now.model ?? undefined, effort: now.effort ?? undefined, speed: now.fast === 'ultrafast' ? 'ultrafast' : now.fast ? 'fast' : 'normal', perm: now.perm ?? undefined, live })
-  if (was.agent === now.agent) return run(true)
-  confirm({ title: `Switch to ${names.agent}?`, body: 'This chat starts again on the new agent. Earlier messages stay, above a "New session" line.', ok: 'Switch', run: () => run(false) })
+  const run = () => void tryAct({ type: 'restart', chat, kind: now.agent, model: now.model ?? undefined, effort: now.effort ?? undefined, speed: speedForAction(now), perm: now.perm ?? undefined })
+  if (was.agent === now.agent) return run()
+  confirm({ title: `Switch to ${names.agent}?`, body: 'This chat starts again on the new agent. Earlier messages stay, above a "New session" line.', ok: 'Switch', run })
 }
 
 function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
@@ -1063,17 +1115,26 @@ function Box({ thread, placeholder }: { thread: Thread; placeholder: string }) {
   const sug = sg && !repliesHidden({ dictating, call, working: busy, sending, spent: spent.has(sg.id) }) ? sg : null
   const machine = snap.places.find((p) => p.id === thread.place)?.machine ?? snap.host
   const pick = pickOf(snap, chat, thread)
-  // a question of its agent's is open: what you type here answers it too (it closes the card, the agent gets your words)
+  // a question of its agent's is open: answer it on its card first (nothing closes its dialog for you, so a message
+  // sent now is refused: core/send.js ASKING)
   const asked = !!ownAsk(chat)
-  const hint = asked ? 'Or type your own answer' : placeholder
+  const hint = asked ? 'Answer its question above first' : placeholder
   // a message sent while the agent works goes in at once (it steers); only Ctrl/Cmd+Enter asks it to wait its turn.
   // The round button and Enter send only what is in the box, never a suggested reply (those are their own bubbles).
   // In a voice call the box takes no text (TEXT_IN_CALL).
   // a line starting with `!` runs as a command in the agent's own shell (Claude Code, Codex); another agent has none,
   // so its words don't go and the box offers your own terminal
   const mode = commandMode(text, pick.agent)
-  const openAgent = (typed?: string) =>
-    openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, typed, onChange: () => undefined, onClose: (now) => applyPick(key, pick, now, { agent: pickWords(now).agent }) })
+  const openAgent = (typed?: string) => {
+    const live = chat && !chat.fresh && !chat.finished && !!chat.agent
+    openPicker({ title: thread.task ? 'This task runs on' : 'This chat runs on', machine, pick, typed, onChange: () => undefined,
+      ...(live ? { live: {
+        chat: key,
+        update: (now: Pick) => act({ type: 'restart', chat: key, kind: now.agent, model: now.model ?? undefined,
+          effort: now.effort ?? undefined, speed: speedForAction(now), perm: now.perm ?? undefined, live: true }),
+      } } : { onClose: (now: Pick) => applyPick(key, pick, now, { agent: pickWords(now).agent }) }),
+    })
+  }
   const go = (wait = false) => {
     if (getState().ui.call && !TEXT_IN_CALL) return
     // a long paste folded into a chip goes as text, exactly as pasted, after what was typed
@@ -1316,7 +1377,7 @@ export default definePlugin({
     reg.commands.push(
       { id: 'chat.reply', title: 'Write in the chat', area: 'Chat', icon: 'reply', keys: ['R'], words: 'reply message box type focus compose', when: () => !!focusChat(), run: () => void focusBox() },
       { id: 'chat.end', title: 'Go to the newest message', area: 'Chat', icon: 'toend', keys: ['End'], words: 'jump bottom latest scroll down end', when: () => isOffEnd(focusChat()), run: () => void toEnd(focusChat()) },
-      { id: 'chat.model', title: 'Change model or effort', area: 'Chat', icon: 'agent', keys: ['Mod+Shift+M'], words: 'agent picker claude codex fast', when: () => !!boxPart('button.agent'), run: () => boxPart('button.agent')?.click() },
+      { id: 'chat.model', title: 'Change model, effort or speed', area: 'Chat', icon: 'agent', keys: ['Mod+Shift+M'], words: 'agent picker claude codex fast ultra-fast tier', when: () => !!boxPart('button.agent'), run: () => boxPart('button.agent')?.click() },
     )
     // Share into Shepherdr (SHEP-345): a share lands in the chat open last
     watchLastChat()
@@ -1324,7 +1385,7 @@ export default definePlugin({
     reg.views.messages = Messages
     reg.views.box = Box
     reg.chatTail.push({ order: 15, View: StoppedChat }, { order: 95, View: WorkingSign }, { order: 96, View: BackgroundNote })
-    reg.aboveBox.push({ order: 5, View: ToEnd, pane: true }) // fork: in the side pane's task chat too
+    reg.aboveBox.push({ order: 5, inPane: true, View: ToEnd })
     // Update <agent> (update.tsx): a row in the space's header menu and in a task's ⋯, while a newer version is out
     reg.spaceMenu.push({ order: 7, rows: (p, head) => (head ? updateRows(p.chat) : []) })
     reg.taskMenu.push({ order: 7, rows: (t, where) => (where === 'thread' ? updateRows(taskChat(t)) : []) })

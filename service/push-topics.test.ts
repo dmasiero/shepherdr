@@ -3,16 +3,12 @@
 // to the devices that chose its topic and don't mute its space, never to one whose app is on screen; a device turned
 // off gets nothing more; a test goes to that one device only.
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { Push, alertsOf, wants } from "./push.ts";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-// fork: Fix main: web push tests. The subscriptions' files go in a folder of this file's own, which it removes after;
-// the service's data folder (paths.ts DATA, vapid.json) stays the run's throwaway one from test/preload.ts. DATA is read
-// once per bun test process, so a file that ran first and set it to this folder left every later Push writing vapid.json
-// into a folder gone (the first alert of each new Push lost: glance.test.ts's two web push tests failed on main).
 const dir = mkdtempSync(join(tmpdir(), "push-topics-"));
-const { Push, alertsOf, wants } = await import("./push.ts");
 
 // a real P-256 key per fake device, so each alert really encrypts
 async function fakeSub(n: number) {
@@ -61,6 +57,36 @@ test("alerts go by each device's topics and muted spaces, never to one on screen
   p.visible = new Set([a.endpoint]);
   await p.send({ title: "x", topic: "needs", place: "sp1" });
   expect(hits).toEqual(["dev2"]);
+});
+
+test("a resolution waits for that device's original push and skips devices getting its replacement", async () => {
+  const p = new Push(() => "https://example.test", file());
+  const [a, b] = [await fakeSub(1), await fakeSub(2)];
+  p.subscribe(a); p.subscribe(b);
+  p.choose(a.endpoint, { topics: ["needs"] });
+  const calls: string[] = [];
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  p.deliver = async ({ endpoint }) => {
+    calls.push(endpoint);
+    if (endpoint === a.endpoint && calls.filter((device) => device === a.endpoint).length === 1) {
+      started.resolve();
+      await release.promise;
+    }
+    return 201;
+  };
+  const first = p.send({ topic: "needs" });
+  await started.promise;
+  const cleared = p.send({ topic: "needs", resolved: true, replacedBy: [{ topic: "ready" }] });
+  try {
+    await Promise.resolve();
+    expect(calls.filter((device) => device === a.endpoint)).toHaveLength(1);
+  } finally {
+    release.resolve();
+    await Promise.all([first, cleared]);
+  }
+  expect(calls.filter((device) => device === a.endpoint)).toHaveLength(2);
+  expect(calls.filter((device) => device === b.endpoint)).toHaveLength(1);
 });
 
 test("turned off: it gets nothing more; on again it keeps its choice; one choice for all", async () => {

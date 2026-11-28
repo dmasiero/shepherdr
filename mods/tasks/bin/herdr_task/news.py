@@ -10,11 +10,11 @@ import subprocess
 import time
 from contextlib import contextmanager
 
-from .base import guard, hc_json, now, QUEUED, run, STORE
+from .base import guard, hc_json, now, run, STORE
 from .settings import bare
 from .agents import (
     agent_log, agent_running, asking, detail, from_person, front, live_agents, log_tail, said, starting, status_word,
-    STATUSES, trust_asked,
+    STATUSES, startup_asked,
 )
 from .sessions import session_of
 from .launch import coordinator_in, core_spaces, everything_of, tilde_of
@@ -77,7 +77,7 @@ def news_line(s, t, v, event, words=None):
             "needs-you": f"{title} needs you: {v.get('why') or 'Needs you'}",
             "failed": f"{title} failed: {v.get('why') or 'Agent stopped'}",
             "stalled": f"{title} {words}",
-            "working-again": f"{title} is working again: {(t.get('back') or {}).get('why') or 'its agent is at work again'}",
+            "working-again": f"{title} is working again: {words or (t.get('back') or {}).get('why') or 'its agent is at work again'}",
             # A schedule's run that only had something to say (ready --told): its words, for the space's chat.
             "told": f"{title}, a schedule's run, says: {words}",
             # Its space's "When a task is accepted" command failed (after_accept.py): the task stays done.
@@ -160,9 +160,9 @@ def news_pass(report, folder=None):
                     else:
                         t.pop("waits", None)
                     s.dirty = True
-                # Claude Code's folder-trust dialog (#755): Needs you in the Tasks panel too (its agent
-                # reports no status while it shows).
-                trust = trust_asked(live) if v.get("needs") == "asks" else None
+                # Keep the address in the existing trust_ask field while the startup prompt waits.
+                startup = startup_asked(live) if v.get("needs") == "asks" else None
+                trust = startup[0] if startup else None
                 if s.write and t.get("trust_ask") != trust:
                     if trust:
                         t["trust_ask"] = trust
@@ -216,12 +216,15 @@ def news_pass(report, folder=None):
                     lines.append(("accept-failed", news_line(s, t, v, "accept-failed", accept_failure(t))))
                 # Taken back to work after it said ready (back_to_work(), busy_again()): told as it happens.
                 # Its agent took up what needed the person (failing checks: on_it()) too.
+                wait_cleared = (prev or {}).get("status") == "needs" and (prev or {}).get("needs") in ("asks", "reply")
                 if v["status"] == "working" and ((prev or {}).get("status") in ("ready", "merging")
-                                                 or (prev or {}).get("needs") == "attention" and t.get("attention")):
+                                                 or (prev or {}).get("needs") == "attention" and t.get("attention")
+                                                 or wait_cleared):
                     event = "working-again"
                 # A schedule's run that ended quietly (ready --nothing / --told) is no "done" news: nothing, or its own words.
                 if event and (prev or {}).get("status") != v["status"] and not t.get("quiet"):
-                    lines.append((event, news_line(s, t, v, event)))
+                    words = "its earlier question or wait has cleared" if event == "working-again" and wait_cleared else None
+                    lines.append((event, news_line(s, t, v, event, words)))
                 if stall and stall[0] != (prev or {}).get("stall"):
                     lines.append(("stalled", news_line(s, t, v, "stalled", stall[1])))
                 for ev, text in lines:
@@ -312,9 +315,9 @@ def news_read(quiet):
 
 
 def news_send(address, text, check=True):
-    """Delivers news as the chat delivers the person's words: typed in, sent at once mid-turn (for
-    Claude Code its "send now", Ctrl+Enter). Not as a message from this terminal: no <hc from>.
-    False when it can't take it now (a dialog of its own is open, or the person is writing to it:
+    """Delivers news with herdr-core's own send (paste + Enter), only while the agent is idle: never pushed into a turn
+    (no key of its own, AGENTS.md "Nothing that risks a ban"). Not as a message from this terminal: no <hc from>.
+    False when it can't take it now (it works, a dialog of its own is open, or the person is writing to it:
     typing()): tried again next time. check=False: typing() was just asked. Never typed into a terminal
     whose agent isn't in front (SHEP-324: not_typed())."""
     k = hc_json("get", address)
@@ -325,31 +328,31 @@ def news_send(address, text, check=True):
         return False
     if check and typing(address, k):
         return False
-    if codex_busy(k):
+    if waits_for_news(k):
         return False
     env = {k: v for k, v in os.environ.items() if k != "HC_TERMINAL_ID"}
     guard(["hc"])
     r = subprocess.run(["hc", "send", address, text], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-    if r.returncode != 0:
+    return r.returncode == 0
+
+
+def busy(k):
+    """A live agent in the middle of a turn: Shepherdr's own news waits until it's idle."""
+    return bool(k) and status_word(k) == "working"
+
+
+def waits_for_news(k):
+    """An agent turning, at a prompt, or before its first status report can't take news yet."""
+    if not k:
         return False
-    k = hc_json("get", address) or {}
-    if is_codex(k):
-        codex_settle(address, text)
-    elif (k.get("labels") or {}).get("herdr.agent", "claude") == "claude" and status_word(k) == "working":
-        for i in range(10):
-            time.sleep(0.25 if i else 0.15)
-            screen = run(["hc", "read", address, "--lines", "40"]).stdout
-            if QUEUED.search(screen):
-                if status_word(hc_json("get", address) or {}) == "working":
-                    run(["hc", "keys", address, "ctrl+enter"])
-                break
-    return True
+    state = status_word(k)
+    return state in ("working", "blocked") or (not state and k.get("turn") == 0)
 
 
 # ---- Codex mid-turn (#1227) -------------------------------------------------------------------
 # A message pasted into Codex while it works can sit in its input box unsent ("tab to queue message"), at times
 # missing its first letter, and hc send says nothing of it. So nothing automatic goes to a working Codex: it
-# waits until the turn ends (as Codex's own queue would), and after a send the input box is checked.
+# waits until the turn ends (as Codex's own queue would). Nothing presses its keys after a send.
 
 def is_codex(k):
     k, st = k or {}, (k or {}).get("status")
@@ -361,61 +364,15 @@ def codex_busy(k):
     return bool(k) and is_codex(k) and status_word(k) == "working"
 
 
-def codex_settle(address, text, tries=3, steer=False):
-    """After a send to Codex: a draft it left for the queue is queued (Tab), or with steer (the person's own message,
-    SHEP-329) sent now (Enter: Codex takes it mid-turn); one still in its input box (the last › line on, past the
-    conversation) is sent. Never presses anything when the box is empty."""
-    words = re.sub(r"\s+", " ", text).strip()
-    probe = words[1:25].strip()  # past the first letter, which may be the one dropped
-    for i in range(tries):
-        time.sleep(0.4 if i else 0.25)
-        lines = run(["hc", "read", address, "--lines", "30"]).stdout.split("\n")
-        at = max((n for n, ln in enumerate(lines) if ln.lstrip().startswith("›")), default=None)
-        box = " ".join(ln.strip() for ln in lines[at:]) if at is not None else ""
-        if re.search(r"tab to queue", box, re.I):
-            run(["hc", "keys", address, "enter" if steer else "tab"])
-            return "sent" if steer else "queued"
-        if probe and probe in box:
-            run(["hc", "keys", address, "enter"])
-            return "sent"
-    return None
-
-
 # ---- the person's message to a working agent (SHEP-329) ---------------------------------------
-# It must be in within seconds, always: the person's message wins over what the agent is doing. Claude Code holds a
-# message typed mid-turn in its own queue ("Queued · ctrl+enter to send now"): its Ctrl+Enter takes it in mid-turn
-# (a running shell or tool call moves to the background); still queued after STEER_GRACE, Esc stops the turn (the
-# running call is cut off) and Claude Code sends the queue at once, so the agent reads it first. Codex (0.163) takes
-# a message typed mid-turn by itself. The same as core/send.js steerNow, for herdr-task reply.
-
-STEER_GRACE = 5.0
-
-
-def steer(address, grace=STEER_GRACE):
-    """Claude Code's queued message in now (see above). Only while it works (on a dialog of its own a key would answer
-    it) and its screen shows the message queued. True: a key was pressed."""
-    screen = lambda: run(["hc", "read", address, "--lines", "40"]).stdout
-    working = lambda: status_word(hc_json("get", address) or {}) == "working"
-    for i in range(20):
-        time.sleep(0.25 if i else 0.15)
-        if not working():
-            return False
-        if QUEUED.search(screen()):
-            break
-    else:
-        return False
-    run(["hc", "keys", address, "ctrl+enter"])
-    for _ in range(int(grace / 0.25)):
-        time.sleep(0.25)
-        if not QUEUED.search(screen()) or not working():
-            return True
-    run(["hc", "keys", address, "esc"])
-    return True
+# herdr-core's own send (paste + Enter) and nothing else: no Ctrl+Enter, Esc or Tab of Shepherdr's own (AGENTS.md
+# "Nothing that risks a ban"). Claude Code queues a message typed mid-turn itself and reads it when its turn allows;
+# Codex takes it mid-turn by itself.
 
 
 def person_send(address, text):
-    """The person's message to an agent (herdr-task reply): sent now, a working one steered (see above). Held only
-    while the person writes in that agent's own box (typing()), or another program than its agent is in front. Returns
+    """The person's message to an agent (herdr-task reply): sent now with herdr-core's send. Held only while the person
+    writes in that agent's own box (typing()), or another program than its agent is in front. Returns
     "sent", "held", NO_AGENT (a plain shell is in front: nothing typed, the caller restarts it) or None (hc refused it)."""
     k = hc_json("get", address)
     f = front(k)
@@ -426,28 +383,19 @@ def person_send(address, text):
         return "held"
     if run(["hc", "send", address, text]).returncode != 0:
         return None
-    k = hc_json("get", address) or {}
-    if is_codex(k):
-        codex_settle(address, text, steer=True)
-    elif (k.get("labels") or {}).get("herdr.agent", "claude") == "claude":
-        steer(address)
     return "sent"
 
 
 def plain_send(address, text):
-    """An agent's message (hc send) to `address`; for Codex, its input box checked after (codex_settle). Never typed
-    into a terminal whose agent isn't in front (SHEP-324: not_typed())."""
+    """An agent's message (hc send) to `address`, herdr-core's send alone. Never typed into a terminal whose agent isn't
+    in front (SHEP-324: not_typed())."""
     k = hc_json("get", address)
     f = front(k)
     if f == "shell":
         return bool(not_typed(address, text, "send", k))
     if f != "agent":
         return False
-    if run(["hc", "send", address, text]).returncode != 0:
-        return False
-    if is_codex(hc_json("get", address)):
-        codex_settle(address, text)
-    return True
+    return run(["hc", "send", address, text]).returncode == 0
 
 
 # ---- the person is writing ------------------------------------------------------------------
@@ -706,7 +654,7 @@ def send_or_hold(address, text, how="send"):
     f = front(k)
     if f == "shell":
         return NO_AGENT
-    if f == "other" or typing(address, k) or codex_busy(k):
+    if f == "other" or typing(address, k) or codex_busy(k) or (how == "news" and waits_for_news(k)):
         hold(address, text, how)
         return "held"
     if how == "news":

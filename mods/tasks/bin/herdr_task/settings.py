@@ -182,6 +182,16 @@ def worktrees_on(s, space=None):
     return s.loc["kind"] == "repo" and settings_for(s, space)["tasks"].get("worktrees") is not False
 
 
+def tier_args(agent, fast):
+    if agent == "claude":
+        # Older settings can carry the Codex tier across. Claude treats it as Fast.
+        return ["--settings", json.dumps({"fastMode": bool(fast)})]
+    if agent == "codex":
+        tier = "ultrafast" if fast == "ultrafast" else "fast" if fast else "default"
+        return ["-c", f'service_tier="{tier}"']
+    return []
+
+
 def argv_for(pick):
     """How to start an agent from a role's settings {agent, model, effort, fast, perm} (or its own
     argv), as the chat's agent picker builds it (mods/chat/agent.js argvFor). None: no setting."""
@@ -199,7 +209,7 @@ def argv_for(pick):
             a += ["--model", pick["model"]]
         if pick.get("effort"):
             a += ["--effort", pick["effort"]]
-        a += ["--settings", json.dumps({"fastMode": bool(pick.get("fast"))})]
+        a += tier_args(agent, pick.get("fast"))
         perm = PERM_ACROSS["claude"].get(pick.get("perm"), pick.get("perm"))
         if perm == "bypassPermissions":
             a.append("--dangerously-skip-permissions")
@@ -214,7 +224,7 @@ def argv_for(pick):
             a += ["-c", f'model_reasoning_effort="{pick["effort"]}"']
         # always said, so Fast off wins over a service_tier in config.toml (default: the standard tier)
         # Ultrafast: Codex's fastest tier (SHEP-258), on models whose catalog offers it
-        a += ["-c", 'service_tier="%s"' % ("ultrafast" if pick.get("fast") == "ultrafast" else "fast" if pick.get("fast") else "default")]
+        a += tier_args(agent, pick.get("fast"))
         perm = PERM_ACROSS["codex"].get(pick.get("perm"), pick.get("perm"))
         if perm == "full":
             a.append("--dangerously-bypass-approvals-and-sandbox")
@@ -296,14 +306,34 @@ def worker_pick(s, task, space=None, agent=None):
     return pick
 
 
+def require_task_cli(key, role="Agent"):
+    if not isinstance(key, str) or key not in AGENTS:
+        setting = role.lower()
+        raise Fail(f"Unknown {role} {key!r}. Choose Claude Code or Codex in Settings › Tasks, "
+                   f"or set this task with herdr-task edit <task> --set {setting}=claude (or {setting}=codex).")
+
+
+def reviewer_pick(s, t, space=None):
+    rv = dict(settings_for(s, space)["reviewer"] or {})
+    if t.get("reviewer") and t["reviewer"] != rv.get("agent"):
+        rv = {"agent": t["reviewer"]}
+    if rv.get("agent"):
+        require_task_cli(rv["agent"], "Reviewer")
+    return rv
+
+
 def worker_argv(s, task, space=None, agent=None):
     """A task's agent when nobody gave an argv: worker_pick's."""
     pick = worker_pick(s, task, space, agent)
+    if pick.get("agent"):
+        require_task_cli(pick["agent"])
     if pick.get("argv") and not any(task.get(k) for k in ("model", "effort", "speed", "perm")):
-        return argv_for(pick)
+        argv = argv_for(pick)
+        require_task_cli(agent_key(argv))
+        return argv
     pick.pop("argv", None)
     pick.setdefault("agent", "claude")
-    return argv_for(pick) or agent_argv(pick["agent"])
+    return argv_for(pick)
 
 
 def argv_model(argv):
@@ -318,6 +348,26 @@ def argv_model(argv):
         elif a in ("-c", "--config") and nxt.startswith("model_reasoning_effort="):
             effort = nxt.split("=", 1)[1].strip("\"'")
     return model, effort
+
+
+def argv_speed(agent, argv):
+    """The explicit tier a start command asks for, in the task CLI's words."""
+    speed = None
+    for i, arg in enumerate(argv):
+        name, eq, value = arg.partition("=")
+        if not eq:
+            value = argv[i + 1] if i + 1 < len(argv) else ""
+        if agent == "codex" and name in ("-c", "--config") and value.startswith("service_tier="):
+            tier = value.split("=", 1)[1].strip("\"'")
+            speed = "fast" if tier == "priority" else SPEED_VALUES.get(tier, "regular")
+        elif agent == "claude" and name == "--settings" and value.startswith("{"):
+            try:
+                fast = json.loads(value).get("fastMode")
+                if isinstance(fast, bool):
+                    speed = "fast" if fast else "regular"
+            except ValueError:
+                pass
+    return speed
 
 
 # ---- the Settings block: the settings that shape a task's work, as words in its brief ---------
@@ -344,6 +394,7 @@ SET_KEYS = {"review": "review", "brief.review": "review", "merge": "merge", "bri
             "reviewer": "reviewer", "reviewer.agent": "reviewer", "reviewer.model": "reviewer_model", "reviewer.effort": "reviewer_effort",
             "reviewer_model": "reviewer_model", "reviewer-model": "reviewer_model",
             "reviewer_effort": "reviewer_effort", "reviewer-effort": "reviewer_effort",
+            "reviewer.speed": "reviewer_speed", "reviewer_speed": "reviewer_speed", "reviewer-speed": "reviewer_speed",
             "proof": "proof", "brief.proof": "proof",
             "speed": "speed", "task.speed": "speed", "fast": "speed", "permission": "perm", "permissions": "perm", "perm": "perm",
             "task.permission": "perm",
@@ -360,6 +411,7 @@ MUST_VALUES = {"blocker": "blocker", "blockers": "blocker", "critical": "blocker
                "minor": "minor", "trivial": "minor", "everything": "minor"}
 # A task's speed (the model's service tier) as argv_for's "fast", and every permission mode a CLI has.
 SPEEDS = {"regular": False, "fast": True, "ultrafast": "ultrafast"}
+SPEED_NAMES = {"regular": "Standard", "fast": "Fast", "ultrafast": "Ultra-fast"}
 SPEED_VALUES = {"regular": "regular", "standard": "regular", "normal": "regular", "off": "regular", "fast": "fast", "on": "fast",
                 "ultrafast": "ultrafast", "ultra-fast": "ultrafast", "ultra fast": "ultrafast"}
 PERM_VALUES = {"default": "manual", "ask": "manual", "accept edits": "acceptEdits", "accept-edits": "acceptEdits", "bypass": "bypassPermissions",
@@ -414,12 +466,15 @@ def set_task(t, key, value, agent=None):
         if low not in MERGE_VALUES:
             raise Fail('merge is "on its own", "after checks" or "ask me first".')
         sets[field] = MERGE_VALUES[low]
-    elif field == "speed":
+    elif field in ("speed", "reviewer_speed"):
         if low not in SPEED_VALUES:
             raise Fail("speed is regular, fast or ultrafast.")
-        t["speed"] = SPEED_VALUES[low]
+        t[field] = SPEED_VALUES[low]
     else:
         # Agents, models and efforts are the task's own fields (worker_pick reads them).
+        if field in ("agent", "reviewer"):
+            require_task_cli(low, field.title())
+            v = low
         if field in ("effort", "reviewer_effort") and low not in EFFORTS:
             raise Fail(f"{field.replace('_', ' ')} is one of {', '.join(sorted(EFFORTS))} (or default).")
         sets.pop(field, None)
@@ -449,7 +504,7 @@ def set_opts(t, args, s=None, space=None):
     checked against the CLI it will run (its own --agent, else its space's Task agent)."""
     def cli():
         return (worker_pick(s, t, space or t.get("space")).get("agent") if s else None) or t.get("agent") or "claude"
-    for flag in ("agent", "model", "effort", "speed", "permission", "flags", "reviewer", "reviewer_model", "reviewer_effort"):
+    for flag in ("agent", "model", "effort", "speed", "permission", "flags", "reviewer", "reviewer_model", "reviewer_effort", "reviewer_speed"):
         v = getattr(args, flag, None)
         if v is not None:
             set_task(t, flag, v, cli() if flag == "flags" else None)
@@ -458,9 +513,6 @@ def set_opts(t, args, s=None, space=None):
             raise Fail(f"--set takes key=value, not {pair!r}.")
         k, v = pair.split("=", 1)
         set_task(t, k, v, cli() if SET_KEYS.get(k.strip().lower()) == "flags" else None)
-    if getattr(args, "reviewer_model", None) or getattr(args, "reviewer", None) or any(
-            SET_KEYS.get(p.split("=", 1)[0].strip().lower()) in ("reviewer", "reviewer_model") for p in getattr(args, "set", None) or []):
-        check_reviewer_model(t)
 
 
 def by_layer(s, space, section, key, value, default):
@@ -486,23 +538,9 @@ CLI_NAMES = {"claude": "Claude Code", "codex": "Codex"}
 LOGIN = {"claude": "claude auth login", "codex": "codex login"}
 
 
-def codex_models():
-    """The model ids Codex offers here: its models_cache.json, which Codex fetches for the account it is signed in
-    with (a ChatGPT account gets fewer than an API key, #948); None when there is none to read."""
-    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
-    try:
-        with open(os.path.join(home, "models_cache.json")) as f:
-            d = json.load(f)
-    except (OSError, ValueError):
-        return None
-    ids = [m.get("slug") for m in (d.get("models") or [] if isinstance(d, dict) else []) if isinstance(m, dict) and m.get("slug")]
-    return ids or None
-
-
-def codex_lacks(model):
-    """The models Codex offers here when `model` isn't one of them (it would refuse to start on it), else None."""
-    ids = codex_models()
-    return ids if model and ids and model not in ids else None
+def check_automatic_agent(argv):
+    if agent_key(argv) not in CLI_NAMES:
+        raise Fail("Automatic starts are available for Claude Code and Codex. Start other agents in their own terminal.")
 
 
 # ---- finding a CLI as the person's shell does (#1228, #1190) -------------------------------------
@@ -598,23 +636,8 @@ def codex_update_words(old):
             "then start again.")
 
 
-CLAUDE_MODEL = re.compile(r"^(claude-|opus|sonnet|haiku|fable)", re.I)
-
-
-def check_reviewer_model(t):
-    """add/edit: a reviewer model Codex here can't use is refused when it is set (#948), not found at review time."""
-    m = t.get("reviewer_model")
-    if not m or t.get("reviewer") == "claude" or (not t.get("reviewer") and CLAUDE_MODEL.match(m)):
-        return
-    ids = codex_lacks(m)
-    if ids:
-        raise Fail(f"Codex here doesn't offer {m} for the account it is signed in with: pick one of {', '.join(ids)} "
-                   "(or leave the reviewer model unset for Codex's own default).")
-
-
 def codex_login_now():
-    """Codex's own word on its sign-in here, asked now (#947): (True, "") signed in, (False, what it said) when not
-    (an unreadable auth file says an error, and Codex then opens its sign-in screen), (None, "") when unknown."""
+    """Codex's own word on its sign-in here (#947). Return an outcome and an optional safe explanation."""
     if not shutil.which("codex"):
         return None, ""
     try:
@@ -622,44 +645,20 @@ def codex_login_now():
     except (OSError, subprocess.SubprocessError):
         return None, ""
     out = f"{r.stdout}\n{r.stderr}"
-    if re.search(r"^\s*logged in", out, re.I | re.M):
+    if re.search(r"^\s*(?:logged in|API key configured)(?:\s|$)", out, re.I | re.M):
         return True, ""
-    said = next((ln.strip() for ln in out.splitlines() if ln.strip()), "")
-    return False, said[:160]
+    # Status output may contain account details or a key fragment. Only report the outcome.
+    return False, "" if re.search(r"^\s*not logged in\b", out, re.I | re.M) else "Sign-in status could not be confirmed."
 
 
-def trust_roots(folder):
-    """The folders Codex asks to trust for an agent started in folder: the folder itself and its git
-    repository's root, which for a worktree is the main checkout's (Codex: "Trusting will apply to
-    the repository root")."""
-    if not folder:
-        return []
-    out = [folder]
-    ok, common, _ = git(folder, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if ok and common:
-        root = os.path.dirname(common) if os.path.basename(common) == ".git" else \
-            git(folder, "rev-parse", "--show-toplevel")[1]
-        if root and root not in out:
-            out.append(root)
-    return out
-
-
-def reviewer_command(who, model=None, effort=None, folder=None):
-    """The command a worker starts its reviewer with (the brief's Reviewer line): read-only, and for
-    Codex on its own app server (--no-daemon, as task agents run: a shared one can keep a sign-in
-    since replaced, and every turn then fails, #745). Codex would first stop on its own screens,
-    nobody at the keys (#798, #753): "Trust this folder?" in a folder it hasn't seen (the task's
-    folder and its repository's root are trusted for this run only, as a table: a dotted
-    projects."<path>" key breaks on a dot in the path, as in ~/.local) and "Hooks need review"
-    when a hook is new or changed (hooks off: a read-only reviewer needs none, and they would run
-    outside its sandbox)."""
+def reviewer_command(who, model=None, effort=None, folder=None, fast=None):
+    """The worker's read-only reviewer. Codex keeps its own project trust and runs without user hooks."""
     if who == "codex":
         a = ["codex", "--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "hooks"]
-        roots = trust_roots(folder)
-        if roots:
-            a += ["-c", "projects={" + ",".join(f'{json.dumps(r)}={{trust_level="trusted"}}' for r in roots) + "}"]
         a += ["-m", model] if model else []
         a += ["-c", f'model_reasoning_effort="{effort}"'] if effort else []
+        if fast is not None:
+            a += tier_args(who, fast)
     elif who == "claude":
         # #1181: never plan mode (it wrote its report into a plan to approve): don't-ask mode with only the reading tools,
         # so a write or a command that isn't read-only is refused, never asked. --tools=… as one word: its list would
@@ -671,6 +670,8 @@ def reviewer_command(who, model=None, effort=None, folder=None):
         a += ["--add-dir=" + TEMPLATES]
         a += ["--model", model] if model else []
         a += ["--effort", effort] if effort else []
+        if fast is not None:
+            a += tier_args(who, fast)
         # #1131: hc run gives it hc's environment, not the worker's: the worker's own Claude profile, when it has one
         return (cli_env(who) or "env ") + CLAUDE_PROFILE + shlex.join(a)
     else:
@@ -714,53 +715,56 @@ def task_settings(s, t, space=None, argv=None, live=False):
     argv = argv or (t["agents"][-1].get("argv") if t.get("agents") else None) or worker_argv(s, t, space)
     agent = agent_key(argv)
     if on:
-        rv = dict(cfg.get("reviewer") or {})
-        if t.get("reviewer") and t["reviewer"] != rv.get("agent"):
-            rv = {"agent": t["reviewer"]}
-        rv_by = "task" if any(t.get(f) for f in ("reviewer", "reviewer_model", "reviewer_effort")) else \
+        rv = reviewer_pick(s, t, space)
+        rv_by = "task" if any(t.get(f) for f in ("reviewer", "reviewer_model", "reviewer_effort", "reviewer_speed")) else \
             by_layer(s, space, "reviewer", None, bool(cfg.get("reviewer")), False)
         for f in ("model", "effort"):
             if t.get(f"reviewer_{f}"):
                 rv[f] = t[f"reviewer_{f}"]
+        if t.get("reviewer_speed") in SPEEDS:
+            rv["fast"] = SPEEDS[t["reviewer_speed"]]
         other = {"claude": "codex", "codex": "claude"}.get(agent)
         want = rv.get("agent") or (other if other and shutil.which(other) else agent)
         who, said = want, ""
-        if want != agent and cli_here(want) == "signed-out":
-            # Signed out here, it would sit at its sign-in screen and never review (#745): the task's own CLI does.
-            who, rv = agent, {}
-        elif want == "codex" and want != agent and live:
+        if want == "codex" and want != agent and live:
             # #947: the periodic check can't read every answer (an unreadable auth file says an error, not "Not logged
             # in"), so a brief asks Codex now; anything but signed in would leave the reviewer on its sign-in screen
             ok, said = codex_login_now()
-            if ok is False:
+            if ok is False or (ok is None and cli_here(want) == "signed-out"):
                 who, rv = agent, {}
+        elif want != agent and cli_here(want) == "signed-out":
+            who, rv = agent, {}
         # #1190: a Codex without --no-daemon exits at once: the worker's own CLI reviews, and the line says to update
         old = codex_too_old() if who == "codex" and agent != "codex" else None
+        notice = ""
         if old:
+            notice = f"Review uses {CLI_NAMES.get(agent, agent)} because Codex needs an update."
             who, rv = agent, {}
-        # #948: a model Codex here doesn't offer this account stops it at once: its own default instead, said
-        lacks = codex_lacks(rv.get("model")) if who == "codex" else None
-        dropped = rv.get("model")
-        if lacks:
-            rv = {k: v for k, v in rv.items() if k != "model"}
+        speed = next((k for k, v in SPEEDS.items() if v == rv.get("fast")), None)
         text = who + (f", model {rv['model']}" if rv.get("model") else "") + (f", effort {rv['effort']}" if rv.get("effort") else "")
-        if lacks:
-            text += (f" (Codex's own default model: Codex here doesn't offer {dropped} "
-                     "for the account it is signed in with)")
         if old:
             text += (f" (your own CLI: Codex here is too old for Shepherdr, {old} has no --no-daemon; the person updates "
                      f"it ({UPDATE_CODEX}), then asks for the review again)")
         elif who != want:
-            text += (f" (your own CLI: {CLI_NAMES.get(want, want)} isn't signed in here"
-                     + (f", `{LOGIN.get(want, want + ' login')} status` says \"{said}\"" if said and not re.match(r"not logged in", said, re.I) else "")
+            notice = (f"Review uses {CLI_NAMES.get(who, who)} because Shepherdr couldn't confirm "
+                      f"{CLI_NAMES.get(want, want)} sign-in.")
+            reason = f"{CLI_NAMES.get(want, want)} sign-in could not be confirmed" if said else f"{CLI_NAMES.get(want, want)} isn't signed in here"
+            text += (f" (your own CLI: {reason}"
                      + f"; the person runs `{LOGIN.get(want, want + ' login')}` on this machine, then asks for the review again)")
         elif not rv.get("agent"):
             text += " (the other CLI)" if who != agent else " (your own CLI: no other is installed)"
         folder = t.get("worktree") or getattr(s, "loc", {}).get("folder")
-        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder)
+        if speed:
+            text += f", {SPEED_NAMES[speed]}"
+        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder, rv.get("fast"))
         if cmd:
             text += f"; start it as `{cmd}`"
-        add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd}, rv_by)
+        add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd,
+                              **({"speed": speed} if speed else {})}, rv_by)
+        if notice:
+            lines[-1]["notice"] = notice
+        if not live and t.get("brief_reviewer_fallback"):
+            lines[-1] = t["brief_reviewer_fallback"]
         must = sets.get("must_fix") or (k.get("must_fix") if k.get("must_fix") in LEVELS else "major")
         add("Must fix", MUST_WORDS[must], must, "task" if "must_fix" in sets else by_layer(s, space, "tasks", "must_fix", must, "major"))
         rounds = sets.get("review_rounds") or (kept or {}).get("rounds") or (rounds_cfg if rounds_cfg > 0 else 3)
@@ -781,14 +785,19 @@ def task_settings(s, t, space=None, argv=None, live=False):
     add("Proof", PROOF_WORDS["on" if proof else "off"], proof,
         "task" if "proof" in sets else by_layer(s, space, "tasks", "proof", proof, True))
     model, effort = argv_model(argv)
+    speed = argv_speed(agent, argv)
+    # The launch command always spells out Standard. Say it in the brief when it was chosen in the task or Settings.
+    named_speed = speed and (speed != "regular" or t.get("speed") in SPEEDS or (cfg.get("worker") or {}).get("fast") is False)
     extra = FLAGS.extra(agent, argv)
     text = agent + (f", model {model}" if model else "") + (f", effort {effort}" if effort else "") + \
+        (f", {SPEED_NAMES[speed]}" if named_speed else "") + \
         (f", extra flags {FLAGS.words(extra)}" if extra else "")
     own_flags = agent in (t.get("flags") or {}) if isinstance(t.get("flags"), dict) else False
-    a_by = "task" if any(t.get(f) for f in ("agent", "model", "effort")) or own_flags else \
+    a_by = "task" if any(t.get(f) for f in ("agent", "model", "effort", "speed")) or own_flags else \
         by_layer(s, space, "worker", None, bool(cfg.get("worker")), False) or \
         (by_layer(s, space, "tasks", f"{agent}_flags", extra, []) if extra else None)
-    add("Agent", text, {"agent": agent, "model": model, "effort": effort, "flags": extra}, a_by)
+    add("Agent", text, {"agent": agent, "model": model, "effort": effort, "flags": extra,
+                       **({"speed": speed} if speed else {})}, a_by)
     # Suggested replies (SHEP-186): the reply ends with one to three replies the person would likely send next (templates/worker.md)
     sug = (cfg.get("agents") or {}).get("suggestions") is not False
     add("Suggested replies", "on (your reply ends with one to three replies the person would likely send next, or one per option, up to five, when it asks a question with options; each at most 30 characters; shown as bubbles to tap)" if sug
@@ -799,6 +808,12 @@ def task_settings(s, t, space=None, argv=None, live=False):
 def settings_block(s, t, space=None, argv=None, live=False, sources=False):
     """The Settings block a brief ends with. sources: every line says where it comes from, its default too (show)."""
     lines = task_settings(s, t, space, argv, live)
+    if live:
+        reviewer = next((x for x in lines if x["label"] == "Reviewer" and x.get("notice")), None)
+        if reviewer:
+            t["brief_reviewer_fallback"] = reviewer
+        else:
+            t.pop("brief_reviewer_fallback", None)
     rows = [f"- {x['label']}: {x['text']}" + (f" ({SET_BY[x['by']]})" if x["by"] else " (Herdr's default)" if sources else "")
             for x in lines]
     # Codex's sandbox can't start here (SHEP-227, #998): the worker hears it in its brief and tells the person.
@@ -882,7 +897,8 @@ def agent_argv(key, argv_json=None):
             raise Fail("--argv must be a JSON list")
         argv = [str(x) for x in argv]
     else:
-        argv = list(AGENTS.get(key, [key]))
+        require_task_cli(key)
+        argv = list(AGENTS[key])
     # Codex runs its commands outside hc without --no-daemon.
     if agent_key(argv) == "codex" and "--no-daemon" not in argv:
         argv.append("--no-daemon")

@@ -62,7 +62,7 @@ function line(need: number, room: number, free: Record<string, number> = { logo:
   return el as unknown as HTMLElement
 }
 
-test("the message box's agent line keeps the model and effort whole: logo, chevron, then mode go first", () => {
+test("the message box's agent line keeps the model and effort whole: logo, chevron and mode go first", () => {
   expect((Pk as any).AGENT_DROPS).toEqual(['logo', 'chev', 'perm'])
   const roomy = line(200, 240)
   expect(fitAgentLine(roomy)).toBe(0)

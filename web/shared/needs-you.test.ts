@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import { ALERT_FRESH_MS, alertStands, alertWhat, taskAlerts } from './needs-you.ts'
-import { needsCount, nowGroups } from './view.ts'
+import { ALERT_FRESH_MS, alertStands, alertWhat, needsYou, taskAlerts, waitingTasks } from './needs-you.ts'
+import { needsCount, nowGroups, statusWord, taskLine } from './view.ts'
 import type { Snapshot, Task } from './types.ts'
 
 const T0 = 1_000_000_000
@@ -48,4 +48,19 @@ test('an alert goes once its task is Ready after it', () => {
   // one it sent after it was handed in stands its 15 minutes
   const b = alert('b', { at: T0 + 2 * 60_000 })
   expect(alertStands(b, snapOf([task('SHOP-1', { status: 'ready', needsAt: T0 + 60_000 })], [b]), T0 + 3 * 60_000)).toBe(true)
+})
+
+test('queued questions show under Needs you while their task stays Working', () => {
+  const t = task('SHOP-1', { queuedQuestions: 2, report: { msg: 'Needs a repo decision' } })
+  const s = snapOf([t], [])
+  s.needs = ['Color?', 'Size?'].map((title, i) => ({ id: `q${i}`, chat: 'SHOP-1/worker', place: 'shop', task: t.id, at: T0 + i,
+    question: { id: `q${i}`, title, kind: 'Question', to: 'SHOP-1/worker', choices: [], queued: true } }))
+  expect(needsCount(s, 'shop')).toBe(2)
+  expect(needsYou(s).map((w) => w.need?.question?.title)).toEqual(['Color?', 'Size?'])
+  expect(waitingTasks(needsYou(s)).has(t.id)).toBe(false)
+  expect(nowGroups(s.tasks).find((g) => g.name === 'Working')?.tasks).toEqual([t])
+  expect(statusWord(t).word).toBe('Working')
+  expect(taskLine(t)).toBe('Working · 2 questions for you')
+  expect(taskLine({ ...t, queuedQuestions: undefined })).toBe('Working')
+  expect(taskLine({ ...t, status: 'need' })).toBe('Needs a repo decision')
 })

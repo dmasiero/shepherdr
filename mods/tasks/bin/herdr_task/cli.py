@@ -235,6 +235,7 @@ def main():
         c.add_argument("--reviewer", help="the CLI its agent's review uses (default: Settings' Reviewer, else the other CLI)")
         c.add_argument("--reviewer-model", help="the reviewer's model")
         c.add_argument("--reviewer-effort", help="the reviewer's effort")
+        c.add_argument("--reviewer-speed", help="the reviewer's service tier: standard, fast or ultrafast, where supported")
         c.add_argument("--set", action="append", metavar="KEY=VALUE",
                        help="one task's setting, a line of its brief's Settings block: review=on|off, review.rounds=1..10, "
                             "review.mustFix=blocker|major|minor, proof=on|off, flags=\"--advisor opus\", merge=\"on its own\"|\"after checks\"|\"ask me first\" (\"\": Settings' again)")
@@ -248,7 +249,7 @@ def main():
                                 "instead of a new one, and ready pushes to its branch (\"\" lets go)")
 
     def pick_opts(c):
-        c.add_argument("--speed", help="its agent's speed, where its model has more than one: regular, fast, ultrafast (default: Settings')")
+        c.add_argument("--speed", help="its agent's service tier: standard, fast or ultrafast, where supported (default: Settings')")
         c.add_argument("--permission", help="its agent's permission mode, in its CLI's words: Claude Code's default, acceptEdits, plan, "
                                             "auto, bypassPermissions; Codex's read-only, auto, approve (Approve for me), full (\"\": Settings' again)")
 
@@ -515,8 +516,8 @@ def main():
     c.add_argument("--refresh", action="store_true", help="look again now")
     c.add_argument("--json", action="store_true")
     c.set_defaults(fn=cmd_assistants)
-    c = sub.add_parser("tell-assistant", help="message another Assistant, here or on a machine reachable from here: tell-assistant vm-demo/t3 \"...\" (or its space)")
-    c.add_argument("target", help="its address as `assistants` lists it (t3, vm-demo/t3, laptop>vm-x/t3), or its space's name or id")
+    c = sub.add_parser("tell-assistant", help="message an Assistant or reply to a task terminal: tell-assistant vm-demo/t3 \"...\" (or name an Assistant's space)")
+    c.add_argument("target", help="an Assistant's space or address, or a task message's from address (t3, vm-demo/t3, laptop>vm-x/t3)")
     c.add_argument("text")
     c.add_argument("--json", action="store_true")
     c.set_defaults(fn=cmd_tell)
@@ -538,6 +539,7 @@ def main():
     c.add_argument("--space")
     c.add_argument("--parent")
     c.add_argument("--keep", action="store_true", help="add the agent beside the old one")
+    c.add_argument("--when-idle", action="store_true", help="leave an active turn alone and resume without a new message")
     c = sub.add_parser("_allow")  # Codex's PermissionRequest hook (own_argv)
     c.add_argument("--command", required=True)
     c.add_argument("--sandboxed", action="store_true")  # Codex's: its proof and commits run escalated (#866)

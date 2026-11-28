@@ -13,8 +13,8 @@ import time
 from . import sandbox, stack
 from .base import Fail, git, guard, now, own_core_check, run, STORE, stop_note, VERSION
 from .settings import (
-    agent_argv, agent_key, bare, merge_policy, review_limits, set_opts, set_task, settings_block, settings_for, space_base,
-    task_settings, worker_argv, worktrees_on, setting_sources, SET_BY,
+    agent_argv, agent_key, bare, check_automatic_agent, merge_policy, review_limits, set_opts, set_task, settings_block, settings_for, space_base,
+    require_task_cli, reviewer_pick, task_settings, worker_argv, worktrees_on, setting_sources, SET_BY,
 )
 from .agents import (
     agent_log, agent_running, background_jobs, busy_again, BY_YOU, NOT_TRUSTED, clear_stopped, job_names, own_jobs, detail, fit, LINE_MAX, live_agents, ready_turns,
@@ -22,7 +22,7 @@ from .agents import (
 )
 from .sessions import refresh_sessions
 from .github import (already_merged, checks_missing, collision, collision_reason, collision_words, github_unreachable, pr_for_branch, checks_since, drop_branch, expected_checks, finish, gh, github, landed, merged_here, needs_approval, note_checks, own_work, pr_adopt, pr_open,
-                     merge_checks, mid_turn, pr_pending, pr_problem, pr_view, queue_refusal, remote_of, update_main, watch_main)
+                     merge_checks, merge_method, mid_turn, pr_pending, pr_problem, pr_view, queue_refusal, remote_of, update_main, watch_main)
 from .github import CHECKS_RUNNING as PR_CHECKS_RUNNING
 from .github import remote_of  # fork: for gitea.local_merge_refused (gitea.py)
 from . import gitea  # fork: Gitea pull requests through tea (gitea.py)
@@ -53,6 +53,11 @@ def cmd_where(args):
 def cmd_list(args):
     if args.all:
         folders = [d["folder"] for d in map(read_list, store_files()) if is_task_list(d)]
+        if any(not os.path.isdir(folder) for folder in folders):
+            here = locate(args.folder)["folder"]
+            if here not in folders and any(os.path.isfile(path) for path in store_files(here)):
+                folders.append(here)
+        folders = list(dict.fromkeys(folders))
     else:
         folders = [locate(args.folder)["folder"]]
     groups = []
@@ -181,6 +186,8 @@ def scheduled_at(args):
 def schedule(s, t, at, plan=None):
     if t["state"] not in ("todo", "scheduled", "queued"):
         raise Fail(f"{s.name(t)} has already started ({STATUSES.get(t['state'], t['state'])}); only a task not started yet can be scheduled.")
+    q = plan or t.get("queue") or {}
+    check_automatic_agent(q.get("argv") or worker_argv(s, t, q.get("space") or t.get("space")))
     t["state"], t["scheduled_for"] = "scheduled", at
     if plan is not None:
         t["queue"] = plan
@@ -297,13 +304,13 @@ def moved_words(s, t, res):
     return line + "."
 
 
-PR_FIELDS = "number,url,state,isCrossRepository,headRefName,headRefOid,baseRefName"
+PR_FIELDS = "number,url,state,isCrossRepository,headRefName,headRefOid,baseRefName,mergeCommit"
 
 
-def take_pr(s, t, number):
+def take_pr(s, t, number, *, ready=False):
     """--pr <n> (#1155, #1195): the task takes a pull request that is already open (a person's, a bot's,
     one its agent opened on another branch) instead of opening its own. Its review, checks news and
-    Accept work on that one; ready pushes the task's commits to its branch, never forced, and leaves its
+    Accept work on that one; ready pushes to the branch it took, protected by a lease, and leaves its
     description as it is (pr["branch"], as #828's). Before its worktree is made, the worktree starts from
     that branch and takes its base; after, the task's branch must already hold its latest commit.
     "" lets go of a pull request taken this way (ready opens the task's own again)."""
@@ -337,24 +344,34 @@ def take_pr(s, t, number):
             raise Fail(f"Couldn't find pull request #{number} in {repo}: {err or out or 'no answer'}")
         where = repo
     n, head, into = v["number"], v.get("headRefName") or "", v.get("baseRefName") or "main"
-    if v.get("state") != "OPEN":
+    merged = ready and v.get("state") == "MERGED" and head == t.get("branch")
+    if v.get("state") != "OPEN" and not merged:
         raise Fail(f"Pull request #{n} is {str(v.get('state') or 'not open').lower()}: only an open one can be taken.")
     if v.get("isCrossRepository"):
         raise Fail(f"Pull request #{n} comes from a fork: Herdr can't push to its branch. Leave --pr out, so ready "
                    "opens the task's own.")
+    if head == (t.get("base") or "main"):
+        raise Fail(f"Pull request #{n} is from this task's base branch. Use the task's own branch.")
     mine = t.get("pr") or {}
-    if mine.get("number") == n and mine.get("repo") == where:  # fork: where, Gitea's "owner/name" too
+    if not merged and mine.get("number") == n and mine.get("repo") == where:  # fork: where, Gitea's "owner/name" too
         return
     other = next((o for o in s.data["tasks"] if o is not t and o.get("state") != "done"
                   and (o.get("pr") or {}).get("number") == n and (o.get("pr") or {}).get("repo") == where), None)
     if other:
         raise Fail(f"Pull request #{n} is already {s.ref(other)}'s.")
     main, wt = s.loc["folder"], t.get("worktree")
-    if wt:
+    if wt or merged:
         if into != (t.get("base") or "main"):
             raise Fail(f"Pull request #{n} merges into {into}, and {s.name(t)} into {t.get('base') or 'main'}: its "
                        "worktree's base can't change now. Take it in a new task (add --pr).")
-        if head != t.get("branch"):
+        if merged:
+            tip = branch_tip(s, t)
+            if tip and not git(main, "merge-base", "--is-ancestor", tip, v.get("headRefOid") or "-")[0]:
+                remote = remote_of(main)
+                git(main, "fetch", "--quiet", remote, into)
+                if not in_base(s, t) and not landed(s, t):
+                    raise Fail(f"Pull request #{n} is merged, but this branch still has work outside {into}.")
+        elif head != t.get("branch"):
             remote = remote_of(main)
             git(main, "fetch", "--quiet", "--no-tags", remote, f"+refs/heads/{head}:refs/remotes/{remote}/{head}")
             if not git(main, "merge-base", "--is-ancestor", v.get("headRefOid") or "-", t["branch"])[0]:
@@ -367,10 +384,11 @@ def take_pr(s, t, number):
         set_base(s, t, into)
     # fork: a Gitea one's record says so (gitea.py)
     t["pr"] = {**(gitea.record(repo, v) if gitea.is_target(repo) else {"number": n, "url": v.get("url"), "repo": repo}),
-               "taken": True, **({"branch": head} if head and head != t.get("branch") else {})}
+               "taken": True, **({"branch": head, "lease": v.get("headRefOid")} if head and head != t.get("branch") else {})}
     for k in ("pr_note", "merge_queued"):
         t.pop(k, None)
     s.dirty = True
+    return v if merged else None
 
 
 def set_notes(t, args):
@@ -452,6 +470,7 @@ def cmd_show(args):
 
 def begin(s, t, argv, space, parent=None):
     """Starts the task's first agent. Returns its record."""
+    reviewer_pick(s, t, space)
     t["state"], t["started"] = "running", now()
     # Its brief teaches `reviewed`: ready waits for a review of its final commit (review_refusal).
     t["review_gate"] = True
@@ -555,16 +574,19 @@ def cmd_start(args):
                 q.pop("argv")
         argv = agent_argv(None, args.argv) if args.argv else worker_argv(s, t, space, args.agent) if args.agent else \
             (q.get("argv") or worker_argv(s, t, space))
+        if not args.argv and not q.get("custom"):
+            require_task_cli(agent_key(argv))
         parent = args.parent or q.get("parent")
         plan = {"argv": argv, "space": space, "parent": parent, **({"custom": True} if args.argv else {})}
         at = scheduled_at(args)
+        if not at and t["state"] == "scheduled" and not args.now:
+            at = t.get("scheduled_for")
         if at:
             # start --at / --in: it starts by itself then, as this start would now.
             schedule(s, t, at, plan)
             v = view(s, t)
             reason = "scheduled"
-        # A queued task started again goes now; otherwise it waits its turn. A scheduled one
-        # started now waits only for the queue (start --now: not even that).
+        # A queued task started again goes now; other tasks wait their turn unless --now was given.
         elif (reason := None if (t["state"] == "queued" or args.now) else queue_reason(s, t)):
             t["state"], t["queued_at"] = "queued", now()
             t.pop("scheduled_for", None)
@@ -633,38 +655,6 @@ def on_branch(t, wt):
     raise Fail(f"HEAD is on {here}, not on this task's branch {br}{has}: ready pushes and opens only {br}. Put the work "
                f"on {br} (git switch {br}, then merge or cherry-pick it), or, for a second pull request, open it yourself "
                "and ask your Assistant for a task to track it (add --pr <its number>).")
-
-
-def base_pr(s, t):
-    """#1204: a task started from an open pull request's branch (its base is that branch: --base <its head>) goes on that
-    pull request at ready, as ready --pr <n> would, never a second one stacked on it. Only when it has none yet, and only
-    a base set for this task: a space's base branch (a develop with its release pull request open) is never taken."""
-    base = t.get("base")
-    if t.get("pr") or not base or not t.get("base_set") or t.get("base_by") == "space":
-        return
-    repo = github(s)
-    if not repo:
-        return
-    if gitea.is_target(repo):  # fork: on Gitea, read through tea (SHEP-94, gitea.py)
-        rows = gitea.prs_from(repo, base)
-    else:
-        ok, out, _ = gh("pr", "list", "--repo", repo, "--head", base, "--state", "open", "--json", PR_FIELDS)
-        try:
-            rows = json.loads(out) if ok and out else []
-        except ValueError:
-            rows = []
-    try:
-        found = next((p for p in rows if not p.get("isCrossRepository")), None)
-    except (TypeError, AttributeError):
-        found = None
-    if not found or found.get("baseRefName") == base:
-        return
-    # fork: a Gitea one's record says so (gitea.py)
-    t["pr"] = {**(gitea.record(repo, found) if gitea.is_target(repo) else {"number": found["number"], "url": found.get("url"), "repo": repo}),
-               "taken": True, "branch": base, "from_base": True}
-    for k in ("pr_note", "merge_queued"):
-        t.pop(k, None)
-    s.dirty = True
 
 
 def pr_words(t, args):
@@ -748,6 +738,12 @@ def cmd_ready(args):
         if t["state"] == "done":
             raise Fail(f"{s.name(t)} is already done.")
         wt = t.get("worktree") if t.get("mode") == "worktree" else None
+        pr = t.get("pr") or {}
+        if pr.get("from_base") or (pr.get("branch") and (not pr.get("taken") or pr["branch"] == t.get("base"))):
+            t.pop("pr")  # Older versions took another branch's PR without being asked.
+            for k in ("pr_note", "merge_queued"):
+                t.pop(k, None)
+        merged_pr = None
         if wt and os.path.isdir(wt):
             if git(wt, "status", "--porcelain", "--untracked-files=no")[1]:
                 raise Fail(f"{wt} has uncommitted changes. Commit them, then run ready again.")
@@ -764,23 +760,25 @@ def cmd_ready(args):
                        f"). In {wt}: `git fetch`, then `{moved['command']}` (it replays only your own commits), resolve any "
                        "conflicts, run the checks, commit, and run ready again.") \
                 if moved.get("conflict") or moved.get("todo") else None
-            # --pr: its work goes on a pull request already open (#1155), checked before anything changes;
-            # else one open from its base branch, the branch the task was started on (#1204).
-            take_pr(s, t, getattr(args, "pr", None))
-            if getattr(args, "pr", None) is None:
-                base_pr(s, t)
+            number = getattr(args, "pr", None)
+            if number is not None:
+                merged_pr = take_pr(s, t, number, ready=True)
             pr_words(t, args)
             own_work(s, t)
             # SHEP-320: other tasks run in parallel and may have merged meanwhile: a branch that conflicts with its
             # base's newest is refused here, with what collided, rather than at its merge. Behind but clean passes.
-            c = collision(s, t, fetch=True) if t.get("start") and not unmoved and not (t.get("pr") or {}).get("from_base") else None
+            c = collision(s, t, fetch=True) if t.get("start") and not unmoved and not merged_pr else None
             collides = (f"{s.name(t)}'s branch conflicts with {c['ref']}, which moved on since it started"
                         + (f" ({', '.join(c['by'][:3])} merged)" if c["by"] else "") + f". {collision_words(c)} "
                         "Then commit and run ready again.") if c else None
-        elif getattr(args, "pr", None):
-            raise Fail("--pr is for tasks in a worktree; this one works in the folder itself.")
         else:
             collides = unmoved = None
+            if getattr(args, "pr", None):
+                if not wt:
+                    raise Fail("--pr is for tasks in a worktree; this one works in the folder itself.")
+                merged_pr = take_pr(s, t, args.pr, ready=True)
+                if not merged_pr:
+                    raise Fail("The worktree is gone. Restore it before saying ready with an open pull request.")
         refused = unmoved or collides or review_refusal(s, t, wt)
         if refused:
             # Kept (the task's line says why it waits); refused after the store is saved.
@@ -824,16 +822,15 @@ def cmd_ready(args):
         # base caught up with: a research or artifact-only task) still waits in Ready for the
         # person's Accept, its summary, details and artifacts on the card (SHEP-96); no pull request,
         # and Accept just marks it done and cleans up its worktree.
-        # #1204: on the pull request open from its own base branch, its work is that pull request's (pushed there
-        # already, or by ready now): never "nothing to merge", nor done because its base holds it.
-        on_base_pr = bool((t.get("pr") or {}).get("from_base"))
-        if wt and t.get("start") and not on_base_pr and in_base(s, t) and not merged_here(s, t):
+        if wt and t.get("start") and not merged_pr and in_base(s, t) and not merged_here(s, t):
             t["nothing_to_merge"] = True
         else:
             t.pop("nothing_to_merge", None)
         # Its work already in its base (SHEP-59: its pull request squash-merged, or nothing left to
         # merge): done at once, never a second pull request.
-        gone = already_merged(s, t) if wt and t.get("start") and not t.get("nothing_to_merge") and not on_base_pr else None
+        gone = merged_pr
+        if gone is None and wt and t.get("start") and not t.get("nothing_to_merge"):
+            gone = already_merged(s, t)
         if gone is not None:
             t["merged"] = True
             if gone:
@@ -1574,22 +1571,46 @@ def cmd_config(args):
                                "Settings for its tasks (a task's own --set wins):", *shown]))
 
 
+def remove_deleted_worktree(s, t):
+    """Use git's clean-worktree check, then delete the branch only if it belongs to this task."""
+    wt, branch, folder = t.get("worktree"), t.get("branch"), s.loc["folder"]
+    if t.get("mode") != "worktree" or not wt:
+        return None
+    trees = worktree_list(folder)
+    tree = next((w for w in trees if os.path.realpath(w["path"]) == os.path.realpath(wt)), None)
+    if not branch or not tree or tree["branch"] != branch or os.path.realpath(wt) == os.path.realpath(folder) or \
+            branch in {t.get("base") or "main", default_branch(folder)} or any(
+                o is not t and branch in (o.get("branch"), o.get("base")) for o in s.data["tasks"]
+                if o.get("state") != "done"):
+        return f"Its worktree {wt} and branch were kept."
+    if not git(folder, "worktree", "remove", wt)[0]:
+        return f"Its worktree {wt} and branch were kept. Check for local changes or files there."
+    if not git(folder, "branch", "-D", "--", branch)[0]:
+        return f"Its branch {branch} was kept."
+    return None
+
+
 def cmd_rm(args):
     with open_store(args) as s:
         t = s.find(args.id)
-        # 3.2: deleting a task stops its agent; its branch, worktree and files are left alone
-        ended = []
+        # Stop the task before asking git to remove its worktree.
+        ended, busy = [], False
         if t["state"] in ("running", "ready") or t.get("agents"):
             for k in live_agents(s.key(t)):
                 stop_note("rm-kill", task=s.ref(t), terminal=k["address"], by="rm")
                 if run(["hc", "kill", k["address"]]).returncode == 0:
                     ended.append(k["address"])
+                else:
+                    busy = True
+        kept = "Its worktree was kept because its agent is still running." if busy and t.get("worktree") else None
+        if not busy:
+            kept = remove_deleted_worktree(s, t)
         s.data["tasks"].remove(t)
         for o in s.data["tasks"]:
             if t["id"] in (o.get("after") or []):
                 o["after"] = [i for i in o["after"] if i != t["id"]]
         s.dirty = True
-    note = f" Its worktree {t['worktree']} is still there." if t.get("worktree") and os.path.isdir(t["worktree"]) else ""
+    note = f" {kept}" if kept else ""
     say(args, {"id": t["id"], "removed": True, "ended": ended}, f"{s.name(t)} removed.{note}")
 
 
@@ -1616,13 +1637,22 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
         raise
 
 
-def _start_again(s, t, space, key, argv_json, message, parent, nudge):
+def restart_argv(s, t, space, key, argv_json):
     prev = last_agent(t)
-    parent = parent_for(parent or (prev or {}).get("parent"), space)
     # The last agent's argv again, unless the task's agent, model, effort or flags changed since (edit).
     keep = prev and prev.get("argv") and (t.get("pick_at") or 0) <= (prev.get("at") or 0)
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \
         (prev["argv"] if keep else worker_argv(s, t, space))
+    if not argv_json:
+        require_task_cli(agent_key(argv))
+    reviewer_pick(s, t, space)
+    return argv
+
+
+def _start_again(s, t, space, key, argv_json, message, parent, nudge):
+    prev = last_agent(t)
+    parent = parent_for(parent or (prev or {}).get("parent"), space)
+    argv = restart_argv(s, t, space, key, argv_json)
     same = prev and agent_key(argv) == prev.get("agent")
     res = resume_argv(argv, prev["session"], folder_for(s, t)) if same and prev.get("session") else None
     if res:
@@ -1683,6 +1713,9 @@ def cmd_switch(args):
         live = [k for k in map(detail, live_agents(s.key(t))) if agent_running(k)]
         refresh_sessions(s, t, live)
         old = live[-1] if live else None
+        when_idle = getattr(args, "when_idle", False)
+        if when_idle and ((old or {}).get("status") or {}).get("state") in ("working", "blocked"):
+            raise Fail("Wait for this turn to finish, then update.")
         labels = (old or {}).get("labels") or {}
         # A given --space wins: the task moves there (#837); else the old agent's own space.
         space = ((bare(args.space) if args.space else None) or labels.get("herdr.task.space") or labels.get("herdr.space")
@@ -1697,13 +1730,15 @@ def cmd_switch(args):
         me = os.environ.get("HC_TERMINAL_ID")
         own = bool(old and me and old["address"].split("/")[-1] == me)
         if old and not args.keep and not own:
+            restart_argv(s, t, space, args.agent, args.argv)
             # The old agent ends before the new one starts (SHEP-211): the new one may resume the same session,
             # and killing the old one after that cut the session's turn short under the new agent, which then
             # sat on "Interrupted" with nothing to do. Its worktree and session stay for the new agent.
             end_agent(s, t, old["address"])
             ended.append(old["address"])
         try:
-            a, resumed = start_again(s, t, space, args.agent, args.argv, parent=args.parent, nudge=SWITCH_NUDGE)
+            a, resumed = start_again(s, t, space, args.agent, args.argv, parent=args.parent,
+                                     nudge=None if when_idle else SWITCH_NUDGE)
         except Fail as e:
             if ended:
                 raise Fail(f"{e} The old agent {ended[0]} already ended: its work is kept, `herdr-task resume "
@@ -1877,7 +1912,7 @@ IN_QUEUE = "It is in GitHub's merge queue."  # #802: merging, done once GitHub m
 
 
 def merge_now(s, t, accept=False):
-    """Merges the task's pull request on GitHub (squash) and tidies up here. Returns why it
+    """Merges the task's pull request on GitHub and tidies up here. Returns why it
     couldn't, or None when it's merged (and the task done). A base branch with GitHub's merge
     queue (#742, #801, #802): the pull request joins the queue and the task stays Merging until
     GitHub merged it (the tick finishes it then, and deletes its branch there)."""
@@ -1917,13 +1952,17 @@ def merge_now(s, t, accept=False):
         # doesn't know the base has a merge queue (a ruleset's queue, an older gh): GitHub only queued
         # it, and a pull request whose branch goes is closed and leaves the queue. Its branch on GitHub
         # goes below, once GitHub says it merged (drop_branch()).
+        try:
+            method = None if gitea.on(t) else merge_method(repo)  # fork: Gitea merges in its own default style (gitea.py)
+        except Fail as e:
+            return str(e)
         if not gitea.on(t) and (v.get("mergeStateStatus") == "DRAFT" or t.get("pr_draft")):  # fork: gh is GitHub's only
             # #1155: opened as a draft (ready --draft): the person's Accept takes it out of draft first; GitHub
             # merges no draft.
             gh("pr", "ready", n, "--repo", repo)
         # fork: a Gitea pull request merges through tea, at once: no merge queue (gitea.py)
         ok, _, err = gitea.pr_merge(t, v) if gitea.on(t) else \
-            gh("pr", "merge", n, "--repo", repo, "--squash", "--match-head-commit", v.get("headRefOid") or "")
+            gh("pr", "merge", n, "--repo", repo, method, "--match-head-commit", v.get("headRefOid") or "")
         # Merged, or only queued (or set to merge by itself)? Asked again; a one-off GitHub error can
         # also come after the merge went through.
         again = pr_view(t)
